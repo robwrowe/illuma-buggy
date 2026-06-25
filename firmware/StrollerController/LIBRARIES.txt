@@ -1,0 +1,10 @@
+# StrollerController v2.0 — Required Arduino Libraries
+# Install via Arduino IDE > Tools > Manage Libraries
+
+NimBLE-Arduino    by h2zero             >= 2.0.0
+ArduinoJson       by Benoit Blanchon    >= 7.0.0
+
+# Built-in to ESP32 Arduino core (no install needed):
+# WiFi, Preferences, HTTPClient
+#
+# NOTE: WebSocketsServer no longer needed — removed in v2.0
