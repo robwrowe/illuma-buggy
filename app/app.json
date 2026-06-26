@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Illuma Buggy",
+    "slug": "illuma-buggy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.illumabuggy.app",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "IllumaBuggy uses Bluetooth to control your stroller LEDs and receive MagicBand+ events.",
+        "NSBluetoothPeripheralUsageDescription": "IllumaBuggy uses Bluetooth to control your stroller LEDs.",
+        "NSLocationWhenInUseUsageDescription": "IllumaBuggy uses your location to trigger LED presets based on where you are in the park.",
+        "NSLocationAlwaysUsageDescription": "IllumaBuggy uses your location in the background to trigger LED presets automatically."
+      }
+    },
+    "android": {
+      "package": "com.illumabuggy.app",
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "$GOOGLE_MAPS_API_KEY"
+        }
+      }
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [
+            "peripheral",
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Allow IllumaBuggy to connect to your stroller controller"
+        }
+      ],
+      "expo-location"
+    ],
+    "splash": {
+      "backgroundColor": "#0a0a0f",
+      "resizeMode": "contain"
+    },
+    "sdkVersion": "53.0.0",
+    "extra": {
+      "eas": {
+        "projectId": "e7692aec-8fa3-4506-beb8-2885de76cbf8"
+      }
+    }
+  }
+}

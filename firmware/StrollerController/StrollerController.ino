@@ -345,6 +345,14 @@ void startBLEPeripheral() {
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(SERVICE_UUID);
+
+  // Include complete local name in the main advertisement packet
+  // so Android shows "IllumaBuggy" instead of the MAC address
+  NimBLEAdvertisementData advData;
+  advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+  advData.setName(BLE_NAME);
+  adv->setAdvertisementData(advData);
+
   adv->start();
 
   Serial.printf("[BLE] Peripheral advertising as: %s\n", BLE_NAME);
@@ -443,7 +451,7 @@ void connectToWLED() {
     Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
     // Wake GLEDOPTO — relay on GPIO18 needs explicit on command
     delay(1000);
-    sendToWLED("{\"on\":true,\"bri\":255}");
+    sendToWLED("{\"on\":true,\"bri\":80}");
   } else {
     Serial.println("\n[WiFi] Failed — will retry");
   }
@@ -465,11 +473,19 @@ void setup() {
 
   // BLE — init once, then start peripheral + scanner
   NimBLEDevice::init(BLE_NAME);
+  delay(200);  // let BLE stack settle before advertising
   startBLEPeripheral();
   startBLEScan();
 
-  // WiFi STA — connect to GLEDOPTO
-  connectToWLED();
+  // WiFi STA — connect to GLEDOPTO in background via FreeRTOS task
+  // so BLE advertising is not blocked by WiFi connection attempts
+  xTaskCreatePinnedToCore(
+    [](void*) {
+      connectToWLED();
+      vTaskDelete(NULL);
+    },
+    "WiFiTask", 4096, NULL, 1, NULL, 1  // core 1
+  );
 
   Serial.println("[Boot] Ready");
 }
