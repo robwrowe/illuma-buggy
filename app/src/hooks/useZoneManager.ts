@@ -23,6 +23,7 @@ export function useZoneManager() {
     indoorZones,
     brightnessConfig,
     overrideKillOnZone,
+    zonesEnabled,
   } = useAppStore();
 
   // Refs to avoid stale closures in the interval callback
@@ -116,7 +117,7 @@ export function useZoneManager() {
           // Entered a new zone or left all zones
           currentZoneRef.current = matchedZone ?? null;
 
-          if (matchedZone) {
+          if (matchedZone && zonesEnabled) {
             console.log('[Zone] Entered:', matchedZone.name);
             bleService.sendZoneTrigger(matchedZone.presetId);
           }

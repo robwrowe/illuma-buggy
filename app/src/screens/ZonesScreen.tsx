@@ -4,14 +4,16 @@
  * First-entered priority, overlap prevention warnings.
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   Modal, FlatList, Alert, TextInput, Switch,
 } from 'react-native';
+import * as Location from 'expo-location';
 import MapView, { Polygon, Marker, MapPressEvent } from 'react-native-maps';
 import { useAppStore, Zone, IndoorZone, LatLng } from '../stores/store';
 import { polygonsOverlap, generateId } from '../utils/utils';
+import { useTheme } from '../utils/theme';
 
 type DrawMode = 'none' | 'preset' | 'indoor';
 
@@ -27,10 +29,29 @@ export default function ZonesScreen() {
   } = useAppStore();
 
   const mapRef = useRef<MapView>(null);
+  const [userLocation, setUserLocation] = useState<LatLng | null>(null);
+
+  // Auto-locate on mount
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+      setUserLocation(coord);
+      mapRef.current?.animateToRegion({
+        ...coord,
+        latitudeDelta: 0.005,
+        longitudeDelta: 0.005,
+      }, 800);
+    })();
+  }, []);
 
   // Drawing state
   const [drawMode, setDrawMode]     = useState<DrawMode>('none');
   const [drawPoints, setDrawPoints] = useState<LatLng[]>([]);
+  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
+  const [isDragging, setIsDragging]   = useState(false);
   const [showList, setShowList]     = useState(false);
   const [listMode, setListMode]     = useState<'preset' | 'indoor'>('preset');
 
@@ -46,6 +67,18 @@ export default function ZonesScreen() {
     const coord = e.nativeEvent.coordinate;
     setDrawPoints((prev) => [...prev, coord]);
   }, [drawMode]);
+
+  const undoLastPin = () => {
+    setDrawPoints(prev => prev.slice(0, -1));
+  };
+
+  const onMarkerDragEnd = (index: number, coord: LatLng) => {
+    setDrawPoints(prev => {
+      const updated = [...prev];
+      updated[index] = coord;
+      return updated;
+    });
+  };
 
   // ── Finish drawing ──
 
@@ -142,6 +175,9 @@ export default function ZonesScreen() {
         showsUserLocation
         showsMyLocationButton
         mapType="satellite"
+        scrollEnabled={!isDragging}
+        pitchEnabled={!isDragging}
+        rotateEnabled={!isDragging}
       >
         {/* Preset zones */}
         {zones.map((zone, i) => (
@@ -166,9 +202,20 @@ export default function ZonesScreen() {
           />
         ))}
 
-        {/* Drawing points */}
+        {/* Drawing points — draggable to move */}
         {drawPoints.map((pt, i) => (
-          <Marker key={i} coordinate={pt} pinColor="#a78bfa" />
+          <Marker
+            key={i}
+            coordinate={pt}
+            pinColor={i === drawPoints.length - 1 ? '#22c55e' : '#a78bfa'}
+            draggable
+            onDragStart={() => setIsDragging(true)}
+            onDragEnd={(e) => {
+              setIsDragging(false);
+              onMarkerDragEnd(i, e.nativeEvent.coordinate);
+            }}
+            title={`Pin ${i + 1}`}
+          />
         ))}
 
         {/* Drawing preview polygon */}
@@ -198,9 +245,14 @@ export default function ZonesScreen() {
       ) : (
         <View style={styles.toolbar}>
           <Text style={styles.drawHint}>
-            {drawMode === 'preset' ? 'Tap map to draw preset zone' : 'Tap map to draw indoor zone'}
+            {drawMode === 'preset' ? 'Tap to add · drag pins to move' : 'Tap to add · drag pins to move'}
             {drawPoints.length > 0 && ` (${drawPoints.length} pts)`}
           </Text>
+          {drawPoints.length > 0 && (
+            <TouchableOpacity style={[styles.toolBtn, { backgroundColor: '#1a1a2e' }]} onPress={undoLastPin}>
+              <Text style={styles.toolBtnText}>↩ Undo</Text>
+            </TouchableOpacity>
+          )}
           {drawPoints.length >= 3 && (
             <TouchableOpacity style={styles.toolBtn} onPress={finishDrawing}>
               <Text style={styles.toolBtnText}>✓ Done</Text>

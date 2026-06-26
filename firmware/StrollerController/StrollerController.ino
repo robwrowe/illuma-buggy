@@ -68,6 +68,14 @@ String savedWledState = "";
 unsigned long lastWifiRetry = 0;
 const int     WIFI_RETRY_MS = 5000;
 
+// Pending command queue — BLE callbacks queue work here, loop() processes it
+// This prevents HTTPClient from running on the NimBLE stack (insufficient stack space)
+// IMPORTANT: use char arrays not String — FreeRTOS queues copy by value
+struct PendingCmd {
+  char type[32];
+};
+QueueHandle_t cmdQueue;
+
 // ─────────────────────────────────────────────
 // BLE NOTIFY HELPER
 // ─────────────────────────────────────────────
@@ -81,23 +89,33 @@ void bleNotify(const String& json) {
 // Chunk a large string and send as series of BLE notifications
 // type: the message type field in each chunk
 void bleNotifyChunked(const String& type, const String& payload) {
-  const int CHUNK = 400;  // conservative chunk size
+  if (!bleConnected) {
+    Serial.printf("[BLE] Not connected, skipping %s\n", type.c_str());
+    return;
+  }
+
+  const int CHUNK = 100;  // must fit in single MTU packet (247 bytes) after base64+JSON wrapper
   int total  = payload.length();
   int offset = 0;
   int seq    = 0;
 
+  Serial.printf("[BLE] Sending %s total=%d\n", type.c_str(), total);
+
   while (offset < total) {
+    if (!bleConnected) {
+      Serial.println("[BLE] Disconnected mid-chunk, aborting");
+      return;
+    }
+
     int end  = min(offset + CHUNK, total);
     bool last = (end >= total);
     String chunk = payload.substring(offset, end);
 
-    // Escape the chunk as a JSON string value
     String msg = "{\"type\":\"" + type + "\","
                  "\"seq\":" + String(seq) + ","
                  "\"last\":" + (last ? "true" : "false") + ","
                  "\"data\":\"";
 
-    // Inline JSON escape
     for (int i = 0; i < (int)chunk.length(); i++) {
       char c = chunk[i];
       if      (c == '"')  msg += "\\\"";
@@ -109,10 +127,14 @@ void bleNotifyChunked(const String& type, const String& payload) {
     msg += "\"}";
 
     bleNotify(msg);
-    delay(20);
+    delay(50);       // let BLE stack process
+    vTaskDelay(1);   // yield to FreeRTOS scheduler
+
     offset = end;
     seq++;
   }
+
+  Serial.printf("[BLE] Done: %s (%d chunks)\n", type.c_str(), seq);
 }
 
 // ─────────────────────────────────────────────
@@ -330,30 +352,21 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_delete\",\"id\":\"" + id + "\"}");
   }
   else if (type == "preset_list") {
-    String presets = getAllPresets();
-    bleNotifyChunked("preset_chunk", presets);
+    PendingCmd cmd; strncpy(cmd.type, "preset_list", 31); xQueueSend(cmdQueue, &cmd, 0);
   }
 
-  // ── WLED proxy GETs ──
+  // ── WLED proxy GETs — queued to main loop (HTTPClient can't run on BLE stack) ──
   else if (type == "wled_get_effects") {
-    String body = getFromWLED("/json/eff");
-    if (body.length() > 0) bleNotifyChunked("wled_effects", body);
-    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch effects\"}");
+    PendingCmd cmd; strncpy(cmd.type, "wled_get_effects", 31); xQueueSend(cmdQueue, &cmd, 0);
   }
   else if (type == "wled_get_palettes") {
-    String body = getFromWLED("/json/pal");
-    if (body.length() > 0) bleNotifyChunked("wled_palettes", body);
-    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch palettes\"}");
+    PendingCmd cmd; strncpy(cmd.type, "wled_get_palettes", 31); xQueueSend(cmdQueue, &cmd, 0);
   }
   else if (type == "wled_get_fxdata") {
-    String body = getFromWLED("/json/fxdata");
-    if (body.length() > 0) bleNotifyChunked("wled_fxdata", body);
-    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch fxdata\"}");
+    PendingCmd cmd; strncpy(cmd.type, "wled_get_fxdata", 31); xQueueSend(cmdQueue, &cmd, 0);
   }
   else if (type == "wled_get_state") {
-    String body = getFromWLED("/json/si");
-    if (body.length() > 0) bleNotifyChunked("wled_state", body);
-    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch state\"}");
+    PendingCmd cmd; strncpy(cmd.type, "wled_get_state", 31); xQueueSend(cmdQueue, &cmd, 0);
   }
 
   // ── Zone / override ──
@@ -562,6 +575,8 @@ void startBLEScan() {
 // ─────────────────────────────────────────────
 
 void connectToWLED() {
+  if (WiFi.status() == WL_CONNECTED) { Serial.println("[WiFi] Already connected"); return; }
+  WiFi.disconnect(false); delay(100);
   Serial.printf("[WiFi] Connecting to GLEDOPTO: %s\n", WLED_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WLED_SSID, WLED_PASS);
@@ -605,6 +620,9 @@ void setup() {
   startBLEPeripheral();
   startBLEScan();
 
+  // Create command queue (10 slots)
+  cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
+
   xTaskCreatePinnedToCore(
     [](void*) { connectToWLED(); vTaskDelete(NULL); },
     "WiFiTask", 4096, NULL, 1, NULL, 1
@@ -613,7 +631,44 @@ void setup() {
   Serial.println("[Boot] Ready");
 }
 
+void processPendingCommands() {
+  PendingCmd cmd;
+  // Process up to 3 commands per loop iteration
+  for (int i = 0; i < 3; i++) {
+    if (xQueueReceive(cmdQueue, &cmd, 0) != pdTRUE) break;
+
+    Serial.printf("[Queue] Processing: %s\n", cmd.type);
+
+    if (strcmp(cmd.type, "preset_list") == 0) {
+      String presets = getAllPresets();
+      bleNotifyChunked("preset_chunk", presets);
+    }
+    else if (strcmp(cmd.type, "wled_get_effects") == 0) {
+      String body = getFromWLED("/json/eff");
+      if (body.length() > 0) bleNotifyChunked("wled_effects", body);
+      else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch effects\"}");
+    }
+    else if (strcmp(cmd.type, "wled_get_palettes") == 0) {
+      String body = getFromWLED("/json/pal");
+      if (body.length() > 0) bleNotifyChunked("wled_palettes", body);
+      else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch palettes\"}");
+    }
+    else if (strcmp(cmd.type, "wled_get_fxdata") == 0) {
+      String body = getFromWLED("/json/fxdata");
+      if (body.length() > 0) bleNotifyChunked("wled_fxdata", body);
+      else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch fxdata\"}");
+    }
+    else if (strcmp(cmd.type, "wled_get_state") == 0) {
+      String body = getFromWLED("/json/si");
+      if (body.length() > 0) bleNotifyChunked("wled_state", body);
+      else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch state\"}");
+    }
+  }
+}
+
 void loop() {
+  processPendingCommands();
+
   if (WiFi.status() != WL_CONNECTED) {
     unsigned long now = millis();
     if (now - lastWifiRetry > WIFI_RETRY_MS) {

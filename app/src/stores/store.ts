@@ -155,6 +155,8 @@ interface AppState {
   setOverrideKillOnZone: (val: boolean) => void;
   magicBandFivePoint: boolean;
   setMagicBandFivePoint: (val: boolean) => void;
+  zonesEnabled: boolean;
+  setZonesEnabled: (val: boolean) => void;
 
   // Persistence
   loadFromStorage: () => Promise<void>;
@@ -192,6 +194,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   deviceStatus:    null,
   overrideKillOnZone: false,
   magicBandFivePoint: true,
+  zonesEnabled: true,
   brightnessConfig: DEFAULT_BRIGHTNESS,
 
   // ── Presets ──
@@ -233,6 +236,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setDeviceStatus: (deviceStatus) => set({ deviceStatus }),
   setOverrideKillOnZone: (val) => set({ overrideKillOnZone: val }),
   setMagicBandFivePoint: (val) => set({ magicBandFivePoint: val }),
+  setZonesEnabled: (val) => set({ zonesEnabled: val }),
 
   // ── Persistence ──
   loadFromStorage: async () => {
@@ -307,7 +311,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 // applying the global recall state + per-preset memory
 // ─────────────────────────────────────────────
 
-export function buildRecallPayload(preset: Preset, recall: RecallState): object {
+const DEFAULT_RECALL_FALLBACK: RecallState = {
+  effect: 'always', palette: 'always', parameters: 'memory',
+  color: 'memory', segments: 'never',
+};
+
+export function buildRecallPayload(preset: Preset, recall: RecallState | undefined): object {
+  if (!recall) recall = DEFAULT_RECALL_FALLBACK;
   const w = preset.wled;
   const m = preset.memory;
   const payload: any = { on: true };

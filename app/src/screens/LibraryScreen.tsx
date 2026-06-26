@@ -91,10 +91,11 @@ export default function LibraryScreen() {
   useEffect(() => {
     const unsub = bleService.onMessage((msg) => {
       if (msg.type === 'wled_effects_done') {
+        console.log('[Library] wled_effects_done received, raw length:', (msg.raw as string)?.length);
         try {
           const arr = JSON.parse(msg.raw as string) as string[];
+          console.log('[Library] Parsed', arr.length, 'effects');
           const effects: WledEffect[] = arr.map((name, id) => ({ id, name, metadata: '' }));
-          // Merge fxdata if available
           const fxdata = useAppStore.getState().wledFxData;
           effects.forEach(e => { e.metadata = fxdata[e.id] ?? ''; });
           setWledEffects(effects.filter(e => e.name !== 'RSVD' && e.name !== '-'));
@@ -102,23 +103,33 @@ export default function LibraryScreen() {
         setLoading(false);
       }
       if (msg.type === 'wled_palettes_done') {
+        console.log('[Library] wled_palettes_done received, raw length:', (msg.raw as string)?.length);
         try {
           const arr = JSON.parse(msg.raw as string) as string[];
+          console.log('[Library] Parsed', arr.length, 'palettes');
           setWledPalettes(arr.map((name, id) => ({ id, name })));
         } catch (e) { console.error('[Library] Palettes parse error:', e); }
         setLoading(false);
       }
       if (msg.type === 'wled_fxdata_done') {
+        console.log('[Library] wled_fxdata_done received, raw length:', (msg.raw as string)?.length);
         try {
           const arr = JSON.parse(msg.raw as string) as string[];
+          console.log('[Library] Parsed', arr.length, 'fxdata entries');
           setWledFxData(arr);
-          // Re-merge into effects if already loaded
           const effects = useAppStore.getState().wledEffects;
           if (effects.length > 0) {
             const updated = effects.map(e => ({ ...e, metadata: arr[e.id] ?? '' }));
             setWledEffects(updated);
           }
         } catch (e) { console.error('[Library] FxData parse error:', e); }
+      }
+      // Log any ack from firmware
+      if (msg.type === 'ack') {
+        console.log('[Library] ACK:', msg.action);
+      }
+      if (msg.type === 'error') {
+        console.error('[Library] Firmware error:', msg.msg);
       }
     });
     return unsub;
@@ -132,8 +143,15 @@ export default function LibraryScreen() {
     setTimeout(() => bleService.sendGetPalettes(), 1000);
   }, [isConnected]);
 
+  // Fetch on connect, and retry if disconnected mid-fetch
   useEffect(() => {
-    if (isConnected && wledEffects.length === 0) fetchAll();
+    if (isConnected && wledEffects.length === 0) {
+      fetchAll();
+    }
+    if (!isConnected) {
+      // Reset loading so it retries on next connect
+      setLoading(false);
+    }
   }, [isConnected]);
 
   // Preview effect live on WLED

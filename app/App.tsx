@@ -99,8 +99,11 @@ export default function App() {
       if (msg.type === 'preset_list_raw') {
         try {
           const parsed = JSON.parse(msg.raw as string);
+          console.log('[App] Presets received:', Array.isArray(parsed) ? parsed.length : 'not array');
           setPresets(Array.isArray(parsed) ? parsed : []);
-        } catch {}
+        } catch (e) {
+          console.error('[App] Preset parse error:', e);
+        }
       }
       if (msg.type === 'status') {
         setDeviceStatus({
