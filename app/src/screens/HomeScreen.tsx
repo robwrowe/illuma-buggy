@@ -8,7 +8,7 @@ import IconBluetooth from '@tabler/icons-react-native/dist/esm/icons/IconBluetoo
 import IconBluetoothOff from '@tabler/icons-react-native/dist/esm/icons/IconBluetoothOff';
 import IconBulb from '@tabler/icons-react-native/dist/esm/icons/IconBulb';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
-import IconZap from '@tabler/icons-react-native/dist/esm/icons/IconZap';
+import IconBolt from '@tabler/icons-react-native/dist/esm/icons/IconBolt';
 import IconFlame from '@tabler/icons-react-native/dist/esm/icons/IconFlame';
 import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
@@ -67,7 +67,7 @@ export default function HomeScreen() {
   const eventIcon = (e: string) => {
     if (e.includes('Color'))     return <IconBulb size={14} color={colors.primary} />;
     if (e.includes('fireworks')) return <IconSparkles size={14} color={colors.warning} />;
-    if (e.includes('flash'))     return <IconZap size={14} color={colors.warning} />;
+    if (e.includes('flash'))     return <IconBolt size={14} color={colors.warning} />;
     return <IconFlame size={14} color={colors.primary} />;
   };
 
