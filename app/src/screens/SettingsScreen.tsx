@@ -3,10 +3,13 @@ import {
   View, Text, StyleSheet, Switch,
   ScrollView, TouchableOpacity, TextInput,
 } from 'react-native';
-import {
-  IconBluetooth, IconBluetoothOff, IconSun, IconMoon,
-  IconDeviceDesktop, IconRefresh, IconToggleLeft,
-} from '@tabler/icons-react-native';
+import IconBluetooth from '@tabler/icons-react-native/dist/esm/icons/IconBluetooth';
+import IconBluetoothOff from '@tabler/icons-react-native/dist/esm/icons/IconBluetoothOff';
+import IconSun from '@tabler/icons-react-native/dist/esm/icons/IconSun';
+import IconMoon from '@tabler/icons-react-native/dist/esm/icons/IconMoon';
+import IconDeviceDesktop from '@tabler/icons-react-native/dist/esm/icons/IconDeviceDesktop';
+import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
+import IconToggleLeft from '@tabler/icons-react-native/dist/esm/icons/IconToggleLeft';
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
