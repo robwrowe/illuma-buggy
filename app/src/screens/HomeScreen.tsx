@@ -4,11 +4,16 @@ import {
   ScrollView, ActivityIndicator,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
-import {
-  IconBluetooth, IconBluetoothOff, IconBulb,
-  IconSparkles, IconZap, IconFlame, IconX,
-  IconRefresh, IconWifi, IconWifiOff,
-} from '@tabler/icons-react-native';
+import IconBluetooth from '@tabler/icons-react-native/dist/esm/icons/IconBluetooth';
+import IconBluetoothOff from '@tabler/icons-react-native/dist/esm/icons/IconBluetoothOff';
+import IconBulb from '@tabler/icons-react-native/dist/esm/icons/IconBulb';
+import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
+import IconZap from '@tabler/icons-react-native/dist/esm/icons/IconZap';
+import IconFlame from '@tabler/icons-react-native/dist/esm/icons/IconFlame';
+import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
+import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
+import IconWifi from '@tabler/icons-react-native/dist/esm/icons/IconWifi';
+import IconWifiOff from '@tabler/icons-react-native/dist/esm/icons/IconWifiOff';
 import { useBLE } from '../hooks/useBLE';
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
