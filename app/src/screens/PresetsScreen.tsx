@@ -3,10 +3,11 @@ import {
   View, Text, StyleSheet, TouchableOpacity,
   FlatList, TextInput, Alert, ActivityIndicator,
 } from 'react-native';
-import {
-  IconPlus, IconRefresh, IconCheck, IconTrash,
-  IconSparkles,
-} from '@tabler/icons-react-native';
+import IconPlus from '@tabler/icons-react-native/dist/esm/icons/IconPlus';
+import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
+import IconCheck from '@tabler/icons-react-native/dist/esm/icons/IconCheck';
+import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
+import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
 import { useBLE } from '../hooks/useBLE';
 import { useAppStore, Preset } from '../stores/store';
 import { bleService } from '../services/BLEService';
