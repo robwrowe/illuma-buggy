@@ -299,17 +299,26 @@ class BLEService {
   }
 
   private handleMessage(msg: BLEMessage) {
-    // Reassemble chunked preset list
-    if (msg.type === 'preset_chunk') {
-      const data = msg.data as unknown[];
-      this.presetChunks.push(...data);
+    // String-chunked responses (firmware v2.1)
+    const CHUNKED_TYPES: Record<string, string> = {
+      'preset_chunk':  'preset_list_raw',
+      'wled_effects':  'wled_effects_done',
+      'wled_palettes': 'wled_palettes_done',
+      'wled_fxdata':   'wled_fxdata_done',
+      'wled_state':    'wled_state_done',
+    };
+
+    const finalType = CHUNKED_TYPES[msg.type as string];
+    if (finalType) {
+      this.notifyBuffer += (msg.data as string) ?? '';
       if (msg.last) {
-        const assembled: BLEMessage = { type: 'preset_list', presets: [...this.presetChunks] };
-        this.presetChunks = [];
-        this.emit(assembled);
+        const raw = this.notifyBuffer;
+        this.notifyBuffer = '';
+        this.emit({ type: finalType, raw });
       }
       return;
     }
+
     this.emit(msg);
   }
 
@@ -322,6 +331,17 @@ class BLEService {
   private setState(state: ConnectionState) {
     this.connState = state;
     this.stateHandlers.forEach((h) => h(state));
+  }
+
+  // WLED library fetches
+  sendGetEffects()  { return this.send({ type: 'wled_get_effects' }); }
+  sendGetPalettes() { return this.send({ type: 'wled_get_palettes' }); }
+  sendGetFxData()   { return this.send({ type: 'wled_get_fxdata' }); }
+  sendGetState()    { return this.send({ type: 'wled_get_state' }); }
+
+  // MagicBand config
+  sendMbConfig(fivePoint: boolean) {
+    return this.send({ type: 'mb_config', five_point: fivePoint });
   }
 
   destroy() {

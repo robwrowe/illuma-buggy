@@ -1,16 +1,12 @@
 /**
- * StrollerController Firmware v2.0
+ * StrollerController Firmware v2.1
  * ESP32-S3-DevKitC-1-N16R8
  *
- * Architecture:
- *  - WiFi STA: connects to GLEDOPTO's WLED AP to forward commands
- *  - BLE Peripheral: companion app connects here via BLE (no WiFi needed on phone)
- *  - BLE Scanner: passive scan for MagicBand+ E9 advertising packets
- *  - NVS: preset storage
- *
- * BLE Services:
- *  - Command characteristic (write): app sends JSON commands
- *  - Notify characteristic (notify): board sends responses/events to app
+ * Changes from v2.0:
+ *  - WLED proxy GET commands (effects, palettes, fxdata, state)
+ *  - MagicBand segment config (4-corner vs 5-point) stored in NVS
+ *  - Segment setup command (splits strip into 5 named segments)
+ *  - Chunked BLE response helper (shared by all large responses)
  */
 
 #include <WiFi.h>
@@ -20,44 +16,53 @@
 #include <NimBLEDevice.h>
 
 // ─────────────────────────────────────────────
-// CONFIG — edit these
+// CONFIG
 // ─────────────────────────────────────────────
-
-// GLEDOPTO WLED AP — connect to this in WLED's WiFi setup
-// Leave as WLED default AP credentials
-const char* WLED_SSID   = "StrollerNet";       // GLEDOPTO AP name
-const char* WLED_PASS   = "stroller1234";      // GLEDOPTO AP password (WLED default)
-const char* WLED_IP     = "4.3.2.1";       // WLED AP default gateway IP
+const char* WLED_SSID   = "StrollerNet";
+const char* WLED_PASS   = "stroller1234";
+const char* WLED_IP     = "4.3.2.1";
 const int   WLED_PORT   = 80;
-
-// BLE device name (shows up on phone when pairing)
 const char* BLE_NAME    = "IllumaBuggy";
 
-// BLE UUIDs
-#define SERVICE_UUID        "12345678-1234-1234-1234-123456789abc"
-#define CMD_CHAR_UUID       "12345678-1234-1234-1234-123456789abd"   // write (app→board)
-#define NOTIFY_CHAR_UUID    "12345678-1234-1234-1234-123456789abe"   // notify (board→app)
+#define SERVICE_UUID     "12345678-1234-1234-1234-123456789abc"
+#define CMD_CHAR_UUID    "12345678-1234-1234-1234-123456789abd"
+#define NOTIFY_CHAR_UUID "12345678-1234-1234-1234-123456789abe"
+
+// MagicBand segment LED indices (50 nodes, 0-based)
+// Corner segments: nodes near physical corners of stroller
+// Center segment: middle of the strip
+#define SEG_TL_START  0
+#define SEG_TL_STOP   12
+#define SEG_TR_START  13
+#define SEG_TR_STOP   25
+#define SEG_BL_START  26
+#define SEG_BL_STOP   37
+#define SEG_BR_START  38
+#define SEG_BR_STOP   49
+#define SEG_CTR_LED   24  // single center LED (index into strip)
 
 // ─────────────────────────────────────────────
 // GLOBALS
 // ─────────────────────────────────────────────
-
 Preferences prefs;
 
-// BLE
-NimBLEServer*         bleServer       = nullptr;
-NimBLECharacteristic* notifyChar      = nullptr;
-bool                  bleConnected    = false;
+NimBLEServer*         bleServer    = nullptr;
+NimBLECharacteristic* notifyChar   = nullptr;
+bool                  bleConnected = false;
 
-// Override state
 enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC };
-OverrideSource currentOverride   = NONE;
+OverrideSource currentOverride    = NONE;
 bool           overrideKillOnZone = false;
 unsigned long  overrideTimestamp  = 0;
 
-// WLED state cache
 int    currentBrightness = 128;
 String currentPresetId   = "";
+
+// MagicBand config (persisted in NVS)
+bool   magicBandFivePoint = true;  // true = 4 corners + center, false = 4 corners only
+
+// Pre-event WLED state (restored after MagicBand clears)
+String savedWledState = "";
 
 // WiFi reconnect
 unsigned long lastWifiRetry = 0;
@@ -73,6 +78,43 @@ void bleNotify(const String& json) {
   notifyChar->notify();
 }
 
+// Chunk a large string and send as series of BLE notifications
+// type: the message type field in each chunk
+void bleNotifyChunked(const String& type, const String& payload) {
+  const int CHUNK = 400;  // conservative chunk size
+  int total  = payload.length();
+  int offset = 0;
+  int seq    = 0;
+
+  while (offset < total) {
+    int end  = min(offset + CHUNK, total);
+    bool last = (end >= total);
+    String chunk = payload.substring(offset, end);
+
+    // Escape the chunk as a JSON string value
+    String msg = "{\"type\":\"" + type + "\","
+                 "\"seq\":" + String(seq) + ","
+                 "\"last\":" + (last ? "true" : "false") + ","
+                 "\"data\":\"";
+
+    // Inline JSON escape
+    for (int i = 0; i < (int)chunk.length(); i++) {
+      char c = chunk[i];
+      if      (c == '"')  msg += "\\\"";
+      else if (c == '\\') msg += "\\\\";
+      else if (c == '\n') msg += "\\n";
+      else if (c == '\r') msg += "\\r";
+      else                msg += c;
+    }
+    msg += "\"}";
+
+    bleNotify(msg);
+    delay(20);
+    offset = end;
+    seq++;
+  }
+}
+
 // ─────────────────────────────────────────────
 // PRESET STORAGE (NVS)
 // ─────────────────────────────────────────────
@@ -82,7 +124,6 @@ void savePreset(const String& id, const String& name, const String& wledJson) {
   String key = "p_" + id;
   String val = "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"wled\":" + wledJson + "}";
   prefs.putString(key.c_str(), val);
-
   String index = prefs.getString("index", "");
   if (index.indexOf(id) == -1) {
     if (index.length() > 0) index += ",";
@@ -103,9 +144,7 @@ String getAllPresets() {
   prefs.begin("presets", true);
   String index = prefs.getString("index", "");
   prefs.end();
-
   if (index.length() == 0) return "[]";
-
   String result = "[";
   int start = 0;
   bool first = true;
@@ -127,7 +166,6 @@ String getAllPresets() {
 void deletePreset(const String& id) {
   prefs.begin("presets", false);
   prefs.remove(("p_" + id).c_str());
-
   String index = prefs.getString("index", "");
   String newIndex = "";
   int start = 0;
@@ -151,12 +189,11 @@ void deletePreset(const String& id) {
 
 bool sendToWLED(const String& jsonBody) {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WLED] WiFi not connected, skipping");
+    Serial.println("[WLED] WiFi not connected");
     return false;
   }
   HTTPClient http;
-  String url = "http://" + String(WLED_IP) + ":" + String(WLED_PORT) + "/json/state";
-  http.begin(url);
+  http.begin("http://" + String(WLED_IP) + ":" + String(WLED_PORT) + "/json/state");
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(2000);
   int code = http.POST(jsonBody);
@@ -164,6 +201,23 @@ bool sendToWLED(const String& jsonBody) {
   if (!ok) Serial.printf("[WLED] POST failed: %d\n", code);
   http.end();
   return ok;
+}
+
+// GET a WLED endpoint and return the response body
+String getFromWLED(const String& path) {
+  if (WiFi.status() != WL_CONNECTED) return "";
+  HTTPClient http;
+  http.begin("http://" + String(WLED_IP) + ":" + String(WLED_PORT) + path);
+  http.setTimeout(5000);
+  int code = http.GET();
+  String body = "";
+  if (code == 200) {
+    body = http.getString();
+  } else {
+    Serial.printf("[WLED] GET %s failed: %d\n", path.c_str(), code);
+  }
+  http.end();
+  return body;
 }
 
 bool applyPreset(const String& id) {
@@ -186,6 +240,30 @@ bool setBrightness(int bri) {
 }
 
 // ─────────────────────────────────────────────
+// SEGMENT SETUP
+// Splits strip into 5 segments for MagicBand color effects
+// ─────────────────────────────────────────────
+
+void setupMagicBandSegments() {
+  // Build segment array: TL, TR, BL, BR, Center
+  String body = "{\"seg\":["
+    "{\"id\":0,\"start\":" + String(SEG_TL_START) + ",\"stop\":" + String(SEG_TL_STOP) + ",\"on\":true},"
+    "{\"id\":1,\"start\":" + String(SEG_TR_START) + ",\"stop\":" + String(SEG_TR_STOP) + ",\"on\":true},"
+    "{\"id\":2,\"start\":" + String(SEG_BL_START) + ",\"stop\":" + String(SEG_BL_STOP) + ",\"on\":true},"
+    "{\"id\":3,\"start\":" + String(SEG_BR_START) + ",\"stop\":" + String(SEG_BR_STOP) + ",\"on\":true},"
+    "{\"id\":4,\"start\":" + String(SEG_CTR_LED)  + ",\"stop\":" + String(SEG_CTR_LED + 1) + ",\"on\":true}"
+    "]}";
+  sendToWLED(body);
+  Serial.println("[Seg] MagicBand segments configured");
+}
+
+// Restore single-segment mode (all 50 LEDs, one segment)
+void restoreSingleSegment() {
+  sendToWLED("{\"seg\":[{\"id\":0,\"start\":0,\"stop\":50,\"on\":true},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}");
+  Serial.println("[Seg] Restored single segment");
+}
+
+// ─────────────────────────────────────────────
 // OVERRIDE LOGIC
 // ─────────────────────────────────────────────
 
@@ -198,6 +276,12 @@ void setOverride(OverrideSource src) {
 void clearOverride() {
   currentOverride = NONE;
   Serial.println("[Override] Cleared");
+  // Restore saved state if we had one from a MagicBand event
+  if (savedWledState.length() > 0) {
+    sendToWLED(savedWledState);
+    restoreSingleSegment();
+    savedWledState = "";
+  }
 }
 
 bool zoneWantsPreset(const String& presetId) {
@@ -217,7 +301,7 @@ bool zoneWantsPreset(const String& presetId) {
 // ─────────────────────────────────────────────
 
 void handleBLECommand(const String& msg) {
-  DynamicJsonDocument doc(2048);
+  DynamicJsonDocument doc(4096);
   DeserializationError err = deserializeJson(doc, msg);
   if (err) {
     Serial.printf("[BLE] JSON parse error: %s\n", err.c_str());
@@ -226,6 +310,7 @@ void handleBLECommand(const String& msg) {
 
   String type = doc["type"].as<String>();
 
+  // ── Preset management ──
   if (type == "preset_save") {
     String id = doc["id"].as<String>();
     String name = doc["name"].as<String>();
@@ -245,20 +330,33 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_delete\",\"id\":\"" + id + "\"}");
   }
   else if (type == "preset_list") {
-    // Split into chunks if needed — BLE MTU is typically 512 bytes
     String presets = getAllPresets();
-    // Send in 500-byte chunks
-    int total = presets.length();
-    int offset = 0;
-    int chunk = 500;
-    while (offset < total) {
-      String part = presets.substring(offset, min(offset + chunk, total));
-      bool last = (offset + chunk >= total);
-      bleNotify("{\"type\":\"preset_chunk\",\"last\":" + String(last ? "true" : "false") + ",\"data\":" + part + "}");
-      offset += chunk;
-      delay(20); // give BLE stack time to send
-    }
+    bleNotifyChunked("preset_chunk", presets);
   }
+
+  // ── WLED proxy GETs ──
+  else if (type == "wled_get_effects") {
+    String body = getFromWLED("/json/eff");
+    if (body.length() > 0) bleNotifyChunked("wled_effects", body);
+    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch effects\"}");
+  }
+  else if (type == "wled_get_palettes") {
+    String body = getFromWLED("/json/pal");
+    if (body.length() > 0) bleNotifyChunked("wled_palettes", body);
+    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch palettes\"}");
+  }
+  else if (type == "wled_get_fxdata") {
+    String body = getFromWLED("/json/fxdata");
+    if (body.length() > 0) bleNotifyChunked("wled_fxdata", body);
+    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch fxdata\"}");
+  }
+  else if (type == "wled_get_state") {
+    String body = getFromWLED("/json/si");
+    if (body.length() > 0) bleNotifyChunked("wled_state", body);
+    else bleNotify("{\"type\":\"error\",\"msg\":\"Failed to fetch state\"}");
+  }
+
+  // ── Zone / override ──
   else if (type == "zone_trigger") {
     String id = doc["preset_id"].as<String>();
     bool applied = zoneWantsPreset(id);
@@ -272,16 +370,31 @@ void handleBLECommand(const String& msg) {
     overrideKillOnZone = doc["kill_on_zone"].as<bool>();
     bleNotify("{\"type\":\"ack\",\"action\":\"override_mode\",\"kill_on_zone\":" + String(overrideKillOnZone ? "true" : "false") + "}");
   }
+
+  // ── Brightness ──
   else if (type == "brightness") {
     int bri = constrain(doc["value"].as<int>(), 0, 255);
     setBrightness(bri);
     bleNotify("{\"type\":\"ack\",\"action\":\"brightness\",\"value\":" + String(bri) + "}");
   }
+
+  // ── Raw WLED passthrough ──
   else if (type == "wled_raw") {
     String wled; serializeJson(doc["wled"], wled);
     bool ok = sendToWLED(wled);
     bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":" + String(ok ? "true" : "false") + "}");
   }
+
+  // ── MagicBand config ──
+  else if (type == "mb_config") {
+    magicBandFivePoint = doc["five_point"].as<bool>();
+    prefs.begin("config", false);
+    prefs.putBool("mb5pt", magicBandFivePoint);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"mb_config\",\"five_point\":" + String(magicBandFivePoint ? "true" : "false") + "}");
+  }
+
+  // ── Status ──
   else if (type == "status") {
     bleNotify(
       "{\"type\":\"status\","
@@ -289,7 +402,8 @@ void handleBLECommand(const String& msg) {
       "\"kill_on_zone\":" + String(overrideKillOnZone ? "true" : "false") + ","
       "\"brightness\":" + String(currentBrightness) + ","
       "\"preset\":\"" + currentPresetId + "\","
-      "\"wifi\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") +
+      "\"wifi\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ","
+      "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") +
       "}"
     );
   }
@@ -299,7 +413,7 @@ void handleBLECommand(const String& msg) {
 }
 
 // ─────────────────────────────────────────────
-// BLE PERIPHERAL — server + callbacks
+// BLE PERIPHERAL
 // ─────────────────────────────────────────────
 
 class ServerCallbacks : public NimBLEServerCallbacks {
@@ -328,31 +442,21 @@ void startBLEPeripheral() {
 
   NimBLEService* svc = bleServer->createService(SERVICE_UUID);
 
-  // Command characteristic — app writes commands here
   NimBLECharacteristic* cmdChar = svc->createCharacteristic(
     CMD_CHAR_UUID,
     NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
   );
   cmdChar->setCallbacks(new CommandCallbacks());
 
-  // Notify characteristic — board pushes responses here
-  notifyChar = svc->createCharacteristic(
-    NOTIFY_CHAR_UUID,
-    NIMBLE_PROPERTY::NOTIFY
-  );
+  notifyChar = svc->createCharacteristic(NOTIFY_CHAR_UUID, NIMBLE_PROPERTY::NOTIFY);
 
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(SERVICE_UUID);
-
-  // Include complete local name in the main advertisement packet
-  // so Android shows "IllumaBuggy" instead of the MAC address
   NimBLEAdvertisementData advData;
   advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
   advData.setName(BLE_NAME);
   adv->setAdvertisementData(advData);
-
   adv->start();
 
   Serial.printf("[BLE] Peripheral advertising as: %s\n", BLE_NAME);
@@ -370,11 +474,33 @@ void handleMagicBandColor(const uint8_t* data, size_t len) {
 
   Serial.printf("[BLE] MagicBand color: R%d G%d B%d\n", r, g, b);
 
-  sendToWLED("{\"on\":true,\"seg\":[{\"col\":[[" +
-    String(r) + "," + String(g) + "," + String(b) + "]]}]}");
+  // Save current WLED state so we can restore it after override clears
+  String state = getFromWLED("/json/state");
+  if (state.length() > 0) savedWledState = state;
+
+  // Set up segments for corner/center effect
+  setupMagicBandSegments();
+  delay(100);
+
+  // Build color payload for each active segment
+  String color = "[[" + String(r) + "," + String(g) + "," + String(b) + "]]";
+  String segPayload = "{\"seg\":["
+    "{\"id\":0,\"col\":" + color + "},"
+    "{\"id\":1,\"col\":" + color + "},"
+    "{\"id\":2,\"col\":" + color + "},"
+    "{\"id\":3,\"col\":" + color + "}";
+
+  if (magicBandFivePoint) {
+    segPayload += ",{\"id\":4,\"col\":" + color + "}";
+  } else {
+    // Turn off center segment
+    segPayload += ",{\"id\":4,\"on\":false}";
+  }
+  segPayload += "]}";
+
+  sendToWLED(segPayload);
   setOverride(BLE_MAGIC);
-  bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) +
-            ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+  bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
 }
 
 void handleMagicBandCommand(uint8_t cmd, const uint8_t* data, size_t len) {
@@ -385,7 +511,7 @@ void handleMagicBandCommand(uint8_t cmd, const uint8_t* data, size_t len) {
       break;
     case 0x06:
       Serial.println("[BLE] MagicBand: flash");
-      sendToWLED("{\"on\":true,\"seg\":[{\"fx\":0,\"col\":[[255,255,255]]}]}");
+      sendToWLED("{\"on\":true,\"seg\":[{\"id\":0,\"fx\":0,\"col\":[[255,255,255]]}]}");
       setOverride(BLE_MAGIC);
       bleNotify("{\"type\":\"ble_event\",\"event\":\"flash\"}");
       break;
@@ -394,7 +520,7 @@ void handleMagicBandCommand(uint8_t cmd, const uint8_t* data, size_t len) {
       break;
     case 0x09:
       Serial.println("[BLE] MagicBand: fireworks");
-      sendToWLED("{\"on\":true,\"seg\":[{\"fx\":42}]}");
+      sendToWLED("{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
       setOverride(BLE_MAGIC);
       bleNotify("{\"type\":\"ble_event\",\"event\":\"fireworks\"}");
       break;
@@ -432,26 +558,23 @@ void startBLEScan() {
 }
 
 // ─────────────────────────────────────────────
-// WIFI — connect to GLEDOPTO AP
+// WIFI
 // ─────────────────────────────────────────────
 
 void connectToWLED() {
   Serial.printf("[WiFi] Connecting to GLEDOPTO: %s\n", WLED_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WLED_SSID, WLED_PASS);
-
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
     attempts++;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
-    // Wake GLEDOPTO — relay on GPIO18 needs explicit on command
     delay(1000);
-    sendToWLED("{\"on\":true,\"bri\":80}");
+    sendToWLED("{\"on\":true,\"bri\":40}");
   } else {
     Serial.println("\n[WiFi] Failed — will retry");
   }
@@ -464,34 +587,33 @@ void connectToWLED() {
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n[Boot] StrollerController v2.0");
+  Serial.println("\n[Boot] StrollerController v2.1");
 
-  // NVS
+  // Load NVS config
+  prefs.begin("config", true);
+  magicBandFivePoint = prefs.getBool("mb5pt", true);
+  overrideKillOnZone = prefs.getBool("killOnZone", false);
+  prefs.end();
+  Serial.printf("[NVS] mb5pt=%d killOnZone=%d\n", magicBandFivePoint, overrideKillOnZone);
+
   prefs.begin("presets", false);
   prefs.end();
   Serial.println("[NVS] Ready");
 
-  // BLE — init once, then start peripheral + scanner
   NimBLEDevice::init(BLE_NAME);
-  delay(200);  // let BLE stack settle before advertising
+  delay(200);
   startBLEPeripheral();
   startBLEScan();
 
-  // WiFi STA — connect to GLEDOPTO in background via FreeRTOS task
-  // so BLE advertising is not blocked by WiFi connection attempts
   xTaskCreatePinnedToCore(
-    [](void*) {
-      connectToWLED();
-      vTaskDelete(NULL);
-    },
-    "WiFiTask", 4096, NULL, 1, NULL, 1  // core 1
+    [](void*) { connectToWLED(); vTaskDelete(NULL); },
+    "WiFiTask", 4096, NULL, 1, NULL, 1
   );
 
   Serial.println("[Boot] Ready");
 }
 
 void loop() {
-  // Reconnect to GLEDOPTO if WiFi drops
   if (WiFi.status() != WL_CONNECTED) {
     unsigned long now = millis();
     if (now - lastWifiRetry > WIFI_RETRY_MS) {

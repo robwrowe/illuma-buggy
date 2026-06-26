@@ -13,15 +13,18 @@ import IconHome     from '@tabler/icons-react-native/dist/esm/icons/IconHome';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
 import IconMap      from '@tabler/icons-react-native/dist/esm/icons/IconMap';
 import IconSettings from '@tabler/icons-react-native/dist/esm/icons/IconSettings';
+import IconBook     from '@tabler/icons-react-native/dist/esm/icons/IconBook';
 
 import { bleService } from './src/services/BLEService';
 import { useAppStore } from './src/stores/store';
 import { useZoneManager } from './src/hooks/useZoneManager';
 import { useTheme, useThemeStore } from './src/utils/theme';
+import { buildRecallPayload } from './src/stores/store';
 
 import HomeScreen     from './src/screens/HomeScreen';
 import PresetsScreen  from './src/screens/PresetsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import LibraryScreen  from './src/screens/LibraryScreen';
 
 const ZonesScreen = React.lazy(() => import('./src/screens/ZonesScreen'));
 
@@ -67,6 +70,7 @@ function AppNavigator() {
           tabBarIcon: ({ color, size }) => {
             if (route.name === 'Home')     return <IconHome size={size} color={color} />;
             if (route.name === 'Presets')  return <IconSparkles size={size} color={color} />;
+            if (route.name === 'Library')  return <IconBook size={size} color={color} />;
             if (route.name === 'Zones')    return <IconMap size={size} color={color} />;
             if (route.name === 'Settings') return <IconSettings size={size} color={color} />;
           },
@@ -74,6 +78,7 @@ function AppNavigator() {
       >
         <Tab.Screen name="Home"     component={HomeScreen} />
         <Tab.Screen name="Presets"  component={PresetsScreen} />
+        <Tab.Screen name="Library"  component={LibraryScreen} />
         <Tab.Screen name="Zones"    component={ZonesWrapper} />
         <Tab.Screen name="Settings" component={SettingsScreen} />
       </Tab.Navigator>
@@ -82,7 +87,7 @@ function AppNavigator() {
 }
 
 export default function App() {
-  const { loadFromStorage, setPresets, setDeviceStatus } = useAppStore();
+  const { loadFromStorage, setPresets, setDeviceStatus, recallState, presets } = useAppStore();
   const { loadMode } = useThemeStore();
   const { isDark } = useTheme();
 
@@ -91,8 +96,11 @@ export default function App() {
     loadMode();
 
     const unsub = bleService.onMessage((msg) => {
-      if (msg.type === 'preset_list') {
-        setPresets(msg.presets as import('./src/stores/store').Preset[]);
+      if (msg.type === 'preset_list_raw') {
+        try {
+          const parsed = JSON.parse(msg.raw as string);
+          setPresets(Array.isArray(parsed) ? parsed : []);
+        } catch {}
       }
       if (msg.type === 'status') {
         setDeviceStatus({
@@ -101,6 +109,7 @@ export default function App() {
           brightness:    msg.brightness as number,
           currentPreset: msg.preset as string,
           wifiConnected: msg.wifi as boolean,
+          mbFivePoint:   msg.mb_five_point as boolean,
         });
       }
     });

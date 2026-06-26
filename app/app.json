@@ -30,12 +30,7 @@
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
-      ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "$GOOGLE_MAPS_API_KEY"
-        }
-      }
+      ]
     },
     "plugins": [
       [
@@ -49,7 +44,8 @@
           "bluetoothAlwaysPermission": "Allow IllumaBuggy to connect to your stroller controller"
         }
       ],
-      "expo-location"
+      "expo-location",
+      "expo-document-picker"
     ],
     "splash": {
       "backgroundColor": "#0a0a0f",
