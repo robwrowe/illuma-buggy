@@ -14,6 +14,7 @@ import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles
 import IconMap      from '@tabler/icons-react-native/dist/esm/icons/IconMap';
 import IconSettings from '@tabler/icons-react-native/dist/esm/icons/IconSettings';
 import IconBook     from '@tabler/icons-react-native/dist/esm/icons/IconBook';
+import IconDroplet  from '@tabler/icons-react-native/dist/esm/icons/IconDroplet';
 
 import { bleService } from './src/services/BLEService';
 import { useAppStore } from './src/stores/store';
@@ -25,6 +26,7 @@ import HomeScreen     from './src/screens/HomeScreen';
 import PresetsScreen  from './src/screens/PresetsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import LibraryScreen  from './src/screens/LibraryScreen';
+import PalettesScreen from './src/screens/PalettesScreen';
 
 const ZonesScreen = React.lazy(() => import('./src/screens/ZonesScreen'));
 
@@ -73,6 +75,7 @@ function AppNavigator() {
             if (route.name === 'Library')  return <IconBook size={size} color={color} />;
             if (route.name === 'Zones')    return <IconMap size={size} color={color} />;
             if (route.name === 'Settings') return <IconSettings size={size} color={color} />;
+          if (route.name === 'Palettes')  return <IconDroplet size={size} color={color} />;
           },
         })}
       >
@@ -81,6 +84,7 @@ function AppNavigator() {
         <Tab.Screen name="Library"  component={LibraryScreen} />
         <Tab.Screen name="Zones"    component={ZonesWrapper} />
         <Tab.Screen name="Settings" component={SettingsScreen} />
+        <Tab.Screen name="Palettes"  component={PalettesScreen} />
       </Tab.Navigator>
     </NavigationContainer>
   );

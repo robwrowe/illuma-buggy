@@ -7,7 +7,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "build": "bash build.sh",
-    "build:clean": "bash build.sh --clean"
+    "build:clean": "bash build.sh --clean",
+    "serve": "npx serve ../web/index.html"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.1.2",

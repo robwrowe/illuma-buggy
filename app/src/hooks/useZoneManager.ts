@@ -1,64 +1,31 @@
-/**
- * useZoneManager.ts
- * Watches GPS location, evaluates zones, fires preset triggers,
- * and calculates brightness from sun position + indoor zones.
- */
-
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import * as Location from 'expo-location';
 import { useAppStore, Zone } from '../stores/store';
-import {
-  findContainingZone,
-  findContainingIndoorZone,
-  sunBasedBrightness,
-} from '../utils/utils';
+import { findContainingZone, findContainingIndoorZone, pointInPolygon, sunBasedBrightness } from '../utils/utils';
 import { bleService } from '../services/BLEService';
 
-const GPS_INTERVAL_MS    = 3000;   // poll every 3 seconds
-const BRIGHTNESS_RAMP_MS = 2000;   // indoor fade duration
+const GPS_INTERVAL_MS    = 3000;
+const BRIGHTNESS_RAMP_MS = 2000;
 
 export function useZoneManager() {
-  const {
-    zones,
-    indoorZones,
-    brightnessConfig,
-    overrideKillOnZone,
-    zonesEnabled,
-  } = useAppStore();
-
-  // Refs to avoid stale closures in the interval callback
   const currentZoneRef    = useRef<Zone | null>(null);
   const isIndoorRef       = useRef(false);
-  const brightnessRampRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const brightnessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const applyBrightness = useCallback((target: number, ramp = false) => {
-    if (brightnessRampRef.current) clearTimeout(brightnessRampRef.current);
+  const zonesRef              = useRef(useAppStore.getState().zones);
+  const indoorZonesRef        = useRef(useAppStore.getState().indoorZones);
+  const brightnessConfigRef   = useRef(useAppStore.getState().brightnessConfig);
+  const zonesEnabledRef       = useRef(useAppStore.getState().zonesEnabled);
+  const setActiveZoneIdsRef   = useRef(useAppStore.getState().setActiveZoneIds);
 
-    if (!ramp) {
-      bleService.sendBrightness(target);
-      return;
-    }
-
-    // Fade: step brightness toward target over BRIGHTNESS_RAMP_MS
-    // We send incremental steps every 100ms
-    const steps    = BRIGHTNESS_RAMP_MS / 100;
-    let   step     = 0;
-    const interval = setInterval(() => {
-      step++;
-      const progress = step / steps;
-      // We don't track current brightness locally — let the board handle it
-      // Just send the final target at end of ramp
-      if (step >= steps) {
-        clearInterval(interval);
-        bleService.sendBrightness(target);
-      }
-    }, 100);
-
-    // Send final value after ramp completes
-    brightnessRampRef.current = setTimeout(() => {
-      clearInterval(interval);
-      bleService.sendBrightness(target);
-    }, BRIGHTNESS_RAMP_MS);
+  useEffect(() => {
+    return useAppStore.subscribe((state) => {
+      zonesRef.current            = state.zones;
+      indoorZonesRef.current      = state.indoorZones;
+      brightnessConfigRef.current = state.brightnessConfig;
+      zonesEnabledRef.current     = state.zonesEnabled;
+      setActiveZoneIdsRef.current = state.setActiveZoneIds;
+    });
   }, []);
 
   useEffect(() => {
@@ -66,70 +33,54 @@ export function useZoneManager() {
 
     const start = async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn('[Zone] Location permission denied');
-        return;
-      }
+      if (status !== 'granted') { console.warn('[Zone] Location permission denied'); return; }
 
       watchSub = await Location.watchPositionAsync(
-        {
-          accuracy:        Location.Accuracy.Balanced,
-          timeInterval:    GPS_INTERVAL_MS,
-          distanceInterval: 5, // meters
-        },
+        { accuracy: Location.Accuracy.Balanced, timeInterval: GPS_INTERVAL_MS, distanceInterval: 5 },
         (loc) => {
-          const point = {
-            latitude:  loc.coords.latitude,
-            longitude: loc.coords.longitude,
-          };
+          const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+          const zones           = zonesRef.current;
+          const indoorZones     = indoorZonesRef.current;
+          const bc              = brightnessConfigRef.current;
+          const zonesEnabled    = zonesEnabledRef.current;
+          const setActive       = setActiveZoneIdsRef.current;
 
-          // ── Indoor brightness ──
-          const indoorZone = findContainingIndoorZone(point, indoorZones);
-          const wasIndoor  = isIndoorRef.current;
-          const nowIndoor  = indoorZone !== null;
+          // Update active zone IDs in store (for HomeScreen display)
+          const activeIds = zones.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
+          setActive(activeIds);
 
-          if (nowIndoor !== wasIndoor) {
+          // Indoor brightness
+          const nowIndoor = findContainingIndoorZone(pt, indoorZones) !== null;
+          if (nowIndoor !== isIndoorRef.current) {
             isIndoorRef.current = nowIndoor;
-            if (nowIndoor) {
-              applyBrightness(brightnessConfig.indoor, true);
-            } else {
-              // Exiting indoor zone — ramp back to sun-based brightness
-              const sunBri = sunBasedBrightness(
-                point.latitude, point.longitude, brightnessConfig
-              );
-              applyBrightness(sunBri, true);
-            }
+            if (brightnessTimerRef.current) clearTimeout(brightnessTimerRef.current);
+            brightnessTimerRef.current = setTimeout(() => {
+              bleService.sendBrightness(nowIndoor ? bc.indoor : sunBasedBrightness(pt.latitude, pt.longitude, bc));
+            }, nowIndoor ? 0 : BRIGHTNESS_RAMP_MS);
           } else if (!nowIndoor) {
-            // Continuously update sun-based brightness outdoors
-            const sunBri = sunBasedBrightness(
-              point.latitude, point.longitude, brightnessConfig
-            );
-            bleService.sendBrightness(sunBri);
+            bleService.sendBrightness(sunBasedBrightness(pt.latitude, pt.longitude, bc));
           }
 
-          // ── Preset zones ──
-          const matchedZone = findContainingZone(point, zones);
+          // Preset zone trigger
+          if (!zonesEnabled) return;
+          const matchedZone = findContainingZone(pt, zones);
           const prevZone    = currentZoneRef.current;
-
-          // No change
           if (matchedZone?.id === prevZone?.id) return;
-
-          // Entered a new zone or left all zones
           currentZoneRef.current = matchedZone ?? null;
-
-          if (matchedZone && zonesEnabled) {
-            console.log('[Zone] Entered:', matchedZone.name);
+          if (matchedZone) {
+            console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
             bleService.sendZoneTrigger(matchedZone.presetId);
+          } else {
+            console.log('[Zone] Left all zones');
           }
         }
       );
     };
 
     start();
-
     return () => {
       watchSub?.remove();
-      if (brightnessRampRef.current) clearTimeout(brightnessRampRef.current);
+      if (brightnessTimerRef.current) clearTimeout(brightnessTimerRef.current);
     };
-  }, [zones, indoorZones, brightnessConfig, overrideKillOnZone, applyBrightness]);
+  }, []);
 }
