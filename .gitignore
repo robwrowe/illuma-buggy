@@ -1,5 +1,7 @@
 app/node_modules/
 app/.expo/
+app/android/
+
 firmware/**/*.bin      # compiled artifacts
 
 .env
