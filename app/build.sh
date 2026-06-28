@@ -34,11 +34,10 @@ if ! npx expo-doctor; then
   fi
 fi
 
-# ── Prebuild ────────────────────────────────────
-echo "🔨 Running prebuild..."
-npx expo prebuild --clean --platform android
-
 # ── EAS Build ───────────────────────────────────
+# Native android/ is gitignored — EAS runs `expo prebuild` on the server (CNG).
+# Do NOT prebuild locally before EAS; a partial android/ dir skips server prebuild
+# and causes "ENOENT ... gradlew" because gitignored files aren't uploaded.
 echo "🚀 Submitting to EAS..."
 eas build --platform android --profile development
 
