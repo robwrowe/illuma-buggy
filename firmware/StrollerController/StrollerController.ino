@@ -30,18 +30,16 @@ const char* BLE_NAME    = "IllumaBuggy";
 #define CMD_CHAR_UUID    "12345678-1234-1234-1234-123456789abd"
 #define NOTIFY_CHAR_UUID "12345678-1234-1234-1234-123456789abe"
 
-// MagicBand segment LED indices (50 nodes, 0-based)
-// Corner segments: nodes near physical corners of stroller
-// Center segment: middle of the strip
-#define SEG_TL_START  0
-#define SEG_TL_STOP   12
-#define SEG_TR_START  13
-#define SEG_TR_STOP   25
-#define SEG_BL_START  26
-#define SEG_BL_STOP   37
-#define SEG_BR_START  38
-#define SEG_BR_STOP   49
-#define SEG_CTR_LED   24  // single center LED (index into strip)
+// LED strip — WLED segment 0 covers the full logical strip (both physical runs)
+#define STRIP_LED_COUNT 100
+#define WLED_CHASE_FX   28   // "Chase" in WLED 16.x effect list
+#define WLED_MB_PAL_SLOT 0   // custom palette slot in pd{}
+
+// MagicBand chase defaults (override via serial or mb_chase_config BLE command)
+uint8_t mbChaseSpeed     = 128;  // sx — 0 = stationary
+uint8_t mbChaseThickness = 4;    // grp — LEDs per chase block (color width)
+
+void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b);
 
 // ─────────────────────────────────────────────
 // GLOBALS
@@ -85,6 +83,18 @@ unsigned long lastWandCastMs  = 0;
 
 // Serial sniff mode — log every manufacturer packet (find wand button format)
 unsigned long bleSniffUntilMs = 0;
+
+// Wand TX beacon — advertise as another Starlight wand (for pairing/cast tests)
+bool          wandTxBeacon    = false;
+unsigned long wandTxCastUntil = 0;
+uint8_t       wandTxCastPalette = 4;
+unsigned long wandTxLastAdvMs = 0;
+static const uint8_t WAND_IDLE_PAYLOAD[19] = {
+  0x0F, 0x11, 0x01, 0x4B, 0x72, 0x99, 0x08, 0x83, 0x0A, 0x66,
+  0xD4, 0x85, 0xCD, 0x9F, 0x95, 0x75, 0xA8, 0xA3, 0x21
+};
+static const uint8_t WAND_CAST_SIG[6] = {0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22};
+#define WAND_CAST_LEN 13
 
 // Pre-event WLED state (restored after BLE effect clears)
 String savedWledState = "";
@@ -287,27 +297,71 @@ bool setBrightness(int bri) {
 }
 
 // ─────────────────────────────────────────────
-// SEGMENT SETUP
-// Splits strip into 5 segments for MagicBand color effects
+// WLED EFFECTS — full-strip MagicBand chase / wand solid
 // ─────────────────────────────────────────────
 
-void setupMagicBandSegments() {
-  // Build segment array: TL, TR, BL, BR, Center
-  String body = "{\"seg\":["
-    "{\"id\":0,\"start\":" + String(SEG_TL_START) + ",\"stop\":" + String(SEG_TL_STOP) + ",\"on\":true},"
-    "{\"id\":1,\"start\":" + String(SEG_TR_START) + ",\"stop\":" + String(SEG_TR_STOP) + ",\"on\":true},"
-    "{\"id\":2,\"start\":" + String(SEG_BL_START) + ",\"stop\":" + String(SEG_BL_STOP) + ",\"on\":true},"
-    "{\"id\":3,\"start\":" + String(SEG_BR_START) + ",\"stop\":" + String(SEG_BR_STOP) + ",\"on\":true},"
-    "{\"id\":4,\"start\":" + String(SEG_CTR_LED)  + ",\"stop\":" + String(SEG_CTR_LED + 1) + ",\"on\":true}"
-    "]}";
-  sendToWLED(body);
-  Serial.println("[Seg] MagicBand segments configured");
+void restoreSingleSegment() {
+  sendToWLED("{\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+             ",\"on\":true},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},"
+             "{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}");
+  Serial.println("[Seg] Restored single segment (full strip)");
 }
 
-// Restore single-segment mode (all 50 LEDs, one segment)
-void restoreSingleSegment() {
-  sendToWLED("{\"seg\":[{\"id\":0,\"start\":0,\"stop\":50,\"on\":true},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}");
-  Serial.println("[Seg] Restored single segment");
+// Build 5-color custom palette + Chase across entire strip
+String buildMagicBandChaseJson(const uint8_t paletteIdxs[5]) {
+  static const int positions[5] = {0, 51, 102, 153, 204};
+  String pd = "\"pd\":{\"" + String(WLED_MB_PAL_SLOT) + "\":[";
+  for (int i = 0; i < 5; i++) {
+    uint8_t r, g, b;
+    paletteToRGB(paletteIdxs[i], r, g, b);
+    if (i > 0) pd += ",";
+    pd += "[" + String(positions[i]) + "," + String(r) + "," + String(g) + "," + String(b) + "]";
+  }
+  pd += "]}";
+  return "{" + pd + ",\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+         ",\"fx\":" + String(WLED_CHASE_FX) + ",\"sx\":" + String(mbChaseSpeed) +
+         ",\"grp\":" + String(mbChaseThickness) + ",\"pal\":" + String(WLED_MB_PAL_SLOT) +
+         "},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
+}
+
+void applyMagicBandChase(const uint8_t paletteIdxs[5], OverrideSource src) {
+  if (!canTakeOverride(src)) {
+    Serial.printf("[MB] chase blocked by override %d\n", (int)currentOverride);
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[MB] WiFi down — chase not sent");
+    return;
+  }
+  saveWledStateForOverride();
+  Serial.printf("[MB] Chase spd=%u thick=%u pals=%u,%u,%u,%u,%u\n",
+                mbChaseSpeed, mbChaseThickness,
+                paletteIdxs[0], paletteIdxs[1], paletteIdxs[2], paletteIdxs[3], paletteIdxs[4]);
+  sendToWLED(buildMagicBandChaseJson(paletteIdxs));
+  setOverride(src);
+  if (src == BLE_MAGIC) mbEventTimestamp = millis();
+}
+
+void applyMagicBandChaseFromAnchor(uint8_t anchorPalette, OverrideSource src) {
+  uint8_t pals[5];
+  for (int i = 0; i < 5; i++) pals[i] = (anchorPalette + (uint8_t)(i * 5)) & 0x1F;
+  applyMagicBandChase(pals, src);
+}
+
+void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
+  if (!canTakeOverride(src)) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (src == BLE_STARLIGHT) bleNotify("{\"type\":\"sw_event\",\"event\":\"wifi_down\"}");
+    return;
+  }
+  saveWledStateForOverride();
+  String body = "{\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+                ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) +
+                "]]},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
+  sendToWLED(body);
+  setOverride(src);
+  if (src == BLE_STARLIGHT) swEventTimestamp = millis();
+  else if (src == BLE_MAGIC) mbEventTimestamp = millis();
 }
 
 // ─────────────────────────────────────────────
@@ -475,6 +529,21 @@ void handleBLECommand(const String& msg) {
     bleNotify(ack);
   }
 
+  // ── MagicBand chase tuning ──
+  else if (type == "mb_chase_config") {
+    if (doc.containsKey("speed"))     mbChaseSpeed     = (uint8_t)doc["speed"].as<int>();
+    if (doc.containsKey("thickness")) mbChaseThickness = (uint8_t)doc["thickness"].as<int>();
+    if (mbChaseThickness < 1) mbChaseThickness = 1;
+    prefs.begin("config", false);
+    prefs.putUChar("mbSpd", mbChaseSpeed);
+    prefs.putUChar("mbGrp", mbChaseThickness);
+    prefs.end();
+    String ack = "{\"type\":\"ack\",\"action\":\"mb_chase_config\","
+                 "\"speed\":" + String(mbChaseSpeed) + ","
+                 "\"thickness\":" + String(mbChaseThickness) + "}";
+    bleNotify(ack);
+  }
+
   // ── MagicBand config ──
   else if (type == "mb_config") {
     if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
@@ -506,6 +575,8 @@ void handleBLECommand(const String& msg) {
       "\"mb_enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
       "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
       "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) + ","
+      "\"mb_chase_speed\":" + String(mbChaseSpeed) + ","
+      "\"mb_chase_thickness\":" + String(mbChaseThickness) + ","
       "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") +
       "}"
     );
@@ -566,12 +637,60 @@ void startBLEPeripheral() {
 }
 
 // ─────────────────────────────────────────────
+// WAND TX BEACON — advertise as another Starlight wand (pairing / cast tests)
+// ─────────────────────────────────────────────
+
+void refreshBleAdvertising(const uint8_t* disneyPayload, size_t plen) {
+  NimBLEAdvertisementData advData;
+  advData.setName(BLE_NAME);
+  advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+  if (disneyPayload && plen > 0) {
+    uint8_t mfr[32];
+    mfr[0] = 0x83;
+    mfr[1] = 0x01;
+    memcpy(mfr + 2, disneyPayload, plen);
+    advData.setManufacturerData(std::string((char*)mfr, plen + 2));
+  }
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  adv->setAdvertisementData(advData);
+  adv->start();
+}
+
+void startWandTxCast(uint8_t palette, uint32_t durationMs) {
+  wandTxCastPalette = palette & 0x1F;
+  wandTxCastUntil = millis() + durationMs;
+  Serial.printf("[WandTX] Cast palette=%u for %ums\n", wandTxCastPalette, durationMs);
+}
+
+void serviceWandTx() {
+  unsigned long now = millis();
+  bool casting = now < wandTxCastUntil;
+  if (!wandTxBeacon && !casting) return;
+  if (now - wandTxLastAdvMs < 200) return;
+  wandTxLastAdvMs = now;
+
+  if (casting) {
+    uint8_t payload[13];
+    memcpy(payload, WAND_CAST_SIG, 6);
+    for (int i = 6; i < 12; i++) payload[i] = (uint8_t)random(0, 256);
+    payload[12] = wandTxCastPalette;
+    refreshBleAdvertising(payload, 13);
+    return;
+  }
+
+  if (wandTxBeacon) {
+    uint8_t idle[19];
+    memcpy(idle, WAND_IDLE_PAYLOAD, 19);
+    idle[18] = (uint8_t)((now / 500) & 0xFF);
+    refreshBleAdvertising(idle, 19);
+  }
+}
+
+// ─────────────────────────────────────────────
 // BLE SCANNER — Disney 0x0183 (Adafruit CLUE_BLE_Beacon_Remote protocol)
 // ─────────────────────────────────────────────
 
 // Starlight Wand color-cast signature (13-byte payload after 0x8301 CID)
-static const uint8_t WAND_CAST_SIG[6] = {0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22};
-#define WAND_CAST_LEN 13
 
 // Palette RGB — from Adafruit magicband_protocol.py (calibrated for LEDs)
 static const uint8_t MB_PALETTE[32][3] = {
@@ -703,66 +822,25 @@ void serialLogSniffPacket(int rssi, const uint8_t* data, size_t len) {
   Serial.println();
 }
 
-String segColorJson(uint8_t paletteIdx) {
-  uint8_t r, g, b;
-  paletteToRGB(paletteIdx, r, g, b);
-  return "[[" + String(r) + "," + String(g) + "," + String(b) + "]]";
-}
-
-void applyCornerColorEffect(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
-  if (!canTakeOverride(src)) {
-    Serial.printf("[BLE] %d blocked by override %d\n", (int)src, (int)currentOverride);
-    if (src == BLE_STARLIGHT) {
-      bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
-    }
-    return;
-  }
-
-  Serial.printf("[BLE] Corner color R%d G%d B%d (src=%d)\n", r, g, b, (int)src);
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[BLE] WiFi down — color not sent to WLED");
-    if (src == BLE_STARLIGHT) {
-      bleNotify("{\"type\":\"sw_event\",\"event\":\"wifi_down\"}");
-    }
-    return;
-  }
-
-  saveWledStateForOverride();
-  setupMagicBandSegments();
-  delay(100);
-
-  String color = "[[" + String(r) + "," + String(g) + "," + String(b) + "]]";
-  String segPayload = "{\"seg\":["
-    "{\"id\":0,\"col\":" + color + "},"
-    "{\"id\":1,\"col\":" + color + "},"
-    "{\"id\":2,\"col\":" + color + "},"
-    "{\"id\":3,\"col\":" + color + "}";
-
-  if (magicBandFivePoint) {
-    segPayload += ",{\"id\":4,\"col\":" + color + "}";
-  } else {
-    segPayload += ",{\"id\":4,\"on\":false}";
-  }
-  segPayload += "]}";
-
-  sendToWLED(segPayload);
-  setOverride(src);
-
-  if (src == BLE_STARLIGHT) swEventTimestamp = millis();
-  else if (src == BLE_MAGIC) mbEventTimestamp = millis();
-}
-
 void notifyPaletteColor(uint8_t paletteIdx, OverrideSource src) {
   uint8_t r, g, b;
   paletteToRGB(paletteIdx, r, g, b);
-  applyCornerColorEffect(r, g, b, src);
-  if (src == BLE_STARLIGHT) {
-    bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
-              ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-  } else {
+  if (src == BLE_MAGIC) {
+    if (!canTakeOverride(src)) {
+      Serial.printf("[MB] palette blocked by override %d\n", (int)currentOverride);
+      return;
+    }
+    applyMagicBandChaseFromAnchor(paletteIdx, BLE_MAGIC);
     bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+    return;
   }
+  if (!canTakeOverride(src)) {
+    bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
+    return;
+  }
+  applyFullStripSolid(r, g, b, BLE_STARLIGHT);
+  bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
+            ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
 }
 
 // Starlight Wand color cast — 13-byte payload, sig CF0B00C42022, palette @ byte 12
@@ -802,11 +880,15 @@ void handleLegacyCf9bCast(const uint8_t* payload, size_t plen) {
   notifyPaletteColor(paletteIdx, BLE_STARLIGHT);
 }
 
-void applyMbAnimation(const char* label, const String& wledJson) {
+void applyMbAnimation(const char* label, int fxId, const char* extraSeg = nullptr) {
   if (!magicBandEnabled) return;
   if (!canTakeOverride(BLE_MAGIC)) return;
   saveWledStateForOverride();
-  sendToWLED(wledJson);
+  String body = "{\"on\":true,\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+                ",\"fx\":" + String(fxId);
+  if (extraSeg) body += extraSeg;
+  body += "},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
+  sendToWLED(body);
   setOverride(BLE_MAGIC);
   mbEventTimestamp = millis();
   bleNotify("{\"type\":\"ble_event\",\"event\":\"" + String(label) + "\"}");
@@ -830,51 +912,58 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       if (plen < 10) return;
       notifyPaletteColor(payload[8] & 0x1F, BLE_MAGIC);
       break;
-    case 0xE908:  // 6-bit RGB
+    case 0xE908: {  // 6-bit RGB — full-strip chase with uniform color blocks
       if (plen < 12) return;
-      applyCornerColorEffect(
-        ((payload[8] >> 1) & 0x3F) * 4,
-        ((payload[9] >> 1) & 0x3F) * 4,
-        ((payload[10] >> 1) & 0x3F) * 4,
-        BLE_MAGIC);
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
-      break;
-    case 0xE909:  // five palette slots — corner layout
-      if (plen < 13) return;
+      uint8_t r = ((payload[8] >> 1) & 0x3F) * 4;
+      uint8_t g = ((payload[9] >> 1) & 0x3F) * 4;
+      uint8_t b = ((payload[10] >> 1) & 0x3F) * 4;
       if (!canTakeOverride(BLE_MAGIC)) return;
       saveWledStateForOverride();
-      setupMagicBandSegments();
-      delay(100);
       {
-        String body = "{\"seg\":["
-          "{\"id\":0,\"col\":" + segColorJson(payload[7] & 0x1F) + "},"
-          "{\"id\":1,\"col\":" + segColorJson(payload[10] & 0x1F) + "},"
-          "{\"id\":2,\"col\":" + segColorJson(payload[8] & 0x1F) + "},"
-          "{\"id\":3,\"col\":" + segColorJson(payload[9] & 0x1F) + "}";
-        if (magicBandFivePoint) {
-          body += ",{\"id\":4,\"col\":" + segColorJson(payload[11] & 0x1F) + "}";
-        } else {
-          body += ",{\"id\":4,\"on\":false}";
+        static const int positions[5] = {0, 51, 102, 153, 204};
+        String pd = "\"pd\":{\"" + String(WLED_MB_PAL_SLOT) + "\":[";
+        for (int i = 0; i < 5; i++) {
+          if (i > 0) pd += ",";
+          pd += "[" + String(positions[i]) + "," + String(r) + "," + String(g) + "," + String(b) + "]";
         }
-        body += "]}";
+        pd += "]}";
+        String body = "{" + pd + ",\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+                      ",\"fx\":" + String(WLED_CHASE_FX) + ",\"sx\":" + String(mbChaseSpeed) +
+                      ",\"grp\":" + String(mbChaseThickness) + ",\"pal\":" + String(WLED_MB_PAL_SLOT) +
+                      "},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
         sendToWLED(body);
         setOverride(BLE_MAGIC);
         mbEventTimestamp = millis();
+      }
+      bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
+      break;
+    }
+    case 0xE909:  // five palette slots — full-strip chase
+      if (plen < 13) return;
+      {
+        uint8_t pals[5] = {
+          (uint8_t)(payload[7] & 0x1F),
+          (uint8_t)(payload[10] & 0x1F),
+          (uint8_t)(payload[8] & 0x1F),
+          (uint8_t)(payload[9] & 0x1F),
+          (uint8_t)(payload[11] & 0x1F),
+        };
+        applyMagicBandChase(pals, BLE_MAGIC);
         bleNotify("{\"type\":\"ble_event\",\"event\":\"five_color\"}");
       }
       break;
     case 0xE90C:
-      applyMbAnimation("show_fx", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
+      applyMbAnimation("show_fx", 42);
       break;
     case 0xE90E:
-      applyMbAnimation("flash", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":0,\"col\":[[255,255,255]]}]}");
+      applyMbAnimation("flash", 0, ",\"col\":[[255,255,255]]");
       break;
     case 0xE911:
     case 0xE912:
     case 0xE913:
     case 0xE90F:
     case 0xE910:
-      applyMbAnimation("animation", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
+      applyMbAnimation("animation", 42);
       break;
     default:
       Serial.printf("[MB+] unhandled func 0x%04X\n", func);
@@ -888,7 +977,7 @@ void handleShowPayload(const uint8_t* payload, size_t plen) {
   if (!magicBandEnabled || plen < 2 || payload[0] != 0xE9) return;
   if (!canTakeOverride(BLE_MAGIC)) return;
   Serial.printf("[MB+] show E9 %02X len=%u\n", payload[1], (unsigned)plen);
-  applyMbAnimation("show", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
+  applyMbAnimation("show", 42);
 }
 
 // Dispatch Disney manufacturer payload (after 0x8301 strip)
@@ -955,7 +1044,44 @@ void processSerialCommands() {
     Serial.println("[Serial] Commands:");
     Serial.println("  sniff [seconds]  — log every BLE mfr packet (default 30)");
     Serial.println("  sniff off        — stop sniffing");
-    Serial.println("  (Use 2nd ESP32 + WandSimulator.ino to broadcast test casts)");
+    Serial.println("  tx on            — broadcast WAND-IDLE beacon (pairing test)");
+    Serial.println("  tx off           — stop wand TX beacon");
+    Serial.println("  tx cast <0-31>   — broadcast WAND-CAST for 3s");
+    Serial.println("  chase speed <0-255>   — MB chase sx (0 = static)");
+    Serial.println("  chase thick <1-50>    — MB chase grp (pixels per block)");
+  } else if (line == "tx on") {
+    wandTxBeacon = true;
+    wandTxLastAdvMs = 0;
+    Serial.println("[Serial] Wand TX idle beacon ON — physical wand should see another wand");
+  } else if (line == "tx off") {
+    wandTxBeacon = false;
+    wandTxCastUntil = 0;
+    refreshBleAdvertising(nullptr, 0);
+    Serial.println("[Serial] Wand TX off — normal IllumaBuggy advertising");
+  } else if (line.startsWith("tx cast")) {
+    int pal = 4;
+    int sp = line.indexOf(' ', 7);
+    if (sp > 0) pal = line.substring(sp + 1).toInt();
+    startWandTxCast((uint8_t)pal, 3000);
+  } else if (line.startsWith("chase speed")) {
+    int sp = line.indexOf(' ', 11);
+    if (sp > 0) {
+      mbChaseSpeed = (uint8_t)line.substring(sp + 1).toInt();
+      prefs.begin("config", false);
+      prefs.putUChar("mbSpd", mbChaseSpeed);
+      prefs.end();
+      Serial.printf("[Serial] Chase speed (sx) = %u\n", mbChaseSpeed);
+    }
+  } else if (line.startsWith("chase thick")) {
+    int sp = line.indexOf(' ', 11);
+    if (sp > 0) {
+      mbChaseThickness = (uint8_t)line.substring(sp + 1).toInt();
+      if (mbChaseThickness < 1) mbChaseThickness = 1;
+      prefs.begin("config", false);
+      prefs.putUChar("mbGrp", mbChaseThickness);
+      prefs.end();
+      Serial.printf("[Serial] Chase thickness (grp) = %u\n", mbChaseThickness);
+    }
   } else if (line == "sniff off") {
     bleSniffUntilMs = 0;
     Serial.println("[Serial] Sniff off");
@@ -1026,11 +1152,14 @@ void setup() {
   magicBandFivePoint  = prefs.getBool("mb5pt", true);
   overrideKillOnZone  = prefs.getBool("killOnZone", false);
   magicBandTimeoutMs  = prefs.getULong("mbTimeout", 30000);
+  mbChaseSpeed        = prefs.getUChar("mbSpd", 128);
+  mbChaseThickness    = prefs.getUChar("mbGrp", 4);
+  if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
   prefs.end();
-  Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d\n",
+  Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
-                bleScanLogEnabled);
+                bleScanLogEnabled, mbChaseSpeed, mbChaseThickness);
 
   prefs.begin("presets", false);
   prefs.end();
@@ -1091,6 +1220,7 @@ void processPendingCommands() {
 void loop() {
   processSerialCommands();
   processPendingCommands();
+  serviceWandTx();
 
   // Auto-clear Starlight Wand override after timeout
   if (currentOverride == BLE_STARLIGHT && starlightTimeoutMs > 0) {
