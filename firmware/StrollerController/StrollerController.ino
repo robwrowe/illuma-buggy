@@ -52,7 +52,7 @@ NimBLEServer*         bleServer    = nullptr;
 NimBLECharacteristic* notifyChar   = nullptr;
 bool                  bleConnected = false;
 
-enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC };
+enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC, BLE_STARLIGHT };
 OverrideSource currentOverride    = NONE;
 bool           overrideKillOnZone = false;
 unsigned long  overrideTimestamp  = 0;
@@ -60,14 +60,33 @@ unsigned long  overrideTimestamp  = 0;
 int    currentBrightness = 128;
 String currentPresetId   = "";
 
-// MagicBand config (persisted in NVS)
-bool          magicBandFivePoint = true;   // true = 4 corners + center, false = 4 corners only
-unsigned long magicBandTimeoutMs = 30000;  // ms before MB override auto-clears (0 = never)
+// BLE effect config (persisted in NVS)
+// Priority (high → low): Starlight Wand > MagicBand+ > Manual > Zone
+bool          starlightEnabled    = true;
+unsigned long starlightTimeoutMs  = 30000;  // ms before wand effect auto-clears (0 = never)
+bool          magicBandEnabled    = true;
+bool          magicBandFivePoint  = true;   // true = 4 corners + center, false = 4 corners only
+unsigned long magicBandTimeoutMs  = 30000;  // ms before MB override auto-clears (0 = never)
+bool          bleScanLogEnabled   = true;   // Serial hex dump of Disney scan packets
 
-// MagicBand timeout tracking
-unsigned long mbEventTimestamp = 0;  // millis() when last MB event fired
+// BLE effect timeout tracking
+unsigned long swEventTimestamp = 0;
+unsigned long mbEventTimestamp = 0;
+unsigned long swDebugLastNotify = 0;
+// BLE scan log dedup state (Serial monitor)
+uint8_t       lastLogBytes[48];
+size_t        lastLogLen      = 0;
+uint32_t      scanRepeatCount = 0;
+unsigned long scanRepeatSummaryMs = 0;
 
-// Pre-event WLED state (restored after MagicBand clears)
+// Wand cast debounce (rolling auth bytes change every advert; palette is stable)
+uint8_t       lastWandPalette = 0xFF;
+unsigned long lastWandCastMs  = 0;
+
+// Serial sniff mode — log every manufacturer packet (find wand button format)
+unsigned long bleSniffUntilMs = 0;
+
+// Pre-event WLED state (restored after BLE effect clears)
 String savedWledState = "";
 
 // WiFi reconnect
@@ -293,7 +312,24 @@ void restoreSingleSegment() {
 
 // ─────────────────────────────────────────────
 // OVERRIDE LOGIC
+// Priority: Starlight Wand (4) > MagicBand+ (3) > Manual (2) > Zone (1)
 // ─────────────────────────────────────────────
+
+int overridePriority(OverrideSource src) {
+  switch (src) {
+    case ZONE:          return 1;
+    case MANUAL:        return 2;
+    case BLE_MAGIC:     return 3;
+    case BLE_STARLIGHT: return 4;
+    default:            return 0;
+  }
+}
+
+bool canTakeOverride(OverrideSource incoming) {
+  if (incoming == NONE) return false;
+  if (currentOverride == NONE) return true;
+  return overridePriority(incoming) >= overridePriority(currentOverride);
+}
 
 void setOverride(OverrideSource src) {
   currentOverride = src;
@@ -301,10 +337,15 @@ void setOverride(OverrideSource src) {
   Serial.printf("[Override] Set to %d\n", (int)src);
 }
 
+void saveWledStateForOverride() {
+  if (savedWledState.length() > 0) return;
+  String state = getFromWLED("/json/state");
+  if (state.length() > 0) savedWledState = state;
+}
+
 void clearOverride() {
   currentOverride = NONE;
   Serial.println("[Override] Cleared");
-  // Restore saved state if we had one from a MagicBand event
   if (savedWledState.length() > 0) {
     sendToWLED(savedWledState);
     restoreSingleSegment();
@@ -313,7 +354,7 @@ void clearOverride() {
 }
 
 bool zoneWantsPreset(const String& presetId) {
-  if (currentOverride == BLE_MAGIC || currentOverride == MANUAL) {
+  if (currentOverride != NONE && currentOverride != ZONE) {
     if (!overrideKillOnZone) {
       Serial.println("[Zone] Blocked by active override");
       return false;
@@ -348,6 +389,11 @@ void handleBLECommand(const String& msg) {
   }
   else if (type == "preset_apply") {
     String id = doc["id"].as<String>();
+    if (!canTakeOverride(MANUAL)) {
+      Serial.println("[Preset] Blocked by higher-priority override");
+      bleNotify("{\"type\":\"ack\",\"action\":\"preset_apply\",\"id\":\"" + id + "\",\"ok\":false}");
+      return;
+    }
     setOverride(MANUAL);
     bool ok = applyPreset(id);
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_apply\",\"id\":\"" + id + "\",\"ok\":" + (ok ? "true" : "false") + "}");
@@ -404,17 +450,43 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":" + String(ok ? "true" : "false") + "}");
   }
 
+  // ── BLE scan log (Serial monitor) ──
+  else if (type == "scan_log_config") {
+    if (doc.containsKey("enabled")) bleScanLogEnabled = doc["enabled"].as<bool>();
+    prefs.begin("config", false);
+    prefs.putBool("scanLog", bleScanLogEnabled);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"scan_log_config\","
+              "\"enabled\":" + String(bleScanLogEnabled ? "true" : "false") + "}");
+    Serial.printf("[Scan] logging %s\n", bleScanLogEnabled ? "enabled" : "disabled");
+  }
+
+  // ── Starlight Wand config ──
+  else if (type == "sw_config") {
+    if (doc.containsKey("enabled"))    starlightEnabled   = doc["enabled"].as<bool>();
+    if (doc.containsKey("timeout_ms")) starlightTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
+    prefs.begin("config", false);
+    prefs.putBool("swEn", starlightEnabled);
+    prefs.putULong("swTimeout", starlightTimeoutMs);
+    prefs.end();
+    String ack = "{\"type\":\"ack\",\"action\":\"sw_config\","
+                 "\"enabled\":" + String(starlightEnabled ? "true" : "false") + ","
+                 "\"timeout_ms\":" + String(starlightTimeoutMs) + "}";
+    bleNotify(ack);
+  }
+
   // ── MagicBand config ──
   else if (type == "mb_config") {
-    magicBandFivePoint = doc["five_point"].as<bool>();
-    if (doc.containsKey("timeout_ms")) {
-      magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
-    }
+    if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
+    if (doc.containsKey("five_point")) magicBandFivePoint = doc["five_point"].as<bool>();
+    if (doc.containsKey("timeout_ms")) magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
     prefs.begin("config", false);
+    prefs.putBool("mbEn", magicBandEnabled);
     prefs.putBool("mb5pt", magicBandFivePoint);
     prefs.putULong("mbTimeout", magicBandTimeoutMs);
     prefs.end();
     String ack = "{\"type\":\"ack\",\"action\":\"mb_config\","
+                 "\"enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
                  "\"five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
                  "\"timeout_ms\":" + String(magicBandTimeoutMs) + "}";
     bleNotify(ack);
@@ -429,8 +501,12 @@ void handleBLECommand(const String& msg) {
       "\"brightness\":" + String(currentBrightness) + ","
       "\"preset\":\"" + currentPresetId + "\","
       "\"wifi\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ","
-      "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") + "," +
-      "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) +
+      "\"sw_enabled\":" + String(starlightEnabled ? "true" : "false") + ","
+      "\"sw_timeout_ms\":" + String(starlightTimeoutMs) + ","
+      "\"mb_enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
+      "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
+      "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) + ","
+      "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") +
       "}"
     );
   }
@@ -490,26 +566,172 @@ void startBLEPeripheral() {
 }
 
 // ─────────────────────────────────────────────
-// BLE SCANNER — MagicBand+ E9 packets
+// BLE SCANNER — Disney 0x0183 (Adafruit CLUE_BLE_Beacon_Remote protocol)
 // ─────────────────────────────────────────────
 
-void handleMagicBandColor(const uint8_t* data, size_t len) {
-  if (len < 5) return;
-  uint8_t r = (data[2] & 0x3F) * 4;
-  uint8_t g = (data[3] & 0x3F) * 4;
-  uint8_t b = (data[4] & 0x3F) * 4;
+// Starlight Wand color-cast signature (13-byte payload after 0x8301 CID)
+static const uint8_t WAND_CAST_SIG[6] = {0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22};
+#define WAND_CAST_LEN 13
 
-  Serial.printf("[BLE] MagicBand color: R%d G%d B%d\n", r, g, b);
+// Palette RGB — from Adafruit magicband_protocol.py (calibrated for LEDs)
+static const uint8_t MB_PALETTE[32][3] = {
+  { 80, 255, 255}, {180,   0, 255}, {  0,   0, 255}, {  0,  20, 120},
+  { 40, 120, 255}, {200,  80, 255}, {200, 180, 255}, {120,   0, 255},
+  {255,  60, 180}, {255,  70, 170}, {255,  80, 160}, {255,  90, 150},
+  {255, 110, 150}, {255, 130, 160}, {255, 160, 170}, {255, 180,   0},
+  {255, 220,   0}, {255, 140,  20}, {180, 255,   0}, {255,  90,   0},
+  {255,  40,   0}, {255,   0,   0}, { 60, 255, 255}, { 40, 240, 255},
+  { 20, 200, 255}, {  0, 255,   0}, { 80, 255,  40}, {255, 200, 180},
+  {255, 200, 180}, {  0,   0,   0}, {255, 140,  60}, {255,   0, 255},
+};
 
-  // Save current WLED state so we can restore it after override clears
-  String state = getFromWLED("/json/state");
-  if (state.length() > 0) savedWledState = state;
+void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b) {
+  idx &= 0x1F;
+  r = MB_PALETTE[idx][0];
+  g = MB_PALETTE[idx][1];
+  b = MB_PALETTE[idx][2];
+}
 
-  // Set up segments for corner/center effect
+// Strip 0x8301 company ID if present; payload is what Adafruit stores in command_library
+void disneyPayload(const uint8_t* data, size_t len, const uint8_t*& payload, size_t& plen) {
+  if (len >= 2 && data[0] == 0x83 && data[1] == 0x01) {
+    payload = data + 2;
+    plen = len - 2;
+  } else {
+    payload = data;
+    plen = len;
+  }
+}
+
+bool isWandCast(const uint8_t* payload, size_t plen) {
+  return plen == WAND_CAST_LEN && memcmp(payload, WAND_CAST_SIG, 6) == 0;
+}
+
+bool isWandIdleBeacon(const uint8_t* payload, size_t plen) {
+  return plen >= 4 && payload[0] == 0x0F && payload[1] == 0x11;
+}
+
+// Older community / wiki captures used CF9B (variable length, palette = last byte)
+bool isLegacyCf9bCast(const uint8_t* payload, size_t plen) {
+  return plen >= 8 && payload[0] == 0xCF && payload[1] == 0x9B;
+}
+
+bool isDisneyMfr(const uint8_t* data, size_t len) {
+  if (len >= 2 && data[0] == 0x83 && data[1] == 0x01) return true;
+  const uint8_t* p;
+  size_t pl;
+  disneyPayload(data, len, p, pl);
+  return isWandCast(p, pl) || isLegacyCf9bCast(p, pl) || isWandIdleBeacon(p, pl)
+      || (pl >= 1 && (p[0] == 0xCC || p[0] == 0xE1 || p[0] == 0xE2 || p[0] == 0xE9));
+}
+
+const char* classifyScanPacket(const uint8_t* data, size_t len) {
+  const uint8_t* p;
+  size_t pl;
+  disneyPayload(data, len, p, pl);
+  if (isWandCast(p, pl)) return "WAND-CAST";
+  if (isLegacyCf9bCast(p, pl)) return "WAND-CF9B";
+  if (isWandIdleBeacon(p, pl)) return "WAND-IDLE";
+  if (pl >= 2 && p[0] == 0xCC && p[1] == 0x03) return "PING";
+  if (pl >= 5 && (p[0] == 0xE1 || p[0] == 0xE2) && p[2] == 0xE9) return "MB+";
+  if (pl >= 2 && p[0] == 0xE9) return "SHOW";
+  return "DISNEY";
+}
+
+// Format manufacturer data as hex for app debug feed
+String mfrToHex(const uint8_t* data, size_t len) {
+  String hex = "";
+  for (size_t i = 0; i < len && i < 32; i++) {
+    if (data[i] < 0x10) hex += "0";
+    hex += String(data[i], HEX);
+  }
+  return hex;
+}
+
+// Rate-limited debug notify → app Home event feed
+void notifySwDebug(const char* reason, const uint8_t* data, size_t len) {
+  unsigned long now = millis();
+  if (now - swDebugLastNotify < 400) return;
+  swDebugLastNotify = now;
+  String msg = "{\"type\":\"sw_debug\",\"reason\":\"" + String(reason) +
+               "\",\"hex\":\"" + mfrToHex(data, len) + "\",\"len\":" + String(len) + "}";
+  bleNotify(msg);
+  Serial.printf("[SW] debug: %s len=%u hex=%s\n", reason, (unsigned)len, mfrToHex(data, len).c_str());
+}
+
+// Serial-only: Disney BLE packets — highlights NEW vs repeated payloads
+void serialLogScanPacket(const char* tag, int rssi, const uint8_t* data, size_t len) {
+  if (!bleScanLogEnabled) return;
+  unsigned long now = millis();
+
+  size_t cmpLen = len < 48 ? len : 48;
+  bool same = (cmpLen == lastLogLen && memcmp(data, lastLogBytes, cmpLen) == 0);
+
+  if (same) {
+    scanRepeatCount++;
+    if (now - scanRepeatSummaryMs < 3000) return;
+    scanRepeatSummaryMs = now;
+    Serial.printf("[Scan:%s] rssi=%d len=%u (same x%u) ", tag, rssi, (unsigned)len, scanRepeatCount);
+  } else {
+    if (scanRepeatCount > 0) {
+      Serial.printf("[Scan] ↳ prior packet repeated %u times\n", scanRepeatCount);
+      scanRepeatCount = 0;
+    }
+    memcpy(lastLogBytes, data, cmpLen);
+    lastLogLen = cmpLen;
+    Serial.printf("[Scan:%s] rssi=%d len=%u NEW ", tag, rssi, (unsigned)len);
+  }
+
+  for (size_t i = 0; i < cmpLen; i++) {
+    if (data[i] < 0x10) Serial.print('0');
+    Serial.print(data[i], HEX);
+  }
+  if (len > 48) Serial.print("…");
+  Serial.println();
+}
+
+// Log any manufacturer data during sniff window (wand button debug)
+void serialLogSniffPacket(int rssi, const uint8_t* data, size_t len) {
+  if (millis() >= bleSniffUntilMs) return;
+  Serial.printf("[Sniff] rssi=%d len=%u ", rssi, (unsigned)len);
+  size_t n = len < 64 ? len : 64;
+  for (size_t i = 0; i < n; i++) {
+    if (data[i] < 0x10) Serial.print('0');
+    Serial.print(data[i], HEX);
+  }
+  if (len > 64) Serial.print("…");
+  Serial.println();
+}
+
+String segColorJson(uint8_t paletteIdx) {
+  uint8_t r, g, b;
+  paletteToRGB(paletteIdx, r, g, b);
+  return "[[" + String(r) + "," + String(g) + "," + String(b) + "]]";
+}
+
+void applyCornerColorEffect(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
+  if (!canTakeOverride(src)) {
+    Serial.printf("[BLE] %d blocked by override %d\n", (int)src, (int)currentOverride);
+    if (src == BLE_STARLIGHT) {
+      bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
+    }
+    return;
+  }
+
+  Serial.printf("[BLE] Corner color R%d G%d B%d (src=%d)\n", r, g, b, (int)src);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[BLE] WiFi down — color not sent to WLED");
+    if (src == BLE_STARLIGHT) {
+      bleNotify("{\"type\":\"sw_event\",\"event\":\"wifi_down\"}");
+    }
+    return;
+  }
+
+  saveWledStateForOverride();
   setupMagicBandSegments();
   delay(100);
 
-  // Build color payload for each active segment
   String color = "[[" + String(r) + "," + String(g) + "," + String(b) + "]]";
   String segPayload = "{\"seg\":["
     "{\"id\":0,\"col\":" + color + "},"
@@ -520,71 +742,246 @@ void handleMagicBandColor(const uint8_t* data, size_t len) {
   if (magicBandFivePoint) {
     segPayload += ",{\"id\":4,\"col\":" + color + "}";
   } else {
-    // Turn off center segment
     segPayload += ",{\"id\":4,\"on\":false}";
   }
   segPayload += "]}";
 
   sendToWLED(segPayload);
-  setOverride(BLE_MAGIC);
-  mbEventTimestamp = millis();
-  bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+  setOverride(src);
+
+  if (src == BLE_STARLIGHT) swEventTimestamp = millis();
+  else if (src == BLE_MAGIC) mbEventTimestamp = millis();
 }
 
-void handleMagicBandCommand(uint8_t cmd, const uint8_t* data, size_t len) {
-  switch (cmd) {
-    case 0x05:
-      Serial.println("[BLE] MagicBand: vibrate");
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"vibrate\"}");
-      break;
-    case 0x06:
-      Serial.println("[BLE] MagicBand: flash");
-      sendToWLED("{\"on\":true,\"seg\":[{\"id\":0,\"fx\":0,\"col\":[[255,255,255]]}]}");
-      setOverride(BLE_MAGIC);
+void notifyPaletteColor(uint8_t paletteIdx, OverrideSource src) {
+  uint8_t r, g, b;
+  paletteToRGB(paletteIdx, r, g, b);
+  applyCornerColorEffect(r, g, b, src);
+  if (src == BLE_STARLIGHT) {
+    bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
+              ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+  } else {
+    bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+  }
+}
+
+// Starlight Wand color cast — 13-byte payload, sig CF0B00C42022, palette @ byte 12
+void handleWandCast(const uint8_t* payload, size_t plen) {
+  if (!isWandCast(payload, plen)) return;
+
+  uint8_t paletteIdx = payload[12] & 0x1F;
+  unsigned long now = millis();
+  if (paletteIdx == lastWandPalette && now - lastWandCastMs < 600) return;
+  lastWandPalette = paletteIdx;
+  lastWandCastMs = now;
+
+  Serial.printf("[Wand] CAST palette=%u roll=%02X%02X%02X%02X%02X%02X\n",
+                paletteIdx, payload[6], payload[7], payload[8],
+                payload[9], payload[10], payload[11]);
+  notifySwDebug("wand_cast", payload, plen);
+
+  if (!starlightEnabled) {
+    bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
+    return;
+  }
+  notifyPaletteColor(paletteIdx, BLE_STARLIGHT);
+}
+
+// CF9B wiki format — palette in last byte
+void handleLegacyCf9bCast(const uint8_t* payload, size_t plen) {
+  if (!isLegacyCf9bCast(payload, plen)) return;
+
+  uint8_t paletteIdx = payload[plen - 1] & 0x1F;
+  Serial.printf("[Wand] CF9B legacy cast palette=%u len=%u\n", paletteIdx, (unsigned)plen);
+  notifySwDebug("wand_cf9b", payload, plen);
+
+  if (!starlightEnabled) {
+    bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
+    return;
+  }
+  notifyPaletteColor(paletteIdx, BLE_STARLIGHT);
+}
+
+void applyMbAnimation(const char* label, const String& wledJson) {
+  if (!magicBandEnabled) return;
+  if (!canTakeOverride(BLE_MAGIC)) return;
+  saveWledStateForOverride();
+  sendToWLED(wledJson);
+  setOverride(BLE_MAGIC);
   mbEventTimestamp = millis();
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"flash\"}");
+  bleNotify("{\"type\":\"ble_event\",\"event\":\"" + String(label) + "\"}");
+}
+
+// E1/E2-wrapped MagicBand+ commands (payload after 0x8301)
+void handleE1E2Payload(const uint8_t* payload, size_t plen) {
+  if (!magicBandEnabled) return;
+  if (plen < 5 || payload[2] != 0xE9) return;
+  if (!canTakeOverride(BLE_MAGIC)) return;
+
+  uint16_t func = ((uint16_t)payload[2] << 8) | payload[3];
+  Serial.printf("[MB+] func=0x%04X len=%u\n", func, (unsigned)plen);
+
+  switch (func) {
+    case 0xE905:  // single palette color
+      if (plen < 9) return;
+      notifyPaletteColor(payload[7] & 0x1F, BLE_MAGIC);
       break;
-    case 0x08:
-      handleMagicBandColor(data, len);
+    case 0xE906:  // dual palette — use outer ring color
+      if (plen < 10) return;
+      notifyPaletteColor(payload[8] & 0x1F, BLE_MAGIC);
       break;
-    case 0x09:
-      Serial.println("[BLE] MagicBand: fireworks");
-      sendToWLED("{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
-      setOverride(BLE_MAGIC);
-  mbEventTimestamp = millis();
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"fireworks\"}");
+    case 0xE908:  // 6-bit RGB
+      if (plen < 12) return;
+      applyCornerColorEffect(
+        ((payload[8] >> 1) & 0x3F) * 4,
+        ((payload[9] >> 1) & 0x3F) * 4,
+        ((payload[10] >> 1) & 0x3F) * 4,
+        BLE_MAGIC);
+      bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
       break;
-    case 0x0b:
-    case 0x0c:
-    case 0x13:
-      Serial.printf("[BLE] MagicBand: animation 0x%02X (stubbed)\n", cmd);
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"animation\"}");
+    case 0xE909:  // five palette slots — corner layout
+      if (plen < 13) return;
+      if (!canTakeOverride(BLE_MAGIC)) return;
+      saveWledStateForOverride();
+      setupMagicBandSegments();
+      delay(100);
+      {
+        String body = "{\"seg\":["
+          "{\"id\":0,\"col\":" + segColorJson(payload[7] & 0x1F) + "},"
+          "{\"id\":1,\"col\":" + segColorJson(payload[10] & 0x1F) + "},"
+          "{\"id\":2,\"col\":" + segColorJson(payload[8] & 0x1F) + "},"
+          "{\"id\":3,\"col\":" + segColorJson(payload[9] & 0x1F) + "}";
+        if (magicBandFivePoint) {
+          body += ",{\"id\":4,\"col\":" + segColorJson(payload[11] & 0x1F) + "}";
+        } else {
+          body += ",{\"id\":4,\"on\":false}";
+        }
+        body += "]}";
+        sendToWLED(body);
+        setOverride(BLE_MAGIC);
+        mbEventTimestamp = millis();
+        bleNotify("{\"type\":\"ble_event\",\"event\":\"five_color\"}");
+      }
+      break;
+    case 0xE90C:
+      applyMbAnimation("show_fx", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
+      break;
+    case 0xE90E:
+      applyMbAnimation("flash", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":0,\"col\":[[255,255,255]]}]}");
+      break;
+    case 0xE911:
+    case 0xE912:
+    case 0xE913:
+    case 0xE90F:
+    case 0xE910:
+      applyMbAnimation("animation", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
       break;
     default:
-      Serial.printf("[BLE] MagicBand: unknown cmd 0x%02X\n", cmd);
+      Serial.printf("[MB+] unhandled func 0x%04X\n", func);
+      bleNotify("{\"type\":\"ble_event\",\"event\":\"animation\"}");
       break;
   }
 }
 
-class MagicBandScanCallbacks : public NimBLEScanCallbacks {
+// Park show commands (direct E9, no E1/E2 wrapper)
+void handleShowPayload(const uint8_t* payload, size_t plen) {
+  if (!magicBandEnabled || plen < 2 || payload[0] != 0xE9) return;
+  if (!canTakeOverride(BLE_MAGIC)) return;
+  Serial.printf("[MB+] show E9 %02X len=%u\n", payload[1], (unsigned)plen);
+  applyMbAnimation("show", "{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
+}
+
+// Dispatch Disney manufacturer payload (after 0x8301 strip)
+void handleDisneyPayload(const uint8_t* payload, size_t plen) {
+  if (isWandCast(payload, plen)) {
+    handleWandCast(payload, plen);
+    return;
+  }
+  if (isLegacyCf9bCast(payload, plen)) {
+    handleLegacyCf9bCast(payload, plen);
+    return;
+  }
+  if (isWandIdleBeacon(payload, plen)) return;  // 0F11 identity beacon — not an effect
+
+  if (plen >= 2 && payload[0] == 0xCC && payload[1] == 0x03) return;  // wake ping
+
+  if (plen >= 5 && (payload[0] == 0xE1 || payload[0] == 0xE2) && payload[2] == 0xE9) {
+    handleE1E2Payload(payload, plen);
+    return;
+  }
+  if (plen >= 2 && payload[0] == 0xE9) {
+    handleShowPayload(payload, plen);
+  }
+}
+
+class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* device) {
     if (!device->haveManufacturerData()) return;
     std::string mfr = device->getManufacturerData();
-    if (mfr.size() < 4) return;
+    if (mfr.size() < 2) return;
     const uint8_t* data = (const uint8_t*)mfr.data();
-    if (data[2] != 0xE9) return;
-    handleMagicBandCommand(data[3], data, mfr.size());
+    size_t len = mfr.size();
+    int rssi = device->getRSSI();
+
+    // Sniff mode: log everything (press wand button while this is active)
+    if (millis() < bleSniffUntilMs) {
+      serialLogSniffPacket(rssi, data, len);
+    }
+
+    if (!isDisneyMfr(data, len)) return;
+
+    serialLogScanPacket(classifyScanPacket(data, len), rssi, data, len);
+
+    const uint8_t* payload;
+    size_t plen;
+    disneyPayload(data, len, payload, plen);
+    handleDisneyPayload(payload, plen);
   }
 };
 
+// ─────────────────────────────────────────────
+// SERIAL DEBUG COMMANDS (USB @ 115200)
+//   help          — command list
+//   sniff [sec]   — log ALL manufacturer data (default 30s); press wand button now
+// ─────────────────────────────────────────────
+
+void processSerialCommands() {
+  if (!Serial.available()) return;
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  if (line.length() == 0) return;
+
+  if (line == "help") {
+    Serial.println("[Serial] Commands:");
+    Serial.println("  sniff [seconds]  — log every BLE mfr packet (default 30)");
+    Serial.println("  sniff off        — stop sniffing");
+    Serial.println("  (Use 2nd ESP32 + WandSimulator.ino to broadcast test casts)");
+  } else if (line == "sniff off") {
+    bleSniffUntilMs = 0;
+    Serial.println("[Serial] Sniff off");
+  } else if (line.startsWith("sniff")) {
+    int sec = 30;
+    int sp = line.indexOf(' ');
+    if (sp > 0) sec = line.substring(sp + 1).toInt();
+    if (sec < 1) sec = 30;
+    bleSniffUntilMs = millis() + (unsigned long)sec * 1000UL;
+    Serial.printf("[Serial] Sniffing ALL mfr data for %ds — press wand button now\n", sec);
+  } else {
+    Serial.printf("[Serial] Unknown: %s (type 'help')\n", line.c_str());
+  }
+}
+
 void startBLEScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setScanCallbacks(new MagicBandScanCallbacks(), true);
-  scan->setActiveScan(false);
-  scan->setInterval(100);
-  scan->setWindow(99);
+  scan->setScanCallbacks(new DisneyBLEScanCallbacks(), true);
+  scan->setActiveScan(true);   // wand may use scan response data
+  scan->setInterval(80);
+  scan->setWindow(79);
+  scan->setDuplicateFilter(false);
   scan->start(0, false);
-  Serial.println("[BLE] Scanner started (passive, continuous)");
+  Serial.println("[BLE] Scanner started (active, continuous, no dedup)");
+  Serial.printf("[BLE] Scan logging: %s (WAND-CAST / WAND-IDLE / MB+ / PING)\n",
+                bleScanLogEnabled ? "ON" : "OFF");
 }
 
 // ─────────────────────────────────────────────
@@ -623,11 +1020,17 @@ void setup() {
 
   // Load NVS config
   prefs.begin("config", true);
+  starlightEnabled    = prefs.getBool("swEn", true);
+  starlightTimeoutMs  = prefs.getULong("swTimeout", 30000);
+  magicBandEnabled    = prefs.getBool("mbEn", true);
   magicBandFivePoint  = prefs.getBool("mb5pt", true);
   overrideKillOnZone  = prefs.getBool("killOnZone", false);
   magicBandTimeoutMs  = prefs.getULong("mbTimeout", 30000);
+  bleScanLogEnabled   = prefs.getBool("scanLog", true);
   prefs.end();
-  Serial.printf("[NVS] mb5pt=%d killOnZone=%d\n", magicBandFivePoint, overrideKillOnZone);
+  Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d\n",
+                starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
+                bleScanLogEnabled);
 
   prefs.begin("presets", false);
   prefs.end();
@@ -647,6 +1050,7 @@ void setup() {
   );
 
   Serial.println("[Boot] Ready");
+  Serial.println("[Serial] Type 'help' for sniff / debug commands");
 }
 
 void processPendingCommands() {
@@ -685,7 +1089,17 @@ void processPendingCommands() {
 }
 
 void loop() {
+  processSerialCommands();
   processPendingCommands();
+
+  // Auto-clear Starlight Wand override after timeout
+  if (currentOverride == BLE_STARLIGHT && starlightTimeoutMs > 0) {
+    if (millis() - swEventTimestamp >= starlightTimeoutMs) {
+      Serial.printf("[SW] Timeout after %lums — restoring state\n", starlightTimeoutMs);
+      clearOverride();
+      bleNotify("{\"type\":\"sw_event\",\"event\":\"timeout\"}");
+    }
+  }
 
   // Auto-clear MagicBand override after timeout
   if (currentOverride == BLE_MAGIC && magicBandTimeoutMs > 0) {

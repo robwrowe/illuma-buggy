@@ -59,8 +59,7 @@ function parseFxDefaults(meta: string): Record<string, number> {
 export default function LibraryScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
-  const { wledEffects, wledPalettes, wledFxData, setWledEffects, setWledPalettes, setWledFxData,
-          recallState, addOrUpdatePreset, saveToStorage } = useAppStore();
+  const { wledEffects, wledPalettes, wledFxData, addOrUpdatePreset, saveToStorage } = useAppStore();
 
   const [tab, setTab]               = useState<Tab>('effects');
   const [loading, setLoading]       = useState(false);
@@ -87,49 +86,15 @@ export default function LibraryScreen() {
 
   const isConnected = bleService.isConnected();
 
-  // Handle chunked responses from firmware
+  // Clear loading spinner when background fetch completes (handled in App.tsx → store)
   useEffect(() => {
     const unsub = bleService.onMessage((msg) => {
-      if (msg.type === 'wled_effects_done') {
-        console.log('[Library] wled_effects_done received, raw length:', (msg.raw as string)?.length);
-        try {
-          const arr = JSON.parse(msg.raw as string) as string[];
-          console.log('[Library] Parsed', arr.length, 'effects');
-          const effects: WledEffect[] = arr.map((name, id) => ({ id, name, metadata: '' }));
-          const fxdata = useAppStore.getState().wledFxData;
-          effects.forEach(e => { e.metadata = fxdata[e.id] ?? ''; });
-          setWledEffects(effects.filter(e => e.name !== 'RSVD' && e.name !== '-'));
-        } catch (e) { console.error('[Library] Effects parse error:', e); }
+      if (msg.type === 'wled_effects_done' || msg.type === 'wled_palettes_done') {
         setLoading(false);
-      }
-      if (msg.type === 'wled_palettes_done') {
-        console.log('[Library] wled_palettes_done received, raw length:', (msg.raw as string)?.length);
-        try {
-          const arr = JSON.parse(msg.raw as string) as string[];
-          console.log('[Library] Parsed', arr.length, 'palettes');
-          setWledPalettes(arr.map((name, id) => ({ id, name })));
-        } catch (e) { console.error('[Library] Palettes parse error:', e); }
-        setLoading(false);
-      }
-      if (msg.type === 'wled_fxdata_done') {
-        console.log('[Library] wled_fxdata_done received, raw length:', (msg.raw as string)?.length);
-        try {
-          const arr = JSON.parse(msg.raw as string) as string[];
-          console.log('[Library] Parsed', arr.length, 'fxdata entries');
-          setWledFxData(arr);
-          const effects = useAppStore.getState().wledEffects;
-          if (effects.length > 0) {
-            const updated = effects.map(e => ({ ...e, metadata: arr[e.id] ?? '' }));
-            setWledEffects(updated);
-          }
-        } catch (e) { console.error('[Library] FxData parse error:', e); }
-      }
-      // Log any ack from firmware
-      if (msg.type === 'ack') {
-        console.log('[Library] ACK:', msg.action);
       }
       if (msg.type === 'error') {
         console.error('[Library] Firmware error:', msg.msg);
+        setLoading(false);
       }
     });
     return unsub;
@@ -141,17 +106,6 @@ export default function LibraryScreen() {
     bleService.sendGetFxData();
     setTimeout(() => bleService.sendGetEffects(), 500);
     setTimeout(() => bleService.sendGetPalettes(), 1000);
-  }, [isConnected]);
-
-  // Fetch on connect, and retry if disconnected mid-fetch
-  useEffect(() => {
-    if (isConnected && wledEffects.length === 0) {
-      fetchAll();
-    }
-    if (!isConnected) {
-      // Reset loading so it retries on next connect
-      setLoading(false);
-    }
   }, [isConnected]);
 
   // Preview effect live on WLED
@@ -267,8 +221,12 @@ export default function LibraryScreen() {
           ListEmptyComponent={
             <View style={s.centered}>
               {loading
-                ? <Text style={s.hint}>Loading…</Text>
-                : <Text style={s.hint}>{isConnected ? 'No results' : 'Connect to IllumaBuggy first'}</Text>}
+                ? <Text style={s.hint}>Refreshing from device…</Text>
+                : <Text style={s.hint}>
+                    {isConnected
+                      ? (wledEffects.length === 0 ? 'Tap ↻ to load from WLED' : 'No results')
+                      : 'Connect to IllumaBuggy first'}
+                  </Text>}
             </View>
           }
           renderItem={({ item }) => {

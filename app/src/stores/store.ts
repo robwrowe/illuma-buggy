@@ -101,12 +101,16 @@ export interface BrightnessConfig {
 }
 
 export interface DeviceStatus {
-  override:      number;
-  killOnZone:    boolean;
-  brightness:    number;
-  currentPreset: string;
-  wifiConnected: boolean;
-  mbFivePoint:   boolean;
+  override:           number;
+  killOnZone:           boolean;
+  brightness:           number;
+  currentPreset:        string;
+  wifiConnected:        boolean;
+  starlightEnabled:     boolean;
+  starlightTimeoutMs:   number;
+  magicBandEnabled:     boolean;
+  mbFivePoint:          boolean;
+  mbTimeoutMs:          number;
 }
 
 // ─────────────────────────────────────────────
@@ -172,14 +176,26 @@ interface AppState {
   // Settings
   overrideKillOnZone:    boolean;
   setOverrideKillOnZone: (val: boolean) => void;
+  starlightEnabled:      boolean;
+  setStarlightEnabled:   (val: boolean) => void;
+  starlightTimeoutSec:   number;
+  setStarlightTimeoutSec:(val: number) => void;
+  magicBandEnabled:      boolean;
+  setMagicBandEnabled:   (val: boolean) => void;
   magicBandFivePoint:    boolean;
   setMagicBandFivePoint: (val: boolean) => void;
+  magicBandTimeoutSec:   number;
+  setMagicBandTimeoutSec:(val: number) => void;
   zonesEnabled:          boolean;
   setZonesEnabled:       (val: boolean) => void;
 
   // Persistence
   loadFromStorage: () => Promise<void>;
   saveToStorage:   () => Promise<void>;
+  ingestWledEffectsRaw:  (raw: string) => void;
+  ingestWledPalettesRaw: (raw: string) => void;
+  ingestWledFxDataRaw:   (raw: string) => void;
+  syncBoardPresets:      (raw: string) => void;
 
   // Export / Import
   exportData: () => object;
@@ -197,6 +213,21 @@ const DEFAULT_BRIGHTNESS: BrightnessConfig = {
 const DEFAULT_RECALL: RecallState = {
   effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never',
 };
+
+const DEFAULT_PRESET_MEMORY: PresetMemory = {
+  effect: true, palette: true, parameters: true, color: false, segments: false,
+};
+
+/** Normalize preset from board sync or legacy imports (firmware stores id/name/wled only). */
+export function normalizePreset(p: Partial<Preset> & { id: string; name: string }): Preset {
+  return {
+    id:        p.id,
+    name:      p.name,
+    wled:      p.wled ?? { on: true },
+    memory:    p.memory ?? DEFAULT_PRESET_MEMORY,
+    createdAt: p.createdAt ?? Date.now(),
+  };
+}
 
 // ─────────────────────────────────────────────
 // Store
@@ -216,7 +247,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeZoneIds:       [],
   deviceStatus:        null,
   overrideKillOnZone:  false,
+  starlightEnabled:    true,
+  starlightTimeoutSec: 30,
+  magicBandEnabled:    true,
   magicBandFivePoint:  true,
+  magicBandTimeoutSec: 30,
   zonesEnabled:        true,
   brightnessConfig:    DEFAULT_BRIGHTNESS,
 
@@ -264,28 +299,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Device
   setDeviceStatus:       (deviceStatus) => set({ deviceStatus }),
   setOverrideKillOnZone: (val)          => set({ overrideKillOnZone: val }),
+  setStarlightEnabled:   (val)          => set({ starlightEnabled: val }),
+  setStarlightTimeoutSec:(val)          => set({ starlightTimeoutSec: val }),
+  setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
   setMagicBandFivePoint: (val)          => set({ magicBandFivePoint: val }),
+  setMagicBandTimeoutSec:(val)          => set({ magicBandTimeoutSec: val }),
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
 
   // Persistence
   loadFromStorage: async () => {
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
-                    'magicBandFivePoint','recallState','customPalettes','paletteSets','activePaletteSetId'];
+                    'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
+                    'magicBandFivePoint','magicBandTimeoutSec','recallState',
+                    'customPalettes','paletteSets','activePaletteSetId',
+                    'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
       pairs.forEach(([k, v]) => { if (v) d[k] = JSON.parse(v); });
       set({
-        presets:            d.presets            ?? [],
+        presets:            (d.presets ?? []).map((p: Preset) => normalizePreset(p)),
         zones:              d.zones              ?? [],
         indoorZones:        d.indoorZones        ?? [],
         brightnessConfig:   d.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
         overrideKillOnZone: d.overrideKillOnZone ?? false,
+        starlightEnabled:   d.starlightEnabled   ?? true,
+        starlightTimeoutSec:d.starlightTimeoutSec ?? 30,
+        magicBandEnabled:   d.magicBandEnabled   ?? true,
         magicBandFivePoint: d.magicBandFivePoint ?? true,
+        magicBandTimeoutSec:d.magicBandTimeoutSec ?? 30,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     d.customPalettes     ?? [],
         paletteSets:        d.paletteSets        ?? [],
         activePaletteSetId: d.activePaletteSetId ?? null,
+        wledEffects:        d.wledEffects        ?? [],
+        wledPalettes:       d.wledPalettes       ?? [],
+        wledFxData:         d.wledFxData         ?? [],
       });
     } catch (e) { console.error('[Store] Load error:', e); }
   },
@@ -299,13 +348,72 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['indoorZones',        JSON.stringify(s.indoorZones)],
         ['brightnessConfig',   JSON.stringify(s.brightnessConfig)],
         ['overrideKillOnZone', JSON.stringify(s.overrideKillOnZone)],
+        ['starlightEnabled',   JSON.stringify(s.starlightEnabled)],
+        ['starlightTimeoutSec',JSON.stringify(s.starlightTimeoutSec)],
+        ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
         ['magicBandFivePoint', JSON.stringify(s.magicBandFivePoint)],
+        ['magicBandTimeoutSec',JSON.stringify(s.magicBandTimeoutSec)],
         ['recallState',        JSON.stringify(s.recallState)],
         ['customPalettes',     JSON.stringify(s.customPalettes)],
         ['paletteSets',        JSON.stringify(s.paletteSets)],
         ['activePaletteSetId', JSON.stringify(s.activePaletteSetId)],
+        ['wledEffects',        JSON.stringify(s.wledEffects)],
+        ['wledPalettes',       JSON.stringify(s.wledPalettes)],
+        ['wledFxData',         JSON.stringify(s.wledFxData)],
       ]);
     } catch (e) { console.error('[Store] Save error:', e); }
+  },
+
+  ingestWledEffectsRaw: (raw) => {
+    try {
+      const fxData = get().wledFxData;
+      const arr = JSON.parse(raw) as string[];
+      const effects: WledEffect[] = arr
+        .map((name, id) => ({ id, name, metadata: fxData[id] ?? '' }))
+        .filter(e => e.name !== 'RSVD' && e.name !== '-');
+      set({ wledEffects: effects });
+      get().saveToStorage();
+    } catch (e) { console.error('[Store] Effects ingest error:', e); }
+  },
+
+  ingestWledPalettesRaw: (raw) => {
+    try {
+      const arr = JSON.parse(raw) as string[];
+      set({ wledPalettes: arr.map((name, id) => ({ id, name })) });
+      get().saveToStorage();
+    } catch (e) { console.error('[Store] Palettes ingest error:', e); }
+  },
+
+  ingestWledFxDataRaw: (raw) => {
+    try {
+      const arr = JSON.parse(raw) as string[];
+      set({ wledFxData: arr });
+      const effects = get().wledEffects;
+      if (effects.length > 0) {
+        set({ wledEffects: effects.map(e => ({ ...e, metadata: arr[e.id] ?? '' })) });
+      }
+      get().saveToStorage();
+    } catch (e) { console.error('[Store] FxData ingest error:', e); }
+  },
+
+  syncBoardPresets: (raw) => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const existingById = Object.fromEntries(get().presets.map(p => [p.id, p]));
+      const fromBoard = parsed.map((p: Partial<Preset> & { id: string; name: string }) => {
+        const local = existingById[p.id];
+        return normalizePreset({
+          ...local,
+          ...p,
+          memory: p.memory ?? local?.memory,
+        });
+      });
+      const boardIds = new Set(fromBoard.map(p => p.id));
+      const phoneOnly = get().presets.filter(p => !boardIds.has(p.id));
+      set({ presets: [...fromBoard, ...phoneOnly] });
+      get().saveToStorage();
+    } catch (e) { console.error('[Store] Board preset sync error:', e); }
   },
 
   exportData: () => {
@@ -314,7 +422,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       version: '2.2', exportedAt: new Date().toISOString(),
       presets: s.presets, zones: s.zones, indoorZones: s.indoorZones,
       brightnessConfig: s.brightnessConfig, recallState: s.recallState,
-      overrideKillOnZone: s.overrideKillOnZone, magicBandFivePoint: s.magicBandFivePoint,
+      overrideKillOnZone: s.overrideKillOnZone,
+      starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
+      magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
+      magicBandTimeoutSec:s.magicBandTimeoutSec,
       customPalettes: s.customPalettes, paletteSets: s.paletteSets,
     };
   },
@@ -327,7 +438,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       brightnessConfig:   data.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
       recallState:        data.recallState        ?? DEFAULT_RECALL,
       overrideKillOnZone: data.overrideKillOnZone ?? false,
+      starlightEnabled:   data.starlightEnabled   ?? true,
+      starlightTimeoutSec:data.starlightTimeoutSec ?? 30,
+      magicBandEnabled:   data.magicBandEnabled   ?? true,
       magicBandFivePoint: data.magicBandFivePoint ?? true,
+      magicBandTimeoutSec:data.magicBandTimeoutSec ?? 30,
       customPalettes:     data.customPalettes     ?? [],
       paletteSets:        data.paletteSets        ?? [],
     });
@@ -345,8 +460,8 @@ const DEFAULT_RECALL_FALLBACK: RecallState = {
 
 export function buildRecallPayload(preset: Preset, recall: RecallState | undefined): object {
   if (!recall) recall = DEFAULT_RECALL_FALLBACK;
-  const w = preset.wled;
-  const m = preset.memory;
+  const w = preset.wled ?? { on: true };
+  const m = preset.memory ?? DEFAULT_PRESET_MEMORY;
   const payload: any = { on: true };
 
   const should = (prop: keyof RecallState, memVal: boolean): boolean => {

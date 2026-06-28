@@ -56,16 +56,22 @@
 
 ## Status
 {"type":"status","override":0,"kill_on_zone":false,"brightness":180,"preset":"fantasy","wifi":true}
-# override: 0=NONE 1=ZONE 2=MANUAL 3=BLE_MAGIC
+# override: 0=NONE 1=ZONE 2=MANUAL 3=BLE_MAGIC 4=BLE_STARLIGHT
 
 ## MagicBand+ color event
 {"type":"ble_color","r":204,"g":0,"b":255}
+
+## Starlight Wand color event
+{"type":"sw_color","palette":4,"r":0,"g":100,"b":255}
 
 ## MagicBand+ generic events
 {"type":"ble_event","event":"fireworks"}
 {"type":"ble_event","event":"flash"}
 {"type":"ble_event","event":"vibrate"}
 {"type":"ble_event","event":"animation"}
+
+## Starlight Wand events
+{"type":"sw_event","event":"timeout"}
 
 # ─────────────────────────────────────────────
 # GLEDOPTO SETUP

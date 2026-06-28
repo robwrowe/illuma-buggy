@@ -20,7 +20,6 @@ import { bleService } from './src/services/BLEService';
 import { useAppStore } from './src/stores/store';
 import { useZoneManager } from './src/hooks/useZoneManager';
 import { useTheme, useThemeStore } from './src/utils/theme';
-import { buildRecallPayload } from './src/stores/store';
 
 import HomeScreen     from './src/screens/HomeScreen';
 import PresetsScreen  from './src/screens/PresetsScreen';
@@ -91,9 +90,18 @@ function AppNavigator() {
 }
 
 export default function App() {
-  const { loadFromStorage, setPresets, setDeviceStatus, recallState, presets } = useAppStore();
+  const {
+    loadFromStorage, setDeviceStatus,
+    ingestWledEffectsRaw, ingestWledPalettesRaw, ingestWledFxDataRaw, syncBoardPresets,
+  } = useAppStore();
   const { loadMode } = useThemeStore();
   const { isDark } = useTheme();
+
+  const fetchWledLibrary = () => {
+    bleService.sendGetFxData();
+    setTimeout(() => bleService.sendGetEffects(), 500);
+    setTimeout(() => bleService.sendGetPalettes(), 1000);
+  };
 
   useEffect(() => {
     loadFromStorage();
@@ -101,28 +109,47 @@ export default function App() {
 
     const unsub = bleService.onMessage((msg) => {
       if (msg.type === 'preset_list_raw') {
-        try {
-          const parsed = JSON.parse(msg.raw as string);
-          console.log('[App] Presets received:', Array.isArray(parsed) ? parsed.length : 'not array');
-          setPresets(Array.isArray(parsed) ? parsed : []);
-        } catch (e) {
-          console.error('[App] Preset parse error:', e);
-        }
+        console.log('[App] Board presets received:', (msg.raw as string)?.length, 'bytes');
+        syncBoardPresets(msg.raw as string);
+      }
+      if (msg.type === 'wled_effects_done') {
+        ingestWledEffectsRaw(msg.raw as string);
+      }
+      if (msg.type === 'wled_palettes_done') {
+        ingestWledPalettesRaw(msg.raw as string);
+      }
+      if (msg.type === 'wled_fxdata_done') {
+        ingestWledFxDataRaw(msg.raw as string);
       }
       if (msg.type === 'status') {
         setDeviceStatus({
-          override:      msg.override as number,
-          killOnZone:    msg.kill_on_zone as boolean,
-          brightness:    msg.brightness as number,
-          currentPreset: msg.preset as string,
-          wifiConnected: msg.wifi as boolean,
-          mbFivePoint:   msg.mb_five_point as boolean,
+          override:           msg.override as number,
+          killOnZone:         msg.kill_on_zone as boolean,
+          brightness:         msg.brightness as number,
+          currentPreset:      msg.preset as string,
+          wifiConnected:      msg.wifi as boolean,
+          starlightEnabled:   msg.sw_enabled as boolean,
+          starlightTimeoutMs: msg.sw_timeout_ms as number,
+          magicBandEnabled:   msg.mb_enabled as boolean,
+          mbFivePoint:        msg.mb_five_point as boolean,
+          mbTimeoutMs:        msg.mb_timeout_ms as number,
         });
       }
     });
 
+    const unsubState = bleService.onStateChange((state) => {
+      if (state === 'connected') {
+        const s = useAppStore.getState();
+        bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
+        bleService.sendMbConfig(s.magicBandEnabled, s.magicBandFivePoint, s.magicBandTimeoutSec * 1000);
+        // Background sync — cached data shows immediately in Library/Presets
+        bleService.sendPresetList();
+        if (s.wledEffects.length === 0) fetchWledLibrary();
+      }
+    });
+
     bleService.connect();
-    return () => unsub();
+    return () => { unsub(); unsubState(); };
   }, []);
 
   return (

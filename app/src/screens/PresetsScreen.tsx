@@ -19,7 +19,7 @@ import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
 
 import { useBLE } from '../hooks/useBLE';
-import { useAppStore, Preset } from '../stores/store';
+import { useAppStore, Preset, buildRecallPayload } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { generateId } from '../utils/utils';
 import { useTheme } from '../utils/theme';
@@ -29,30 +29,32 @@ export default function PresetsScreen() {
   const s = styles(colors);
   const { isConnected } = useBLE();
   const { presets, wledEffects, wledPalettes, deviceStatus, addOrUpdatePreset, removePreset, saveToStorage } = useAppStore();
-  const [loading, setLoading]       = useState(false);
+  const [syncing, setSyncing]       = useState(false);
   const [editingPreset, setEditingPreset] = useState<Preset | null>(null);
   const [showEdit, setShowEdit]     = useState(false);
 
-  // Listen for preset_list_raw (assembled in App.tsx → store) and preset_list (legacy)
-  useEffect(() => {
-    if (!isConnected) { setLoading(false); return; }
-    setLoading(true);
-    // Loading done when store is updated — watch presets length change
-    const timer = setTimeout(() => setLoading(false), 8000); // timeout fallback
-    const unsub = bleService.onMessage((msg) => {
-      if (msg.type === 'preset_list_raw' || msg.type === 'preset_list') {
-        setLoading(false);
-        clearTimeout(timer);
-      }
-    });
+  // Background board sync (App.tsx triggers on connect); manual refresh available
+  const refreshFromBoard = () => {
+    if (!isConnected) return;
+    setSyncing(true);
     bleService.sendPresetList();
-    return () => { unsub(); clearTimeout(timer); };
-  }, [isConnected]);
+  };
+
+  useEffect(() => {
+    const unsub = bleService.onMessage((msg) => {
+      if (msg.type === 'preset_list_raw') setSyncing(false);
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!syncing) return;
+    const timer = setTimeout(() => setSyncing(false), 10000);
+    return () => clearTimeout(timer);
+  }, [syncing]);
 
   const applyPreset = (preset: Preset) => {
-    // Build recall payload and send as wled_raw
     const { recallState } = useAppStore.getState();
-    const { buildRecallPayload } = require('../stores/store');
     const payload = buildRecallPayload(preset, recallState);
     bleService.sendWledRaw(payload);
     bleService.sendPresetApply(preset.id);
@@ -116,18 +118,15 @@ export default function PresetsScreen() {
   return (
     <View style={s.container}>
       <View style={s.header}>
-        <TouchableOpacity style={s.headerBtn} onPress={() => { setLoading(true); bleService.sendPresetList(); }} disabled={!isConnected}>
-          <IconRefresh size={16} color={colors.primary} />
-          <Text style={s.headerBtnText}>Sync</Text>
+        <TouchableOpacity style={s.headerBtn} onPress={refreshFromBoard} disabled={!isConnected || syncing}>
+          {syncing
+            ? <ActivityIndicator size="small" color={colors.primary} />
+            : <IconRefresh size={16} color={colors.primary} />}
+          <Text style={s.headerBtnText}>{syncing ? 'Syncing…' : 'Sync'}</Text>
         </TouchableOpacity>
       </View>
 
-      {loading ? (
-        <View style={s.centered}>
-          <ActivityIndicator color={colors.primary} />
-          <Text style={s.hint}>Loading presets…</Text>
-        </View>
-      ) : presets.length === 0 ? (
+      {presets.length === 0 ? (
         <View style={s.centered}>
           <IconSparkles size={40} color={colors.textMuted} />
           <Text style={s.emptyText}>No presets yet</Text>

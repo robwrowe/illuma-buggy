@@ -112,7 +112,16 @@ class BLEService {
   sendGetPalettes()                                       { return this.send({ type: 'wled_get_palettes' }); }
   sendGetFxData()                                         { return this.send({ type: 'wled_get_fxdata' }); }
   sendGetState()                                          { return this.send({ type: 'wled_get_state' }); }
-  sendMbConfig(fivePoint: boolean)                        { return this.send({ type: 'mb_config', five_point: fivePoint }); }
+  sendMbConfig(enabled: boolean, fivePoint: boolean, timeoutMs?: number) {
+    const msg: BLEMessage = { type: 'mb_config', enabled, five_point: fivePoint };
+    if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;
+    return this.send(msg);
+  }
+  sendSwConfig(enabled: boolean, timeoutMs?: number) {
+    const msg: BLEMessage = { type: 'sw_config', enabled };
+    if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;
+    return this.send(msg);
+  }
 
   private async requestPermissions(): Promise<void> {
     if (Platform.OS !== 'android') return;

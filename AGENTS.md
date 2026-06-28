@@ -113,15 +113,16 @@ each chunk is itself a valid JSON object with `type`, `seq`, `last`, and `data` 
 | `wled_raw` | `wled` (object) | POST arbitrary JSON to WLED `/json/state` |
 | `brightness` | `value` (0–255) | Set WLED brightness |
 | `zone_trigger` | `preset_id` | Apply preset (zone-sourced, respects override) |
-| `override_clear` | — | Clear manual/MB override, restore zone |
+| `override_clear` | — | Clear manual/BLE override, restore zone |
 | `override_mode` | `kill_on_zone` (bool) | Configure override behavior |
-| `mb_config` | `five_point` (bool), `timeout_ms` (int) | MagicBand+ config |
+| `sw_config` | `enabled` (bool), `timeout_ms` (int) | Starlight Wand config |
+| `mb_config` | `enabled` (bool), `five_point` (bool), `timeout_ms` (int) | MagicBand+ config |
 
 ### Firmware → App messages
 
 | `type` | Fields | Description |
 |--------|--------|-------------|
-| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `mb_five_point`, `mb_timeout_ms` | Device state |
+| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_five_point`, `mb_timeout_ms` | Device state |
 | `ack` | `action`, `id?`, `ok?` | Command acknowledgement |
 | `error` | `msg` | Firmware error |
 | `preset_list_raw` | assembled from `preset_chunk` chunks | JSON array of all presets |
@@ -131,6 +132,9 @@ each chunk is itself a valid JSON object with `type`, `seq`, `last`, and `data` 
 | `wled_state_done` | assembled from `wled_state` chunks | WLED state+info JSON |
 | `ble_color` | `r`, `g`, `b` | MagicBand+ E9 color event (6-bit → 8-bit scaled) |
 | `ble_event` | `event` | MagicBand+ non-color event (flash, fireworks, timeout) |
+| `sw_color` | `palette`, `r`, `g`, `b` | Starlight Wand palette color event |
+| `sw_event` | `event` | Starlight Wand event (timeout, disabled, blocked, wifi_down) |
+| `sw_debug` | `reason`, `hex`, `len` | Rate-limited raw wand packet debug (shown on Home) |
 
 ### Chunked type routing (BLEService.ts)
 
@@ -152,7 +156,9 @@ const CHUNKED_TYPES = {
 
 **Persisted keys** (AsyncStorage):
 `presets`, `zones`, `indoorZones`, `brightnessConfig`, `overrideKillOnZone`,
-`magicBandFivePoint`, `recallState`, `customPalettes`, `paletteSets`, `activePaletteSetId`
+`starlightEnabled`, `starlightTimeoutSec`, `magicBandEnabled`, `magicBandFivePoint`,
+`magicBandTimeoutSec`, `recallState`, `customPalettes`, `paletteSets`, `activePaletteSetId`,
+`wledEffects`, `wledPalettes`, `wledFxData` (cached WLED library — refresh via Library ↻)
 
 **Key types:**
 
@@ -261,12 +267,18 @@ ls app/node_modules/@tabler/icons-react-native/dist/esm/icons/ | grep "^IconName
 NimBLECharacteristic* notifyChar;
 bool bleConnected;
 
-// Override system
-enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC };
+// Override system — priority: Starlight Wand > MagicBand+ > Manual > Zone
+enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC, BLE_STARLIGHT };
 OverrideSource currentOverride;
 unsigned long overrideTimestamp;
 
+// Starlight Wand
+bool starlightEnabled;            // listen for CF9B broadcasts
+unsigned long starlightTimeoutMs; // ms before auto-clear (0 = never)
+unsigned long swEventTimestamp;
+
 // MagicBand
+bool magicBandEnabled;            // listen for E9 show codes
 bool magicBandFivePoint;          // 5-point vs 4-corner mode
 unsigned long magicBandTimeoutMs; // ms before auto-clear (0 = never)
 unsigned long mbEventTimestamp;   // millis() of last MB event
@@ -297,11 +309,22 @@ processPendingCommands();  // does actual HTTP work here
 ### MagicBand+ E9 packet format
 
 ```
-data[0-1]: manufacturer ID
+data[0-1]: manufacturer ID (0x83 0x01)
 data[2]:   0xE9 (MagicBand+ magic byte)
 data[3]:   command (0x05=vibrate, 0x06=flash, 0x08=color, 0x09=fireworks)
 data[4-6]: for 0x08: 6-bit RGB values — must scale: r = (data[4] & 0x3F) * 4
 ```
+
+### Starlight Wand CF9B packet format
+
+```
+data[0-1]: manufacturer ID (0x83 0x01)
+data[2-3]: 0xCF 0x9B (wand marker)
+data[4..n-2]: device serial / unknown
+data[n-1]: 5-bit palette color index (same table as MB+)
+```
+
+Wand broadcasts use the same corner-segment layout as MB+ color effects.
 
 ### Segment layout (MagicBand+ color effects)
 
@@ -370,7 +393,11 @@ cd web && ./serve.sh   # starts python3 -m http.server 3000 + opens browser
   "recallState": { "effect": "always", "palette": "always",
                    "parameters": "memory", "color": "memory", "segments": "never" },
   "overrideKillOnZone": false,
+  "starlightEnabled": true,
+  "starlightTimeoutSec": 30,
+  "magicBandEnabled": true,
   "magicBandFivePoint": true,
+  "magicBandTimeoutSec": 30,
   "customPalettes": [{ "id": "...", "name": "...", "colors": ["#hex", ...] }],
   "paletteSets": [{ "id": "...", "name": "...", "paletteIds": ["pid1", ...] }]
 }

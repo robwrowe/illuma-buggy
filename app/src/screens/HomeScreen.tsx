@@ -19,8 +19,9 @@ import { useAppStore, buildWledCustomPalette } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { useTheme } from '../utils/theme';
 
-const OVERRIDE_LABELS = ['Zone', 'Zone', 'Manual', 'MagicBand+'];
-const OVERRIDE_COLORS = (c: any) => [c.textMuted, c.success, c.warning, c.primary];
+const OVERRIDE_LABELS = ['—', 'Zone', 'Manual', 'MagicBand+', 'Starlight Wand'];
+const OVERRIDE_COLORS = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) =>
+  [c.textMuted, c.success, c.warning, c.primary, '#c084fc'];
 
 export default function HomeScreen() {
   const { colors } = useTheme();
@@ -50,14 +51,22 @@ export default function HomeScreen() {
     if (deviceStatus?.brightness !== undefined) setBrightness(deviceStatus.brightness);
   }, [deviceStatus?.brightness]);
 
-  // MagicBand+ event feed
+  // BLE effect event feed (Starlight Wand + MagicBand+)
   useEffect(() => {
     return bleService.onMessage((msg) => {
-      if (msg.type === 'ble_event' || msg.type === 'ble_color') {
+      if (msg.type === 'sw_color') {
+        const label = `Wand palette ${msg.palette} → R${msg.r} G${msg.g} B${msg.b}`;
+        setEvents(prev => [label, ...prev].slice(0, 12));
+      } else if (msg.type === 'sw_debug') {
+        const label = `Wand [${msg.reason}] ${msg.hex} (${msg.len}b)`;
+        setEvents(prev => [label, ...prev].slice(0, 12));
+      } else if (msg.type === 'sw_event') {
+        setEvents(prev => [`Wand: ${String(msg.event)}`, ...prev].slice(0, 12));
+      } else if (msg.type === 'ble_event' || msg.type === 'ble_color') {
         const label = msg.type === 'ble_color'
-          ? `Color → R${msg.r} G${msg.g} B${msg.b}`
-          : String(msg.event);
-        setEvents(prev => [label, ...prev].slice(0, 6));
+          ? `MB+ color → R${msg.r} G${msg.g} B${msg.b}`
+          : `MB+: ${String(msg.event)}`;
+        setEvents(prev => [label, ...prev].slice(0, 12));
       }
     });
   }, []);
@@ -228,19 +237,23 @@ export default function HomeScreen() {
         />
       </View>
 
-      {/* MagicBand+ events */}
-      {events.length > 0 && (
+      {/* BLE effect events — always visible when connected */}
+      {isConnected && (
         <View style={s.card}>
           <View style={s.row}>
             <IconSparkles size={15} color={colors.textSecondary} />
-            <Text style={s.label}>MagicBand+ Events</Text>
+            <Text style={s.label}>BLE Effect Events</Text>
           </View>
-          {events.map((e, i) => (
-            <View key={i} style={[s.row, { opacity: Math.max(0.3, 1 - i * 0.15) }]}>
-              <IconBolt size={11} color={colors.primary} />
-              <Text style={[s.subText, { marginLeft: 4 }]}>{e}</Text>
-            </View>
-          ))}
+          {events.length === 0 ? (
+            <Text style={s.subText}>Wave the wand — raw packets appear here as [packet] hex dumps</Text>
+          ) : (
+            events.map((e, i) => (
+              <View key={i} style={[s.row, { opacity: Math.max(0.3, 1 - i * 0.08) }]}>
+                <IconBolt size={11} color={colors.primary} />
+                <Text style={[s.subText, { marginLeft: 4, flex: 1 }]} numberOfLines={2}>{e}</Text>
+              </View>
+            ))
+          )}
         </View>
       )}
 

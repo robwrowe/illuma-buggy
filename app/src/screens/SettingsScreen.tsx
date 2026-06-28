@@ -24,14 +24,15 @@ const RECALL_LABELS: Record<RecallValue, string> = { always: 'Always', never: 'N
 
 export default function SettingsScreen() {
   const { colors, mode, setMode } = useTheme();
-  const [mbTimeoutSec, setMbTimeoutSec] = React.useState(
-    () => Math.round((useAppStore.getState().deviceStatus as any)?.mb_timeout_ms ?? 30000) / 1000
-  );
   const s = styles(colors);
   const { isConnected } = useBLE();
   const {
     overrideKillOnZone, setOverrideKillOnZone,
+    starlightEnabled, setStarlightEnabled,
+    starlightTimeoutSec, setStarlightTimeoutSec,
+    magicBandEnabled, setMagicBandEnabled,
     magicBandFivePoint, setMagicBandFivePoint,
+    magicBandTimeoutSec, setMagicBandTimeoutSec,
     brightnessConfig, setBrightnessConfig,
     recallState, setRecallState,
     saveToStorage, exportData, importData,
@@ -43,9 +44,33 @@ export default function SettingsScreen() {
     saveToStorage();
   };
 
+  const pushSwConfig = (enabled = starlightEnabled, timeoutSec = starlightTimeoutSec) => {
+    if (isConnected) bleService.sendSwConfig(enabled, timeoutSec * 1000);
+  };
+
+  const pushMbConfig = (
+    enabled = magicBandEnabled,
+    fivePoint = magicBandFivePoint,
+    timeoutSec = magicBandTimeoutSec,
+  ) => {
+    if (isConnected) bleService.sendMbConfig(enabled, fivePoint, timeoutSec * 1000);
+  };
+
+  const updateStarlightEnabled = (val: boolean) => {
+    setStarlightEnabled(val);
+    pushSwConfig(val);
+    saveToStorage();
+  };
+
+  const updateMbEnabled = (val: boolean) => {
+    setMagicBandEnabled(val);
+    pushMbConfig(val);
+    saveToStorage();
+  };
+
   const updateMbFivePoint = (val: boolean) => {
     setMagicBandFivePoint(val);
-    bleService.sendMbConfig(val);
+    pushMbConfig(magicBandEnabled, val);
     saveToStorage();
   };
 
@@ -159,9 +184,45 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* Starlight Wand */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Starlight Wand Effects</Text>
+        <Text style={s.sectionHint}>Highest priority. Detects 0xCF9B wand broadcasts at home or in-park.</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Enable wand effects</Text>
+            <Text style={s.rowHint}>Listen for Starlight Wand BLE color codes.</Text>
+          </View>
+          <Switch value={starlightEnabled} onValueChange={updateStarlightEnabled}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
+        </View>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Auto-clear timeout</Text>
+            <Text style={s.rowHint}>Seconds before wand effect reverts. 0 = never.</Text>
+          </View>
+          <TextInput
+            style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
+            value={String(starlightTimeoutSec)}
+            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setStarlightTimeoutSec(n); }}
+            onEndEditing={() => { pushSwConfig(); saveToStorage(); }}
+            keyboardType="number-pad"
+            selectTextOnFocus
+          />
+        </View>
+      </View>
+
       {/* MagicBand */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>MagicBand+ Effects</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Enable MB+ effects</Text>
+            <Text style={s.rowHint}>Listen for in-park E9 show codes (lower priority than wand).</Text>
+          </View>
+          <Switch value={magicBandEnabled} onValueChange={updateMbEnabled}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
+        </View>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>5-point mode</Text>
@@ -173,17 +234,13 @@ export default function SettingsScreen() {
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>Auto-clear timeout</Text>
-            <Text style={s.rowHint}>Seconds before MagicBand+ effect auto-clears. 0 = never.</Text>
+            <Text style={s.rowHint}>Seconds before MB+ effect auto-clears. 0 = never.</Text>
           </View>
           <TextInput
             style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
-            value={String(mbTimeoutSec)}
-            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setMbTimeoutSec(n); }}
-            onEndEditing={() => {
-              const ms = mbTimeoutSec * 1000;
-              bleService.send({ type: 'mb_config', five_point: magicBandFivePoint, timeout_ms: ms });
-              saveToStorage();
-            }}
+            value={String(magicBandTimeoutSec)}
+            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setMagicBandTimeoutSec(n); }}
+            onEndEditing={() => { pushMbConfig(); saveToStorage(); }}
             keyboardType="number-pad"
             selectTextOnFocus
           />
