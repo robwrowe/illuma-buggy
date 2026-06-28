@@ -24,6 +24,9 @@ const RECALL_LABELS: Record<RecallValue, string> = { always: 'Always', never: 'N
 
 export default function SettingsScreen() {
   const { colors, mode, setMode } = useTheme();
+  const [mbTimeoutSec, setMbTimeoutSec] = React.useState(
+    () => Math.round((useAppStore.getState().deviceStatus as any)?.mb_timeout_ms ?? 30000) / 1000
+  );
   const s = styles(colors);
   const { isConnected } = useBLE();
   const {
@@ -166,6 +169,24 @@ export default function SettingsScreen() {
           </View>
           <Switch value={magicBandFivePoint} onValueChange={updateMbFivePoint}
             trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
+        </View>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Auto-clear timeout</Text>
+            <Text style={s.rowHint}>Seconds before MagicBand+ effect auto-clears. 0 = never.</Text>
+          </View>
+          <TextInput
+            style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
+            value={String(mbTimeoutSec)}
+            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setMbTimeoutSec(n); }}
+            onEndEditing={() => {
+              const ms = mbTimeoutSec * 1000;
+              bleService.send({ type: 'mb_config', five_point: magicBandFivePoint, timeout_ms: ms });
+              saveToStorage();
+            }}
+            keyboardType="number-pad"
+            selectTextOnFocus
+          />
         </View>
       </View>
 

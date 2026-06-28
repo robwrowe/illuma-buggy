@@ -1,937 +1,958 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Illuma Buggy — Config Tool</title>
-  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
-  <style>
-    *,
-    *::before,
-    *::after {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0
-    }
-
-    :root {
-      --bg: #0a0a0f;
-      --surface: #12121e;
-      --surface2: #1a1a2e;
-      --border: #2a2a3e;
-      --primary: #a78bfa;
-      --primary-dim: #a78bfa22;
-      --success: #22c55e;
-      --warning: #f59e0b;
-      --danger: #ef4444;
-      --text: #e8e8f0;
-      --text2: #9090b0;
-      --text3: #4a4a6a;
-      --indoor: #60a5fa;
-    }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, system-ui, sans-serif;
-      height: 100vh;
-      overflow: hidden
-    }
-
-    #root {
-      height: 100vh;
-      display: flex;
-      flex-direction: column
-    }
-
-    button {
-      cursor: pointer;
-      border: none;
-      outline: none;
-      font-family: inherit
-    }
-
-    input,
-    select,
-    textarea {
-      outline: none;
-      font-family: inherit
-    }
-
-    ::-webkit-scrollbar {
-      width: 5px;
-      height: 5px
-    }
-
-    ::-webkit-scrollbar-track {
-      background: transparent
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 3px
-    }
-
-    #map-container {
-      width: 100%;
-      height: 100%
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Illuma Buggy — Config Tool</title>
+<script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0a0f;--surface:#12121e;--surface2:#1a1a2e;
+  --border:#2a2a3e;--primary:#a78bfa;--primary-dim:#a78bfa22;
+  --success:#22c55e;--warning:#f59e0b;--danger:#ef4444;
+  --text:#e8e8f0;--text2:#9090b0;--text3:#4a4a6a;--indoor:#60a5fa;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,sans-serif;height:100vh;overflow:hidden}
+#root{height:100vh;display:flex;flex-direction:column}
+button{cursor:pointer;border:none;outline:none;font-family:inherit}
+input,select,textarea{outline:none;font-family:inherit}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+#map-container{width:100%;height:100%}
+</style>
 </head>
-
 <body>
-  <div id="root">
-    <div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text2);font-size:14px">
-      Loading…</div>
-  </div>
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text2);font-size:14px">Loading…</div></div>
 
-  <script type="text/javascript">
-    // Google Maps loader - called from the React app
-    window.MAPS_LOADED = false;
-    window.MAPS_KEY = 'AIzaSyBWAqtlMqVathaVflE8S5OLpqAVvVscxWI';
-    window.initMap = function () { window.MAPS_LOADED = true; };
-    window.loadGoogleMaps = function () {
-      if (window.google) { window.MAPS_LOADED = true; return; }
-      var s = document.createElement('script');
-      s.src = 'https://maps.googleapis.com/maps/api/js?key=' + window.MAPS_KEY + '&callback=initMap&libraries=geometry';
+<script type="text/javascript">
+// Google Maps loader - called from the React app
+window.MAPS_LOADED = false;
+window.MAPS_KEY = localStorage.getItem('maps-api-key') || '';
+window.initMap = function() { window.MAPS_LOADED = true; };
+window.loadGoogleMaps = function() {
+  if (window.google) { window.MAPS_LOADED = true; return; }
+  var s = document.createElement('script');
+  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + window.MAPS_KEY + '&callback=initMap&libraries=geometry';
+  s.async = true;
+  s.defer = true;
+  document.head.appendChild(s);
+};
+if (window.MAPS_KEY) window.loadGoogleMaps();
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Utilities ──────────────────────────────────────────────────────
+function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return [r,g,b];
+}
+
+const ZONE_COLORS = ['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316','#ec4899','#14b8a6'];
+const PRESET_COLORS = [
+  '#ff0000','#ff4400','#ff8800','#ffcc00','#ffff00','#aaff00','#00ff00','#00ff88',
+  '#00ffff','#0099ff','#0044ff','#6600ff','#aa00ff','#ff00ff','#ff0088','#ffffff',
+  '#888888','#444444','#000000','#ff6666','#66ff66','#6666ff','#ffaa44','#44aaff',
+];
+
+const DEFAULT_DATA = {
+  version:'2.2', presets:[], zones:[], indoorZones:[],
+  brightnessConfig:{daytime:200,nighttime:80,indoor:120,transitionMinutes:30,solarThresholdDeg:6},
+  recallState:{effect:'always',palette:'always',parameters:'memory',color:'memory',segments:'never'},
+  overrideKillOnZone:false, magicBandFivePoint:true,
+  customPalettes:[], paletteSets:[],
+};
+
+const LS_KEY = 'illuma-buggy-active';
+const LS_PROFILES = 'illuma-buggy-profiles';
+
+// ── Shared UI ──────────────────────────────────────────────────────
+const btn = (variant, extra={}) => ({
+  padding:'7px 14px', borderRadius:8, fontWeight:600, fontSize:13, cursor:'pointer',
+  background: variant==='primary' ? 'var(--primary)' : variant==='danger' ? '#ef444422' : 'var(--surface2)',
+  color: variant==='primary' ? '#fff' : variant==='danger' ? 'var(--danger)' : 'var(--text2)',
+  border: variant==='danger' ? '1px solid var(--danger)' : '1px solid var(--border)',
+  ...extra,
+});
+const inputStyle = {width:'100%',background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:8,color:'var(--text)',padding:'8px 10px',fontSize:14};
+const labelStyle = {display:'block',fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.6px',marginBottom:5};
+const cardStyle = {background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:14,marginBottom:12};
+const selectStyle = {...inputStyle, cursor:'pointer'};
+
+function Field({label,children,style={}}) {
+  return <div style={{marginBottom:10,...style}}>
+    <label style={labelStyle}>{label}</label>
+    {children}
+  </div>;
+}
+
+function SectionHead({children}) {
+  return <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.6px',marginBottom:8,marginTop:16}}>{children}</div>;
+}
+
+function Modal({title,children,onClose,width=400}) {
+  return <div style={{position:'fixed',inset:0,background:'#00000099',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
+    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:14,padding:20,width,maxWidth:'95vw',maxHeight:'85vh',overflowY:'auto',display:'flex',flexDirection:'column',gap:10}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+        <span style={{fontWeight:700,fontSize:15}}>{title}</span>
+        <button onClick={onClose} style={{background:'none',color:'var(--text3)',fontSize:20,lineHeight:1,cursor:'pointer',border:'none'}}>×</button>
+      </div>
+      {children}
+    </div>
+  </div>;
+}
+
+function ColorSwatch({colors,size=14,gap=3,max=999}) {
+  return <div style={{display:'flex',flexWrap:'wrap',gap}}>
+    {colors.slice(0,max).map((c,i) => <div key={i} style={{width:size,height:size,borderRadius:3,background:c,border:'1px solid #ffffff22'}}/>)}
+  </div>;
+}
+
+function PaletteGradient({colors,height=24}) {
+  if (!colors || colors.length < 2) return null;
+  return <div style={{height,borderRadius:6,overflow:'hidden',flexDirection:'row',display:'flex',border:'1px solid var(--border)'}}>
+    {colors.map((c,i) => <div key={i} style={{flex:1,background:c}}/>)}
+  </div>;
+}
+
+// ── App ───────────────────────────────────────────────────────────
+function App() {
+  const [tab, setTab]   = useState('map');
+  const [mapsReady, setMapsReady] = useState(window.MAPS_LOADED);
+  const [data, setData] = useState(() => {
+    try { const s = localStorage.getItem(LS_KEY); return s ? {...DEFAULT_DATA,...JSON.parse(s)} : {...DEFAULT_DATA}; }
+    catch { return {...DEFAULT_DATA}; }
+  });
+  const [profiles, setProfiles] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(LS_PROFILES)||'{}'); } catch { return {}; }
+  });
+  const [showProfiles, setShowProfiles] = useState(false);
+  // Maps API key — stored in localStorage, prompted if missing
+  const [mapsKey, setMapsKey] = useState(() => localStorage.getItem('maps-api-key') || '');
+  const [showKeyModal, setShowKeyModal] = useState(() => !localStorage.getItem('maps-api-key'));
+  const [keyInput, setKeyInput] = useState(() => localStorage.getItem('maps-api-key') || '');
+
+  const saveMapsKey = () => {
+    const k = keyInput.trim();
+    if (!k) return;
+    localStorage.setItem('maps-api-key', k);
+    setMapsKey(k);
+    setShowKeyModal(false);
+    // Dynamically reload Maps with new key
+    if (!window.google) {
+      const s = document.createElement('script');
+      s.src = 'https://maps.googleapis.com/maps/api/js?key=' + k + '&callback=initMap&libraries=geometry';
       s.async = true;
-      s.defer = true;
       document.head.appendChild(s);
-    };
-    window.loadGoogleMaps();
-  </script>
-
-  <script type="text/babel" data-presets="react">
-    const { useState, useEffect, useRef, useCallback } = React;
-
-    // ── Utilities ──────────────────────────────────────────────────────
-    function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
-
-    function hexToRgb(hex) {
-      const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-      return [r, g, b];
+    } else {
+      window.MAPS_LOADED = true;
     }
+  };
+  const [newProfileName, setNewProfileName] = useState('');
 
-    const ZONE_COLORS = ['#a78bfa', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899', '#14b8a6'];
-    const PRESET_COLORS = [
-      '#ff0000', '#ff4400', '#ff8800', '#ffcc00', '#ffff00', '#aaff00', '#00ff00', '#00ff88',
-      '#00ffff', '#0099ff', '#0044ff', '#6600ff', '#aa00ff', '#ff00ff', '#ff0088', '#ffffff',
-      '#888888', '#444444', '#000000', '#ff6666', '#66ff66', '#6666ff', '#ffaa44', '#44aaff',
-    ];
+  // Poll for Maps ready
+  useEffect(() => {
+    if (window.MAPS_LOADED) return;
+    const t = setInterval(() => { if (window.MAPS_LOADED) { setMapsReady(true); clearInterval(t); } }, 200);
+    return () => clearInterval(t);
+  }, []);
 
-    const DEFAULT_DATA = {
-      version: '2.2', presets: [], zones: [], indoorZones: [],
-      brightnessConfig: { daytime: 200, nighttime: 80, indoor: 120, transitionMinutes: 30, solarThresholdDeg: 6 },
-      recallState: { effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never' },
-      overrideKillOnZone: false, magicBandFivePoint: true,
-      customPalettes: [], paletteSets: [],
-    };
-
-    const LS_KEY = 'illuma-buggy-active';
-    const LS_PROFILES = 'illuma-buggy-profiles';
-
-    // ── Shared UI ──────────────────────────────────────────────────────
-    const btn = (variant, extra = {}) => ({
-      padding: '7px 14px', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer',
-      background: variant === 'primary' ? 'var(--primary)' : variant === 'danger' ? '#ef444422' : 'var(--surface2)',
-      color: variant === 'primary' ? '#fff' : variant === 'danger' ? 'var(--danger)' : 'var(--text2)',
-      border: variant === 'danger' ? '1px solid var(--danger)' : '1px solid var(--border)',
-      ...extra,
+  const update = useCallback((patch) => {
+    setData(prev => {
+      const next = {...prev, ...patch};
+      try { localStorage.setItem(LS_KEY, JSON.stringify(next)); } catch {}
+      return next;
     });
-    const inputStyle = { width: '100%', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', padding: '8px 10px', fontSize: 14 };
-    const labelStyle = { display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 5 };
-    const cardStyle = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 14, marginBottom: 12 };
-    const selectStyle = { ...inputStyle, cursor: 'pointer' };
+  }, []);
 
-    function Field({ label, children, style = {} }) {
-      return <div style={{ marginBottom: 10, ...style }}>
-        <label style={labelStyle}>{label}</label>
-        {children}
-      </div>;
-    }
+  const saveProfile = () => {
+    if (!newProfileName.trim()) return;
+    const updated = {...profiles, [newProfileName]: {...data, savedAt: new Date().toISOString()}};
+    setProfiles(updated);
+    localStorage.setItem(LS_PROFILES, JSON.stringify(updated));
+    setNewProfileName('');
+  };
 
-    function SectionHead({ children }) {
-      return <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 8, marginTop: 16 }}>{children}</div>;
-    }
+  const loadProfile = (name) => {
+    if (!profiles[name]) return;
+    const {savedAt, ...rest} = profiles[name];
+    update({...DEFAULT_DATA, ...rest});
+    setShowProfiles(false);
+  };
 
-    function Modal({ title, children, onClose, width = 400 }) {
-      return <div style={{ position: 'fixed', inset: 0, background: '#00000099', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, width, maxWidth: '95vw', maxHeight: '85vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <span style={{ fontWeight: 700, fontSize: 15 }}>{title}</span>
-            <button onClick={onClose} style={{ background: 'none', color: 'var(--text3)', fontSize: 20, lineHeight: 1, cursor: 'pointer', border: 'none' }}>×</button>
-          </div>
-          {children}
+  const deleteProfile = (name) => {
+    if (!confirm(`Delete profile "${name}"?`)) return;
+    const updated = {...profiles}; delete updated[name];
+    setProfiles(updated);
+    localStorage.setItem(LS_PROFILES, JSON.stringify(updated));
+  };
+
+  const exportJSON = () => {
+    const blob = new Blob([JSON.stringify({...data, exportedAt: new Date().toISOString()},null,2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `illuma-buggy-${(newProfileName||'export').replace(/\s+/g,'-')}-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+  };
+
+  const importJSON = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { try { update({...DEFAULT_DATA, ...JSON.parse(ev.target.result)}); alert('Imported!'); } catch { alert('Invalid file'); } };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const TABS = [
+    {id:'map',      label:'🗺 Map & Zones'},
+    {id:'presets',  label:'✨ Presets'},
+    {id:'palettes', label:'🎨 Palettes'},
+    {id:'brightness',label:'💡 Brightness'},
+    {id:'settings', label:'⚙️ Settings'},
+  ];
+
+  return <div style={{display:'flex',flexDirection:'column',height:'100vh'}}>
+    {/* Header */}
+    <div style={{background:'var(--surface)',borderBottom:'1px solid var(--border)',padding:'0 12px',display:'flex',alignItems:'center',gap:8,minHeight:46,flexShrink:0}}>
+      <span style={{fontWeight:700,color:'var(--primary)',fontSize:14,marginRight:4}}>🔦 Illuma Buggy</span>
+      <div style={{display:'flex',gap:2,flex:1,overflowX:'auto'}}>
+        {TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{
+          padding:'5px 12px',borderRadius:7,whiteSpace:'nowrap',
+          background: tab===t.id ? 'var(--primary-dim)' : 'transparent',
+          color: tab===t.id ? 'var(--primary)' : 'var(--text2)',
+          fontWeight:600, fontSize:12,
+          border: tab===t.id ? '1px solid var(--primary)' : '1px solid transparent',
+        }}>{t.label}</button>)}
+      </div>
+      <button onClick={() => setShowProfiles(true)} style={btn('',{fontSize:12})}>
+        🗂 Profiles {Object.keys(profiles).length > 0 && `(${Object.keys(profiles).length})`}
+      </button>
+      <label style={{...btn('',{fontSize:12}), cursor:'pointer'}}>
+        📥 Import <input type="file" accept=".json" onChange={importJSON} style={{display:'none'}}/>
+      </label>
+      <button onClick={exportJSON} style={btn('primary',{fontSize:12})}>📤 Export</button>
+    </div>
+
+    {/* Tab content */}
+    <div style={{flex:1,overflow:'hidden'}}>
+      {tab==='map'        && <MapZonesTab data={data} update={update} mapsReady={mapsReady}/>}
+      {tab==='presets'    && <PresetsTab data={data} update={update}/>}
+      {tab==='palettes'   && <PalettesTab data={data} update={update}/>}
+      {tab==='brightness' && <BrightnessTab data={data} update={update}/>}
+      {tab==='settings'   && <SettingsTab data={data} update={update}/>}
+    </div>
+
+    {/* API Key modal */}
+    {showKeyModal && (<div style={{position:'fixed',inset:0,background:'#000000cc',display:'flex',alignItems:'center',justifyContent:'center',zIndex:3000}}>
+      <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:16,padding:28,width:440,display:'flex',flexDirection:'column',gap:16}}>
+        <div style={{fontSize:18,fontWeight:700}}>🔑 Google Maps API Key</div>
+        <div style={{fontSize:13,color:'var(--text2)',lineHeight:'1.6'}}>
+          Stored only in your browser. Get a key at <a href="https://console.cloud.google.com/google/maps-apis" target="_blank" style={{color:'var(--primary)'}}>Google Cloud Console</a> — enable Maps JavaScript API and Geocoding API.
         </div>
-      </div>;
-    }
-
-    function ColorSwatch({ colors, size = 14, gap = 3, max = 999 }) {
-      return <div style={{ display: 'flex', flexWrap: 'wrap', gap }}>
-        {colors.slice(0, max).map((c, i) => <div key={i} style={{ width: size, height: size, borderRadius: 3, background: c, border: '1px solid #ffffff22' }} />)}
-      </div>;
-    }
-
-    function PaletteGradient({ colors, height = 24 }) {
-      if (!colors || colors.length < 2) return null;
-      return <div style={{ height, borderRadius: 6, overflow: 'hidden', flexDirection: 'row', display: 'flex', border: '1px solid var(--border)' }}>
-        {colors.map((c, i) => <div key={i} style={{ flex: 1, background: c }} />)}
-      </div>;
-    }
-
-    // ── App ───────────────────────────────────────────────────────────
-    function App() {
-      const [tab, setTab] = useState('map');
-      const [mapsReady, setMapsReady] = useState(window.MAPS_LOADED);
-      const [data, setData] = useState(() => {
-        try { const s = localStorage.getItem(LS_KEY); return s ? { ...DEFAULT_DATA, ...JSON.parse(s) } : { ...DEFAULT_DATA }; }
-        catch { return { ...DEFAULT_DATA }; }
-      });
-      const [profiles, setProfiles] = useState(() => {
-        try { return JSON.parse(localStorage.getItem(LS_PROFILES) || '{}'); } catch { return {}; }
-      });
-      const [showProfiles, setShowProfiles] = useState(false);
-      const [newProfileName, setNewProfileName] = useState('');
-
-      // Poll for Maps ready
-      useEffect(() => {
-        if (window.MAPS_LOADED) return;
-        const t = setInterval(() => { if (window.MAPS_LOADED) { setMapsReady(true); clearInterval(t); } }, 200);
-        return () => clearInterval(t);
-      }, []);
-
-      const update = useCallback((patch) => {
-        setData(prev => {
-          const next = { ...prev, ...patch };
-          try { localStorage.setItem(LS_KEY, JSON.stringify(next)); } catch { }
-          return next;
-        });
-      }, []);
-
-      const saveProfile = () => {
-        if (!newProfileName.trim()) return;
-        const updated = { ...profiles, [newProfileName]: { ...data, savedAt: new Date().toISOString() } };
-        setProfiles(updated);
-        localStorage.setItem(LS_PROFILES, JSON.stringify(updated));
-        setNewProfileName('');
-      };
-
-      const loadProfile = (name) => {
-        if (!profiles[name]) return;
-        const { savedAt, ...rest } = profiles[name];
-        update({ ...DEFAULT_DATA, ...rest });
-        setShowProfiles(false);
-      };
-
-      const deleteProfile = (name) => {
-        if (!confirm(`Delete profile "${name}"?`)) return;
-        const updated = { ...profiles }; delete updated[name];
-        setProfiles(updated);
-        localStorage.setItem(LS_PROFILES, JSON.stringify(updated));
-      };
-
-      const exportJSON = () => {
-        const blob = new Blob([JSON.stringify({ ...data, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = `illuma-buggy-${(newProfileName || 'export').replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-      };
-
-      const importJSON = (e) => {
-        const file = e.target.files[0]; if (!file) return;
-        const reader = new FileReader();
-        reader.onload = ev => { try { update({ ...DEFAULT_DATA, ...JSON.parse(ev.target.result) }); alert('Imported!'); } catch { alert('Invalid file'); } };
-        reader.readAsText(file);
-        e.target.value = '';
-      };
-
-      const TABS = [
-        { id: 'map', label: '🗺 Map & Zones' },
-        { id: 'presets', label: '✨ Presets' },
-        { id: 'palettes', label: '🎨 Palettes' },
-        { id: 'brightness', label: '💡 Brightness' },
-        { id: 'settings', label: '⚙️ Settings' },
-      ];
-
-      return <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-        {/* Header */}
-        <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '0 12px', display: 'flex', alignItems: 'center', gap: 8, minHeight: 46, flexShrink: 0 }}>
-          <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 14, marginRight: 4 }}>🔦 Illuma Buggy</span>
-          <div style={{ display: 'flex', gap: 2, flex: 1, overflowX: 'auto' }}>
-            {TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{
-              padding: '5px 12px', borderRadius: 7, whiteSpace: 'nowrap',
-              background: tab === t.id ? 'var(--primary-dim)' : 'transparent',
-              color: tab === t.id ? 'var(--primary)' : 'var(--text2)',
-              fontWeight: 600, fontSize: 12,
-              border: tab === t.id ? '1px solid var(--primary)' : '1px solid transparent',
-            }}>{t.label}</button>)}
-          </div>
-          <button onClick={() => setShowProfiles(true)} style={btn('', { fontSize: 12 })}>
-            🗂 Profiles {Object.keys(profiles).length > 0 && `(${Object.keys(profiles).length})`}
-          </button>
-          <label style={{ ...btn('', { fontSize: 12 }), cursor: 'pointer' }}>
-            📥 Import <input type="file" accept=".json" onChange={importJSON} style={{ display: 'none' }} />
-          </label>
-          <button onClick={exportJSON} style={btn('primary', { fontSize: 12 })}>📤 Export</button>
+        <input value={keyInput} onChange={e=>setKeyInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&saveMapsKey()}
+          placeholder="AIza..." style={{...inputStyle,fontFamily:'monospace',fontSize:13}} autoFocus/>
+        <div style={{display:'flex',gap:8}}>
+          {mapsKey && <button onClick={()=>setShowKeyModal(false)} style={btn('',{flex:1})}>Cancel</button>}
+          <button onClick={saveMapsKey} disabled={!keyInput.trim()} style={btn('primary',{flex:1})}>Save & Load Map</button>
         </div>
+      </div>
+    </div>)}
 
-        {/* Tab content */}
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          {tab === 'map' && <MapZonesTab data={data} update={update} mapsReady={mapsReady} />}
-          {tab === 'presets' && <PresetsTab data={data} update={update} />}
-          {tab === 'palettes' && <PalettesTab data={data} update={update} />}
-          {tab === 'brightness' && <BrightnessTab data={data} update={update} />}
-          {tab === 'settings' && <SettingsTab data={data} update={update} />}
-        </div>
-
-        {/* Profiles modal */}
-        {showProfiles && <Modal title="🗂 Profiles" onClose={() => setShowProfiles(false)} width={460}>
-          <p style={{ fontSize: 12, color: 'var(--text3)' }}>
-            Profiles save your full config (zones, presets, palettes, settings) to a named slot in browser storage.
-            Perfect for separate configs per park — load one before you leave the house.
-          </p>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input value={newProfileName} onChange={e => setNewProfileName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && saveProfile()}
-              placeholder="Profile name (e.g. Magic Kingdom)"
-              style={{ ...inputStyle, flex: 1 }} />
-            <button onClick={saveProfile} style={btn('primary')}>Save</button>
-          </div>
-          {Object.keys(profiles).length === 0
-            ? <div style={{ textAlign: 'center', color: 'var(--text3)', padding: '16px 0', fontSize: 13 }}>No profiles saved yet</div>
-            : Object.entries(profiles).map(([name, prof]) => (
-              <div key={name} style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-                    {prof.presets?.length || 0} presets · {prof.zones?.length || 0} zones · {prof.customPalettes?.length || 0} palettes
-                    {prof.savedAt && ' · ' + new Date(prof.savedAt).toLocaleDateString()}
-                  </div>
-                </div>
-                <button onClick={() => loadProfile(name)} style={btn('primary', { fontSize: 12 })}>Load</button>
-                <button onClick={() => {
-                  const updated = { ...profiles, [name]: { ...data, savedAt: new Date().toISOString() } };
-                  setProfiles(updated); localStorage.setItem(LS_PROFILES, JSON.stringify(updated));
-                }} style={btn('', { fontSize: 12 })}>Update</button>
-                <button onClick={() => deleteProfile(name)} style={btn('danger', { fontSize: 12 })}>✕</button>
+    {/* Profiles modal */}
+    {showProfiles && <Modal title="🗂 Profiles" onClose={() => setShowProfiles(false)} width={460}>
+      <p style={{fontSize:12,color:'var(--text3)'}}>
+        Profiles save your full config (zones, presets, palettes, settings) to a named slot in browser storage.
+        Perfect for separate configs per park — load one before you leave the house.
+      </p>
+      <div style={{display:'flex',gap:8}}>
+        <input value={newProfileName} onChange={e => setNewProfileName(e.target.value)}
+          onKeyDown={e => e.key==='Enter' && saveProfile()}
+          placeholder="Profile name (e.g. Magic Kingdom)"
+          style={{...inputStyle,flex:1}}/>
+        <button onClick={saveProfile} style={btn('primary')}>Save</button>
+      </div>
+      {Object.keys(profiles).length === 0
+        ? <div style={{textAlign:'center',color:'var(--text3)',padding:'16px 0',fontSize:13}}>No profiles saved yet</div>
+        : Object.entries(profiles).map(([name, prof]) => (
+          <div key={name} style={{...cardStyle,display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:14}}>{name}</div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>
+                {prof.presets?.length||0} presets · {prof.zones?.length||0} zones · {prof.customPalettes?.length||0} palettes
+                {prof.savedAt && ' · ' + new Date(prof.savedAt).toLocaleDateString()}
               </div>
-            ))
+            </div>
+            <button onClick={() => loadProfile(name)} style={btn('primary',{fontSize:12})}>Load</button>
+            <button onClick={() => {
+              const updated = {...profiles, [name]: {...data, savedAt: new Date().toISOString()}};
+              setProfiles(updated); localStorage.setItem(LS_PROFILES, JSON.stringify(updated));
+            }} style={btn('',{fontSize:12})}>Update</button>
+            <button onClick={() => deleteProfile(name)} style={btn('danger',{fontSize:12})}>✕</button>
+          </div>
+        ))
+      }
+    </Modal>}
+  </div>;
+}
+
+// ── Map & Zones ────────────────────────────────────────────────────────
+function MapZonesTab({data, update}) {
+  const gmap     = useRef(null);
+  const mapDiv   = useRef(null);
+  const zonePoly = useRef([]);
+  const pinMarkers = useRef([]);
+  const previewPoly = useRef(null);
+
+  const [drawMode, setDrawMode] = useState('none');
+  const [insertMode, setInsertMode] = useState(false);
+  const [drawPoints, setDrawPoints] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [formName, setFormName] = useState('');
+  const [formPreset, setFormPreset] = useState('');
+  const [editZone, setEditZone] = useState(null);
+  const [editIndoor, setEditIndoor] = useState(null);
+  const [mapType, setMapType] = useState('satellite');
+  const [locationSearch, setLocationSearch] = useState('');
+  const [searching, setSearching] = useState(false);
+
+  // Keep refs current to use inside Google Maps callbacks
+  const drawModeRef  = useRef('none');
+  const drawPtsRef   = useRef([]);
+  drawModeRef.current = drawMode;
+  drawPtsRef.current  = drawPoints;
+  const insertModeRef = useRef(false);
+  insertModeRef.current = insertMode;
+
+  // Init map
+  useEffect(() => {
+    if (!window.google || gmap.current) return;
+    const waitForMaps = setInterval(() => {
+      if (!window.google?.maps) return;
+      clearInterval(waitForMaps);
+      gmap.current = new google.maps.Map(mapDiv.current, {
+        center:{lat:28.4177,lng:-81.5812}, zoom:15,
+        mapTypeId:'satellite',
+        mapTypeControl:false, streetViewControl:false,
+        fullscreenControlOptions:{position:google.maps.ControlPosition.TOP_LEFT},
+      });
+      gmap.current.addListener('click', e => {
+        const lat = e.latLng.lat(), lng = e.latLng.lng();
+        const pts = drawPtsRef.current;
+        if (drawModeRef.current === 'none') return;
+        if (insertModeRef.current && pts.length >= 2) {
+          // Find nearest edge midpoint and insert there
+          let bestIdx = 0, bestDist = Infinity;
+          for (let i = 0; i < pts.length; i++) {
+            const a = pts[i], b = pts[(i+1) % pts.length];
+            const midLat = (a.lat+b.lat)/2, midLng = (a.lng+b.lng)/2;
+            const d = Math.pow(lat-midLat,2) + Math.pow(lng-midLng,2);
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
           }
-        </Modal>}
-      </div>;
-    }
-
-    // ── Map & Zones ────────────────────────────────────────────────────
-    function MapZonesTab({ data, update, mapsReady }) {
-      const mapDiv = useRef(null);
-      const gmap = useRef(null);
-      const overlays = useRef([]);
-      const pinMarkers = useRef([]);
-      const previewPoly = useRef(null);
-
-      const [drawMode, setDrawMode] = useState('none');
-      const [drawPoints, setDrawPoints] = useState([]);
-      const [selPin, setSelPin] = useState(null);
-      const [showForm, setShowForm] = useState(false);
-      const [formName, setFormName] = useState('');
-      const [formPreset, setFormPreset] = useState('');
-      const [editZone, setEditZone] = useState(null);
-      const [editIndoor, setEditIndoor] = useState(null);
-      const [mapType, setMapType] = useState('satellite');
-      const drawModeRef = useRef('none');
-      const selPinRef = useRef(null);
-      const drawPtsRef = useRef([]);
-
-      drawModeRef.current = drawMode;
-      selPinRef.current = selPin;
-      drawPtsRef.current = drawPoints;
-
-      // Init map
-      useEffect(() => {
-        if (!mapsReady || !mapDiv.current || gmap.current) return;
-        gmap.current = new google.maps.Map(mapDiv.current, {
-          center: { lat: 28.4177, lng: -81.5812 }, zoom: 15,
-          mapTypeId: 'satellite',
-          fullscreenControl: false, streetViewControl: false,
-        });
-        gmap.current.addListener('click', e => {
-          const lat = e.latLng.lat(), lng = e.latLng.lng();
-          const curPin = selPinRef.current;
-          if (curPin !== null) {
-            setDrawPoints(prev => { const u = [...prev]; u[curPin] = { lat, lng }; return u; });
-            setSelPin(null);
-            return;
-          }
-          if (drawModeRef.current !== 'none') {
-            setDrawPoints(prev => [...prev, { lat, lng }]);
-          }
-        });
-      }, [mapsReady]);
-
-      // Sync map type
-      useEffect(() => { gmap.current?.setMapTypeId(mapType); }, [mapType]);
-
-      // Redraw existing zones
-      useEffect(() => {
-        if (!gmap.current) return;
-        overlays.current.forEach(o => o.setMap(null));
-        overlays.current = [];
-        data.zones.forEach((z, i) => {
-          const color = ZONE_COLORS[i % ZONE_COLORS.length];
-          const p = new google.maps.Polygon({
-            paths: z.polygon.map(pt => ({ lat: pt.latitude, lng: pt.longitude })),
-            fillColor: color, fillOpacity: 0.2,
-            strokeColor: z.enabled ? color : '#555', strokeWeight: 2,
-            map: gmap.current,
+          setDrawPoints(prev => {
+            const u = [...prev];
+            u.splice(bestIdx+1, 0, {lat,lng});
+            return u;
           });
-          p.addListener('click', () => setEditZone({ ...z }));
-          overlays.current.push(p);
-        });
-        data.indoorZones.forEach(z => {
-          const p = new google.maps.Polygon({
-            paths: z.polygon.map(pt => ({ lat: pt.latitude, lng: pt.longitude })),
-            fillColor: '#60a5fa', fillOpacity: 0.15,
-            strokeColor: z.enabled ? '#60a5fa' : '#555', strokeWeight: 2,
-            map: gmap.current,
-          });
-          p.addListener('click', () => setEditIndoor({ ...z }));
-          overlays.current.push(p);
-        });
-      }, [data.zones, data.indoorZones, mapsReady]);
-
-      // Redraw drawing pins + preview
-      useEffect(() => {
-        if (!gmap.current) return;
-        pinMarkers.current.forEach(m => m.setMap(null));
-        pinMarkers.current = [];
-        if (previewPoly.current) { previewPoly.current.setMap(null); previewPoly.current = null; }
-        drawPoints.forEach((pt, i) => {
-          const selected = selPin === i;
-          const isLast = i === drawPoints.length - 1;
-          const m = new google.maps.Marker({
-            position: { lat: pt.lat, lng: pt.lng },
-            map: gmap.current,
-            label: { text: String(i + 1), color: '#fff', fontWeight: 'bold', fontSize: '11px' },
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              fillColor: selected ? '#ffffff' : isLast ? '#22c55e' : '#a78bfa',
-              fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, scale: 11,
-            },
-            zIndex: selected ? 2000 : 1000 + i,
-            title: selected ? 'Click map to move' : 'Click to select/move',
-          });
-          m.addListener('click', () => setSelPin(prev => prev === i ? null : i));
-          pinMarkers.current.push(m);
-        });
-        if (drawPoints.length >= 3) {
-          previewPoly.current = new google.maps.Polygon({
-            paths: drawPoints.map(p => ({ lat: p.lat, lng: p.lng })),
-            fillColor: '#a78bfa', fillOpacity: 0.15,
-            strokeColor: '#a78bfa', strokeWeight: 2, map: gmap.current,
-          });
-        }
-      }, [drawPoints, selPin, mapsReady]);
-
-      const commitZone = () => {
-        if (!formName.trim()) return alert('Enter a name');
-        if (drawMode === 'preset' && !formPreset) return alert('Select a preset');
-        if (drawPoints.length < 3) return alert('Draw at least 3 points');
-        const polygon = drawPoints.map(p => ({ latitude: p.lat, longitude: p.lng }));
-        if (drawMode === 'preset') {
-          update({ zones: [...data.zones, { id: generateId(), name: formName, polygon, presetId: formPreset, enabled: true }] });
         } else {
-          update({ indoorZones: [...data.indoorZones, { id: generateId(), name: formName, polygon, enabled: true }] });
+          setDrawPoints(prev => [...prev, {lat,lng}]);
         }
-        setShowForm(false); setDrawPoints([]); setDrawMode('none'); setFormName(''); setFormPreset(''); setSelPin(null);
-      };
-
-      const cancel = () => { setDrawMode('none'); setDrawPoints([]); setShowForm(false); setSelPin(null); };
-
-      const saveZoneEdit = () => {
-        if (editZone) update({ zones: data.zones.map(z => z.id === editZone.id ? editZone : z) });
-        if (editIndoor) update({ indoorZones: data.indoorZones.map(z => z.id === editIndoor.id ? editIndoor : z) });
-        setEditZone(null); setEditIndoor(null);
-      };
-
-      const deleteZoneEdit = () => {
-        if (editZone) update({ zones: data.zones.filter(z => z.id !== editZone.id) });
-        if (editIndoor) update({ indoorZones: data.indoorZones.filter(z => z.id !== editIndoor.id) });
-        setEditZone(null); setEditIndoor(null);
-      };
-
-      if (!mapsReady) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text2)' }}>
-        Loading Google Maps… (check your API key in index.html)
-      </div>;
-
-      return <div style={{ display: 'flex', height: '100%' }}>
-        {/* Sidebar */}
-        <div style={{ width: 220, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0 }}>
-          <div style={{ overflowY: 'auto', flex: 1, padding: 10 }}>
-            <SectionHead>Draw</SectionHead>
-            {drawMode === 'none' ? <>
-              <button onClick={() => setDrawMode('preset')} style={{ ...btn('primary'), width: '100%', marginBottom: 6 }}>+ Preset Zone</button>
-              <button onClick={() => setDrawMode('indoor')} style={{ ...btn('', { color: 'var(--indoor)', borderColor: 'var(--indoor)' }), width: '100%', marginBottom: 6 }}>+ Indoor Zone</button>
-              <select value={mapType} onChange={e => setMapType(e.target.value)} style={{ ...selectStyle, fontSize: 12 }}>
-                <option value="satellite">🛰 Satellite</option>
-                <option value="hybrid">🛰 Hybrid</option>
-                <option value="roadmap">🗺 Roadmap</option>
-              </select>
-            </> : <>
-              <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8, lineHeight: 1.5 }}>
-                {selPin !== null ? `Pin ${selPin + 1} selected — click map to move` : `Tap map to add pins (${drawPoints.length} placed)`}
-              </div>
-              {drawPoints.length > 0 && <button onClick={() => { setDrawPoints(p => p.slice(0, -1)); setSelPin(null); }} style={{ ...btn(''), width: '100%', marginBottom: 4, fontSize: 12 }}>↩ Undo</button>}
-              {drawPoints.length >= 3 && <button onClick={() => setShowForm(true)} style={{ ...btn('primary'), width: '100%', marginBottom: 4, fontSize: 12 }}>✓ Done</button>}
-              <button onClick={cancel} style={{ ...btn('danger'), width: '100%', fontSize: 12 }}>✕ Cancel</button>
-            </>}
-
-            <SectionHead>Preset Zones ({data.zones.length})</SectionHead>
-            {data.zones.length === 0 && <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>None yet</div>}
-            {data.zones.map((z, i) => <div key={z.id} onClick={() => setEditZone({ ...z })}
-              style={{ background: 'var(--surface2)', borderRadius: 8, padding: '8px 10px', marginBottom: 6, borderLeft: `3px solid ${ZONE_COLORS[i % ZONE_COLORS.length]}`, cursor: 'pointer' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{z.name}</div>
-              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{data.presets.find(p => p.id === z.presetId)?.name || 'No preset'}</div>
-              <div style={{ fontSize: 10, marginTop: 1, color: z.enabled ? 'var(--success)' : 'var(--text3)' }}>{z.enabled ? '● enabled' : '○ disabled'}</div>
-            </div>)}
-
-            <SectionHead>Indoor Zones ({data.indoorZones.length})</SectionHead>
-            {data.indoorZones.length === 0 && <div style={{ fontSize: 11, color: 'var(--text3)' }}>None yet</div>}
-            {data.indoorZones.map(z => <div key={z.id} onClick={() => setEditIndoor({ ...z })}
-              style={{ background: 'var(--surface2)', borderRadius: 8, padding: '8px 10px', marginBottom: 6, borderLeft: '3px solid var(--indoor)', cursor: 'pointer' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{z.name}</div>
-              <div style={{ fontSize: 10, marginTop: 1, color: z.enabled ? 'var(--success)' : 'var(--text3)' }}>{z.enabled ? '● enabled' : '○ disabled'}</div>
-            </div>)}
-          </div>
-        </div>
-
-        {/* Map */}
-        <div ref={mapDiv} style={{ flex: 1 }} />
-
-        {/* Zone form */}
-        {showForm && <Modal title={drawMode === 'preset' ? 'New Preset Zone' : 'New Indoor Zone'} onClose={cancel}>
-          <Field label="Name"><input value={formName} onChange={e => setFormName(e.target.value)} placeholder={drawMode === 'preset' ? 'e.g. Fantasyland' : 'e.g. Inside castle'} style={inputStyle} autoFocus /></Field>
-          {drawMode === 'preset' && <Field label="Preset">
-            <select value={formPreset} onChange={e => setFormPreset(e.target.value)} style={selectStyle}>
-              <option value="">Select preset…</option>
-              {data.presets.map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
-            </select>
-          </Field>}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={cancel} style={{ ...btn(''), flex: 1 }}>Cancel</button>
-            <button onClick={commitZone} style={{ ...btn('primary'), flex: 1 }}>Save Zone</button>
-          </div>
-        </Modal>}
-
-        {/* Edit zone */}
-        {(editZone || editIndoor) && <Modal title={editZone ? 'Edit Preset Zone' : 'Edit Indoor Zone'} onClose={() => { setEditZone(null); setEditIndoor(null); }}>
-          {editZone && <>
-            <Field label="Name"><input value={editZone.name} onChange={e => setEditZone({ ...editZone, name: e.target.value })} style={inputStyle} /></Field>
-            <Field label="Preset">
-              <select value={editZone.presetId} onChange={e => setEditZone({ ...editZone, presetId: e.target.value })} style={selectStyle}>
-                {data.presets.map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
-              </select>
-            </Field>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-              <input type="checkbox" checked={editZone.enabled} onChange={e => setEditZone({ ...editZone, enabled: e.target.checked })} /> Enabled
-            </label>
-          </>}
-          {editIndoor && <>
-            <Field label="Name"><input value={editIndoor.name} onChange={e => setEditIndoor({ ...editIndoor, name: e.target.value })} style={inputStyle} /></Field>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-              <input type="checkbox" checked={editIndoor.enabled} onChange={e => setEditIndoor({ ...editIndoor, enabled: e.target.checked })} /> Enabled
-            </label>
-          </>}
-          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-            <button onClick={deleteZoneEdit} style={{ ...btn('danger') }}>Delete</button>
-            <button onClick={() => { setEditZone(null); setEditIndoor(null); }} style={btn('')}>Cancel</button>
-            <button onClick={saveZoneEdit} style={{ ...btn('primary'), flex: 1 }}>Save</button>
-          </div>
-        </Modal>}
-      </div>;
-    }
-
-    // ── Presets ────────────────────────────────────────────────────────
-    function PresetsTab({ data, update }) {
-      const [sel, setSel] = useState(null);
-      const [isNew, setIsNew] = useState(false);
-      const [ptab, setPtab] = useState('effect');
-
-      const blank = () => ({
-        id: generateId(), name: '', createdAt: Date.now(),
-        wled: { on: true, fx: undefined, fxName: '', pal: undefined, palName: '', sx: 128, ix: 128, c1: 128, c2: 128, c3: 16, o1: false, o2: false, o3: false },
-        memory: { effect: true, palette: true, parameters: true, color: false, segments: false },
       });
+    }, 200);
+    return () => clearInterval(waitForMaps);
+  }, []);
 
-      const save = () => {
-        if (!sel.name.trim()) return alert('Enter a name');
-        update({ presets: isNew ? [...data.presets, sel] : data.presets.map(p => p.id === sel.id ? sel : p) });
-        setSel(null);
-      };
-      const del = id => { if (confirm('Delete this preset?')) { update({ presets: data.presets.filter(p => p.id !== id) }); setSel(null); } };
-      const w = (k, v) => setSel(s => ({ ...s, wled: { ...s.wled, [k]: v } }));
-      const m = (k, v) => setSel(s => ({ ...s, memory: { ...s.memory, [k]: v } }));
+  // Redraw zone polygons
+  useEffect(() => {
+    if (!gmap.current) return;
+    zonePoly.current.forEach(p => p.setMap(null));
+    zonePoly.current = [];
+    const COLORS = ['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316','#ec4899','#14b8a6'];
+    data.zones.forEach((z,i) => {
+      const c = COLORS[i % COLORS.length];
+      const poly = new google.maps.Polygon({
+        paths:z.polygon.map(p=>({lat:p.lat,lng:p.lng})),
+        fillColor:c, fillOpacity:0.2,
+        strokeColor:z.enabled?c:'#666', strokeWeight:2,
+        map:gmap.current,
+      });
+      poly.addListener('click', () => setEditZone({...z}));
+      zonePoly.current.push(poly);
+    });
+    data.indoorZones.forEach(z => {
+      const poly = new google.maps.Polygon({
+        paths:z.polygon.map(p=>({lat:p.lat,lng:p.lng})),
+        fillColor:'#60a5fa', fillOpacity:0.15,
+        strokeColor:z.enabled?'#60a5fa':'#666', strokeWeight:2,
+        map:gmap.current,
+      });
+      poly.addListener('click', () => setEditIndoor({...z}));
+      zonePoly.current.push(poly);
+    });
+  }, [data.zones, data.indoorZones]);
 
-      return <div style={{ display: 'flex', height: '100%' }}>
-        {/* List */}
-        <div style={{ width: 240, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>Presets ({data.presets.length})</span>
-            <button onClick={() => { setSel(blank()); setIsNew(true); setPtab('effect'); }} style={btn('primary', { padding: '4px 10px', fontSize: 12 })}>+ New</button>
-          </div>
-          <div style={{ overflowY: 'auto', flex: 1 }}>
-            {data.presets.length === 0 && <div style={{ padding: 16, color: 'var(--text3)', fontSize: 12 }}>No presets yet</div>}
-            {data.presets.map(p => <div key={p.id} onClick={() => { setSel({ ...p, wled: { ...p.wled }, memory: { ...p.memory } }); setIsNew(false); setPtab('effect'); }}
-              style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', cursor: 'pointer', background: sel?.id === p.id ? 'var(--primary-dim)' : 'transparent' }}>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name}</div>
-              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-                {p.wled.fxName || '—'} · {p.wled.palName || '—'}
-              </div>
-            </div>)}
-          </div>
-        </div>
+  // Redraw draggable pin markers
+  useEffect(() => {
+    if (!gmap.current) return;
+    pinMarkers.current.forEach(m => m.setMap(null));
+    pinMarkers.current = [];
+    if (previewPoly.current) { previewPoly.current.setMap(null); previewPoly.current = null; }
 
-        {/* Editor */}
-        {sel ? <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <span style={{ fontWeight: 700, fontSize: 16 }}>{isNew ? 'New Preset' : 'Edit Preset'}</span>
-            {!isNew && <button onClick={() => del(sel.id)} style={btn('danger', { fontSize: 12 })}>Delete</button>}
-          </div>
-          <Field label="Name"><input value={sel.name} onChange={e => setSel({ ...sel, name: e.target.value })} placeholder="e.g. Haunted Mansion" style={inputStyle} /></Field>
+    drawPoints.forEach((pt, i) => {
+      const isLast = i === drawPoints.length - 1;
+      const m = new google.maps.Marker({
+        position:{lat:pt.lat,lng:pt.lng},
+        map:gmap.current,
+        draggable:true,
+        label:{text:String(i+1),color:'#fff',fontWeight:'bold',fontSize:'11px'},
+        icon:{
+          path:google.maps.SymbolPath.CIRCLE,
+          fillColor: isLast ? '#22c55e' : '#a78bfa',
+          fillOpacity:1, strokeColor:'#fff', strokeWeight:2, scale:11,
+        },
+        zIndex:1000+i,
+        title:`Pin ${i+1} — drag to move or right-click to delete`,
+        cursor:'move',
+      });
+      // Drag to move
+      m.addListener('dragend', e => {
+        const lat = e.latLng.lat(), lng = e.latLng.lng();
+        setDrawPoints(prev => { const u=[...prev]; u[i]={lat,lng}; return u; });
+      });
+      // Right-click to delete pin
+      m.addListener('rightclick', () => {
+        setDrawPoints(prev => prev.filter((_,j) => j!==i));
+      });
+      pinMarkers.current.push(m);
+    });
 
-          {/* Sub-tabs */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 14, marginTop: 8 }}>
-            {['effect', 'palette', 'memory'].map(t => (<button key={t} onClick={() => setPtab(t)} style={{
-              padding: '6px 14px', background: 'none', border: 'none', borderBottom: ptab === t ? '2px solid var(--primary)' : '2px solid transparent',
-              color: ptab === t ? 'var(--primary)' : 'var(--text2)', fontWeight: 600, fontSize: 13, cursor: 'pointer', marginBottom: -1,
-            }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>))}
-          </div>
-
-          {ptab === 'effect' && <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Effect Name" style={{ gridColumn: '1/-1' }}>
-              <input value={sel.wled.fxName || ''} onChange={e => w('fxName', e.target.value)} placeholder="e.g. Rainbow" style={inputStyle} />
-            </Field>
-            <Field label="Effect ID">
-              <input type="number" value={sel.wled.fx ?? ''} onChange={e => w('fx', parseInt(e.target.value))} placeholder="0" style={inputStyle} />
-            </Field>
-            <Field label={`Speed: ${sel.wled.sx ?? 128}`}>
-              <input type="range" min={0} max={255} value={sel.wled.sx ?? 128} onChange={e => w('sx', +e.target.value)} style={{ width: '100%', accentColor: 'var(--primary)' }} />
-            </Field>
-            <Field label={`Intensity: ${sel.wled.ix ?? 128}`}>
-              <input type="range" min={0} max={255} value={sel.wled.ix ?? 128} onChange={e => w('ix', +e.target.value)} style={{ width: '100%', accentColor: 'var(--primary)' }} />
-            </Field>
-            <Field label={`Custom 1: ${sel.wled.c1 ?? 128}`}>
-              <input type="range" min={0} max={255} value={sel.wled.c1 ?? 128} onChange={e => w('c1', +e.target.value)} style={{ width: '100%', accentColor: 'var(--primary)' }} />
-            </Field>
-            <Field label={`Custom 2: ${sel.wled.c2 ?? 128}`}>
-              <input type="range" min={0} max={255} value={sel.wled.c2 ?? 128} onChange={e => w('c2', +e.target.value)} style={{ width: '100%', accentColor: 'var(--primary)' }} />
-            </Field>
-            {(['o1', 'o2', 'o3']).map(k => (<label key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-              <input type="checkbox" checked={!!sel.wled[k]} onChange={e => w(k, e.target.checked)} /> Option {k.slice(1)}
-            </label>))}
-          </div>}
-
-          {ptab === 'palette' && <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <Field label="Palette Name">
-                <input value={sel.wled.palName || ''} onChange={e => w('palName', e.target.value)} placeholder="e.g. Rainbow" style={inputStyle} />
-              </Field>
-              <Field label="Palette ID">
-                <input type="number" value={sel.wled.pal ?? ''} onChange={e => w('pal', parseInt(e.target.value))} placeholder="0" style={inputStyle} />
-              </Field>
-            </div>
-            {(data.customPalettes || []).length > 0 && <>
-              <SectionHead>Custom Palettes</SectionHead>
-              {(data.customPalettes || []).map((cp, i) => <div key={cp.id} onClick={() => setSel(s => ({ ...s, wled: { ...s.wled, pal: 255 - i, palName: cp.name } }))}
-                style={{
-                  ...cardStyle, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-                  border: sel.wled.palName === cp.name ? '1px solid var(--primary)' : '1px solid var(--border)',
-                  background: sel.wled.palName === cp.name ? 'var(--primary-dim)' : 'var(--surface)'
-                }}>
-                <PaletteGradient colors={cp.colors} height={28} />
-                <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{cp.name}</span>
-                {sel.wled.palName === cp.name && <span style={{ color: 'var(--primary)' }}>✓</span>}
-              </div>)}
-            </>}
-          </>}
-
-          {ptab === 'memory' && <>
-            <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>Which properties to apply when global recall is set to "Memory"</p>
-            {Object.keys(sel.memory).map(k => (<label key={k} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-              <input type="checkbox" checked={sel.memory[k]} onChange={e => m(k, e.target.checked)} style={{ width: 16, height: 16 }} />
-              <span style={{ textTransform: 'capitalize', flex: 1 }}>{k}</span>
-            </label>))}
-          </>}
-
-          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-            <button onClick={() => setSel(null)} style={btn('')}>Cancel</button>
-            <button onClick={save} style={{ ...btn('primary'), flex: 1 }}>Save Preset</button>
-          </div>
-
-          {/* Zone assignments */}
-          {!isNew && <>
-            <SectionHead>Zone Assignments</SectionHead>
-            {data.zones.filter(z => z.presetId === sel.id).map(z => (<div key={z.id} style={{ fontSize: 12, color: 'var(--primary)', padding: '4px 0' }}>📍 {z.name}</div>))}
-            {data.zones.filter(z => z.presetId === sel.id).length === 0 && <div style={{ fontSize: 12, color: 'var(--text3)' }}>No zones use this preset yet</div>}
-          </>}
-        </div>
-          : <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text3)', fontSize: 14 }}>
-            Select a preset or click + New
-          </div>}
-      </div>;
+    if (drawPoints.length >= 3) {
+      previewPoly.current = new google.maps.Polygon({
+        paths:drawPoints.map(p=>({lat:p.lat,lng:p.lng})),
+        fillColor:'#a78bfa', fillOpacity:0.15,
+        strokeColor:'#a78bfa', strokeWeight:2, strokeDashOffset:0,
+        map:gmap.current,
+      });
     }
+  }, [drawPoints]);
 
-    // ── Palettes ───────────────────────────────────────────────────────
-    function PalettesTab({ data, update }) {
-      const palettes = data.customPalettes || [];
-      const sets = data.paletteSets || [];
-      const [ptab, setPtab] = useState('palettes');
-      const [editP, setEditP] = useState(null);
-      const [editS, setEditS] = useState(null);
-      const [isNew, setIsNew] = useState(false);
-
-      const blankPal = () => ({ id: generateId(), name: '', colors: ['#a78bfa', '#22c55e', '#f59e0b'] });
-      const blankSet = () => ({ id: generateId(), name: '', paletteIds: [] });
-
-      const savePal = () => {
-        if (!editP.name.trim()) return alert('Enter a name');
-        update({ customPalettes: isNew ? [...palettes, editP] : palettes.map(p => p.id === editP.id ? editP : p) });
-        setEditP(null);
-      };
-      const delPal = id => {
-        if (!confirm('Delete palette?')) return;
-        update({
-          customPalettes: palettes.filter(p => p.id !== id),
-          paletteSets: sets.map(s => ({ ...s, paletteIds: s.paletteIds.filter(pid => pid !== id) })),
-        });
-        setEditP(null);
-      };
-      const saveSet = () => {
-        if (!editS.name.trim()) return alert('Enter a name');
-        update({ paletteSets: isNew ? [...sets, editS] : sets.map(s => s.id === editS.id ? editS : s) });
-        setEditS(null);
-      };
-      const delSet = id => { if (!confirm('Delete set?')) return; update({ paletteSets: sets.filter(s => s.id !== id) }); setEditS(null); };
-      const toggleInSet = id => setEditS(s => ({ ...s, paletteIds: s.paletteIds.includes(id) ? s.paletteIds.filter(p => p !== id) : [...s.paletteIds, id] }));
-      const moveInSet = (from, to) => setEditS(s => { const ids = [...s.paletteIds]; const [x] = ids.splice(from, 1); ids.splice(to, 0, x); return { ...s, paletteIds: ids }; });
-
-      return <div style={{ display: 'flex', height: '100%' }}>
-        {/* List panel */}
-        <div style={{ width: 260, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-            {['palettes', 'sets'].map(t => (<button key={t} onClick={() => setPtab(t)} style={{
-              flex: 1, padding: '10px 0', background: 'none', border: 'none', borderBottom: ptab === t ? '2px solid var(--primary)' : '2px solid transparent',
-              color: ptab === t ? 'var(--primary)' : 'var(--text2)', fontWeight: 600, fontSize: 13, cursor: 'pointer', marginBottom: -1,
-            }}>{t === 'palettes' ? `Palettes (${palettes.length})` : `Sets (${sets.length})`}</button>))}
-          </div>
-          <div style={{ overflowY: 'auto', flex: 1, padding: 10 }}>
-            {ptab === 'palettes' && <>
-              <button onClick={() => { setEditP(blankPal()); setIsNew(true); }} style={{ ...btn('primary'), width: '100%', marginBottom: 10, fontSize: 12 }}>+ New Palette</button>
-              {palettes.length === 0 && <div style={{ fontSize: 12, color: 'var(--text3)' }}>No palettes yet</div>}
-              {palettes.map(p => (<div key={p.id} onClick={() => { setEditP({ ...p, colors: [...p.colors] }); setIsNew(false); }}
-                style={{ ...cardStyle, cursor: 'pointer', background: editP?.id === p.id ? 'var(--primary-dim)' : 'var(--surface)', marginBottom: 8 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{p.name}</div>
-                <PaletteGradient colors={p.colors} height={18} />
-              </div>))}
-            </>}
-            {ptab === 'sets' && <>
-              <button onClick={() => { setEditS(blankSet()); setIsNew(true); }} style={{ ...btn('primary'), width: '100%', marginBottom: 10, fontSize: 12 }}>+ New Set</button>
-              {sets.length === 0 && <div style={{ fontSize: 12, color: 'var(--text3)' }}>No sets yet</div>}
-              {sets.map(s => (<div key={s.id} onClick={() => { setEditS({ ...s, paletteIds: [...s.paletteIds] }); setIsNew(false); }}
-                style={{ ...cardStyle, cursor: 'pointer', background: editS?.id === s.id ? 'var(--primary-dim)' : 'var(--surface)', marginBottom: 8 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{s.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>{s.paletteIds.length} palette{s.paletteIds.length !== 1 ? 's' : ''}</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                  {s.paletteIds.map(id => { const pal = palettes.find(p => p.id === id); return pal?.colors.slice(0, 4).map((c, i) => <div key={i} style={{ width: 12, height: 12, borderRadius: 2, background: c }} />) })}
-                </div>
-              </div>))}
-            </>}
-          </div>
-        </div>
-
-        {/* Palette editor */}
-        {editP && ptab === 'palettes' && <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <span style={{ fontWeight: 700, fontSize: 16 }}>{isNew ? 'New Palette' : 'Edit Palette'}</span>
-            {!isNew && <button onClick={() => delPal(editP.id)} style={btn('danger', { fontSize: 12 })}>Delete</button>}
-          </div>
-          <Field label="Name"><input value={editP.name} onChange={e => setEditP({ ...editP, name: e.target.value })} placeholder="e.g. Sunset Glow" style={inputStyle} autoFocus /></Field>
-          {editP.colors.length >= 2 && <div style={{ marginBottom: 12 }}><Field label="Preview"><PaletteGradient colors={editP.colors} height={36} /></Field></div>}
-          <SectionHead>Colors ({editP.colors.length}/16)</SectionHead>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-            {editP.colors.map((c, i) => <div key={i} style={{ ...cardStyle, padding: 10 }}>
-              <div style={{ height: 36, borderRadius: 6, background: c, marginBottom: 8, border: '1px solid var(--border)' }} />
-              <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace', marginBottom: 6, textAlign: 'center' }}>{c}</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 6 }}>
-                {PRESET_COLORS.map(pc => (<div key={pc} onClick={() => { const cl = [...editP.colors]; cl[i] = pc; setEditP({ ...editP, colors: cl }); }}
-                  style={{ width: 18, height: 18, borderRadius: 3, background: pc, cursor: 'pointer', border: pc === c ? '2px solid white' : '1px solid #ffffff22' }} />))}
-              </div>
-              <input type="color" value={c} onChange={e => { const cl = [...editP.colors]; cl[i] = e.target.value; setEditP({ ...editP, colors: cl }); }}
-                style={{ width: '100%', height: 28, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', padding: 1 }} />
-              {editP.colors.length > 2 && <button onClick={() => setEditP({ ...editP, colors: editP.colors.filter((_, j) => j !== i) })}
-                style={{ ...btn('danger', { fontSize: 11, padding: '3px 8px', marginTop: 6 }), width: '100%' }}>Remove</button>}
-            </div>)}
-          </div>
-          {editP.colors.length < 16 && <button onClick={() => setEditP({ ...editP, colors: [...editP.colors, '#ffffff'] })}
-            style={{ ...btn('', { width: '100%', marginBottom: 12, borderStyle: 'dashed' }) }}>+ Add Color</button>}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setEditP(null)} style={btn('')}>Cancel</button>
-            <button onClick={savePal} style={{ ...btn('primary'), flex: 1 }}>Save Palette</button>
-          </div>
-        </div>}
-
-        {/* Set editor */}
-        {editS && ptab === 'sets' && <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <span style={{ fontWeight: 700, fontSize: 16 }}>{isNew ? 'New Set' : 'Edit Set'}</span>
-            {!isNew && <button onClick={() => delSet(editS.id)} style={btn('danger', { fontSize: 12 })}>Delete</button>}
-          </div>
-          <Field label="Set Name"><input value={editS.name} onChange={e => setEditS({ ...editS, name: e.target.value })} placeholder="e.g. Magic Kingdom" style={inputStyle} autoFocus /></Field>
-          <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>Select palettes and order them. Slot #1 = WLED custom palette 0, etc. Max 8.</p>
-          {palettes.length === 0 && <div style={{ color: 'var(--text3)', fontSize: 13 }}>Create palettes first</div>}
-          {palettes.map(p => {
-            const sel2 = editS.paletteIds.includes(p.id); const idx = editS.paletteIds.indexOf(p.id); const atLimit = editS.paletteIds.length >= 8 && !sel2;
-            return <div key={p.id} onClick={() => !atLimit && toggleInSet(p.id)}
-              style={{
-                ...cardStyle, display: 'flex', alignItems: 'center', gap: 10, cursor: atLimit ? 'not-allowed' : 'pointer', opacity: atLimit ? 0.4 : 1,
-                border: sel2 ? '1px solid var(--primary)' : '1px solid var(--border)', background: sel2 ? 'var(--primary-dim)' : 'var(--surface)', marginBottom: 8
-              }}>
-              <PaletteGradient colors={p.colors} height={24} />
-              <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{p.name}</span>
-              {sel2 && <span style={{ background: 'var(--primary)', color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 10 }}>#{idx + 1}</span>}
-              {sel2 && <span style={{ color: 'var(--primary)', fontSize: 14 }}>✓</span>}
-            </div>;
-          })}
-          {editS.paletteIds.length > 0 && <>
-            <SectionHead>Order (drag to reorder slots)</SectionHead>
-            {editS.paletteIds.map((id, i) => {
-              const pal = palettes.find(p => p.id === id); return <div key={id}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 11, color: 'var(--text3)', width: 22 }}>#{i + 1}</span>
-                <div style={{ flex: 1 }}><PaletteGradient colors={pal?.colors || []} height={18} /><span style={{ fontSize: 12, marginTop: 3, display: 'block' }}>{pal?.name}</span></div>
-                <button onClick={() => i > 0 && moveInSet(i, i - 1)} disabled={i === 0} style={{ ...btn('', { padding: '2px 8px', fontSize: 13 }), opacity: i === 0 ? 0.3 : 1 }}>▲</button>
-                <button onClick={() => i < editS.paletteIds.length - 1 && moveInSet(i, i + 1)} disabled={i === editS.paletteIds.length - 1} style={{ ...btn('', { padding: '2px 8px', fontSize: 13 }), opacity: i === editS.paletteIds.length - 1 ? 0.3 : 1 }}>▼</button>
-              </div>;
-            })}
-          </>}
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button onClick={() => setEditS(null)} style={btn('')}>Cancel</button>
-            <button onClick={saveSet} style={{ ...btn('primary'), flex: 1 }}>Save Set</button>
-          </div>
-        </div>}
-
-        {!editP && !editS && <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text3)', fontSize: 14 }}>
-          Select an item to edit
-        </div>}
-      </div>;
+  const commitZone = () => {
+    if (!formName.trim()) return alert('Enter a name');
+    if (drawMode === 'preset' && !formPreset) return alert('Select a preset');
+    if (drawPoints.length < 3) return alert('Draw at least 3 points');
+    if (drawMode === 'preset') {
+      update({zones:[...data.zones,{id:generateId(),name:formName,polygon:drawPoints,presetId:formPreset,enabled:true}]});
+    } else {
+      update({indoorZones:[...data.indoorZones,{id:generateId(),name:formName,polygon:drawPoints,enabled:true}]});
     }
+    setShowForm(false); setDrawPoints([]); setDrawMode('none'); setFormName(''); setFormPreset('');
+  };
 
-    // ── Brightness ─────────────────────────────────────────────────────
-    function BrightnessTab({ data, update }) {
-      const bc = data.brightnessConfig;
-      const set = (k, v) => update({ brightnessConfig: { ...bc, [k]: v } });
-      const sunElev = () => {
-        const d = new Date(), day = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
-        const decl = (23.45 * Math.PI / 180) * Math.sin((2 * Math.PI / 365) * (day - 81));
-        const utcH = d.getUTCHours() + d.getUTCMinutes() / 60;
-        const ha = (Math.PI / 180) * 15 * (utcH - 12 + (-81.5812) / 15);
-        const lat_r = 28.4177 * Math.PI / 180;
-        return (Math.asin(Math.sin(lat_r) * Math.sin(decl) + Math.cos(lat_r) * Math.cos(decl) * Math.cos(ha)) * 180 / Math.PI).toFixed(1);
-      };
-      const elev = sunElev();
-      const isDay = parseFloat(elev) >= bc.solarThresholdDeg;
+  const saveZoneEdit = () => {
+    if (editZone)   update({zones:      data.zones.map(z => z.id===editZone.id ? editZone : z)});
+    if (editIndoor) update({indoorZones:data.indoorZones.map(z => z.id===editIndoor.id ? editIndoor : z)});
+    setEditZone(null); setEditIndoor(null);
+  };
 
-      return <div style={{ padding: 24, maxWidth: 560, overflowY: 'auto', height: '100%' }}>
-        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>Brightness Configuration</div>
-        <div style={{ ...cardStyle, marginBottom: 16 }}>
-          <div style={{ fontSize: 13 }}>Sun elevation at WDW right now: <span style={{ color: isDay ? 'var(--warning)' : 'var(--text2)', fontWeight: 700 }}>{elev}°</span></div>
-          <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>{isDay ? '☀️ Daytime mode' : '🌙 Nighttime mode'} (threshold: {bc.solarThresholdDeg}°)</div>
+  const deleteZoneEdit = () => {
+    if (editZone)   update({zones:      data.zones.filter(z => z.id!==editZone.id)});
+    if (editIndoor) update({indoorZones:data.indoorZones.filter(z => z.id!==editIndoor.id)});
+    setEditZone(null); setEditIndoor(null);
+  };
+
+  const searchLocation = async () => {
+    if (!locationSearch.trim() || !gmap.current) return;
+    setSearching(true);
+    try {
+      const geocoder = new google.maps.Geocoder();
+      geocoder.geocode({address: locationSearch}, (results, status) => {
+        setSearching(false);
+        if (status === 'OK' && results[0]) {
+          const loc = results[0].geometry.location;
+          gmap.current.setCenter(loc);
+          gmap.current.setZoom(17);
+          new google.maps.Marker({
+            position:loc, map:gmap.current,
+            title:results[0].formatted_address,
+            icon:{path:google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,scale:6,fillColor:'#f59e0b',fillOpacity:1,strokeColor:'#fff',strokeWeight:2},
+          });
+        } else {
+          alert('Location not found. Try "Magic Kingdom, Orlando" or a full address.');
+        }
+      });
+    } catch(e) { setSearching(false); alert('Search failed'); }
+  };
+
+  return (<div style={{display:'flex',height:'100%'}}>
+    {/* Sidebar */}
+    <div style={{width:240,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',padding:12,gap:8,overflowY:'auto'}}>
+
+      {/* Location search */}
+      <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>Search Location</div>
+      <div style={{display:'flex',gap:4}}>
+        <input value={locationSearch} onChange={e=>setLocationSearch(e.target.value)}
+          onKeyDown={e=>e.key==='Enter' && searchLocation()}
+          placeholder="e.g. Fantasyland" style={{...inputStyle,flex:1,padding:'6px 8px',fontSize:12}}/>
+        <button onClick={searchLocation} disabled={searching}
+          style={{...btn('primary',{padding:'6px 10px',fontSize:12})}}>
+          {searching ? '…' : '🔍'}
+        </button>
+      </div>
+
+      {/* Draw controls */}
+      <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>Draw Zone</div>
+      {drawMode === 'none' ? (<>
+        <button onClick={()=>setDrawMode('preset')} style={btn('primary',{width:'100%'})}>+ Preset Zone</button>
+        <button onClick={()=>setDrawMode('indoor')} style={btn('',{width:'100%',color:'var(--indoor)',borderColor:'var(--indoor)'})}>+ Indoor Zone</button>
+        <select value={mapType} onChange={e=>{setMapType(e.target.value);gmap.current?.setMapTypeId(e.target.value);}} style={selectStyle}>
+          <option value="satellite">Satellite</option>
+          <option value="hybrid">Hybrid</option>
+          <option value="roadmap">Roadmap</option>
+        </select>
+      </>) : (<>
+        <div style={{fontSize:12,color:'var(--text2)',lineHeight:1.5}}>
+          Click map to place pins.<br/>
+          <strong>Drag</strong> pins to reposition.<br/>
+          <strong>Right-click</strong> pin to delete.
         </div>
-        {[{ k: 'daytime', l: 'Daytime', h: 'When sun is above threshold' }, { k: 'nighttime', l: 'Nighttime', h: 'When sun is below threshold' }, { k: 'indoor', l: 'Indoor', h: 'Inside indoor zones' }].map(({ k, l, h }) =>
-          <div key={k} style={{ marginBottom: 18 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-              <label style={{ fontSize: 13, fontWeight: 600 }}>{l} Brightness</label>
-              <span style={{ fontSize: 13, color: 'var(--primary)', fontFamily: 'monospace' }}>{bc[k]}</span>
-            </div>
-            <input type="range" min={0} max={255} value={bc[k]} onChange={e => set(k, +e.target.value)} style={{ width: '100%', accentColor: 'var(--primary)' }} />
-            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{h}</div>
-          </div>
-        )}
-        <div style={{ height: 1, background: 'var(--border)', margin: '12px 0' }} />
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>Sun Position Settings</div>
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <label style={{ fontSize: 13, fontWeight: 600 }}>Day/Night Threshold</label>
-            <span style={{ fontSize: 13, color: 'var(--primary)', fontFamily: 'monospace' }}>{bc.solarThresholdDeg}°</span>
-          </div>
-          <input type="range" min={-10} max={20} step={0.5} value={bc.solarThresholdDeg} onChange={e => set('solarThresholdDeg', +e.target.value)} style={{ width: '100%', accentColor: 'var(--primary)' }} />
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>6° = civil twilight. 0° = horizon.</div>
-        </div>
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <label style={{ fontSize: 13, fontWeight: 600 }}>Transition Window</label>
-            <span style={{ fontSize: 13, color: 'var(--primary)', fontFamily: 'monospace' }}>{bc.transitionMinutes} min</span>
-          </div>
-          <input type="range" min={0} max={120} value={bc.transitionMinutes} onChange={e => set('transitionMinutes', +e.target.value)} style={{ width: '100%', accentColor: 'var(--primary)' }} />
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Brightness ramp duration around the threshold crossing.</div>
-        </div>
-      </div>;
+        <div style={{fontSize:12,color:'var(--text3)'}}>{drawPoints.length} pin{drawPoints.length!==1?'s':''} placed</div>
+        {drawPoints.length >= 3 && (<button onClick={()=>setInsertMode(v=>!v)}
+          style={btn(insertMode?'warning':'',{width:'100%',marginBottom:4,fontSize:12,borderColor:insertMode?'var(--warning)':'var(--border)',color:insertMode?'var(--warning)':'var(--text2)'})}>
+          {insertMode ? '⊕ Insert Mode ON — click to insert' : '⊕ Insert Between Pins'}
+        </button>)}
+        {drawPoints.length > 0 && (<button onClick={()=>setDrawPoints(p=>p.slice(0,-1))} style={btn('',{width:'100%',marginBottom:4,fontSize:12})}>↩ Undo Last</button>)}
+        {drawPoints.length >= 3 && (<button onClick={()=>setShowForm(true)} style={btn('primary',{width:'100%',marginBottom:4,fontSize:12})}>✓ Done</button>)}
+        <button onClick={()=>{setDrawMode('none');setDrawPoints([]);}} style={btn('danger',{width:'100%',fontSize:12})}>✕ Cancel</button>
+      </>)}
+
+      {/* Zone list */}
+      <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:8}}>Preset Zones ({data.zones.length})</div>
+      {data.zones.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>None yet</div>}
+      {data.zones.map((z,i) => {
+        const COLORS=['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316'];
+        const c=COLORS[i%COLORS.length];
+        return (<div key={z.id} style={{background:'var(--surface2)',borderRadius:8,padding:8,borderLeft:`3px solid ${c}`,cursor:'pointer'}} onClick={()=>setEditZone({...z})}>
+          <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
+          <div style={{fontSize:11,color:'var(--text3)'}}>{data.presets.find(p=>p.id===z.presetId)?.name||'No preset'}</div>
+          <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
+        </div>);
+      })}
+      <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>Indoor Zones ({data.indoorZones.length})</div>
+      {data.indoorZones.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>None yet</div>}
+      {data.indoorZones.map(z => (<div key={z.id} style={{background:'var(--surface2)',borderRadius:8,padding:8,borderLeft:'3px solid #60a5fa',cursor:'pointer'}} onClick={()=>setEditIndoor({...z})}>
+        <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
+        <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
+      </div>))}
+    </div>
+
+    {/* Map */}
+    <div style={{flex:1,position:'relative'}}>
+      <div ref={mapDiv} style={{width:'100%',height:'100%'}}/>
+      {!window.MAPS_LOADED && <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'var(--surface)',color:'var(--text2)',fontSize:14}}>
+        Loading Google Maps… (check your API key in index.html)
+      </div>}
+    </div>
+
+    {/* Zone save form */}
+    {showForm && (<Modal title={drawMode==='preset'?'New Preset Zone':'New Indoor Zone'} onClose={()=>setShowForm(false)}>
+      <Field label="Name"><input value={formName} onChange={e=>setFormName(e.target.value)} placeholder={drawMode==='preset'?'e.g. Fantasyland':'e.g. Inside castle'} style={inputStyle} autoFocus/></Field>
+      {drawMode==='preset' && (<Field label="Preset">
+        <select value={formPreset} onChange={e=>setFormPreset(e.target.value)} style={selectStyle}>
+          <option value="">Select preset…</option>
+          {data.presets.map(p=>(<option key={p.id} value={p.id}>{p.name}</option>))}
+        </select>
+      </Field>)}
+      <ModalBtns onCancel={()=>setShowForm(false)} onSave={commitZone}/>
+    </Modal>)}
+
+    {/* Edit zone */}
+    {(editZone||editIndoor) && (<Modal title={editZone?'Edit Preset Zone':'Edit Indoor Zone'} onClose={()=>{setEditZone(null);setEditIndoor(null);}}>
+      {editZone && (<>
+        <Field label="Name"><input value={editZone.name} onChange={e=>setEditZone({...editZone,name:e.target.value})} style={inputStyle}/></Field>
+        <Field label="Preset">
+          <select value={editZone.presetId} onChange={e=>setEditZone({...editZone,presetId:e.target.value})} style={selectStyle}>
+            {data.presets.map(p=>(<option key={p.id} value={p.id}>{p.name}</option>))}
+          </select>
+        </Field>
+        <Field label="Enabled"><input type="checkbox" checked={editZone.enabled} onChange={e=>setEditZone({...editZone,enabled:e.target.checked})} style={{width:18,height:18}}/></Field>
+      </>)}
+      {editIndoor && (<>
+        <Field label="Name"><input value={editIndoor.name} onChange={e=>setEditIndoor({...editIndoor,name:e.target.value})} style={inputStyle}/></Field>
+        <Field label="Enabled"><input type="checkbox" checked={editIndoor.enabled} onChange={e=>setEditIndoor({...editIndoor,enabled:e.target.checked})} style={{width:18,height:18}}/></Field>
+      </>)}
+      <div style={{display:'flex',gap:8,marginTop:4}}>
+        <button onClick={deleteZoneEdit} style={btn('danger',{flex:1})}>Delete</button>
+        <button onClick={()=>{setEditZone(null);setEditIndoor(null);}} style={btn('',{flex:1})}>Cancel</button>
+        <button onClick={saveZoneEdit} style={btn('primary',{flex:1})}>Save</button>
+      </div>
+    </Modal>)}
+  </div>);
+}
+
+
+// ── Presets ────────────────────────────────────────────────────────────
+function PresetsTab({data, update}) {
+  const [sel, setSel]     = useState(null);
+  const [isNew, setIsNew] = useState(false);
+  const [ptab, setPtab]   = useState('effect');
+
+  // WLED connection
+  const [wledIp, setWledIp]       = useState(localStorage.getItem('wled-ip')||'4.3.2.1');
+  const [wledStatus, setWledStatus] = useState('idle'); // idle | connecting | connected | error
+  const [wledEffects, setWledEffects]   = useState([]);
+  const [wledPalettes, setWledPalettes] = useState([]);
+
+  const blank = () => ({
+    id:generateId(), name:'', createdAt:Date.now(),
+    wled:{on:true,fx:undefined,fxName:'',pal:undefined,palName:'',sx:128,ix:128,c1:128,c2:128,c3:16,o1:false,o2:false,o3:false},
+    memory:{effect:true,palette:true,parameters:true,color:false,segments:false},
+  });
+
+  const save = () => {
+    if (!sel.name.trim()) return alert('Enter a name');
+    update({presets: isNew ? [...data.presets, sel] : data.presets.map(p => p.id===sel.id ? sel : p)});
+    setSel(null);
+  };
+  const del = id => { if(confirm('Delete this preset?')) { update({presets:data.presets.filter(p=>p.id!==id)}); setSel(null); }};
+  const w = (k,v) => setSel(s => ({...s, wled:{...s.wled,[k]:v}}));
+  const m = (k,v) => setSel(s => ({...s, memory:{...s.memory,[k]:v}}));
+
+  const connectWled = async () => {
+    if (!wledIp.trim()) return;
+    localStorage.setItem('wled-ip', wledIp);
+    setWledStatus('connecting');
+    try {
+      const [effRes, palRes] = await Promise.all([
+        fetch(`http://${wledIp}/json/eff`),
+        fetch(`http://${wledIp}/json/pal`),
+      ]);
+      if (!effRes.ok || !palRes.ok) throw new Error('Bad response');
+      const effs = await effRes.json();
+      const pals = await palRes.json();
+      setWledEffects(effs.map((name,id) => ({id,name})).filter(e=>e.name!=='RSVD'&&e.name!=='-'));
+      setWledPalettes(pals.map((name,id) => ({id,name})));
+      setWledStatus('connected');
+    } catch(e) {
+      setWledStatus('error');
+      alert('Could not connect to WLED at ' + wledIp + '. Make sure your computer is on the same network as WLED (or StrollerNet).');
     }
+  };
 
-    // ── Settings ───────────────────────────────────────────────────────
-    function SettingsTab({ data, update }) {
-      const RECALL = ['always', 'never', 'memory'];
-      return <div style={{ padding: 24, maxWidth: 560, overflowY: 'auto', height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ fontWeight: 700, fontSize: 16 }}>Settings</div>
-        <div style={cardStyle}>
-          <SectionHead>Override Behavior</SectionHead>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13 }}>
-            <input type="checkbox" checked={data.overrideKillOnZone} onChange={e => update({ overrideKillOnZone: e.target.checked })} style={{ width: 16, height: 16, marginTop: 2 }} />
-            <div><div style={{ fontWeight: 600 }}>Reset override on zone entry</div>
-              <div style={{ color: 'var(--text3)', fontSize: 12, marginTop: 2 }}>Manual/MagicBand+ overrides clear when entering a new zone</div></div>
-          </label>
+  const applyWledEffect = (eff) => {
+    if (!sel) return;
+    setSel(s => ({...s, wled:{...s.wled, fx:eff.id, fxName:eff.name}}));
+  };
+  const applyWledPalette = (pal) => {
+    if (!sel) return;
+    setSel(s => ({...s, wled:{...s.wled, pal:pal.id, palName:pal.name}}));
+  };
+
+  return (<div style={{display:'flex',height:'100%'}}>
+    {/* List */}
+    <div style={{width:240,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',overflow:'hidden'}}>
+      <div style={{padding:'10px 12px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <span style={{fontWeight:700,fontSize:14}}>Presets ({data.presets.length})</span>
+        <button onClick={()=>{setSel(blank());setIsNew(true);setPtab('effect');}} style={btn('primary',{padding:'5px 12px',fontSize:12})}>+ New</button>
+      </div>
+      {/* WLED connect */}
+      <div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)',background:'var(--surface2)',display:'flex',flexDirection:'column',gap:6}}>
+        <div style={{fontSize:10,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>WLED Connect</div>
+        <div style={{display:'flex',gap:4}}>
+          <input value={wledIp} onChange={e=>setWledIp(e.target.value)} placeholder="192.168.x.x or 4.3.2.1"
+            style={{...inputStyle,flex:1,padding:'5px 8px',fontSize:11}} onKeyDown={e=>e.key==='Enter'&&connectWled()}/>
+          <button onClick={connectWled} style={btn(wledStatus==='connected'?'success':'primary',{padding:'5px 8px',fontSize:11,whiteSpace:'nowrap'})}>
+            {wledStatus==='connecting'?'…':wledStatus==='connected'?'✓':wledStatus==='error'?'✕':'Go'}
+          </button>
         </div>
-        <div style={cardStyle}>
-          <SectionHead>MagicBand+ Effects</SectionHead>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13 }}>
-            <input type="checkbox" checked={data.magicBandFivePoint} onChange={e => update({ magicBandFivePoint: e.target.checked })} style={{ width: 16, height: 16, marginTop: 2 }} />
-            <div><div style={{ fontWeight: 600 }}>5-Point Mode</div>
-              <div style={{ color: 'var(--text3)', fontSize: 12, marginTop: 2 }}>On: 4 corners + center. Off: 4 corners only.</div></div>
-          </label>
+        {wledStatus==='connected' && <div style={{fontSize:10,color:'var(--success)'}}>{wledEffects.length} effects · {wledPalettes.length} palettes loaded</div>}
+        {wledStatus==='error' && <div style={{fontSize:10,color:'var(--danger)'}}>Connection failed — check IP and network</div>}
+      </div>
+      <div style={{overflowY:'auto',flex:1}}>
+        {data.presets.length===0 && <div style={{padding:16,color:'var(--text3)',fontSize:13}}>No presets yet.</div>}
+        {data.presets.map(p=>(<div key={p.id}
+          onClick={()=>{setSel({...p,wled:{...p.wled},memory:{...p.memory}});setIsNew(false);setPtab('effect');}}
+          style={{padding:'10px 12px',borderBottom:'1px solid var(--border)',cursor:'pointer',background:sel?.id===p.id?'var(--primary-dim)':'transparent'}}>
+          <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
+          <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{p.wled.fxName||'—'} · {p.wled.palName||'—'}</div>
+        </div>))}
+      </div>
+    </div>
+
+    {/* Edit panel */}
+    {sel ? (<div style={{flex:1,overflowY:'auto',padding:20,display:'flex',flexDirection:'column',gap:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <input value={sel.name} onChange={e=>setSel({...sel,name:e.target.value})} placeholder="Preset name"
+          style={{...inputStyle,fontSize:16,fontWeight:600,flex:1,marginRight:12}}/>
+        <div style={{display:'flex',gap:8}}>
+          {!isNew && <button onClick={()=>del(sel.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+          <button onClick={()=>setSel(null)} style={btn('',{fontSize:12})}>Cancel</button>
+          <button onClick={save} style={btn('primary',{fontSize:12})}>Save</button>
         </div>
-        <div style={cardStyle}>
-          <SectionHead>Recall State</SectionHead>
-          <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>"Memory" uses the per-preset setting captured at save time.</p>
-          {Object.keys(data.recallState).map(k => (<div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 13, textTransform: 'capitalize' }}>{k}</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {RECALL.map(opt => (<button key={opt} onClick={() => update({ recallState: { ...data.recallState, [k]: opt } })}
-                style={{
-                  padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                  background: data.recallState[k] === opt ? 'var(--primary)' : 'transparent',
-                  color: data.recallState[k] === opt ? '#fff' : 'var(--text3)',
-                  border: `1px solid ${data.recallState[k] === opt ? 'var(--primary)' : 'var(--border)'}`,
-                }}>{opt}</button>))}
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
+        {['effect','palette','params','memory'].map(t=>(<button key={t} onClick={()=>setPtab(t)} style={{
+          padding:'8px 16px',background:'none',border:'none',
+          borderBottom:ptab===t?'2px solid var(--primary)':'2px solid transparent',
+          color:ptab===t?'var(--primary)':'var(--text2)',fontWeight:600,fontSize:13,cursor:'pointer',
+        }}>{t.charAt(0).toUpperCase()+t.slice(1)}</button>))}
+      </div>
+
+      {/* Effect tab */}
+      {ptab==='effect' && (<div style={{display:'flex',gap:12,flex:1,minHeight:0}}>
+        <div style={{flex:1,display:'flex',flexDirection:'column',gap:8}}>
+          <Field label="Effect Name (manual)">
+            <input value={sel.wled.fxName||''} onChange={e=>w('fxName',e.target.value)} placeholder="e.g. Rainbow" style={inputStyle}/>
+          </Field>
+          <Field label="Effect ID">
+            <input type="number" value={sel.wled.fx??''} onChange={e=>w('fx',parseInt(e.target.value))} placeholder="0" style={inputStyle}/>
+          </Field>
+        </div>
+        {wledStatus==='connected' && (<div style={{width:220,display:'flex',flexDirection:'column',gap:4}}>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>From WLED ({wledEffects.length})</div>
+          <input placeholder="Filter effects…" style={{...inputStyle,padding:'5px 8px',fontSize:12}} onChange={e=>{
+            const v=e.target.value.toLowerCase();
+            document.querySelectorAll('.eff-item').forEach(el=>{el.style.display=el.dataset.name.includes(v)?'':'none';});
+          }}/>
+          <div style={{overflowY:'auto',maxHeight:320,border:'1px solid var(--border)',borderRadius:8}}>
+            {wledEffects.map(eff=>(<div key={eff.id} className="eff-item" data-name={eff.name.toLowerCase()}
+              onClick={()=>applyWledEffect(eff)}
+              style={{padding:'6px 10px',cursor:'pointer',fontSize:12,borderBottom:'1px solid var(--border)',
+                background:sel.wled.fx===eff.id?'var(--primary-dim)':'transparent',
+                color:sel.wled.fx===eff.id?'var(--primary)':'var(--text)'}}>
+              {eff.name}
+            </div>))}
+          </div>
+        </div>)}
+      </div>)}
+
+      {/* Palette tab */}
+      {ptab==='palette' && (<div style={{display:'flex',gap:12,flex:1,minHeight:0}}>
+        <div style={{flex:1,display:'flex',flexDirection:'column',gap:8}}>
+          <Field label="Palette Name (manual)">
+            <input value={sel.wled.palName||''} onChange={e=>w('palName',e.target.value)} placeholder="e.g. Rainbow" style={inputStyle}/>
+          </Field>
+          <Field label="Palette ID">
+            <input type="number" value={sel.wled.pal??''} onChange={e=>w('pal',parseInt(e.target.value))} placeholder="0" style={inputStyle}/>
+          </Field>
+          {data.customPalettes?.length>0 && (<>
+            <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>Custom Palettes</div>
+            {data.customPalettes.map((cp,i)=>(<div key={cp.id} onClick={()=>{w('pal',255-i);w('palName',cp.name);}}
+              style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',borderRadius:8,cursor:'pointer',
+                background:sel.wled.palName===cp.name?'var(--primary-dim)':'var(--surface2)'}}>
+              <div style={{display:'flex',gap:2}}>{cp.colors.map((c,j)=>(<div key={j} style={{width:14,height:14,borderRadius:2,background:c}}/>))}</div>
+              <span style={{fontSize:13,flex:1}}>{cp.name}</span>
+              {sel.wled.palName===cp.name && <span style={{color:'var(--primary)',fontSize:13}}>✓</span>}
+            </div>))}
+          </>)}
+        </div>
+        {wledStatus==='connected' && (<div style={{width:220,display:'flex',flexDirection:'column',gap:4}}>
+          <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>From WLED ({wledPalettes.length})</div>
+          <input placeholder="Filter palettes…" style={{...inputStyle,padding:'5px 8px',fontSize:12}} onChange={e=>{
+            const v=e.target.value.toLowerCase();
+            document.querySelectorAll('.pal-item').forEach(el=>{el.style.display=el.dataset.name.includes(v)?'':'none';});
+          }}/>
+          <div style={{overflowY:'auto',maxHeight:320,border:'1px solid var(--border)',borderRadius:8}}>
+            {wledPalettes.map(pal=>(<div key={pal.id} className="pal-item" data-name={pal.name.toLowerCase()}
+              onClick={()=>applyWledPalette(pal)}
+              style={{padding:'6px 10px',cursor:'pointer',fontSize:12,borderBottom:'1px solid var(--border)',
+                background:sel.wled.pal===pal.id?'var(--primary-dim)':'transparent',
+                color:sel.wled.pal===pal.id?'var(--primary)':'var(--text)'}}>
+              <span style={{color:'var(--text3)',marginRight:6,fontSize:10}}>#{pal.id}</span>{pal.name}
+            </div>))}
+          </div>
+        </div>)}
+      </div>)}
+
+      {/* Params tab */}
+      {ptab==='params' && (<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        {[{k:'sx',label:'Speed',max:255},{k:'ix',label:'Intensity',max:255},{k:'c1',label:'Custom 1',max:255},{k:'c2',label:'Custom 2',max:255},{k:'c3',label:'Custom 3',max:31}].map(({k,label,max})=>(<Field key={k} label={`${label}: ${sel.wled[k]??128}`}>
+          <input type="range" min={0} max={max} value={sel.wled[k]??128} onChange={e=>w(k,+e.target.value)} style={{width:'100%',accentColor:'var(--primary)'}}/>
+        </Field>))}
+        {[{k:'o1',label:'Option 1'},{k:'o2',label:'Option 2'},{k:'o3',label:'Option 3'}].map(({k,label})=>(<Field key={k} label={label}>
+          <input type="checkbox" checked={sel.wled[k]||false} onChange={e=>w(k,e.target.checked)} style={{width:18,height:18}}/>
+        </Field>))}
+      </div>)}
+
+      {/* Memory tab */}
+      {ptab==='memory' && (<div style={{display:'flex',flexDirection:'column',gap:8}}>
+        <div style={{fontSize:12,color:'var(--text3)',marginBottom:4}}>Which properties to recall when "Memory" mode is set globally.</div>
+        {Object.keys(sel.memory).map(k=>(<div key={k} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
+          <span style={{fontSize:13,textTransform:'capitalize'}}>{k}</span>
+          <input type="checkbox" checked={sel.memory[k]} onChange={e=>m(k,e.target.checked)} style={{width:18,height:18}}/>
+        </div>))}
+        <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>Zone assignments using this preset:</div>
+        {data.zones.filter(z=>z.presetId===sel.id).map(z=>(<div key={z.id} style={{fontSize:12,color:'var(--primary)',padding:'2px 0'}}>📍 {z.name}</div>))}
+      </div>)}
+    </div>) : (<div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text3)',fontSize:14}}>
+      Select a preset or click + New
+    </div>)}
+  </div>);
+}
+
+
+// ── ColorCell component ─────────────────────────────────────────────────
+function hexToRgb(hex) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return {r,g,b};
+}
+function rgbToHex(r,g,b) {
+  return '#'+[r,g,b].map(x=>Math.max(0,Math.min(255,Math.round(x))).toString(16).padStart(2,'0')).join('');
+}
+
+const PALETTE_SWATCHES = [
+  '#ff0000','#ff4400','#ff8800','#ffcc00','#ffff00','#aaff00',
+  '#00ff00','#00ff88','#00ffff','#0088ff','#0044ff','#6600ff',
+  '#aa00ff','#ff00ff','#ff0088','#ffffff','#cccccc','#888888',
+  '#444444','#000000','#ff6666','#66ff66','#6666ff','#ffaa44',
+];
+
+function ColorCell({color, onChange, onRemove}) {
+  const [mode, setMode] = useState('swatches'); // swatches | hex | rgb
+  const rgb = hexToRgb(color || '#000000');
+  const [hexInput, setHexInput] = useState(color);
+
+  useEffect(() => { setHexInput(color); }, [color]);
+
+  const applyHex = (v) => {
+    const h = v.startsWith('#') ? v : '#'+v;
+    if (/^#[0-9a-fA-F]{6}$/.test(h)) onChange(h);
+    setHexInput(v);
+  };
+
+  return (<div style={{background:'var(--surface2)',borderRadius:10,padding:10,display:'flex',flexDirection:'column',gap:8}}>
+    {/* Color preview */}
+    <div style={{height:44,borderRadius:7,background:color,border:'1px solid var(--border)',position:'relative',display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <span style={{color:'#ffffff',fontSize:11,fontFamily:'monospace',textShadow:'0 1px 3px #000000aa'}}>{color}</span>
+    </div>
+    {/* Mode selector */}
+    <div style={{display:'flex',gap:0,background:'var(--surface)',borderRadius:6,overflow:'hidden',border:'1px solid var(--border)'}}>
+      {['swatches','hex','rgb'].map(m=>(<button key={m} onClick={()=>setMode(m)} style={{
+        flex:1,padding:'4px 0',fontSize:11,fontWeight:600,border:'none',cursor:'pointer',
+        background:mode===m?'var(--primary)':'transparent',
+        color:mode===m?'#fff':'var(--text2)',
+      }}>{m.charAt(0).toUpperCase()+m.slice(1)}</button>))}
+    </div>
+
+    {mode==='swatches' && (<div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+      {PALETTE_SWATCHES.map(sw=>(<div key={sw} onClick={()=>onChange(sw)}
+        style={{width:20,height:20,borderRadius:3,background:sw,cursor:'pointer',flexShrink:0,
+          outline:sw.toLowerCase()===color.toLowerCase()?'2px solid white':'1px solid #ffffff22',outlineOffset:1}}/>))}
+      <label style={{width:20,height:20,borderRadius:3,overflow:'hidden',cursor:'pointer',border:'2px dashed var(--border)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'var(--text3)',title:'Custom'}}>
+        <input type="color" value={color} onChange={e=>onChange(e.target.value)} style={{width:0,height:0,opacity:0,position:'absolute'}}/>+
+      </label>
+    </div>)}
+
+    {mode==='hex' && (<div style={{display:'flex',gap:6,alignItems:'center'}}>
+      <div style={{width:28,height:28,borderRadius:5,background:color,border:'1px solid var(--border)',flexShrink:0}}/>
+      <input value={hexInput} onChange={e=>applyHex(e.target.value)}
+        placeholder="#rrggbb" maxLength={7}
+        style={{...inputStyle,fontFamily:'monospace',fontSize:13,flex:1,padding:'5px 8px'}}/>
+    </div>)}
+
+    {mode==='rgb' && (<div style={{display:'flex',flexDirection:'column',gap:4}}>
+      {[['R',rgb.r,'#ff4444'],['G',rgb.g,'#44ff44'],['B',rgb.b,'#4488ff']].map(([ch,val,trackColor])=>(<div key={ch} style={{display:'flex',alignItems:'center',gap:6}}>
+        <span style={{fontSize:11,fontWeight:700,color:'var(--text2)',width:14}}>{ch}</span>
+        <input type="range" min={0} max={255} value={val}
+          onChange={e=>{
+            const nv=+e.target.value;
+            onChange(rgbToHex(ch==='R'?nv:rgb.r, ch==='G'?nv:rgb.g, ch==='B'?nv:rgb.b));
+          }}
+          style={{flex:1,accentColor:trackColor,height:16}}/>
+        <span style={{fontSize:10,fontFamily:'monospace',color:'var(--text3)',width:24,textAlign:'right'}}>{val}</span>
+      </div>))}
+    </div>)}
+
+    {onRemove && (<button onClick={onRemove} style={btn('danger',{width:'100%',padding:'3px 0',fontSize:11})}>Remove</button>)}
+  </div>);
+}
+
+// ── Palettes ───────────────────────────────────────────────────────
+function PalettesTab({data, update}) {
+  const palettes = data.customPalettes || [];
+  const sets     = data.paletteSets    || [];
+  const [ptab, setPtab] = useState('palettes');
+  const [editP, setEditP] = useState(null);
+  const [editS, setEditS] = useState(null);
+  const [isNew, setIsNew] = useState(false);
+
+  const blankPal = () => ({id:generateId(),name:'',colors:['#a78bfa','#22c55e','#f59e0b']});
+  const blankSet = () => ({id:generateId(),name:'',paletteIds:[]});
+
+  const savePal = () => {
+    if (!editP.name.trim()) return alert('Enter a name');
+    update({customPalettes: isNew ? [...palettes,editP] : palettes.map(p=>p.id===editP.id?editP:p)});
+    setEditP(null);
+  };
+  const delPal = id => {
+    if(!confirm('Delete palette?')) return;
+    update({
+      customPalettes: palettes.filter(p=>p.id!==id),
+      paletteSets: sets.map(s=>({...s,paletteIds:s.paletteIds.filter(pid=>pid!==id)})),
+    });
+    setEditP(null);
+  };
+  const saveSet = () => {
+    if (!editS.name.trim()) return alert('Enter a name');
+    update({paletteSets: isNew ? [...sets,editS] : sets.map(s=>s.id===editS.id?editS:s)});
+    setEditS(null);
+  };
+  const delSet = id => { if(!confirm('Delete set?')) return; update({paletteSets:sets.filter(s=>s.id!==id)}); setEditS(null); };
+  const toggleInSet = id => setEditS(s=>({...s,paletteIds:s.paletteIds.includes(id)?s.paletteIds.filter(p=>p!==id):[...s.paletteIds,id]}));
+  const moveInSet = (from,to) => setEditS(s=>{const ids=[...s.paletteIds];const[x]=ids.splice(from,1);ids.splice(to,0,x);return{...s,paletteIds:ids};});
+
+  return <div style={{display:'flex',height:'100%'}}>
+    {/* List panel */}
+    <div style={{width:260,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column'}}>
+      <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
+        {['palettes','sets'].map(t=>(<button key={t} onClick={()=>setPtab(t)} style={{
+          flex:1,padding:'10px 0',background:'none',border:'none',borderBottom:ptab===t?'2px solid var(--primary)':'2px solid transparent',
+          color:ptab===t?'var(--primary)':'var(--text2)',fontWeight:600,fontSize:13,cursor:'pointer',marginBottom:-1,
+        }}>{t==='palettes'?`Palettes (${palettes.length})`:`Sets (${sets.length})`}</button>))}
+      </div>
+      <div style={{overflowY:'auto',flex:1,padding:10}}>
+        {ptab==='palettes' && <>
+          <button onClick={()=>{setEditP(blankPal());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Palette</button>
+          {palettes.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No palettes yet</div>}
+          {palettes.map(p=>(<div key={p.id} onClick={()=>{setEditP({...p,colors:[...p.colors]});setIsNew(false);}}
+            style={{...cardStyle,cursor:'pointer',background:editP?.id===p.id?'var(--primary-dim)':'var(--surface)',marginBottom:8}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>{p.name}</div>
+            <PaletteGradient colors={p.colors} height={18}/>
+          </div>))}
+        </>}
+        {ptab==='sets' && <>
+          <button onClick={()=>{setEditS(blankSet());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Set</button>
+          {sets.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No sets yet</div>}
+          {sets.map(s=>(<div key={s.id} onClick={()=>{setEditS({...s,paletteIds:[...s.paletteIds]});setIsNew(false);}}
+            style={{...cardStyle,cursor:'pointer',background:editS?.id===s.id?'var(--primary-dim)':'var(--surface)',marginBottom:8}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>{s.name}</div>
+            <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>{s.paletteIds.length} palette{s.paletteIds.length!==1?'s':''}</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+              {s.paletteIds.map(id=>{const pal=palettes.find(p=>p.id===id);return pal?.colors.slice(0,4).map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:2,background:c}}/>) })}
             </div>
           </div>))}
-        </div>
-        <div style={cardStyle}>
-          <SectionHead>Summary</SectionHead>
-          {[['Presets', data.presets.length], ['Preset Zones', data.zones.length], ['Indoor Zones', data.indoorZones.length],
-          ['Custom Palettes', (data.customPalettes || []).length], ['Palette Sets', (data.paletteSets || []).length]]
-            .map(([l, c]) => <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: 13 }}>
-              <span style={{ color: 'var(--text2)' }}>{l}</span>
-              <span style={{ color: 'var(--primary)', fontWeight: 700 }}>{c}</span>
-            </div>)}
-        </div>
-      </div>;
-    }
+        </>}
+      </div>
+    </div>
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-  </script>
-</body>
-
-</html>
+    {/* Palette editor */}
+    {editP && ptab==='palettes' && <div style={{flex:1,overflowY:'auto',padding:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Palette':'Edit Palette'}</span>
+        {!isNew && <button onClick={()=>delPal(editP.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+      </div>
+      <Field label="Name"><input value={editP.name} onChange={e=>setEditP({...editP,name:e.target.value})} placeholder="e.g. Sunset Glow" style={inputStyle} autoFocus/></Field>
+      {editP.colors.length>=2 && <div style={{marginBottom:12}}><Field label="Preview"><PaletteGradient colors={editP.colors} height={36}/></Field></div>}
+      <SectionHead>Colors ({editP.colors.length}/16)</SectionHead>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+        {editP.colors.map((c,i)=>(<ColorCell key={i} color={c}
+            onRemove={editP.colors.length>2?()=>setEditP({...editP,colors:editP.colors.filter((_,j)=>j!==i)}):null}
+            onChange={nc=>{const cl=[...editP.colors];cl[i]=nc;setEditP({...editP,colors:cl});}}
+          />))

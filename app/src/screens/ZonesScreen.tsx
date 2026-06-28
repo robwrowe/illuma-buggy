@@ -1,7 +1,8 @@
 /**
  * ZonesScreen.tsx
- * Full zone management: draw, edit, view, delete zones.
- * Shows active zones. Pin dragging via long-press selection.
+ * Map zone management. Fixes:
+ * - Pin selection/movement uses refs to avoid stale closures
+ * - Active zone detection uses zonesRef to catch newly added zones
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -10,13 +11,12 @@ import {
   Modal, FlatList, Alert, TextInput, Switch, ScrollView,
 } from 'react-native';
 import * as Location from 'expo-location';
-import MapView, { Polygon, Marker, MapPressEvent, Circle } from 'react-native-maps';
+import MapView, { Polygon, Marker, MapPressEvent } from 'react-native-maps';
 import { useAppStore, Zone, IndoorZone, LatLng } from '../stores/store';
 import { polygonsOverlap, pointInPolygon, generateId } from '../utils/utils';
 import { useTheme } from '../utils/theme';
 
-type DrawMode  = 'none' | 'preset' | 'indoor';
-type EditMode  = 'none' | 'zone' | 'indoor';
+type DrawMode = 'none' | 'preset' | 'indoor';
 
 const ZONE_COLORS  = ['#a78bfa', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#f97316'];
 const INDOOR_COLOR = '#60a5fa';
@@ -37,10 +37,24 @@ export default function ZonesScreen() {
   const [userLocation, setUserLocation] = useState<LatLng | null>(null);
   const [activeZoneIds, setActiveZoneIds] = useState<string[]>([]);
 
-  // Drawing
-  const [drawMode, setDrawMode]   = useState<DrawMode>('none');
-  const [drawPoints, setDrawPoints] = useState<LatLng[]>([]);
+  // Drawing state
+  const [drawMode, setDrawMode]       = useState<DrawMode>('none');
+  const [drawPoints, setDrawPoints]   = useState<LatLng[]>([]);
   const [selectedPinIdx, setSelectedPinIdx] = useState<number | null>(null);
+  const [insertMode, setInsertMode]   = useState(false); // tap polygon edge to insert pin
+
+  // Refs for use inside map callbacks (avoids stale closures)
+  const drawModeRef       = useRef<DrawMode>('none');
+  const selectedPinRef    = useRef<number | null>(null);
+  const drawPointsRef     = useRef<LatLng[]>([]);
+  const insertModeRef     = useRef(false);
+  const zonesRef          = useRef<Zone[]>(zones);
+
+  drawModeRef.current    = drawMode;
+  selectedPinRef.current = selectedPinIdx;
+  drawPointsRef.current  = drawPoints;
+  insertModeRef.current  = insertMode;
+  zonesRef.current       = zones;
 
   // Zone form
   const [showZoneForm, setShowZoneForm] = useState(false);
@@ -48,16 +62,15 @@ export default function ZonesScreen() {
   const [newZonePreset, setNewZonePreset] = useState('');
 
   // Zone editing
-  const [editingZone, setEditingZone]       = useState<Zone | null>(null);
-  const [editingIndoor, setEditingIndoor]   = useState<IndoorZone | null>(null);
-  const [editMode, setEditMode]             = useState<EditMode>('none');
-  const [showEditModal, setShowEditModal]   = useState(false);
+  const [editingZone, setEditingZone]     = useState<Zone | null>(null);
+  const [editingIndoor, setEditingIndoor] = useState<IndoorZone | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
-  // List modal
-  const [showList, setShowList]   = useState(false);
-  const [listMode, setListMode]   = useState<'preset' | 'indoor'>('preset');
+  // List
+  const [showList, setShowList] = useState(false);
+  const [listMode, setListMode] = useState<'preset' | 'indoor'>('preset');
 
-  // Auto-locate and track active zones
+  // ── Location & active zones ──
   useEffect(() => {
     let sub: Location.LocationSubscription | null = null;
     (async () => {
@@ -69,55 +82,108 @@ export default function ZonesScreen() {
       setUserLocation(coord);
       mapRef.current?.animateToRegion({ ...coord, latitudeDelta: 0.005, longitudeDelta: 0.005 }, 800);
 
-      // Watch for active zone updates
+      // Compute active zones for current position immediately
+      const activeNow = zonesRef.current.filter(z => z.enabled && pointInPolygon(coord, z.polygon)).map(z => z.id);
+      setActiveZoneIds(activeNow);
+
       sub = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, timeInterval: 3000, distanceInterval: 5 },
         (loc) => {
           const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
           setUserLocation(pt);
-          const active = zones.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
+          // Use zonesRef so newly-added zones are always visible here
+          const active = zonesRef.current.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
           setActiveZoneIds(active);
         }
       );
     })();
     return () => { sub?.remove(); };
-  }, [zones]);
+  }, []); // intentionally empty — uses refs for live data
 
-  // ── Drawing ──
+  // Recompute active zones immediately when zones list changes
+  useEffect(() => {
+    zonesRef.current = zones;
+    if (userLocation) {
+      const active = zones.filter(z => z.enabled && pointInPolygon(userLocation, z.polygon)).map(z => z.id);
+      setActiveZoneIds(active);
+    }
+  }, [zones, userLocation]);
 
+  // ── Map press — unified handler using refs ──
   const onMapPress = useCallback((e: MapPressEvent) => {
-    if (drawMode === 'none') return;
-    // If a pin is selected, deselect instead of adding new point
-    if (selectedPinIdx !== null) { setSelectedPinIdx(null); return; }
-    setDrawPoints(prev => [...prev, e.nativeEvent.coordinate]);
-  }, [drawMode, selectedPinIdx]);
+    if (!e?.nativeEvent?.coordinate) return;
+    const coord = e.nativeEvent.coordinate;
 
-  const undoLastPin = () => {
-    setDrawPoints(prev => prev.slice(0, -1));
-    setSelectedPinIdx(null);
-  };
-
-  const onPinPress = (i: number) => {
-    // Tap pin to select it for moving
-    setSelectedPinIdx(selectedPinIdx === i ? null : i);
-  };
-
-  // Move selected pin to tapped map location
-  const onMapPressForMove = useCallback((e: MapPressEvent) => {
-    if (selectedPinIdx !== null) {
-      const coord = e.nativeEvent.coordinate;
+    // If a pin is selected, move it there
+    if (selectedPinRef.current !== null) {
+      const idx = selectedPinRef.current;
       setDrawPoints(prev => {
         const updated = [...prev];
-        updated[selectedPinIdx] = coord;
+        updated[idx] = coord;
         return updated;
       });
       setSelectedPinIdx(null);
       return;
     }
-    if (drawMode !== 'none') {
-      setDrawPoints(prev => [...prev, e.nativeEvent.coordinate]);
+
+    // Otherwise add a new point if drawing
+    if (drawModeRef.current !== 'none') {
+      if (insertModeRef.current && drawPointsRef.current.length >= 2) {
+        // Insert on nearest edge instead of appending
+        const pts = drawPointsRef.current;
+        let bestIdx = 0, bestDist = Infinity;
+        for (let i = 0; i < pts.length; i++) {
+          const a = pts[i];
+          const b = pts[(i + 1) % pts.length];
+          const midLat = (a.latitude + b.latitude) / 2;
+          const midLng = (a.longitude + b.longitude) / 2;
+          const d = Math.pow(coord.latitude - midLat, 2) + Math.pow(coord.longitude - midLng, 2);
+          if (d < bestDist) { bestDist = d; bestIdx = i; }
+        }
+        setDrawPoints(prev => {
+          const updated = [...prev];
+          updated.splice(bestIdx + 1, 0, coord);
+          return updated;
+        });
+      } else {
+        setDrawPoints(prev => [...prev, coord]);
+      }
     }
-  }, [selectedPinIdx, drawMode]);
+  }, []); // empty deps — reads everything from refs
+
+  const onPinPress = (i: number) => {
+    setSelectedPinIdx(prev => prev === i ? null : i);
+  };
+
+  // Find which segment of the polygon the tap is closest to,
+  // then insert a new point between those two vertices.
+  const insertPinOnEdge = (tapCoord: LatLng) => {
+    if (drawPoints.length < 2) return;
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < drawPoints.length; i++) {
+      const a = drawPoints[i];
+      const b = drawPoints[(i + 1) % drawPoints.length];
+      // Midpoint distance as a proxy for "closest segment"
+      const midLat = (a.latitude + b.latitude) / 2;
+      const midLng = (a.longitude + b.longitude) / 2;
+      const dLat = tapCoord.latitude - midLat;
+      const dLng = tapCoord.longitude - midLng;
+      const dist = dLat * dLat + dLng * dLng;
+      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    }
+    // Insert after bestIdx
+    setDrawPoints(prev => {
+      const updated = [...prev];
+      updated.splice(bestIdx + 1, 0, tapCoord);
+      return updated;
+    });
+  };
+
+  const undoLastPin = () => {
+    setDrawPoints(prev => prev.slice(0, -1));
+    setSelectedPinIdx(null);
+  };
 
   const finishDrawing = () => {
     if (drawPoints.length < 3) { Alert.alert('Too few points', 'Draw at least 3 points.'); return; }
@@ -142,7 +208,7 @@ export default function ZonesScreen() {
       cancelDrawing();
     };
     if (overlapping) {
-      Alert.alert('Overlap Detected', `Overlaps with "${overlapping.name}". Continue?`, [
+      Alert.alert('Overlap', `Overlaps with "${overlapping.name}". Continue?`, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Save Anyway', onPress: save },
       ]);
@@ -156,31 +222,24 @@ export default function ZonesScreen() {
     cancelDrawing();
   };
 
-  // ── Zone editing ──
-
   const openZoneEdit = (z: Zone) => {
-    setEditingZone({ ...z, polygon: [...z.polygon] });
-    setEditMode('zone');
-    setShowEditModal(true);
+    setEditingZone({ ...z }); setEditingIndoor(null); setShowEditModal(true);
   };
-
   const openIndoorEdit = (z: IndoorZone) => {
-    setEditingIndoor({ ...z, polygon: [...z.polygon] });
-    setEditMode('indoor');
-    setShowEditModal(true);
+    setEditingIndoor({ ...z }); setEditingZone(null); setShowEditModal(true);
   };
 
-  const saveZoneEdit = () => {
+  const saveEdit = () => {
     if (editingZone) { updateZone(editingZone.id, editingZone); saveToStorage(); }
     if (editingIndoor) { updateIndoorZone(editingIndoor.id, editingIndoor); saveToStorage(); }
-    setShowEditModal(false);
-    setEditingZone(null);
-    setEditingIndoor(null);
-    setEditMode('none');
+    setShowEditModal(false); setEditingZone(null); setEditingIndoor(null);
   };
 
-  const deleteZone   = (id: string) => { removeZone(id); saveToStorage(); };
-  const deleteIndoor = (id: string) => { removeIndoorZone(id); saveToStorage(); };
+  const deleteEdit = () => {
+    if (editingZone) { removeZone(editingZone.id); saveToStorage(); }
+    if (editingIndoor) { removeIndoorZone(editingIndoor.id); saveToStorage(); }
+    setShowEditModal(false); setEditingZone(null); setEditingIndoor(null);
+  };
 
   const isDrawing = drawMode !== 'none';
 
@@ -189,12 +248,11 @@ export default function ZonesScreen() {
       <MapView
         ref={mapRef}
         style={s.map}
-        onPress={isDrawing ? onMapPressForMove : undefined}
+        onPress={onMapPress}
         showsUserLocation
         showsMyLocationButton
         mapType="satellite"
       >
-        {/* Existing preset zones */}
         {zones.map((zone, i) => {
           const color = ZONE_COLORS[i % ZONE_COLORS.length];
           const isActive = activeZoneIds.includes(zone.id);
@@ -206,12 +264,11 @@ export default function ZonesScreen() {
               strokeColor={zone.enabled ? color : '#4a4a6a'}
               strokeWidth={isActive ? 3 : 2}
               tappable
-              onPress={() => openZoneEdit(zone)}
+              onPress={() => !isDrawing && openZoneEdit(zone)}
             />
           );
         })}
 
-        {/* Indoor zones */}
         {indoorZones.map(zone => (
           <Polygon
             key={zone.id}
@@ -221,11 +278,11 @@ export default function ZonesScreen() {
             strokeWidth={2}
             lineDashPattern={[6, 4]}
             tappable
-            onPress={() => openIndoorEdit(zone)}
+            onPress={() => !isDrawing && openIndoorEdit(zone)}
           />
         ))}
 
-        {/* Drawing points */}
+        {/* Drawing pins — tap to select, then tap map to move */}
         {drawPoints.map((pt, i) => {
           const isSelected = selectedPinIdx === i;
           const isLast = i === drawPoints.length - 1;
@@ -235,13 +292,14 @@ export default function ZonesScreen() {
               coordinate={pt}
               pinColor={isSelected ? '#ffffff' : isLast ? '#22c55e' : '#a78bfa'}
               zIndex={isSelected ? 2000 : 1000 + i}
-              onPress={() => onPinPress(i)}
-              title={isSelected ? 'Tap map to move' : `Pin ${i + 1} — tap to select`}
+              onPress={(e) => {
+                e.stopPropagation();
+                onPinPress(i);
+              }}
             />
           );
         })}
 
-        {/* Drawing preview */}
         {drawPoints.length >= 3 && (
           <Polygon
             coordinates={drawPoints}
@@ -259,19 +317,15 @@ export default function ZonesScreen() {
           {activeZoneIds.map(id => {
             const z = zones.find(z => z.id === id);
             const preset = presets.find(p => p.id === z?.presetId);
-            return z ? (
-              <Text key={id} style={s.activeBannerItem}>
-                {z.name}{preset ? ` → ${preset.name}` : ''}
-              </Text>
-            ) : null;
+            return z ? <Text key={id} style={s.activeBannerItem}>{z.name}{preset ? ` → ${preset.name}` : ''}</Text> : null;
           })}
         </View>
       )}
 
-      {/* Selected pin hint */}
+      {/* Pin selection hint */}
       {selectedPinIdx !== null && (
-        <View style={[s.activeBanner, { backgroundColor: '#ffffff22' }]}>
-          <Text style={s.activeBannerTitle}>Pin {selectedPinIdx + 1} selected — tap map to move it</Text>
+        <View style={s.pinHint}>
+          <Text style={s.pinHintText}>Pin {selectedPinIdx + 1} selected — tap anywhere on map to move it</Text>
         </View>
       )}
 
@@ -281,7 +335,7 @@ export default function ZonesScreen() {
           <TouchableOpacity style={s.toolBtn} onPress={() => setDrawMode('preset')}>
             <Text style={s.toolBtnText}>＋ Preset Zone</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[s.toolBtn, { backgroundColor: colors.surfaceAlt }]} onPress={() => setDrawMode('indoor')}>
+          <TouchableOpacity style={[s.toolBtn, { borderColor: INDOOR_COLOR }]} onPress={() => setDrawMode('indoor')}>
             <Text style={[s.toolBtnText, { color: INDOOR_COLOR }]}>＋ Indoor Zone</Text>
           </TouchableOpacity>
           <TouchableOpacity style={s.listBtn} onPress={() => { setListMode('preset'); setShowList(true); }}>
@@ -290,13 +344,27 @@ export default function ZonesScreen() {
         </View>
       ) : (
         <View style={s.toolbar}>
-          <Text style={s.drawHint}>
-            {selectedPinIdx !== null
-              ? `Pin ${selectedPinIdx + 1} selected — tap map to move`
-              : `Tap map to add pins (${drawPoints.length} placed)`}
-          </Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.drawHint}>
+              {selectedPinIdx !== null
+                ? `Pin ${selectedPinIdx + 1} selected → tap map to move`
+                : insertMode
+                ? `Insert mode — tap map to add pin between nearest pins`
+                : `Tap map to add pins (${drawPoints.length})`}
+            </Text>
+            {selectedPinIdx !== null && (
+              <Text style={[s.drawHint, { fontSize: 10, opacity: 0.7 }]}>Tap pin again to deselect</Text>
+            )}
+          </View>
+          {drawPoints.length >= 3 && (
+            <TouchableOpacity
+              style={[s.toolBtn, { paddingHorizontal: 10 }, insertMode && { backgroundColor: colors.warning + '33', borderColor: colors.warning }]}
+              onPress={() => setInsertMode(v => !v)}>
+              <Text style={[s.toolBtnText, insertMode && { color: colors.warning }]}>⊕</Text>
+            </TouchableOpacity>
+          )}
           {drawPoints.length > 0 && (
-            <TouchableOpacity style={[s.toolBtn, { backgroundColor: colors.surfaceAlt }]} onPress={undoLastPin}>
+            <TouchableOpacity style={[s.toolBtn, { paddingHorizontal: 10 }]} onPress={undoLastPin}>
               <Text style={s.toolBtnText}>↩</Text>
             </TouchableOpacity>
           )}
@@ -305,7 +373,7 @@ export default function ZonesScreen() {
               <Text style={s.toolBtnText}>✓ Done</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={[s.toolBtn, { backgroundColor: colors.danger + '33' }]} onPress={cancelDrawing}>
+          <TouchableOpacity style={[s.toolBtn, { borderColor: colors.danger }]} onPress={cancelDrawing}>
             <Text style={[s.toolBtnText, { color: colors.danger }]}>✕</Text>
           </TouchableOpacity>
         </View>
@@ -313,7 +381,7 @@ export default function ZonesScreen() {
 
       {/* Zone save form */}
       <Modal visible={showZoneForm} transparent animationType="slide">
-        <View style={s.modalOverlay}>
+        <View style={s.overlay}>
           <View style={s.modal}>
             <Text style={s.modalTitle}>{drawMode === 'preset' ? 'New Preset Zone' : 'New Indoor Zone'}</Text>
             <Text style={s.fieldLabel}>Name</Text>
@@ -323,18 +391,17 @@ export default function ZonesScreen() {
             {drawMode === 'preset' && (
               <>
                 <Text style={s.fieldLabel}>Preset</Text>
-                <ScrollView style={{ maxHeight: 180 }}>
-                  {presets.length === 0
-                    ? <Text style={s.hint}>No presets yet — create one in Library tab first.</Text>
-                    : presets.map(p => (
-                      <TouchableOpacity key={p.id}
-                        style={[s.option, newZonePreset === p.id && s.optionActive]}
-                        onPress={() => setNewZonePreset(p.id)}>
-                        <Text style={[s.optionText, newZonePreset === p.id && { color: colors.primary }]}>{p.name}</Text>
-                      </TouchableOpacity>
-                    ))
-                  }
-                </ScrollView>
+                {presets.length === 0
+                  ? <Text style={s.hint}>No presets yet — create one in Library first.</Text>
+                  : <ScrollView style={{ maxHeight: 160 }}>
+                      {presets.map(p => (
+                        <TouchableOpacity key={p.id}
+                          style={[s.option, newZonePreset === p.id && s.optionActive]}
+                          onPress={() => setNewZonePreset(p.id)}>
+                          <Text style={[s.optionText, newZonePreset === p.id && { color: colors.primary }]}>{p.name}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>}
               </>
             )}
             <View style={s.modalRow}>
@@ -349,13 +416,11 @@ export default function ZonesScreen() {
         </View>
       </Modal>
 
-      {/* Edit zone modal */}
+      {/* Edit modal */}
       <Modal visible={showEditModal} transparent animationType="slide">
-        <View style={s.modalOverlay}>
+        <View style={s.overlay}>
           <View style={s.modal}>
-            <Text style={s.modalTitle}>
-              Edit {editMode === 'zone' ? 'Preset' : 'Indoor'} Zone
-            </Text>
+            <Text style={s.modalTitle}>Edit {editingZone ? 'Preset Zone' : 'Indoor Zone'}</Text>
             {editingZone && (
               <>
                 <Text style={s.fieldLabel}>Name</Text>
@@ -372,7 +437,7 @@ export default function ZonesScreen() {
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
-                <View style={s.row}>
+                <View style={s.switchRow}>
                   <Text style={s.fieldLabel}>Enabled</Text>
                   <Switch value={editingZone.enabled}
                     onValueChange={v => setEditingZone({ ...editingZone, enabled: v })}
@@ -386,7 +451,7 @@ export default function ZonesScreen() {
                 <TextInput style={s.input} value={editingIndoor.name}
                   onChangeText={v => setEditingIndoor({ ...editingIndoor, name: v })}
                   placeholderTextColor={colors.textMuted} />
-                <View style={s.row}>
+                <View style={s.switchRow}>
                   <Text style={s.fieldLabel}>Enabled</Text>
                   <Switch value={editingIndoor.enabled}
                     onValueChange={v => setEditingIndoor({ ...editingIndoor, enabled: v })}
@@ -395,23 +460,17 @@ export default function ZonesScreen() {
               </>
             )}
             <View style={s.modalRow}>
-              <TouchableOpacity style={[s.cancelBtn, { backgroundColor: colors.danger + '22' }]}
-                onPress={() => {
-                  Alert.alert('Delete Zone', 'Delete this zone?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: () => {
-                      if (editingZone) deleteZone(editingZone.id);
-                      if (editingIndoor) deleteIndoor(editingIndoor.id);
-                      setShowEditModal(false);
-                    }},
-                  ]);
-                }}>
+              <TouchableOpacity style={[s.cancelBtn, { borderColor: colors.danger }]}
+                onPress={() => Alert.alert('Delete', 'Delete this zone?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: deleteEdit },
+                ])}>
                 <Text style={[s.cancelBtnText, { color: colors.danger }]}>Delete</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.cancelBtn} onPress={() => setShowEditModal(false)}>
                 <Text style={s.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.saveBtn} onPress={saveZoneEdit}>
+              <TouchableOpacity style={s.saveBtn} onPress={saveEdit}>
                 <Text style={s.saveBtnText}>Save</Text>
               </TouchableOpacity>
             </View>
@@ -421,7 +480,7 @@ export default function ZonesScreen() {
 
       {/* Zone list modal */}
       <Modal visible={showList} transparent animationType="slide">
-        <View style={s.modalOverlay}>
+        <View style={s.overlay}>
           <View style={[s.modal, { maxHeight: '80%' }]}>
             <View style={s.modalRow}>
               {(['preset', 'indoor'] as const).map(m => (
@@ -432,7 +491,7 @@ export default function ZonesScreen() {
                 </TouchableOpacity>
               ))}
               <TouchableOpacity style={{ marginLeft: 'auto' }} onPress={() => setShowList(false)}>
-                <Text style={{ color: colors.textMuted, fontSize: 18 }}>✕</Text>
+                <Text style={{ color: colors.textMuted, fontSize: 20 }}>✕</Text>
               </TouchableOpacity>
             </View>
             <FlatList
@@ -446,25 +505,21 @@ export default function ZonesScreen() {
                     {'presetId' in z && (
                       <Text style={s.hint}>{presets.find(p => p.id === (z as Zone).presetId)?.name ?? 'No preset'}</Text>
                     )}
+                    {activeZoneIds.includes(z.id) && <Text style={{ color: colors.success, fontSize: 11 }}>● Currently inside</Text>}
                   </View>
                   <Switch
                     value={z.enabled}
-                    onValueChange={v => listMode === 'preset' ? toggleZone(z.id, v) : toggleIndoor(z.id, v)}
+                    onValueChange={v => {
+                      listMode === 'preset' ? updateZone(z.id, { enabled: v }) : updateIndoorZone(z.id, { enabled: v });
+                      saveToStorage();
+                    }}
                     trackColor={{ false: colors.borderFocus, true: colors.primary }}
                   />
                   <TouchableOpacity onPress={() => {
                     listMode === 'preset' ? openZoneEdit(z as Zone) : openIndoorEdit(z as IndoorZone);
                     setShowList(false);
                   }}>
-                    <Text style={{ color: colors.primary, fontSize: 14, padding: 4 }}>Edit</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => {
-                    Alert.alert('Delete', `Delete "${z.name}"?`, [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Delete', style: 'destructive', onPress: () => listMode === 'preset' ? deleteZone(z.id) : deleteIndoor(z.id) },
-                    ]);
-                  }}>
-                    <Text style={{ color: colors.danger, fontSize: 16, padding: 4 }}>✕</Text>
+                    <Text style={{ color: colors.primary, fontSize: 14, padding: 6 }}>Edit</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -474,37 +529,36 @@ export default function ZonesScreen() {
       </Modal>
     </View>
   );
-
-  function toggleZone(id: string, v: boolean) { updateZone(id, { enabled: v }); saveToStorage(); }
-  function toggleIndoor(id: string, v: boolean) { updateIndoorZone(id, { enabled: v }); saveToStorage(); }
 }
 
 const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) => StyleSheet.create({
   container:        { flex: 1, backgroundColor: c.background },
   map:              { flex: 1 },
   toolbar:          { position: 'absolute', bottom: 24, left: 16, right: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: c.surface + 'ee', borderRadius: 14, padding: 10, borderWidth: 1, borderColor: c.border },
-  toolBtn:          { backgroundColor: c.primary + '33', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: c.primary },
+  toolBtn:          { backgroundColor: c.primary + '22', paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: c.primary },
   toolBtnText:      { color: c.primary, fontWeight: '600', fontSize: 13 },
-  listBtn:          { marginLeft: 'auto', backgroundColor: c.surfaceAlt, width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  listBtn:          { marginLeft: 'auto', backgroundColor: c.surfaceAlt, width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   listBtnText:      { color: c.textSecondary, fontSize: 20 },
   drawHint:         { color: c.textSecondary, fontSize: 12, flex: 1 },
   activeBanner:     { position: 'absolute', top: 12, left: 16, right: 16, backgroundColor: c.success + '22', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: c.success },
   activeBannerTitle: { color: c.success, fontWeight: '700', fontSize: 13 },
   activeBannerItem: { color: c.textPrimary, fontSize: 12, marginTop: 2 },
-  modalOverlay:     { flex: 1, backgroundColor: '#00000088', justifyContent: 'flex-end' },
+  pinHint:          { position: 'absolute', top: 12, left: 16, right: 16, backgroundColor: '#ffffff22', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#ffffff44' },
+  pinHintText:      { color: c.textPrimary, fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  overlay:          { flex: 1, backgroundColor: '#00000088', justifyContent: 'flex-end' },
   modal:            { backgroundColor: c.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 10, borderWidth: 1, borderColor: c.border },
   modalTitle:       { color: c.textPrimary, fontSize: 17, fontWeight: '600' },
   modalRow:         { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  row:              { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  switchRow:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   fieldLabel:       { color: c.textSecondary, fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
   input:            { backgroundColor: c.background, borderRadius: 8, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 10, fontSize: 15 },
-  hint:             { color: c.textMuted, fontSize: 12, padding: 8 },
+  hint:             { color: c.textMuted, fontSize: 12, padding: 4 },
   option:           { padding: 10, borderRadius: 8, backgroundColor: c.background, borderWidth: 1, borderColor: c.border, marginBottom: 4 },
   optionActive:     { borderColor: c.primary, backgroundColor: c.primaryDim },
   optionText:       { color: c.textSecondary, fontSize: 14 },
-  cancelBtn:        { flex: 1, padding: 12, borderRadius: 8, backgroundColor: c.surfaceAlt, alignItems: 'center' },
+  cancelBtn:        { flex: 1, padding: 11, borderRadius: 8, backgroundColor: c.surfaceAlt, alignItems: 'center', borderWidth: 1, borderColor: c.border },
   cancelBtnText:    { color: c.textMuted, fontWeight: '600' },
-  saveBtn:          { flex: 1, padding: 12, borderRadius: 8, backgroundColor: c.primary, alignItems: 'center' },
+  saveBtn:          { flex: 1, padding: 11, borderRadius: 8, backgroundColor: c.primary, alignItems: 'center' },
   saveBtnText:      { color: '#fff', fontWeight: '600' },
   tabLabel:         { color: c.textMuted, fontSize: 14, fontWeight: '600', paddingVertical: 4, paddingHorizontal: 8 },
   tabLabelActive:   { color: c.primary },

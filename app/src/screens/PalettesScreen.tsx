@@ -315,7 +315,8 @@ export default function PalettesScreen() {
               {customPalettes.map(p => {
                 const selected = editSet?.paletteIds.includes(p.id) ?? false;
                 const idx = editSet?.paletteIds.indexOf(p.id) ?? -1;
-                const atLimit = (editSet?.paletteIds.length ?? 0) >= 8 && !selected;
+                // WLED v16+ supports 100+ custom palettes - no meaningful limit needed
+                const atLimit = false;
                 return (
                   <TouchableOpacity key={p.id}
                     style={[s.setPaletteRow, selected && { borderColor: colors.primary, backgroundColor: colors.primaryDim }]}

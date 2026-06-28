@@ -18,9 +18,11 @@
 // ─────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────
-const char* WLED_SSID   = "StrollerNet";
-const char* WLED_PASS   = "stroller1234";
-const char* WLED_IP     = "4.3.2.1";
+// const char* WLED_SSID   = "StrollerNet";
+// const char* WLED_PASS   = "stroller1234";
+const char* WLED_SSID   = "KyLan Ren";
+const char* WLED_PASS   = "tigers2016";
+const char* WLED_IP     = "wled.local";
 const int   WLED_PORT   = 80;
 const char* BLE_NAME    = "IllumaBuggy";
 
@@ -59,7 +61,11 @@ int    currentBrightness = 128;
 String currentPresetId   = "";
 
 // MagicBand config (persisted in NVS)
-bool   magicBandFivePoint = true;  // true = 4 corners + center, false = 4 corners only
+bool          magicBandFivePoint = true;   // true = 4 corners + center, false = 4 corners only
+unsigned long magicBandTimeoutMs = 30000;  // ms before MB override auto-clears (0 = never)
+
+// MagicBand timeout tracking
+unsigned long mbEventTimestamp = 0;  // millis() when last MB event fired
 
 // Pre-event WLED state (restored after MagicBand clears)
 String savedWledState = "";
@@ -401,10 +407,17 @@ void handleBLECommand(const String& msg) {
   // ── MagicBand config ──
   else if (type == "mb_config") {
     magicBandFivePoint = doc["five_point"].as<bool>();
+    if (doc.containsKey("timeout_ms")) {
+      magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
+    }
     prefs.begin("config", false);
     prefs.putBool("mb5pt", magicBandFivePoint);
+    prefs.putULong("mbTimeout", magicBandTimeoutMs);
     prefs.end();
-    bleNotify("{\"type\":\"ack\",\"action\":\"mb_config\",\"five_point\":" + String(magicBandFivePoint ? "true" : "false") + "}");
+    String ack = "{\"type\":\"ack\",\"action\":\"mb_config\","
+                 "\"five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
+                 "\"timeout_ms\":" + String(magicBandTimeoutMs) + "}";
+    bleNotify(ack);
   }
 
   // ── Status ──
@@ -416,7 +429,8 @@ void handleBLECommand(const String& msg) {
       "\"brightness\":" + String(currentBrightness) + ","
       "\"preset\":\"" + currentPresetId + "\","
       "\"wifi\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ","
-      "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") +
+      "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") + "," +
+      "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) +
       "}"
     );
   }
@@ -513,6 +527,7 @@ void handleMagicBandColor(const uint8_t* data, size_t len) {
 
   sendToWLED(segPayload);
   setOverride(BLE_MAGIC);
+  mbEventTimestamp = millis();
   bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
 }
 
@@ -526,6 +541,7 @@ void handleMagicBandCommand(uint8_t cmd, const uint8_t* data, size_t len) {
       Serial.println("[BLE] MagicBand: flash");
       sendToWLED("{\"on\":true,\"seg\":[{\"id\":0,\"fx\":0,\"col\":[[255,255,255]]}]}");
       setOverride(BLE_MAGIC);
+  mbEventTimestamp = millis();
       bleNotify("{\"type\":\"ble_event\",\"event\":\"flash\"}");
       break;
     case 0x08:
@@ -535,6 +551,7 @@ void handleMagicBandCommand(uint8_t cmd, const uint8_t* data, size_t len) {
       Serial.println("[BLE] MagicBand: fireworks");
       sendToWLED("{\"on\":true,\"seg\":[{\"id\":0,\"fx\":42}]}");
       setOverride(BLE_MAGIC);
+  mbEventTimestamp = millis();
       bleNotify("{\"type\":\"ble_event\",\"event\":\"fireworks\"}");
       break;
     case 0x0b:
@@ -606,8 +623,9 @@ void setup() {
 
   // Load NVS config
   prefs.begin("config", true);
-  magicBandFivePoint = prefs.getBool("mb5pt", true);
-  overrideKillOnZone = prefs.getBool("killOnZone", false);
+  magicBandFivePoint  = prefs.getBool("mb5pt", true);
+  overrideKillOnZone  = prefs.getBool("killOnZone", false);
+  magicBandTimeoutMs  = prefs.getULong("mbTimeout", 30000);
   prefs.end();
   Serial.printf("[NVS] mb5pt=%d killOnZone=%d\n", magicBandFivePoint, overrideKillOnZone);
 
@@ -668,6 +686,15 @@ void processPendingCommands() {
 
 void loop() {
   processPendingCommands();
+
+  // Auto-clear MagicBand override after timeout
+  if (currentOverride == BLE_MAGIC && magicBandTimeoutMs > 0) {
+    if (millis() - mbEventTimestamp >= magicBandTimeoutMs) {
+      Serial.printf("[MB] Timeout after %lums — restoring state\n", magicBandTimeoutMs);
+      clearOverride();
+      bleNotify("{"type":"ble_event","event":"timeout"}");
+    }
+  }
 
   if (WiFi.status() != WL_CONNECTED) {
     unsigned long now = millis();
