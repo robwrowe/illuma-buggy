@@ -692,7 +692,7 @@ void loop() {
     if (millis() - mbEventTimestamp >= magicBandTimeoutMs) {
       Serial.printf("[MB] Timeout after %lums — restoring state\n", magicBandTimeoutMs);
       clearOverride();
-      bleNotify("{"type":"ble_event","event":"timeout"}");
+      bleNotify("{\"type\":\"ble_event\",\"event\":\"timeout\"}");
     }
   }
 
