@@ -284,6 +284,13 @@ function Modal({title,children,onClose,width=400}) {
   </div>;
 }
 
+function ModalBtns({onCancel, onSave, saveLabel='Save'}) {
+  return (<div style={{display:'flex',gap:8,marginTop:4}}>
+    <button onClick={onCancel} style={btn('',{flex:1})}>Cancel</button>
+    <button onClick={onSave} style={btn('primary',{flex:1})}>{saveLabel}</button>
+  </div>);
+}
+
 function ColorSwatch({colors,size=14,gap=3,max=999}) {
   return <div style={{display:'flex',flexWrap:'wrap',gap}}>
     {colors.slice(0,max).map((c,i) => <div key={i} style={{width:size,height:size,borderRadius:3,background:c,border:'1px solid #ffffff22'}}/>)}
