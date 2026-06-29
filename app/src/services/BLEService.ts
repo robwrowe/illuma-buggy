@@ -34,6 +34,8 @@ class BLEService {
   private shouldReconnect = false;
   private notifyBuffer    = '';
   private chunkBuffer:    Record<string, string> = {};
+  private sendQueue:      { msg: BLEMessage; resolve: (ok: boolean) => void }[] = [];
+  private sendRunning     = false;
 
   private static readonly CHUNKED_TYPES: Record<string, string> = {
     'preset_chunk':  'preset_list_raw',
@@ -88,6 +90,31 @@ class BLEService {
       console.warn('[BLE] Not connected, cannot send');
       return false;
     }
+    return new Promise((resolve) => {
+      this.sendQueue.push({ msg, resolve });
+      this.drainSendQueue();
+    });
+  }
+
+  private async drainSendQueue() {
+    if (this.sendRunning) return;
+    this.sendRunning = true;
+    while (this.sendQueue.length > 0) {
+      if (!this.device || this.connState !== 'connected') {
+        while (this.sendQueue.length > 0) this.sendQueue.shift()!.resolve(false);
+        break;
+      }
+      const { msg, resolve } = this.sendQueue.shift()!;
+      resolve(await this.sendImmediate(msg));
+      if (this.sendQueue.length > 0) {
+        await new Promise(r => setTimeout(r, 120));
+      }
+    }
+    this.sendRunning = false;
+  }
+
+  private async sendImmediate(msg: BLEMessage): Promise<boolean> {
+    if (!this.device || this.connState !== 'connected') return false;
     try {
       const b64 = strToBase64(JSON.stringify(msg));
       await this.device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
@@ -204,6 +231,8 @@ class BLEService {
     this.device = null;
     this.notifyBuffer = '';
     this.chunkBuffer = {};
+    while (this.sendQueue.length > 0) this.sendQueue.shift()!.resolve(false);
+    this.sendRunning = false;
     this.setConnState('disconnected');
     if (this.shouldReconnect) this.scheduleReconnect();
   }
@@ -254,6 +283,10 @@ class BLEService {
       if (msg.last) {
         const raw = this.chunkBuffer[t];
         delete this.chunkBuffer[t];
+        if (!raw || raw.length === 0) {
+          console.warn(`[BLE] Empty assembled ${t}, skipping`);
+          return;
+        }
         console.log(`[BLE] Assembled ${t}: ${raw.length} bytes`);
         this.emit({ type: finalType, raw });
       }

@@ -182,6 +182,8 @@ interface AppState {
   // Device status
   deviceStatus:    DeviceStatus | null;
   setDeviceStatus: (status: DeviceStatus) => void;
+  overrideDetail:  string | null;
+  setOverrideDetail: (detail: string | null) => void;
 
   // Settings
   overrideKillOnZone:    boolean;
@@ -259,12 +261,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   indoorZones:         [],
   activeZoneIds:       [],
   deviceStatus:        null,
+  overrideDetail:      null,
   overrideKillOnZone:  false,
   starlightEnabled:    true,
-  starlightTimeoutSec: 30,
+  starlightTimeoutSec: 15,
   magicBandEnabled:    true,
   magicBandFivePoint:  true,
-  magicBandTimeoutSec: 30,
+  magicBandTimeoutSec: 15,
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
   brightnessConfig:    DEFAULT_BRIGHTNESS,
@@ -312,6 +315,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Device
   setDeviceStatus:       (deviceStatus) => set({ deviceStatus }),
+  setOverrideDetail:     (overrideDetail) => set({ overrideDetail }),
   setOverrideKillOnZone: (val)          => set({ overrideKillOnZone: val }),
   setStarlightEnabled:   (val)          => set({ starlightEnabled: val }),
   setStarlightTimeoutSec:(val)          => set({ starlightTimeoutSec: val }),
@@ -341,10 +345,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         brightnessConfig:   d.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
         overrideKillOnZone: d.overrideKillOnZone ?? false,
         starlightEnabled:   d.starlightEnabled   ?? true,
-        starlightTimeoutSec:d.starlightTimeoutSec ?? 30,
+        starlightTimeoutSec:d.starlightTimeoutSec ?? 15,
         magicBandEnabled:   d.magicBandEnabled   ?? true,
         magicBandFivePoint: d.magicBandFivePoint ?? true,
-        magicBandTimeoutSec:d.magicBandTimeoutSec ?? 30,
+        magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
         mbMapping:          normalizeMbMapping(d.mbMapping),
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     d.customPalettes     ?? [],
@@ -417,7 +421,14 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   syncBoardPresets: (raw) => {
     try {
-      const parsed = JSON.parse(raw);
+      const trimmed = (raw ?? '').trim();
+      if (!trimmed) return;
+      const start = trimmed.indexOf('[');
+      const end = trimmed.lastIndexOf(']');
+      if (start === -1 || end <= start) return;
+      const json = trimmed.slice(start, end + 1);
+      if (json === '[]') return;
+      const parsed = JSON.parse(json);
       if (!Array.isArray(parsed)) return;
       const existingById = Object.fromEntries(get().presets.map(p => [p.id, p]));
       const fromBoard = parsed.map((p: Partial<Preset> & { id: string; name: string }) => {
@@ -459,10 +470,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       recallState:        data.recallState        ?? DEFAULT_RECALL,
       overrideKillOnZone: data.overrideKillOnZone ?? false,
       starlightEnabled:   data.starlightEnabled   ?? true,
-      starlightTimeoutSec:data.starlightTimeoutSec ?? 30,
+      starlightTimeoutSec:data.starlightTimeoutSec ?? 15,
       magicBandEnabled:   data.magicBandEnabled   ?? true,
       magicBandFivePoint: data.magicBandFivePoint ?? true,
-      magicBandTimeoutSec:data.magicBandTimeoutSec ?? 30,
+      magicBandTimeoutSec:data.magicBandTimeoutSec ?? 15,
       mbMapping:          normalizeMbMapping(data.mbMapping),
       customPalettes:     data.customPalettes     ?? [],
       paletteSets:        data.paletteSets        ?? [],

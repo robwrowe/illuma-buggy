@@ -33,6 +33,7 @@ export default function HomeScreen() {
     activeZoneIds, zonesEnabled, setZonesEnabled,
     customPalettes, paletteSets, activePaletteSetId,
     setActivePaletteSet, saveToStorage,
+    overrideDetail, setOverrideDetail,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
@@ -75,6 +76,23 @@ export default function HomeScreen() {
   const overrideColor  = OVERRIDE_COLORS(colors)[overrideIndex] ?? colors.textMuted;
   const currentPreset  = presets.find(p => p.id === deviceStatus?.currentPreset);
   const activeZones    = zones.filter(z => activeZoneIds.includes(z.id));
+  const overrideActive = overrideIndex > 0;
+
+  const effectDescription = (() => {
+    if (!deviceStatus || overrideIndex === 0) return 'Normal — zone or idle';
+    if (overrideDetail) return overrideDetail;
+    if (currentPreset) return currentPreset.name;
+    if (overrideIndex === 1) return 'Zone preset';
+    if (overrideIndex === 2) return 'Manual preset';
+    if (overrideIndex === 3) return 'MagicBand+ effect';
+    if (overrideIndex === 4) return 'Starlight Wand effect';
+    return 'Active override';
+  })();
+
+  const clearEffect = () => {
+    bleService.sendOverrideClear();
+    setOverrideDetail(null);
+  };
 
   // Push active palette set to WLED
   const activateSet = (setId: string | null) => {
@@ -134,21 +152,24 @@ export default function HomeScreen() {
 
       {/* Current Mode */}
       <View style={s.card}>
-        <Text style={s.label}>Current Mode</Text>
+        <Text style={s.label}>Current Effect</Text>
         {deviceStatus ? (
           <>
             <View style={s.row}>
               <View style={[s.badge, { backgroundColor: overrideColor + '22', borderColor: overrideColor }]}>
                 <Text style={[s.badgeText, { color: overrideColor }]}>{OVERRIDE_LABELS[overrideIndex]}</Text>
               </View>
-              {overrideIndex > 1 && (
-                <TouchableOpacity style={s.clearBtn} onPress={() => bleService.sendOverrideClear()}>
-                  <IconX size={14} color={colors.primary} />
-                  <Text style={s.clearBtnText}>Resume Zone</Text>
+              {overrideActive && (
+                <TouchableOpacity style={s.clearBtn} onPress={clearEffect}>
+                  <IconX size={14} color={colors.danger} />
+                  <Text style={[s.clearBtnText, { color: colors.danger }]}>Clear Effect</Text>
                 </TouchableOpacity>
               )}
             </View>
-            {currentPreset && <Text style={s.subText}>Preset: {currentPreset.name}</Text>}
+            <Text style={s.effectText}>{effectDescription}</Text>
+            {currentPreset && overrideIndex <= 2 && (
+              <Text style={s.subText}>Preset: {currentPreset.name}</Text>
+            )}
           </>
         ) : (
           <Text style={s.subText}>{isConnected ? 'Waiting for status…' : 'Not connected'}</Text>
@@ -271,8 +292,9 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   subText:      { color: c.textMuted, fontSize: 12 },
   badge:        { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1 },
   badgeText:    { fontSize: 13, fontWeight: '600' },
-  clearBtn:     { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: c.surfaceAlt, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  clearBtnText: { color: c.primary, fontSize: 12, fontWeight: '500' },
+  effectText:   { color: c.textPrimary, fontSize: 15, fontWeight: '500' },
+  clearBtn:     { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: c.danger + '18', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: c.danger + '44' },
+  clearBtnText: { fontSize: 12, fontWeight: '600' },
   zoneRow:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 2 },
   zoneDot:      { width: 8, height: 8, borderRadius: 4, backgroundColor: c.success },
   zoneName:     { color: c.textPrimary, fontSize: 13, fontWeight: '500' },

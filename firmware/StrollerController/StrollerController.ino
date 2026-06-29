@@ -63,10 +63,10 @@ String currentPresetId   = "";
 // BLE effect config (persisted in NVS)
 // Priority (high → low): Starlight Wand > MagicBand+ > Manual > Zone
 bool          starlightEnabled    = true;
-unsigned long starlightTimeoutMs  = 30000;  // ms before wand effect auto-clears (0 = never)
+unsigned long starlightTimeoutMs  = 15000;  // ms before wand effect auto-clears (0 = never)
 bool          magicBandEnabled    = true;
 bool          magicBandFivePoint  = true;   // true = 4 corners + center, false = 4 corners only
-unsigned long magicBandTimeoutMs  = 30000;  // ms before MB override auto-clears (0 = never)
+unsigned long magicBandTimeoutMs  = 15000;  // ms before MB override auto-clears (0 = never)
 bool          bleScanLogEnabled   = true;   // Serial hex dump of Disney scan packets
 
 // BLE effect timeout tracking
@@ -1499,11 +1499,11 @@ void setup() {
   // Load NVS config
   prefs.begin("config", true);
   starlightEnabled    = prefs.getBool("swEn", true);
-  starlightTimeoutMs  = prefs.getULong("swTimeout", 30000);
+  starlightTimeoutMs  = prefs.getULong("swTimeout", 15000);
   magicBandEnabled    = prefs.getBool("mbEn", true);
   magicBandFivePoint  = prefs.getBool("mb5pt", true);
   overrideKillOnZone  = prefs.getBool("killOnZone", false);
-  magicBandTimeoutMs  = prefs.getULong("mbTimeout", 30000);
+  magicBandTimeoutMs  = prefs.getULong("mbTimeout", 15000);
   mbChaseSpeed        = prefs.getUChar("mbSpd", 128);
   mbChaseThickness    = prefs.getUChar("mbGrp", 4);
   if (mbChaseThickness < 1) mbChaseThickness = 4;

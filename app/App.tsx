@@ -89,19 +89,38 @@ function AppNavigator() {
   );
 }
 
+function formatBleEffectLabel(msg: Record<string, unknown>): string | null {
+  if (msg.type === 'ble_color') {
+    return `Color RGB(${msg.r}, ${msg.g}, ${msg.b})`;
+  }
+  if (msg.type === 'ble_event') {
+    const ev = String(msg.event ?? 'effect');
+    const labels: Record<string, string> = {
+      rgb: 'Raw RGB',
+      five_color: 'Five-color pattern',
+      show_fx: 'Show FX',
+      flash: 'Flash',
+      animation: 'Animation',
+      show: 'Park show',
+    };
+    return labels[ev] ?? ev.replace(/_/g, ' ');
+  }
+  if (msg.type === 'sw_color') {
+    return `Wand palette ${msg.palette} → RGB(${msg.r}, ${msg.g}, ${msg.b})`;
+  }
+  if (msg.type === 'sw_event') {
+    return `Wand: ${String(msg.event)}`;
+  }
+  return null;
+}
+
 export default function App() {
   const {
-    loadFromStorage, setDeviceStatus,
+    loadFromStorage, setDeviceStatus, setOverrideDetail,
     ingestWledEffectsRaw, ingestWledPalettesRaw, ingestWledFxDataRaw, syncBoardPresets,
   } = useAppStore();
   const { loadMode } = useThemeStore();
   const { isDark } = useTheme();
-
-  const fetchWledLibrary = () => {
-    bleService.sendGetFxData();
-    setTimeout(() => bleService.sendGetEffects(), 500);
-    setTimeout(() => bleService.sendGetPalettes(), 1000);
-  };
 
   useEffect(() => {
     loadFromStorage();
@@ -121,9 +140,12 @@ export default function App() {
       if (msg.type === 'wled_fxdata_done') {
         ingestWledFxDataRaw(msg.raw as string);
       }
+      const effectLabel = formatBleEffectLabel(msg);
+      if (effectLabel) setOverrideDetail(effectLabel);
       if (msg.type === 'status') {
+        const override = msg.override as number;
         setDeviceStatus({
-          override:           msg.override as number,
+          override,
           killOnZone:         msg.kill_on_zone as boolean,
           brightness:         msg.brightness as number,
           currentPreset:      msg.preset as string,
@@ -134,18 +156,22 @@ export default function App() {
           mbFivePoint:        msg.mb_five_point as boolean,
           mbTimeoutMs:        msg.mb_timeout_ms as number,
         });
+        if (override === 0) setOverrideDetail(null);
       }
     });
 
-    const unsubState = bleService.onStateChange((state) => {
-      if (state === 'connected') {
-        const s = useAppStore.getState();
-        bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
-        bleService.sendMbConfig(s.magicBandEnabled, s.magicBandFivePoint, s.magicBandTimeoutSec * 1000);
-        bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
-        // Background sync — cached data shows immediately in Library/Presets
-        bleService.sendPresetList();
-        if (s.wledEffects.length === 0) fetchWledLibrary();
+    const unsubState = bleService.onStateChange(async (state) => {
+      if (state !== 'connected') return;
+      const s = useAppStore.getState();
+      await bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
+      await bleService.sendMbConfig(s.magicBandEnabled, s.magicBandFivePoint, s.magicBandTimeoutSec * 1000);
+      await bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
+      await new Promise(r => setTimeout(r, 400));
+      await bleService.sendPresetList();
+      if (s.wledEffects.length === 0) {
+        await bleService.sendGetFxData();
+        await bleService.sendGetEffects();
+        await bleService.sendGetPalettes();
       }
     });
 
