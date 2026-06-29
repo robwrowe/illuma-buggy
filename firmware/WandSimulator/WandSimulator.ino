@@ -22,11 +22,62 @@ static const uint8_t IDLE_PAYLOAD[19] = {
 
 NimBLEAdvertising* adv = nullptr;
 
-enum LoopMode { LOOP_NONE, LOOP_WAND_CAST, LOOP_MB_SWEEP, LOOP_MB_PALETTE };
+enum LoopMode { LOOP_NONE, LOOP_WAND_CAST, LOOP_MB_SWEEP, LOOP_MB_PALETTE, LOOP_SW_FX };
 LoopMode loopMode = LOOP_NONE;
 uint8_t loopPalette = 4;
 uint8_t mbSweepIdx = 0;
+uint8_t swFxLoopIdx = 0;
 unsigned long loopNextMs = 0;
+
+// Named park/show payloads (Adafruit command_library.py — wands hear E9 commands too)
+struct HexPreset {
+  const char* name;
+  const char* desc;
+  const uint8_t* data;
+  size_t len;
+  bool pingFirst;
+};
+
+static const uint8_t PRESET_RAINBOW[] = {
+  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0x5D,0x46,0x5B,0xF0,0x05,0x32,0x37,0x48,0xB0
+};
+static const uint8_t PRESET_BLINK[] = {
+  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0x5D,0x46,0x5B,0xF0,0x05,0x32,0x37,0x48,0x95
+};
+static const uint8_t PRESET_PALETTE5[] = {
+  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0xB1,0xB9,0xB5,0xB1,0xA2,0x30,0x7B,0x7D,0xB0
+};
+static const uint8_t PRESET_FLASH[] = {
+  0xE1,0x00,0xE9,0x0E,0x00,0x01,0x0F,0xBD,0xA0,0xA0,0xBD,0xA0,0x59,0x07,0x00,0x48,0xAE,0xB5
+};
+static const uint8_t PRESET_SPARKLE[] = {
+  0xE1,0x00,0xE9,0x10,0x00,0x13,0x48,0x97,0xD0,0x0E,0xA0,0xD1,0x46,0x06,0x0F,0x30,0xD0,0x4E,0x07,0xB0
+};
+static const uint8_t PRESET_PULSE[] = {
+  0xE1,0x00,0xE9,0x13,0x00,0x02,0xD0,0x37,0xF0,0xD2,0x3D,0x05,0x05,0x00,0x0E,0xFA,0x89,0x83,0x51,0x0E,0xE7,0xA0,0xB0
+};
+static const uint8_t PRESET_CIRCLE[] = {
+  0xE2,0x00,0xE9,0x12,0x00,0x03,0x0F,0xA2,0xA2,0xA4,0xA4,0xA2,0x30,0xD0,0x37,0xF4,0xD2,0x46,0x00,0x64,0xFC,0xB8
+};
+static const uint8_t PRESET_FADE[] = {
+  0xE1,0x00,0xE9,0x11,0x00,0x6F,0x0F,0x56,0x48,0x58,0xF4,0x48,0x82,0xD1,0x46,0x02,0x08,0xD0,0x65,0x00,0xB0
+};
+static const uint8_t PRESET_FADE2[] = {
+  0xE1,0x00,0xE9,0x11,0x00,0x0F,0x0F,0x48,0x59,0x58,0xF4,0x48,0x82,0xD1,0x46,0x02,0x0D,0xD0,0x65,0x05,0xB0
+};
+
+static const HexPreset SW_FX_PRESETS[] = {
+  { "rainbow",  "E90C Taste the Rainbow",      PRESET_RAINBOW,  sizeof(PRESET_RAINBOW),  false },
+  { "blink",    "E90C white blink",            PRESET_BLINK,    sizeof(PRESET_BLINK),    false },
+  { "palette5", "E90C five-palette cycle",     PRESET_PALETTE5, sizeof(PRESET_PALETTE5), false },
+  { "flash",    "E90E purple/white flash",     PRESET_FLASH,    sizeof(PRESET_FLASH),    false },
+  { "sparkle",  "E910 blue sparkle",           PRESET_SPARKLE,  sizeof(PRESET_SPARKLE),  true  },
+  { "pulse",    "E913 purple pulse",           PRESET_PULSE,    sizeof(PRESET_PULSE),    false },
+  { "circle",   "E912 blue circle + vibe",     PRESET_CIRCLE,   sizeof(PRESET_CIRCLE),   true  },
+  { "fade",     "E911 cyan to pink",           PRESET_FADE,     sizeof(PRESET_FADE),     true  },
+  { "fade2",    "E911 pink to green",          PRESET_FADE2,    sizeof(PRESET_FADE2),    false },
+};
+static const size_t SW_FX_PRESET_COUNT = sizeof(SW_FX_PRESETS) / sizeof(SW_FX_PRESETS[0]);
 
 // ── Adafruit magicband_protocol.py builders ────────────────────────────────
 
@@ -72,18 +123,26 @@ static size_t buildMbRgb(uint8_t* out, uint8_t red, uint8_t green, uint8_t blue,
 }
 
 // E909 five palette slots — TL, BL, BR, TR, center (Adafruit byte order)
+// patternNibble: emcot wiki — 3=spin, 4=solid A, 8=4/5 corners, B=all on B
 static size_t buildMbFive(uint8_t* out, uint8_t topLeft, uint8_t bottomLeft,
                           uint8_t bottomRight, uint8_t topRight, uint8_t center,
-                          uint8_t timing = 0x0E, uint8_t vibration = 0) {
+                          uint8_t timing = 0x0E, uint8_t vibration = 0,
+                          uint8_t patternNibble = 0x05) {
   out[0] = 0xE1; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x09;
   out[4] = 0x00; out[5] = timing; out[6] = 0x0F;
-  out[7] = mbColorByte(topLeft, 0x05);       // pattern 101b
-  out[8] = mbColorByte(bottomLeft, 0x05);
-  out[9] = mbColorByte(bottomRight, 0x05);
-  out[10] = mbColorByte(topRight, 0x05);
-  out[11] = mbColorByte(center, 0x05);
+  out[7] = mbColorByte(topLeft, patternNibble);
+  out[8] = mbColorByte(bottomLeft, patternNibble);
+  out[9] = mbColorByte(bottomRight, patternNibble);
+  out[10] = mbColorByte(topRight, patternNibble);
+  out[11] = mbColorByte(center, patternNibble);
   out[12] = mbVibByte(vibration);
   return 13;
+}
+
+static size_t buildMbFiveUniform(uint8_t* out, uint8_t paletteIdx, uint8_t patternNibble) {
+  paletteIdx &= 0x1F;
+  return buildMbFive(out, paletteIdx, paletteIdx, paletteIdx, paletteIdx, paletteIdx,
+                     0x0E, 0, patternNibble);
 }
 
 // CC03000000 — park "ping" (bands may respond / wake)
@@ -208,6 +267,53 @@ void broadcastIdle() {
   broadcastPayload(IDLE_PAYLOAD, sizeof(IDLE_PAYLOAD), 5000);
 }
 
+const HexPreset* findSwFx(const String& name) {
+  for (size_t i = 0; i < SW_FX_PRESET_COUNT; i++) {
+    if (name.equalsIgnoreCase(SW_FX_PRESETS[i].name)) return &SW_FX_PRESETS[i];
+  }
+  return nullptr;
+}
+
+void broadcastHexPreset(const HexPreset& fx) {
+  Serial.printf("[SW] %s — %s\n", fx.name, fx.desc);
+  if (fx.pingFirst) {
+    uint8_t ping[8];
+    size_t pn = buildPing(ping);
+    broadcastPayload(ping, pn, 800);
+  }
+  broadcastPayload(fx.data, fx.len, 4000);
+}
+
+// Color + pattern (E909) — wands/MB+ treat pattern nibble as LED animation mode
+void broadcastSwPattern(uint8_t palette, uint8_t patternNibble) {
+  uint8_t payload[16];
+  size_t n = buildMbFiveUniform(payload, palette, patternNibble);
+  Serial.printf("[SW] pattern=%u palette=%u (E909)\n", patternNibble, palette);
+  broadcastPayload(payload, n, 4000);
+}
+
+// Wand-to-wand color cast + optional follow-up animation on same color
+void broadcastSwCombo(uint8_t palette, const char* fxName) {
+  stopLoops();
+  broadcastWandCast(palette);
+  const HexPreset* fx = findSwFx(String(fxName));
+  if (fx) {
+    delay(400);
+    broadcastHexPreset(*fx);
+  } else {
+    Serial.printf("[SW] unknown fx '%s' — cast only\n", fxName);
+  }
+}
+
+void printSwFxList() {
+  Serial.println("[SW] Named animation presets (E9 show codes):");
+  for (size_t i = 0; i < SW_FX_PRESET_COUNT; i++) {
+    Serial.printf("  %-10s %s%s\n", SW_FX_PRESETS[i].name, SW_FX_PRESETS[i].desc,
+                  SW_FX_PRESETS[i].pingFirst ? " (+ping)" : "");
+  }
+  Serial.println("[SW] Pattern modes (E909 color+pattern): solid spin all corners");
+}
+
 // ── Serial parsing ──────────────────────────────────────────────────────────
 
 int splitWords(const String& line, String out[], int maxOut) {
@@ -240,6 +346,17 @@ uint8_t parsePaletteWord(const String& w) {
   return (uint8_t)s.toInt();
 }
 
+uint8_t parsePatternWord(const String& w) {
+  String s = w;
+  s.toLowerCase();
+  if (s == "solid") return 0x04;
+  if (s == "spin") return 0x03;
+  if (s == "all") return 0x0B;
+  if (s == "corners") return 0x08;
+  if (s == "middle") return 0x02;
+  return (uint8_t)s.toInt();
+}
+
 void stopLoops() {
   loopMode = LOOP_NONE;
 }
@@ -247,10 +364,17 @@ void stopLoops() {
 void printHelp() {
   Serial.println("[WandSim] Commands:");
   Serial.println("  --- Starlight wand ---");
-  Serial.println("  cast <0-31>              CF0B wand color cast");
-  Serial.println("  legacy <0-31>            CF9B wiki format");
+  Serial.println("  cast <color>             CF0B wand-to-wand color cast");
+  Serial.println("  legacy <color>           CF9B wiki color cast");
   Serial.println("  idle                     0F11 idle beacon");
-  Serial.println("  loop <0-31>              repeat wand cast every 5s");
+  Serial.println("  loop <color>             repeat wand cast every 5s");
+  Serial.println("  --- Starlight effects (color + pattern / animation) ---");
+  Serial.println("  sw list                  list named animation presets");
+  Serial.println("  sw solid <color>         E905 solid (wands hear MB codes)");
+  Serial.println("  sw pattern <mode> <color> E909 — mode: solid|spin|all|corners");
+  Serial.println("  sw fx <name>             park animation (rainbow|flash|sparkle|…)");
+  Serial.println("  sw combo <color> <fx>    CF0B cast then animation");
+  Serial.println("  swfxloop                 cycle all sw fx presets every 4s");
   Serial.println("  --- MagicBand+ (Adafruit E9 builders) ---");
   Serial.println("  mb <0-31|name>           E905 single color (all 5 LEDs)");
   Serial.println("  mb <pal> mask <0-7>      E905 with LED mask (1=TR only, etc.)");
@@ -305,9 +429,52 @@ void handleLine(String line) {
     Serial.println("[WandSim] MB sweep — cycling palettes (stop to cancel)");
     return;
   }
+  if (lower == "sw list" || lower == "swlist") {
+    printSwFxList();
+    return;
+  }
+  if (lower == "swfxloop") {
+    loopMode = LOOP_SW_FX;
+    swFxLoopIdx = 0;
+    loopNextMs = 0;
+    Serial.println("[WandSim] SW fx loop — stop to cancel");
+    return;
+  }
 
   String parts[8];
   int n = splitWords(lower, parts, 8);
+
+  // sw fx <name>
+  if (n >= 3 && parts[0] == "sw" && parts[1] == "fx") {
+    stopLoops();
+    const HexPreset* fx = findSwFx(parts[2]);
+    if (fx) broadcastHexPreset(*fx);
+    else Serial.printf("[SW] Unknown fx '%s' — try 'sw list'\n", parts[2].c_str());
+    return;
+  }
+  // sw combo <color> <fx>
+  if (n >= 4 && parts[0] == "sw" && parts[1] == "combo") {
+    broadcastSwCombo(parsePaletteWord(parts[2]), parts[3].c_str());
+    return;
+  }
+  // sw pattern <mode> <color>
+  if (n >= 4 && parts[0] == "sw" && parts[1] == "pattern") {
+    stopLoops();
+    broadcastSwPattern(parsePaletteWord(parts[3]), parsePatternWord(parts[2]));
+    return;
+  }
+  // sw solid <color>
+  if (n >= 3 && parts[0] == "sw" && parts[1] == "solid") {
+    stopLoops();
+    broadcastMbSingle(parsePaletteWord(parts[2]));
+    return;
+  }
+  // sw cast <color> — alias
+  if (n >= 3 && parts[0] == "sw" && parts[1] == "cast") {
+    stopLoops();
+    broadcastWandCast(parsePaletteWord(parts[2]));
+    return;
+  }
 
   if (n >= 2 && parts[0] == "cast") {
     stopLoops();
@@ -384,6 +551,13 @@ void serviceLoops() {
       broadcastMbSingle(mbSweepIdx);
       mbSweepIdx = (uint8_t)((mbSweepIdx + 1) & 0x1F);
       loopNextMs = now + 3000;
+      break;
+    }
+    case LOOP_SW_FX: {
+      const HexPreset& fx = SW_FX_PRESETS[swFxLoopIdx % SW_FX_PRESET_COUNT];
+      broadcastHexPreset(fx);
+      swFxLoopIdx = (uint8_t)((swFxLoopIdx + 1) % SW_FX_PRESET_COUNT);
+      loopNextMs = now + 4000;
       break;
     }
     default:
