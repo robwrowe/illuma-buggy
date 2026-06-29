@@ -116,6 +116,10 @@ export interface DeviceStatus {
 import {
   MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
+import {
+  BleCapturePacket, BleCaptureSession, BleCaptureDuration,
+  MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
+} from '../utils/bleCapture';
 
 export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
 export {
@@ -215,6 +219,23 @@ interface AppState {
   // Export / Import
   exportData: () => object;
   importData: (data: object) => void;
+
+  // BLE packet capture (parade / show recording)
+  bleCaptureActive:       boolean;
+  bleCaptureDurationSec:  BleCaptureDuration;
+  bleCaptureStartedAt:    number | null;
+  bleCaptureEndsAt:       number | null;
+  bleCaptureLiveCount:    number;
+  bleCaptureBuffer:       BleCapturePacket[];
+  bleCaptureSessions:     BleCaptureSession[];
+  bleCaptureDraftName:    string;
+  setBleCaptureDurationSec: (sec: BleCaptureDuration) => void;
+  setBleCaptureDraftName:   (name: string) => void;
+  startBleCapture:          () => void;
+  stopBleCapture:           (reason?: string) => void;
+  appendBleCapturePacket:   (pkt: Omit<BleCapturePacket, 'receivedAt'>) => void;
+  deleteBleCaptureSession:  (id: string) => void;
+  renameBleCaptureSession:  (id: string, name: string) => void;
 }
 
 // ─────────────────────────────────────────────
@@ -271,6 +292,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
   brightnessConfig:    DEFAULT_BRIGHTNESS,
+  bleCaptureActive:       false,
+  bleCaptureDurationSec:  900,
+  bleCaptureStartedAt:    null,
+  bleCaptureEndsAt:       null,
+  bleCaptureLiveCount:    0,
+  bleCaptureBuffer:       [],
+  bleCaptureSessions:     [],
+  bleCaptureDraftName:    'Parade capture',
 
   // Presets
   setPresets: (presets) => set({ presets }),
@@ -326,13 +355,87 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateMbMapping:       (patch)       => set(s => ({ mbMapping: normalizeMbMapping({ ...s.mbMapping, ...patch }) })),
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
 
+  setBleCaptureDurationSec: (sec) => set({ bleCaptureDurationSec: sec }),
+  setBleCaptureDraftName:   (name) => set({ bleCaptureDraftName: name }),
+
+  startBleCapture: () => {
+    const s = get();
+    if (s.bleCaptureActive) return;
+    const startedAt = Date.now();
+    const durationSec = s.bleCaptureDurationSec;
+    set({
+      bleCaptureActive: true,
+      bleCaptureStartedAt: startedAt,
+      bleCaptureEndsAt: durationSec > 0 ? startedAt + durationSec * 1000 : null,
+      bleCaptureLiveCount: 0,
+      bleCaptureBuffer: [],
+    });
+  },
+
+  stopBleCapture: (reason = 'manual') => {
+    const s = get();
+    if (!s.bleCaptureActive && s.bleCaptureBuffer.length === 0) {
+      set({ bleCaptureActive: false, bleCaptureStartedAt: null, bleCaptureEndsAt: null });
+      return;
+    }
+    const endedAt = Date.now();
+    const startedAt = s.bleCaptureStartedAt ?? endedAt;
+    const packets = s.bleCaptureBuffer;
+    const session: BleCaptureSession = {
+      id: `cap_${endedAt}`,
+      name: s.bleCaptureDraftName.trim() || `Capture ${new Date(startedAt).toLocaleString()}`,
+      startedAt,
+      endedAt,
+      durationSec: Math.round((endedAt - startedAt) / 1000),
+      packets,
+    };
+    let sessions = [session, ...s.bleCaptureSessions];
+    if (sessions.length > MAX_CAPTURE_SESSIONS) sessions = sessions.slice(0, MAX_CAPTURE_SESSIONS);
+    set({
+      bleCaptureActive: false,
+      bleCaptureStartedAt: null,
+      bleCaptureEndsAt: null,
+      bleCaptureLiveCount: 0,
+      bleCaptureBuffer: [],
+      bleCaptureSessions: sessions,
+    });
+    get().saveToStorage();
+    console.log(`[Capture] Stopped (${reason}): ${packets.length} packets`);
+  },
+
+  appendBleCapturePacket: (pkt) => {
+    const s = get();
+    if (!s.bleCaptureActive) return;
+    if (s.bleCaptureBuffer.length >= MAX_PACKETS_PER_SESSION) {
+      get().stopBleCapture('limit');
+      return;
+    }
+    const entry: BleCapturePacket = { ...pkt, receivedAt: Date.now() };
+    const buf = [...s.bleCaptureBuffer, entry];
+    set({ bleCaptureBuffer: buf, bleCaptureLiveCount: buf.length });
+  },
+
+  deleteBleCaptureSession: (id) => {
+    set(s => ({ bleCaptureSessions: s.bleCaptureSessions.filter(x => x.id !== id) }));
+    get().saveToStorage();
+  },
+
+  renameBleCaptureSession: (id, name) => {
+    set(s => ({
+      bleCaptureSessions: s.bleCaptureSessions.map(x =>
+        x.id === id ? { ...x, name: name.trim() || x.name } : x,
+      ),
+    }));
+    get().saveToStorage();
+  },
+
   // Persistence
   loadFromStorage: async () => {
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandFivePoint','magicBandTimeoutSec','mbMapping',
-                    'recallState',
+                    'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','paletteSets','activePaletteSetId',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
@@ -357,6 +460,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         wledEffects:        d.wledEffects        ?? [],
         wledPalettes:       d.wledPalettes       ?? [],
         wledFxData:         d.wledFxData         ?? [],
+        bleCaptureSessions: d.bleCaptureSessions ?? [],
+        bleCaptureDurationSec: d.bleCaptureDurationSec ?? 900,
+        bleCaptureDraftName:   d.bleCaptureDraftName   ?? 'Parade capture',
       });
     } catch (e) { console.error('[Store] Load error:', e); }
   },
@@ -383,6 +489,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['wledEffects',        JSON.stringify(s.wledEffects)],
         ['wledPalettes',       JSON.stringify(s.wledPalettes)],
         ['wledFxData',         JSON.stringify(s.wledFxData)],
+        ['bleCaptureSessions', JSON.stringify(s.bleCaptureSessions)],
+        ['bleCaptureDurationSec', JSON.stringify(s.bleCaptureDurationSec)],
+        ['bleCaptureDraftName',   JSON.stringify(s.bleCaptureDraftName)],
       ]);
     } catch (e) { console.error('[Store] Save error:', e); }
   },
@@ -457,6 +566,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
       magicBandTimeoutSec:s.magicBandTimeoutSec,
       mbMapping:          s.mbMapping,
+      bleCaptureSessions: s.bleCaptureSessions,
       customPalettes: s.customPalettes, paletteSets: s.paletteSets,
     };
   },
@@ -475,6 +585,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandFivePoint: data.magicBandFivePoint ?? true,
       magicBandTimeoutSec:data.magicBandTimeoutSec ?? 15,
       mbMapping:          normalizeMbMapping(data.mbMapping),
+      bleCaptureSessions: data.bleCaptureSessions ?? [],
+      bleCaptureDurationSec: data.bleCaptureDurationSec ?? 900,
+      bleCaptureDraftName:   data.bleCaptureDraftName   ?? 'Parade capture',
       customPalettes:     data.customPalettes     ?? [],
       paletteSets:        data.paletteSets        ?? [],
     });

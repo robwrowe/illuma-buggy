@@ -152,6 +152,11 @@ class BLEService {
   sendMbMappingConfig(payload: object) {
     return this.send({ type: 'mb_mapping_config', mapping: payload });
   }
+  sendBleCaptureConfig(active: boolean, durationMs = 0) {
+    const msg: BLEMessage = { type: 'ble_capture_config', active };
+    if (active && durationMs > 0) msg.duration_ms = durationMs;
+    return this.send(msg);
+  }
 
   private async requestPermissions(): Promise<void> {
     if (Platform.OS !== 'android') return;

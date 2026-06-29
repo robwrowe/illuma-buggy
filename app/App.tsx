@@ -15,6 +15,7 @@ import IconMap      from '@tabler/icons-react-native/dist/esm/icons/IconMap';
 import IconSettings from '@tabler/icons-react-native/dist/esm/icons/IconSettings';
 import IconBook     from '@tabler/icons-react-native/dist/esm/icons/IconBook';
 import IconDroplet  from '@tabler/icons-react-native/dist/esm/icons/IconDroplet';
+import IconBolt     from '@tabler/icons-react-native/dist/esm/icons/IconBolt';
 
 import { bleService } from './src/services/BLEService';
 import { useAppStore, mbMappingToBlePayload } from './src/stores/store';
@@ -22,6 +23,7 @@ import { useZoneManager } from './src/hooks/useZoneManager';
 import { useTheme, useThemeStore } from './src/utils/theme';
 
 import HomeScreen     from './src/screens/HomeScreen';
+import BleCaptureScreen from './src/screens/BleCaptureScreen';
 import PresetsScreen  from './src/screens/PresetsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import LibraryScreen  from './src/screens/LibraryScreen';
@@ -74,11 +76,13 @@ function AppNavigator() {
             if (route.name === 'Library')  return <IconBook size={size} color={color} />;
             if (route.name === 'Zones')    return <IconMap size={size} color={color} />;
             if (route.name === 'Settings') return <IconSettings size={size} color={color} />;
-          if (route.name === 'Palettes')  return <IconDroplet size={size} color={color} />;
+            if (route.name === 'Palettes')  return <IconDroplet size={size} color={color} />;
+            if (route.name === 'Capture')   return <IconBolt size={size} color={color} />;
           },
         })}
       >
         <Tab.Screen name="Home"     component={HomeScreen} />
+        <Tab.Screen name="Capture"  component={BleCaptureScreen} options={{ title: 'BLE Capture' }} />
         <Tab.Screen name="Presets"  component={PresetsScreen} />
         <Tab.Screen name="Library"  component={LibraryScreen} />
         <Tab.Screen name="Zones"    component={ZonesWrapper} />
@@ -118,6 +122,7 @@ export default function App() {
   const {
     loadFromStorage, setDeviceStatus, setOverrideDetail,
     ingestWledEffectsRaw, ingestWledPalettesRaw, ingestWledFxDataRaw, syncBoardPresets,
+    appendBleCapturePacket, stopBleCapture,
   } = useAppStore();
   const { loadMode } = useThemeStore();
   const { isDark } = useTheme();
@@ -139,6 +144,21 @@ export default function App() {
       }
       if (msg.type === 'wled_fxdata_done') {
         ingestWledFxDataRaw(msg.raw as string);
+      }
+      if (msg.type === 'ble_packet') {
+        appendBleCapturePacket({
+          boardTs: msg.ts as number,
+          tag: String(msg.tag ?? 'DISNEY'),
+          rssi: msg.rssi as number,
+          hex: String(msg.hex ?? ''),
+          len: msg.len as number,
+        });
+      }
+      if (msg.type === 'ble_capture') {
+        const event = String(msg.event ?? '');
+        if (event === 'stopped') {
+          stopBleCapture(String(msg.reason ?? 'board'));
+        }
       }
       const effectLabel = formatBleEffectLabel(msg);
       if (effectLabel) setOverrideDetail(effectLabel);

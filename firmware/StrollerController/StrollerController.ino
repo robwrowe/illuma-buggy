@@ -79,12 +79,41 @@ size_t        lastLogLen      = 0;
 uint32_t      scanRepeatCount = 0;
 unsigned long scanRepeatSummaryMs = 0;
 
-// Wand cast debounce (rolling auth bytes change every advert; palette is stable)
-uint8_t       lastWandPalette = 0xFF;
-unsigned long lastWandCastMs  = 0;
+// Wand cast dedupe — rolling bytes change every advert; palette is stable per button press
+uint8_t       lastWandCastPayload[16];
+size_t        lastWandCastLen     = 0;
+unsigned long lastWandCastMs      = 0;
+
+void touchOverrideIdleTimer(OverrideSource src) {
+  unsigned long now = millis();
+  if (src == BLE_MAGIC) mbEventTimestamp = now;
+  else if (src == BLE_STARLIGHT) swEventTimestamp = now;
+}
+
+// True when this is a repeat advert of the same cast (extend idle timer only)
+bool wandCastIsDuplicateAdvert(const uint8_t* payload, size_t plen) {
+  unsigned long now = millis();
+  if (plen == 0 || plen > sizeof(lastWandCastPayload)) return false;
+  if (plen != lastWandCastLen) return false;
+  if (memcmp(payload, lastWandCastPayload, plen) != 0) return false;
+  return (now - lastWandCastMs) < 250;
+}
+
+void rememberWandCast(const uint8_t* payload, size_t plen) {
+  if (plen > sizeof(lastWandCastPayload)) plen = sizeof(lastWandCastPayload);
+  memcpy(lastWandCastPayload, payload, plen);
+  lastWandCastLen = plen;
+  lastWandCastMs = millis();
+}
 
 // Serial sniff mode — log every manufacturer packet (find wand button format)
 unsigned long bleSniffUntilMs = 0;
+
+// App packet capture (parade / show recording)
+bool          bleCaptureToApp     = false;
+unsigned long bleCaptureUntilMs   = 0;
+unsigned long bleCaptureLastNotifyMs = 0;
+uint16_t      bleCaptureNotifyCount  = 0;
 
 // Wand TX beacon — advertise as another Starlight wand (for pairing/cast tests)
 bool          wandTxBeacon    = false;
@@ -430,7 +459,7 @@ void applyMagicBandChase(const uint8_t paletteIdxs[5], OverrideSource src) {
                 paletteIdxs[0], paletteIdxs[1], paletteIdxs[2], paletteIdxs[3], paletteIdxs[4]);
   sendToWLED(buildMagicBandChaseJson(paletteIdxs));
   setOverride(src);
-  if (src == BLE_MAGIC) mbEventTimestamp = millis();
+  touchOverrideIdleTimer(src);
 }
 
 void applyMagicBandChaseFromAnchor(uint8_t anchorPalette, OverrideSource src) {
@@ -551,8 +580,7 @@ void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src)
   body += "]}";
   sendToWLED(body);
   setOverride(src);
-  if (src == BLE_MAGIC) mbEventTimestamp = millis();
-  else if (src == BLE_STARLIGHT) swEventTimestamp = millis();
+  touchOverrideIdleTimer(src);
 }
 
 void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n, OverrideSource src) {
@@ -571,7 +599,7 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
   body += "]}";
   sendToWLED(body);
   setOverride(src);
-  if (src == BLE_MAGIC) mbEventTimestamp = millis();
+  touchOverrideIdleTimer(src);
 }
 
 bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, int packetPalCount, OverrideSource src) {
@@ -619,8 +647,7 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
   serializeJson(wled, wledJson);
   sendToWLED(wledJson);
   setOverride(src);
-  if (src == BLE_MAGIC) mbEventTimestamp = millis();
-  else if (src == BLE_STARLIGHT) swEventTimestamp = millis();
+  touchOverrideIdleTimer(src);
   return true;
 }
 
@@ -698,8 +725,7 @@ void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
                 ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]") + "}";
   sendToWLED(body);
   setOverride(src);
-  if (src == BLE_STARLIGHT) swEventTimestamp = millis();
-  else if (src == BLE_MAGIC) mbEventTimestamp = millis();
+  touchOverrideIdleTimer(src);
 }
 
 // ─────────────────────────────────────────────
@@ -861,6 +887,27 @@ void handleBLECommand(const String& msg) {
     Serial.printf("[Scan] logging %s\n", bleScanLogEnabled ? "enabled" : "disabled");
   }
 
+  // ── App packet capture (parade / show recording) ──
+  else if (type == "ble_capture_config") {
+    if (doc.containsKey("active")) bleCaptureToApp = doc["active"].as<bool>();
+    bleCaptureUntilMs = 0;
+    if (bleCaptureToApp && doc.containsKey("duration_ms")) {
+      unsigned long dur = (unsigned long)doc["duration_ms"].as<long>();
+      if (dur > 0) bleCaptureUntilMs = millis() + dur;
+    }
+    if (!bleCaptureToApp) {
+      bleCaptureUntilMs = 0;
+      bleNotify("{\"type\":\"ble_capture\",\"event\":\"stopped\",\"reason\":\"manual\"}");
+    } else {
+      bleCaptureLastNotifyMs = 0;
+      bleCaptureNotifyCount = 0;
+      bleNotify("{\"type\":\"ble_capture\",\"event\":\"started\"}");
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"ble_capture_config\","
+              "\"active\":" + String(bleCaptureToApp ? "true" : "false") + "}");
+    Serial.printf("[Capture] app recording %s\n", bleCaptureToApp ? "ON" : "OFF");
+  }
+
   // ── Starlight Wand config ──
   else if (type == "sw_config") {
     if (doc.containsKey("enabled"))    starlightEnabled   = doc["enabled"].as<bool>();
@@ -936,7 +983,8 @@ void handleBLECommand(const String& msg) {
       "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) + ","
       "\"mb_chase_speed\":" + String(mbChaseSpeed) + ","
       "\"mb_chase_thickness\":" + String(mbChaseThickness) + ","
-      "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") +
+      "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") + ","
+      "\"capture_active\":" + String(bleCaptureToApp ? "true" : "false") +
       "}"
     );
   }
@@ -1104,7 +1152,7 @@ const char* classifyScanPacket(const uint8_t* data, size_t len) {
   return "DISNEY";
 }
 
-// Format manufacturer data as hex for app debug feed
+// Format manufacturer data as hex for app debug feed (truncated)
 String mfrToHex(const uint8_t* data, size_t len) {
   String hex = "";
   for (size_t i = 0; i < len && i < 32; i++) {
@@ -1112,6 +1160,66 @@ String mfrToHex(const uint8_t* data, size_t len) {
     hex += String(data[i], HEX);
   }
   return hex;
+}
+
+String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen = 64) {
+  String hex = "";
+  size_t n = len < maxLen ? len : maxLen;
+  for (size_t i = 0; i < n; i++) {
+    if (data[i] < 0x10) hex += "0";
+    hex += String(data[i], HEX);
+  }
+  if (len > maxLen) hex += "…";
+  return hex;
+}
+
+// Returns true when payload differs from previous scan (updates dedup state)
+bool scanDedupIsNew(const uint8_t* data, size_t len) {
+  size_t cmpLen = len < 48 ? len : 48;
+  bool same = (cmpLen == lastLogLen && memcmp(data, lastLogBytes, cmpLen) == 0);
+  if (same) {
+    scanRepeatCount++;
+    return false;
+  }
+  if (scanRepeatCount > 0) scanRepeatCount = 0;
+  memcpy(lastLogBytes, data, cmpLen);
+  lastLogLen = cmpLen;
+  return true;
+}
+
+void stopBleCapture(const char* reason) {
+  if (!bleCaptureToApp) return;
+  bleCaptureToApp = false;
+  bleCaptureUntilMs = 0;
+  if (bleConnected) {
+    bleNotify(String("{\"type\":\"ble_capture\",\"event\":\"stopped\",\"reason\":\"") + reason + "\"}");
+  }
+  Serial.printf("[Capture] stopped (%s)\n", reason);
+}
+
+void notifyBleCapturePacket(const char* tag, int rssi, const uint8_t* data, size_t len, bool isNew) {
+  if (!bleCaptureToApp || !bleConnected || !isNew) return;
+
+  if (bleCaptureUntilMs > 0 && millis() >= bleCaptureUntilMs) {
+    stopBleCapture("timeout");
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - bleCaptureLastNotifyMs >= 1000) {
+    bleCaptureLastNotifyMs = now;
+    bleCaptureNotifyCount = 0;
+  }
+  if (bleCaptureNotifyCount >= 20) return;
+  bleCaptureNotifyCount++;
+
+  String hex = mfrToHexFull(data, len);
+  String msg = "{\"type\":\"ble_packet\",\"tag\":\"" + String(tag) +
+               "\",\"rssi\":" + String(rssi) +
+               ",\"len\":" + String(len) +
+               ",\"hex\":\"" + hex +
+               "\",\"ts\":" + String(now) + "}";
+  bleNotify(msg);
 }
 
 // Rate-limited debug notify → app Home event feed
@@ -1126,15 +1234,11 @@ void notifySwDebug(const char* reason, const uint8_t* data, size_t len) {
 }
 
 // Serial-only: Disney BLE packets — highlights NEW vs repeated payloads
-void serialLogScanPacket(const char* tag, int rssi, const uint8_t* data, size_t len) {
+void serialLogScanPacket(const char* tag, int rssi, const uint8_t* data, size_t len, bool isNew) {
   if (!bleScanLogEnabled) return;
   unsigned long now = millis();
 
-  size_t cmpLen = len < 48 ? len : 48;
-  bool same = (cmpLen == lastLogLen && memcmp(data, lastLogBytes, cmpLen) == 0);
-
-  if (same) {
-    scanRepeatCount++;
+  if (!isNew) {
     if (now - scanRepeatSummaryMs < 3000) return;
     scanRepeatSummaryMs = now;
     Serial.printf("[Scan:%s] rssi=%d len=%u (same x%u) ", tag, rssi, (unsigned)len, scanRepeatCount);
@@ -1143,11 +1247,10 @@ void serialLogScanPacket(const char* tag, int rssi, const uint8_t* data, size_t 
       Serial.printf("[Scan] ↳ prior packet repeated %u times\n", scanRepeatCount);
       scanRepeatCount = 0;
     }
-    memcpy(lastLogBytes, data, cmpLen);
-    lastLogLen = cmpLen;
     Serial.printf("[Scan:%s] rssi=%d len=%u NEW ", tag, rssi, (unsigned)len);
   }
 
+  size_t cmpLen = len < 48 ? len : 48;
   for (size_t i = 0; i < cmpLen; i++) {
     if (data[i] < 0x10) Serial.print('0');
     Serial.print(data[i], HEX);
@@ -1195,12 +1298,16 @@ void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
 void handleWandCast(const uint8_t* payload, size_t plen) {
   if (!isWandCast(payload, plen)) return;
 
-  uint8_t paletteIdx = payload[12] & 0x1F;
-  unsigned long now = millis();
-  if (paletteIdx == lastWandPalette && now - lastWandCastMs < 600) return;
-  lastWandPalette = paletteIdx;
-  lastWandCastMs = now;
+  // Repeat adverts from one button press: extend idle timer only (no WLED spam)
+  if (wandCastIsDuplicateAdvert(payload, plen)) {
+    if (starlightEnabled && currentOverride == BLE_STARLIGHT) {
+      touchOverrideIdleTimer(BLE_STARLIGHT);
+    }
+    return;
+  }
+  rememberWandCast(payload, plen);
 
+  uint8_t paletteIdx = payload[12] & 0x1F;
   Serial.printf("[Wand] CAST palette=%u roll=%02X%02X%02X%02X%02X%02X\n",
                 paletteIdx, payload[6], payload[7], payload[8],
                 payload[9], payload[10], payload[11]);
@@ -1216,6 +1323,14 @@ void handleWandCast(const uint8_t* payload, size_t plen) {
 // CF9B wiki format — palette in last byte
 void handleLegacyCf9bCast(const uint8_t* payload, size_t plen) {
   if (!isLegacyCf9bCast(payload, plen)) return;
+
+  if (wandCastIsDuplicateAdvert(payload, plen)) {
+    if (starlightEnabled && currentOverride == BLE_STARLIGHT) {
+      touchOverrideIdleTimer(BLE_STARLIGHT);
+    }
+    return;
+  }
+  rememberWandCast(payload, plen);
 
   uint8_t paletteIdx = payload[plen - 1] & 0x1F;
   Serial.printf("[Wand] CF9B legacy cast palette=%u len=%u\n", paletteIdx, (unsigned)plen);
@@ -1238,7 +1353,7 @@ void applyMbAnimOpcode(const char* animKey, const char* label) {
   saveWledStateForOverride();
   sendToWLED("{\"on\":true," + buildSeg0JsonBody("\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) + ",\"fx\":0") + "}");
   setOverride(BLE_MAGIC);
-  mbEventTimestamp = millis();
+  touchOverrideIdleTimer(BLE_MAGIC);
   bleNotify("{\"type\":\"ble_event\",\"event\":\"" + String(label) + "\"}");
 }
 
@@ -1280,7 +1395,7 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
                   + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}]}";
       sendToWLED(body);
       setOverride(BLE_MAGIC);
-      mbEventTimestamp = millis();
+      touchOverrideIdleTimer(BLE_MAGIC);
       bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
       break;
     }
@@ -1369,7 +1484,10 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
 
     if (!isDisneyMfr(data, len)) return;
 
-    serialLogScanPacket(classifyScanPacket(data, len), rssi, data, len);
+    const char* tag = classifyScanPacket(data, len);
+    bool isNew = scanDedupIsNew(data, len);
+    serialLogScanPacket(tag, rssi, data, len, isNew);
+    notifyBleCapturePacket(tag, rssi, data, len, isNew);
 
     const uint8_t* payload;
     size_t plen;
@@ -1593,6 +1711,10 @@ void loop() {
       clearOverride();
       bleNotify("{\"type\":\"ble_event\",\"event\":\"timeout\"}");
     }
+  }
+
+  if (bleCaptureToApp && bleCaptureUntilMs > 0 && millis() >= bleCaptureUntilMs) {
+    stopBleCapture("timeout");
   }
 
   if (WiFi.status() != WL_CONNECTED) {

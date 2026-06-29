@@ -333,16 +333,45 @@ int splitWords(const String& line, String out[], int maxOut) {
 uint8_t parsePaletteWord(const String& w) {
   String s = w;
   s.toLowerCase();
+  s.replace(' ', '-');
+
+  // Full MB+ palette (0–31) — hyphenated names
   if (s == "cyan") return 0;
   if (s == "purple") return 1;
   if (s == "blue") return 2;
+  if (s == "midnight-blue") return 3;
+  if (s == "blue-2") return 4;
+  if (s == "bright-purple") return 5;
+  if (s == "lavender") return 6;
+  if (s == "purple-2") return 7;
   if (s == "pink") return 8;
-  if (s == "yellow") return 15;
+  if (s == "pink-2") return 9;
+  if (s == "pink-3") return 10;
+  if (s == "pink-4") return 11;
+  if (s == "pink-5") return 12;
+  if (s == "pink-6") return 13;
+  if (s == "pink-7") return 14;
+  if (s == "yellow-orange") return 15;
+  if (s == "off-yellow") return 16;
+  if (s == "yellow-orange-2") return 17;
   if (s == "lime") return 18;
   if (s == "orange") return 19;
+  if (s == "red-orange") return 20;
   if (s == "red") return 21;
+  if (s == "cyan-2") return 22;
+  if (s == "cyan-3") return 23;
+  if (s == "cyan-4") return 24;
   if (s == "green") return 25;
+  if (s == "lime-green") return 26;
   if (s == "white") return 27;
+  if (s == "white-2") return 28;
+  if (s == "off") return 29;
+  if (s == "unique") return 30;
+  if (s == "random") return 31;
+
+  // Short aliases (backward compatible)
+  if (s == "yellow") return 15;
+
   return (uint8_t)s.toInt();
 }
 
@@ -387,7 +416,9 @@ void printHelp() {
   Serial.println("  mbloop <0-31|name>       repeat single MB color every 3s");
   Serial.println("  stop                     cancel loop / mbsweep / mbloop");
   Serial.println("  help");
-  Serial.println("  Names: cyan purple blue pink yellow lime orange red green white");
+  Serial.println("  Names: 0-31, or hyphenated MB palette names");
+  Serial.println("         e.g. red midnight-blue yellow-orange lime-green pink-3");
+  Serial.println("         Short: cyan purple blue pink yellow lime orange red green white");
 }
 
 void handleLine(String line) {

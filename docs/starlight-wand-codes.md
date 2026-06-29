@@ -117,6 +117,26 @@ Run **`sw list`** on WandSimulator for the live list.
 4. Cast at another wand or use button + **`sniff 30`** to capture cast packets
 5. On success: `[Scan:WAND-CAST]`, `[Wand] CAST palette=N`, stroller WLED changes
 
+### What the stroller does today
+
+| Packet | Stroller response |
+|--------|-------------------|
+| **WAND-CAST** (button cast at stroller) | **Color only** — full-strip solid using palette byte (index 0–31). No FX byte in this packet. |
+| **WAND-CF9B** (legacy) | Same — solid from last-byte palette index |
+| **WAND-IDLE** | Ignored (identity beacon, not an effect) |
+
+The **pattern/sparkle you see on the wand tube** when you press the button is almost certainly **local wand firmware** — it is not encoded in the 13-byte CF0B cast. Color is the only field we receive (byte 12, 5-bit palette index). Rolling bytes 6–11 change every advert but are anti-replay noise, not an effect ID.
+
+To mirror an **animation** on the stroller when a wand cast arrives:
+
+1. App → **Settings → MagicBand Mapping → MB Animations → Starlight Wand cast**
+2. Pick a WLED **preset** (chase, sparkle, etc.) and optional color slots
+3. Sync to board over BLE
+
+Park **E9** commands (E909 pattern, E90C rainbow, …) are separate broadcasts — same as MagicBand+ show packets. They affect the stroller when **MagicBand+ effects** are enabled, not via the wand cast path.
+
+**Timeout:** Auto-clear is idle time since the **last** wand command (default 15s). Each new cast immediately switches color/effect and resets the timer.
+
 ### WandSimulator → wand / bands / stroller
 
 Flash `WandSimulator.ino` on a second ESP32 (~0.5–2 m away):

@@ -33,7 +33,7 @@ multiple chances to decode the packet.
 | `mbloop red`          | E905 loop   | Repeat one color every 3s                         |
 | `stop`                | —           | Cancel loops                                      |
 
-**Named colors:** `cyan`, `purple`, `blue`, `pink`, `yellow`, `lime`, `orange`, `red`, `green`, `white`
+**Named colors:** palette index `0-31`, or hyphenated names — `red`, `midnight-blue`, `yellow-orange`, `lime-green`, `pink-3`, etc. (`help` in serial for full list). Short aliases: `cyan`, `purple`, `blue`, `pink`, `yellow`, `lime`, `orange`, `red`, `green`, `white`.
 
 **LED mask** (single-color only): `mb red mask 1` — mask values from emcot wiki:
 `0`=all, `1`=top-right only, `2`=bottom-right, `3`=bottom-left, `4`=top-left

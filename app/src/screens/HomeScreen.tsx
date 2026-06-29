@@ -18,6 +18,7 @@ import { useBLE } from '../hooks/useBLE';
 import { useAppStore, buildWledCustomPalette } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { useTheme } from '../utils/theme';
+import { useNavigation } from '@react-navigation/native';
 
 const OVERRIDE_LABELS = ['—', 'Zone', 'Manual', 'MagicBand+', 'Starlight Wand'];
 const OVERRIDE_COLORS = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) =>
@@ -26,6 +27,7 @@ const OVERRIDE_COLORS = (c: ReturnType<typeof import('../utils/theme').useTheme>
 export default function HomeScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
+  const navigation = useNavigation();
   const { connectionState, isConnected } = useBLE();
 
   const {
@@ -34,6 +36,7 @@ export default function HomeScreen() {
     customPalettes, paletteSets, activePaletteSetId,
     setActivePaletteSet, saveToStorage,
     overrideDetail, setOverrideDetail,
+    bleCaptureActive, bleCaptureLiveCount,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
@@ -121,6 +124,18 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
+
+      {bleCaptureActive && (
+        <TouchableOpacity
+          style={s.captureBanner}
+          onPress={() => navigation.navigate('Capture' as never)}
+        >
+          <IconBolt size={16} color={colors.danger} />
+          <Text style={s.captureBannerText}>
+            Recording BLE · {bleCaptureLiveCount} packets — tap to view
+          </Text>
+        </TouchableOpacity>
+      )}
 
       {/* Connection */}
       <View style={s.card}>
@@ -285,6 +300,8 @@ export default function HomeScreen() {
 const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) => StyleSheet.create({
   container:    { flex: 1, backgroundColor: c.background },
   content:      { padding: 16, gap: 12 },
+  captureBanner:{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: c.danger + '18', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: c.danger + '55' },
+  captureBannerText: { color: c.textPrimary, fontSize: 13, fontWeight: '600', flex: 1 },
   card:         { backgroundColor: c.surface, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: c.border, gap: 8 },
   row:          { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label:        { color: c.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
