@@ -122,6 +122,9 @@ class BLEService {
     if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;
     return this.send(msg);
   }
+  sendMbMappingConfig(payload: object) {
+    return this.send({ type: 'mb_mapping_config', mapping: payload });
+  }
 
   private async requestPermissions(): Promise<void> {
     if (Platform.OS !== 'android') return;

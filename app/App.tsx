@@ -17,7 +17,7 @@ import IconBook     from '@tabler/icons-react-native/dist/esm/icons/IconBook';
 import IconDroplet  from '@tabler/icons-react-native/dist/esm/icons/IconDroplet';
 
 import { bleService } from './src/services/BLEService';
-import { useAppStore } from './src/stores/store';
+import { useAppStore, mbMappingToBlePayload } from './src/stores/store';
 import { useZoneManager } from './src/hooks/useZoneManager';
 import { useTheme, useThemeStore } from './src/utils/theme';
 
@@ -142,6 +142,7 @@ export default function App() {
         const s = useAppStore.getState();
         bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
         bleService.sendMbConfig(s.magicBandEnabled, s.magicBandFivePoint, s.magicBandTimeoutSec * 1000);
+        bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
         // Background sync — cached data shows immediately in Library/Presets
         bleService.sendPresetList();
         if (s.wledEffects.length === 0) fetchWledLibrary();

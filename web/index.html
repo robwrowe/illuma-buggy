@@ -51,8 +51,14 @@ const { useState, useEffect, useRef, useCallback } = React;
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 function hexToRgb(hex) {
-  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-  return [r,g,b];
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return { r, g, b };
+}
+
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map(x => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0')).join('');
 }
 
 const ZONE_COLORS = ['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316','#ec4899','#14b8a6'];
@@ -68,7 +74,132 @@ const DEFAULT_DATA = {
   recallState:{effect:'always',palette:'always',parameters:'memory',color:'memory',segments:'never'},
   overrideKillOnZone:false, magicBandFivePoint:true,
   customPalettes:[], paletteSets:[],
+  mbMapping: null, // filled by normalizeMbMapping on load
 };
+
+const MB_COLOR_NAMES = [
+  'cyan','purple','blue','midnight blue','blue 2','bright purple','lavender','purple',
+  'pink','pink 2','pink 3','pink 4','pink 5','pink 6','pink 7','yellow orange',
+  'off yellow','yellow orange 2','lime','orange','red orange','red',
+  'cyan 2','cyan 3','cyan 4','green','lime green','white','white 2',
+  'off','unique','random',
+];
+
+const DEFAULT_MB_WLED_COLORS = [
+  '#00ffff','#9900ff','#0000ff','#000080','#0066ff','#cc44ff','#cc99ff','#7700cc',
+  '#ff66b2','#ff5aa8','#ff509e','#ff4a94','#ff6e96','#ff82a0','#ffa0aa','#ffaa00',
+  '#cccc00','#ff8800','#aaff00','#ff6600','#ff3300','#ff0000',
+  '#3cffff','#28f0ff','#14c8ff','#00ff00','#66ff28','#ffffff','#f0f0f0',
+  '#000000','#ff9933','#ff00ff',
+];
+
+const DEFAULT_MB_MAPPING = {
+  version: 1,
+  colors: [...DEFAULT_MB_WLED_COLORS],
+  animations: {
+    E90C: { presetId: '', colorSlots: [0, 2, 21, 8, 18] },
+    E90E: { presetId: '', colorSlots: [27] },
+    E90F: { presetId: '', colorSlots: [] },
+    E910: { presetId: '', colorSlots: [] },
+    E911: { presetId: '', colorSlots: [21, 0] },
+    E912: { presetId: '', colorSlots: [2, 8] },
+    E913: { presetId: '', colorSlots: [1, 5] },
+    wand: { presetId: '', colorSlots: [] },
+  },
+  patterns: {
+    '3': { presetId: '', colorSlots: [] },
+    '4': { presetId: '', colorSlots: [] },
+    '5': { presetId: '', colorSlots: [] },
+    '8': { presetId: '', colorSlots: [] },
+    'B': { presetId: '', colorSlots: [] },
+  },
+  segments: {
+    all:         [{ id: 0, start: 0, stop: 100 }],
+    inner:       [{ id: 1, start: 35, stop: 65 }],
+    outer:       [{ id: 2, start: 0, stop: 35 }, { id: 3, start: 65, stop: 100 }],
+    topLeft:     [{ id: 4, start: 0, stop: 25 }],
+    topRight:    [{ id: 5, start: 25, stop: 50 }],
+    bottomLeft:  [{ id: 6, start: 50, stop: 75 }],
+    bottomRight: [{ id: 7, start: 75, stop: 100 }],
+    center:      [{ id: 8, start: 48, stop: 52 }],
+    band0:       [{ id: 9, start: 0, stop: 20 }],
+    band1:       [{ id: 10, start: 20, stop: 40 }],
+    band2:       [{ id: 11, start: 40, stop: 60 }],
+    band3:       [{ id: 12, start: 60, stop: 80 }],
+    band4:       [{ id: 13, start: 80, stop: 100 }],
+  },
+};
+
+const MB_SEGMENT_META = [
+  { id: 'all', label: 'All', hint: 'E905 mask 000, full strip' },
+  { id: 'inner', label: 'Inner ring', hint: 'E906 inner' },
+  { id: 'outer', label: 'Outer ring', hint: 'E906 outer' },
+  { id: 'topLeft', label: 'Top left', hint: 'E909 TL' },
+  { id: 'topRight', label: 'Top right', hint: 'E909 TR' },
+  { id: 'bottomLeft', label: 'Bottom left', hint: 'E909 BL' },
+  { id: 'bottomRight', label: 'Bottom right', hint: 'E909 BR' },
+  { id: 'center', label: 'Center', hint: 'E909 center' },
+  { id: 'band0', label: 'Band LED 0', hint: 'E905 mask bit 0' },
+  { id: 'band1', label: 'Band LED 1', hint: 'E905 mask bit 1' },
+  { id: 'band2', label: 'Band LED 2', hint: 'E905 mask bit 2' },
+  { id: 'band3', label: 'Band LED 3', hint: 'E905 mask bit 3' },
+  { id: 'band4', label: 'Band LED 4', hint: 'E905 mask bit 4' },
+];
+
+const MB_ANIMATION_META = [
+  { key: 'E90C', label: 'Show FX (Taste the Rainbow)' },
+  { key: 'E90E', label: 'Flash' },
+  { key: 'E90F', label: 'Animation F' },
+  { key: 'E910', label: 'Animation 10' },
+  { key: 'E911', label: 'Cross-fade' },
+  { key: 'E912', label: 'Circle' },
+  { key: 'E913', label: 'Pulse' },
+  { key: 'wand', label: 'Starlight Wand cast' },
+];
+
+const MB_PATTERN_META = [
+  { key: '3', label: 'Spin (palette B)' },
+  { key: '4', label: 'Solid palette A' },
+  { key: '5', label: 'All LEDs on' },
+  { key: '8', label: 'Four / five corners' },
+  { key: 'B', label: 'All on palette B' },
+];
+
+function normalizeMbMapping(raw) {
+  const d = DEFAULT_MB_MAPPING;
+  if (!raw || raw.version !== 1) return JSON.parse(JSON.stringify(d));
+  const colors = Array.from({ length: 32 }, (_, i) => {
+    const c = raw.colors?.[i];
+    return c && /^#[0-9a-fA-F]{6}$/.test(c) ? c : d.colors[i];
+  });
+  const normEffect = (key, fallback, src) => {
+    const v = src?.[key];
+    if (!v) return { ...fallback };
+    if (typeof v === 'string') return { presetId: v, colorSlots: [...fallback.colorSlots] };
+    return {
+      presetId: v.presetId ?? '',
+      colorSlots: Array.isArray(v.colorSlots) ? [...v.colorSlots] : [...fallback.colorSlots],
+    };
+  };
+  const animations = {};
+  MB_ANIMATION_META.forEach(({ key }) => { animations[key] = normEffect(key, d.animations[key], raw.animations); });
+  const patterns = {};
+  MB_PATTERN_META.forEach(({ key }) => { patterns[key] = normEffect(key, d.patterns[key], raw.patterns); });
+  const segments = {};
+  MB_SEGMENT_META.forEach(({ id }) => {
+    const src = raw.segments?.[id];
+    segments[id] = src?.length
+      ? src.map(s => ({ id: s.id ?? 0, start: s.start, stop: s.stop }))
+      : d.segments[id].map(s => ({ ...s }));
+  });
+  return { version: 1, colors, animations, patterns, segments };
+}
+
+function loadAppData(stored) {
+  const merged = stored ? { ...DEFAULT_DATA, ...stored } : { ...DEFAULT_DATA };
+  merged.mbMapping = normalizeMbMapping(merged.mbMapping);
+  return merged;
+}
 
 const LS_KEY = 'illuma-buggy-active';
 const LS_PROFILES = 'illuma-buggy-profiles';
@@ -127,8 +258,8 @@ function App() {
   const [tab, setTab]   = useState('map');
   const [mapsReady, setMapsReady] = useState(window.MAPS_LOADED);
   const [data, setData] = useState(() => {
-    try { const s = localStorage.getItem(LS_KEY); return s ? {...DEFAULT_DATA,...JSON.parse(s)} : {...DEFAULT_DATA}; }
-    catch { return {...DEFAULT_DATA}; }
+    try { const s = localStorage.getItem(LS_KEY); return loadAppData(s ? JSON.parse(s) : null); }
+    catch { return loadAppData(null); }
   });
   const [profiles, setProfiles] = useState(() => {
     try { return JSON.parse(localStorage.getItem(LS_PROFILES)||'{}'); } catch { return {}; }
@@ -205,7 +336,7 @@ function App() {
   const importJSON = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => { try { update({...DEFAULT_DATA, ...JSON.parse(ev.target.result)}); alert('Imported!'); } catch { alert('Invalid file'); } };
+    reader.onload = ev => { try { update(loadAppData(JSON.parse(ev.target.result))); alert('Imported!'); } catch { alert('Invalid file'); } };
     reader.readAsText(file);
     e.target.value = '';
   };
@@ -799,14 +930,6 @@ function PresetsTab({data, update}) {
 
 
 // ── ColorCell component ─────────────────────────────────────────────────
-function hexToRgb(hex) {
-  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
-  return {r,g,b};
-}
-function rgbToHex(r,g,b) {
-  return '#'+[r,g,b].map(x=>Math.max(0,Math.min(255,Math.round(x))).toString(16).padStart(2,'0')).join('');
-}
-
 const PALETTE_SWATCHES = [
   '#ff0000','#ff4400','#ff8800','#ffcc00','#ffff00','#aaff00',
   '#00ff00','#00ff88','#00ffff','#0088ff','#0044ff','#6600ff',
@@ -955,4 +1078,196 @@ function PalettesTab({data, update}) {
         {editP.colors.map((c,i)=>(<ColorCell key={i} color={c}
             onRemove={editP.colors.length>2?()=>setEditP({...editP,colors:editP.colors.filter((_,j)=>j!==i)}):null}
             onChange={nc=>{const cl=[...editP.colors];cl[i]=nc;setEditP({...editP,colors:cl});}}
-          />))
+          />))}
+      </div>
+      {editP.colors.length < 16 && (
+        <button onClick={()=>setEditP({...editP,colors:[...editP.colors,'#ffffff']})} style={{...btn('',{width:'100%',marginBottom:12})}}>+ Add Color</button>
+      )}
+      <button onClick={savePal} style={btn('primary')}>Save Palette</button>
+    </div>}
+
+    {/* Set editor */}
+    {editS && ptab==='sets' && <div style={{flex:1,overflowY:'auto',padding:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Set':'Edit Set'}</span>
+        {!isNew && <button onClick={()=>delSet(editS.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+      </div>
+      <Field label="Name"><input value={editS.name} onChange={e=>setEditS({...editS,name:e.target.value})} placeholder="e.g. Magic Kingdom" style={inputStyle} autoFocus/></Field>
+      <SectionHead>Included Palettes</SectionHead>
+      {palettes.length===0 && <div style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>Create palettes first</div>}
+      {palettes.map(p=>(<div key={p.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
+        <input type="checkbox" checked={editS.paletteIds.includes(p.id)} onChange={()=>toggleInSet(p.id)} style={{width:18,height:18}}/>
+        <div style={{flex:1}}>
+          <div style={{fontSize:13,fontWeight:600}}>{p.name}</div>
+          <PaletteGradient colors={p.colors} height={14}/>
+        </div>
+        {editS.paletteIds.includes(p.id) && (<>
+          <button onClick={()=>{const i=editS.paletteIds.indexOf(p.id);if(i>0)moveInSet(i,i-1);}} style={btn('',{padding:'4px 8px',fontSize:11})}>↑</button>
+          <button onClick={()=>{const i=editS.paletteIds.indexOf(p.id);if(i<editS.paletteIds.length-1)moveInSet(i,i+1);}} style={btn('',{padding:'4px 8px',fontSize:11})}>↓</button>
+        </>)}
+      </div>))}
+      <button onClick={saveSet} style={{...btn('primary'),marginTop:16}}>Save Set</button>
+    </div>}
+  </div>;
+}
+
+// ── Brightness ───────────────────────────────────────────────────────
+function BrightnessTab({data, update}) {
+  const bc = data.brightnessConfig || DEFAULT_DATA.brightnessConfig;
+  const set = (key, val) => update({brightnessConfig:{...bc,[key]:val}});
+  return <div style={{padding:24,maxWidth:520}}>
+    <div style={{fontWeight:700,fontSize:18,marginBottom:16}}>Brightness</div>
+    {[
+      {k:'daytime',label:'Daytime',hint:'Sun above threshold (0–255)'},
+      {k:'nighttime',label:'Nighttime',hint:'Sun below threshold (0–255)'},
+      {k:'indoor',label:'Indoor',hint:'Inside indoor zones (0–255)'},
+      {k:'solarThresholdDeg',label:'Solar threshold (°)',hint:'Elevation for day/night switch'},
+      {k:'transitionMinutes',label:'Transition (min)',hint:'Ramp duration at threshold'},
+    ].map(({k,label,hint})=>(<Field key={k} label={label}>
+      <div style={{display:'flex',alignItems:'center',gap:12}}>
+        <input type="number" min={k.includes('Deg')||k.includes('Minutes')?0:0} max={k.includes('Deg')?90:k.includes('Minutes')?120:255}
+          value={bc[k]} onChange={e=>set(k,+e.target.value||0)} style={{...inputStyle,width:80,textAlign:'right'}}/>
+        <span style={{fontSize:12,color:'var(--text3)'}}>{hint}</span>
+      </div>
+    </Field>))}
+  </div>;
+}
+
+function WledSegEditor({label, hint, refs, onChange}) {
+  const update = (idx, field, val) => {
+    const n = +val;
+    if (isNaN(n)) return;
+    onChange(refs.map((r, i) => i === idx ? {...r, [field]: n} : r));
+  };
+  const addRef = () => {
+    const last = refs[refs.length - 1];
+    onChange([...refs, { id: refs.length, start: last?.stop ?? 0, stop: Math.min((last?.stop ?? 0) + 10, 100) }]);
+  };
+  return (<div style={{marginBottom:14}}>
+    <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{label}</div>
+    <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>{hint}</div>
+    {refs.map((r, idx) => (
+      <div key={idx} style={{display:'flex',gap:8,alignItems:'center',marginBottom:4}}>
+        <span style={{fontSize:11,color:'var(--text3)'}}>id</span>
+        <input type="number" min={0} max={31} value={r.id} onChange={e=>update(idx,'id',e.target.value)} style={{...inputStyle,width:56,textAlign:'right'}}/>
+        <span style={{fontSize:11,color:'var(--text3)'}}>start</span>
+        <input type="number" min={0} max={100} value={r.start} onChange={e=>update(idx,'start',e.target.value)} style={{...inputStyle,width:72,textAlign:'right'}}/>
+        <span style={{fontSize:11,color:'var(--text3)'}}>stop</span>
+        <input type="number" min={0} max={100} value={r.stop} onChange={e=>update(idx,'stop',e.target.value)} style={{...inputStyle,width:72,textAlign:'right'}}/>
+        {refs.length > 1 && <button onClick={()=>onChange(refs.filter((_,i)=>i!==idx))} style={btn('danger',{padding:'4px 8px',fontSize:11})}>✕</button>}
+      </div>
+    ))}
+    <button onClick={addRef} style={btn('',{padding:'4px 10px',fontSize:11,marginTop:4})}>+ WLED segment</button>
+  </div>);
+}
+
+function MbEffectField({label, hint, mapping, presets, onChange}) {
+  const setPreset = (presetId) => onChange({ ...mapping, presetId });
+  const setSlots = (v) => {
+    const colorSlots = v.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n >= 0 && n <= 31);
+    onChange({ ...mapping, colorSlots });
+  };
+  return (<Field label={label}>
+    <select value={mapping.presetId||''} onChange={e=>setPreset(e.target.value)} style={{...inputStyle,cursor:'pointer'}}>
+      <option value="">Built-in segment colors</option>
+      {presets.map(p=>(<option key={p.id} value={p.id}>{p.name}</option>))}
+    </select>
+    <input value={(mapping.colorSlots||[]).join(',')} placeholder="color slots 0-31 (comma-separated)"
+      onChange={e=>setSlots(e.target.value)} style={{...inputStyle,marginTop:6,fontFamily:'monospace',fontSize:12}}/>
+    <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>{hint}</div>
+  </Field>);
+}
+
+// ── Settings ───────────────────────────────────────────────────────
+function SettingsTab({data, update}) {
+  const mb = data.mbMapping || DEFAULT_MB_MAPPING;
+  const presets = data.presets || [];
+  const setMb = (patch) => update({ mbMapping: normalizeMbMapping({ ...mb, ...patch }) });
+  const setMbColor = (idx, hex) => {
+    const colors = [...mb.colors];
+    const v = hex.startsWith('#') ? hex : `#${hex}`;
+    if (!/^#[0-9a-fA-F]{6}$/.test(v)) return;
+    colors[idx] = v;
+    setMb({ colors });
+  };
+  const setAnim = (key, patch) => setMb({ animations: { ...mb.animations, [key]: { ...mb.animations[key], ...patch } } });
+  const setPat = (key, patch) => setMb({ patterns: { ...mb.patterns, [key]: { ...mb.patterns[key], ...patch } } });
+  const setSeg = (id, refs) => setMb({ segments: { ...mb.segments, [id]: refs } });
+
+  return <div style={{padding:24,maxWidth:640,overflowY:'auto',height:'100%'}}>
+    <div style={{fontWeight:700,fontSize:18,marginBottom:8}}>Settings</div>
+    <p style={{fontSize:12,color:'var(--text3)',marginBottom:20,lineHeight:1.6}}>
+      MagicBand+ mapping exports with your config. The Android app pushes it to the board over BLE on connect.
+    </p>
+
+    <SectionHead>MB → WLED Colors (32)</SectionHead>
+    <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>Map each MB palette index to a WLED RGB color.</p>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:24}}>
+      {MB_COLOR_NAMES.map((name, idx) => (
+        <div key={idx} style={{display:'flex',alignItems:'center',gap:8,padding:8,background:'var(--surface2)',borderRadius:8}}>
+          <div style={{width:24,height:24,borderRadius:4,background:mb.colors[idx],border:'1px solid var(--border)'}}/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:12,fontWeight:600}}>{idx} · {name}</div>
+          </div>
+          <input value={mb.colors[idx]}
+            onChange={e=>{const v=e.target.value; if(/^#?[0-9a-fA-F]{6}$/.test(v)) setMbColor(idx,v.startsWith('#')?v:'#'+v);}}
+            style={{...inputStyle,width:88,padding:'4px 6px',fontSize:11,fontFamily:'monospace'}}/>
+        </div>
+      ))}
+    </div>
+
+    <SectionHead>MB Animations → Preset</SectionHead>
+    {MB_ANIMATION_META.map(({key,label})=>(
+      <MbEffectField key={key} label={label} hint="Empty preset = built-in fallback"
+        mapping={mb.animations[key]} presets={presets}
+        onChange={m=>setAnim(key,m)}/>
+    ))}
+
+    <SectionHead>MB Patterns (E909) → Preset</SectionHead>
+    {MB_PATTERN_META.map(({key,label})=>(
+      <MbEffectField key={key} label={`${key} — ${label}`} hint="Pattern nibble from E909 byte"
+        mapping={mb.patterns[key]} presets={presets}
+        onChange={m=>setPat(key,m)}/>
+    ))}
+
+    <SectionHead>MB Segments → WLED Segments</SectionHead>
+    <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>One MB segment can map to multiple WLED segments (id, start%, stop%).</p>
+    {MB_SEGMENT_META.map(({id,label,hint})=>(
+      <WledSegEditor key={id} label={label} hint={hint} refs={mb.segments[id]} onChange={refs=>setSeg(id,refs)}/>
+    ))}
+    <button onClick={()=>update({mbMapping:JSON.parse(JSON.stringify(DEFAULT_MB_MAPPING))})} style={{...btn('',{marginBottom:20})}}>Reset MB mapping to defaults</button>
+
+    <SectionHead>Recall State</SectionHead>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:24}}>
+      {Object.keys(data.recallState||DEFAULT_DATA.recallState).map(k=>(<Field key={k} label={k.charAt(0).toUpperCase()+k.slice(1)}>
+        <select value={(data.recallState||DEFAULT_DATA.recallState)[k]}
+          onChange={e=>update({recallState:{...(data.recallState||DEFAULT_DATA.recallState),[k]:e.target.value}})}
+          style={{...inputStyle,cursor:'pointer'}}>
+          {['always','never','memory'].map(v=>(<option key={v} value={v}>{v}</option>))}
+        </select>
+      </Field>))}
+    </div>
+
+    <Field label="Override kill on zone">
+      <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+        <input type="checkbox" checked={!!data.overrideKillOnZone}
+          onChange={e=>update({overrideKillOnZone:e.target.checked})} style={{width:18,height:18}}/>
+        Clear manual/MB override when entering a zone
+      </label>
+    </Field>
+
+    <Field label="MagicBand five-point mode">
+      <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+        <input type="checkbox" checked={data.magicBandFivePoint!==false}
+          onChange={e=>update({magicBandFivePoint:e.target.checked})} style={{width:18,height:18}}/>
+        4 corners + center (legacy segment layout flag)
+      </label>
+    </Field>
+  </div>;
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>

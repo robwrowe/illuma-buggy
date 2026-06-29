@@ -40,6 +40,8 @@ uint8_t mbChaseSpeed     = 128;  // sx — 0 = stationary
 uint8_t mbChaseThickness = 4;    // grp — LEDs per chase block (color width)
 
 void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b);
+void loadMbMappingDefaults();
+void loadMbMappingFromJson();
 
 // ─────────────────────────────────────────────
 // GLOBALS
@@ -97,7 +99,43 @@ static const uint8_t WAND_CAST_SIG[6] = {0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22};
 #define WAND_CAST_LEN 13
 
 // Pre-event WLED state (restored after BLE effect clears)
-String savedWledState = "";
+String savedWledState   = "";
+String baselineWledState  = "";   // snapshot at connect — full /json/state
+String mbMappingJson = "";  // unified MB→WLED mapping (colors, animations, patterns, segments)
+bool   wledWasConnected   = false;
+
+#define MB_MAX_SEG_REFS 8
+#define MB_MAX_COLOR_SLOTS 16
+
+struct WledSegRef { uint8_t id; uint16_t start; uint16_t stop; };
+struct MbSegMap { WledSegRef refs[MB_MAX_SEG_REFS]; uint8_t count; };
+
+uint8_t mbWledColors[32][3];
+MbSegMap mbSegMaps[13];  // parallel to segment key order in JSON
+
+struct MbEffectMap {
+  String presetId;
+  uint8_t colorSlots[MB_MAX_COLOR_SLOTS];
+  uint8_t colorSlotCount;
+};
+
+MbEffectMap mbAnimMap[8];   // E90C,E90E,E90F,E910,E911,E912,E913,wand
+MbEffectMap mbPatMap[5];    // 3,4,5,8,B
+
+static const char* MB_SEG_KEYS[] = {
+  "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
+  "band0", "band1", "band2", "band3", "band4"
+};
+static const char* MB_ANIM_KEYS[] = { "E90C", "E90E", "E90F", "E910", "E911", "E912", "E913", "wand" };
+static const char* MB_PAT_KEYS[]  = { "3", "4", "5", "8", "B" };
+
+static const uint8_t MB_DEFAULT_COLORS[32][3] = {
+  {0,255,255},{153,0,255},{0,0,255},{0,0,128},{0,102,255},{204,68,255},{204,153,255},{119,0,204},
+  {255,102,178},{255,90,168},{255,80,158},{255,74,148},{255,110,150},{255,130,160},{255,160,170},{255,170,0},
+  {204,204,0},{255,136,0},{170,255,0},{255,102,0},{255,51,0},{255,0,0},
+  {60,255,255},{40,240,255},{20,200,255},{0,255,0},{102,255,40},{255,255,255},{240,240,240},
+  {0,0,0},{255,153,51},{255,0,255}
+};
 
 // WiFi reconnect
 unsigned long lastWifiRetry = 0;
@@ -296,15 +334,69 @@ bool setBrightness(int bri) {
   return sendToWLED("{\"bri\":" + String(bri) + "}");
 }
 
+// Pull full WLED state, persist as baseline (segments, bri, fx, etc.)
+void snapshotWledBaseline() {
+  String state = getFromWLED("/json/state");
+  if (state.length() == 0) {
+    Serial.println("[WLED] Baseline snapshot failed (GET /json/state)");
+    return;
+  }
+
+  baselineWledState = state;
+
+  DynamicJsonDocument doc(12288);
+  DeserializationError err = deserializeJson(doc, state);
+  if (!err) {
+    if (doc.containsKey("bri")) {
+      currentBrightness = doc["bri"].as<int>();
+    }
+  }
+
+  prefs.begin("config", false);
+  prefs.putString("wledBase", baselineWledState);
+  prefs.end();
+
+  Serial.printf("[WLED] Baseline snapshot (%u bytes, bri=%d)\n",
+                (unsigned)baselineWledState.length(), currentBrightness);
+}
+
+void loadWledBaselineFromNvs() {
+  prefs.begin("config", true);
+  String loaded = prefs.getString("wledBase", "");
+  prefs.end();
+  if (loaded.length() == 0) return;
+
+  baselineWledState = loaded;
+  DynamicJsonDocument doc(12288);
+  if (!deserializeJson(doc, loaded)) {
+    if (doc.containsKey("bri")) {
+      currentBrightness = doc["bri"].as<int>();
+    }
+  }
+  Serial.printf("[WLED] Loaded baseline from NVS (%u bytes, bri=%d)\n",
+                (unsigned)baselineWledState.length(), currentBrightness);
+}
+
+void ensureWledPowerOn() {
+  DynamicJsonDocument doc(12288);
+  if (baselineWledState.length() > 0 &&
+      deserializeJson(doc, baselineWledState) == DeserializationError::Ok) {
+    if (!doc["on"].as<bool>()) {
+      sendToWLED("{\"on\":true}");
+      Serial.println("[WLED] Master power was off — sent on:true (relay)");
+    }
+    return;
+  }
+  sendToWLED("{\"on\":true}");
+}
+
 // ─────────────────────────────────────────────
 // WLED EFFECTS — full-strip MagicBand chase / wand solid
+// Only PATCH segment 0 — never send stop:0 on other segments (destroys WLED layout)
 // ─────────────────────────────────────────────
 
-void restoreSingleSegment() {
-  sendToWLED("{\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
-             ",\"on\":true},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},"
-             "{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}");
-  Serial.println("[Seg] Restored single segment (full strip)");
+String buildSeg0JsonBody(const String& seg0Inner) {
+  return "\"seg\":[{\"id\":0," + seg0Inner + "}]";
 }
 
 // Build 5-color custom palette + Chase across entire strip
@@ -318,10 +410,9 @@ String buildMagicBandChaseJson(const uint8_t paletteIdxs[5]) {
     pd += "[" + String(positions[i]) + "," + String(r) + "," + String(g) + "," + String(b) + "]";
   }
   pd += "]}";
-  return "{" + pd + ",\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+  return "{" + pd + "," + buildSeg0JsonBody("\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
          ",\"fx\":" + String(WLED_CHASE_FX) + ",\"sx\":" + String(mbChaseSpeed) +
-         ",\"grp\":" + String(mbChaseThickness) + ",\"pal\":" + String(WLED_MB_PAL_SLOT) +
-         "},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
+         ",\"grp\":" + String(mbChaseThickness) + ",\"pal\":" + String(WLED_MB_PAL_SLOT)) + "}";
 }
 
 void applyMagicBandChase(const uint8_t paletteIdxs[5], OverrideSource src) {
@@ -348,6 +439,254 @@ void applyMagicBandChaseFromAnchor(uint8_t anchorPalette, OverrideSource src) {
   applyMagicBandChase(pals, src);
 }
 
+void loadMbMappingDefaults() {
+  memcpy(mbWledColors, MB_DEFAULT_COLORS, sizeof(mbWledColors));
+  const uint16_t defs[][2] = {
+    {0,100},{35,65},{0,35},{0,25},{25,50},{50,75},{75,100},{48,52},
+    {0,20},{20,40},{40,60},{60,80},{80,100}
+  };
+  for (int i = 0; i < 13; i++) {
+    mbSegMaps[i].count = 1;
+    mbSegMaps[i].refs[0] = { (uint8_t)(i == 2 ? 2 : i), defs[i][0], defs[i][1] };
+    if (i == 2) {
+      mbSegMaps[i].count = 2;
+      mbSegMaps[i].refs[0] = { 2, 0, 35 };
+      mbSegMaps[i].refs[1] = { 3, 65, 100 };
+    }
+  }
+  for (int i = 0; i < 8; i++) { mbAnimMap[i].presetId = ""; mbAnimMap[i].colorSlotCount = 0; }
+  for (int i = 0; i < 5; i++) { mbPatMap[i].presetId = ""; mbPatMap[i].colorSlotCount = 0; }
+}
+
+void parseEffectMap(JsonObject obj, MbEffectMap& out) {
+  out.presetId = obj["presetId"] | "";
+  out.colorSlotCount = 0;
+  if (obj.containsKey("colorSlots")) {
+    for (JsonVariant v : obj["colorSlots"].as<JsonArray>()) {
+      if (out.colorSlotCount >= MB_MAX_COLOR_SLOTS) break;
+      out.colorSlots[out.colorSlotCount++] = (uint8_t)(v.as<int>() & 0x1F);
+    }
+  }
+}
+
+void parseSegMapArray(JsonArray arr, MbSegMap& out) {
+  out.count = 0;
+  for (JsonVariant v : arr) {
+    if (!v.is<JsonObject>() || out.count >= MB_MAX_SEG_REFS) continue;
+    JsonObject r = v;
+    uint16_t start = (uint16_t)r["start"].as<int>();
+    uint16_t stop  = (uint16_t)r["stop"].as<int>();
+    if (stop <= start || stop > STRIP_LED_COUNT) continue;
+    out.refs[out.count++] = {
+      (uint8_t)r["id"].as<int>(),
+      start, stop
+    };
+  }
+}
+
+void loadMbMappingFromJson() {
+  loadMbMappingDefaults();
+  if (mbMappingJson.length() == 0) return;
+
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, mbMappingJson)) return;
+
+  if (doc.containsKey("colors")) {
+    JsonObject colors = doc["colors"];
+    for (JsonPair kv : colors) {
+      int idx = atoi(kv.key().c_str());
+      if (idx < 0 || idx > 31) continue;
+      JsonArray rgb = kv.value().as<JsonArray>();
+      if (rgb.isNull() || rgb.size() < 3) continue;
+      mbWledColors[idx][0] = (uint8_t)rgb[0].as<int>();
+      mbWledColors[idx][1] = (uint8_t)rgb[1].as<int>();
+      mbWledColors[idx][2] = (uint8_t)rgb[2].as<int>();
+    }
+  }
+  if (doc.containsKey("segments")) {
+    JsonObject segs = doc["segments"];
+    for (int i = 0; i < 13; i++) {
+      if (!segs.containsKey(MB_SEG_KEYS[i])) continue;
+      parseSegMapArray(segs[MB_SEG_KEYS[i]].as<JsonArray>(), mbSegMaps[i]);
+    }
+  }
+  if (doc.containsKey("animations")) {
+    JsonObject anims = doc["animations"];
+    for (int i = 0; i < 8; i++) {
+      if (anims.containsKey(MB_ANIM_KEYS[i])) parseEffectMap(anims[MB_ANIM_KEYS[i]], mbAnimMap[i]);
+    }
+  }
+  if (doc.containsKey("patterns")) {
+    JsonObject pats = doc["patterns"];
+    for (int i = 0; i < 5; i++) {
+      if (pats.containsKey(MB_PAT_KEYS[i])) parseEffectMap(pats[MB_PAT_KEYS[i]], mbPatMap[i]);
+    }
+  }
+}
+
+int mbSegKeyIndex(const char* key) {
+  for (int i = 0; i < 13; i++) if (strcmp(key, MB_SEG_KEYS[i]) == 0) return i;
+  return -1;
+}
+
+void appendWledSolidSeg(String& body, const WledSegRef& ref, uint8_t r, uint8_t g, uint8_t b, bool& first) {
+  if (ref.stop <= ref.start) return;
+  if (!first) body += ",";
+  first = false;
+  body += "{\"id\":" + String(ref.id) + ",\"start\":" + String(ref.start) + ",\"stop\":" + String(ref.stop)
+       + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
+}
+
+void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src) {
+  int si = mbSegKeyIndex(segKey);
+  if (si < 0) return;
+  uint8_t r, g, b;
+  paletteToRGB(palIdx, r, g, b);
+  MbSegMap& map = mbSegMaps[si];
+  if (map.count == 0) return;
+  saveWledStateForOverride();
+  String body = "{\"on\":true,\"seg\":[";
+  bool first = true;
+  for (uint8_t i = 0; i < map.count; i++) appendWledSolidSeg(body, map.refs[i], r, g, b, first);
+  body += "]}";
+  sendToWLED(body);
+  setOverride(src);
+  if (src == BLE_MAGIC) mbEventTimestamp = millis();
+  else if (src == BLE_STARLIGHT) swEventTimestamp = millis();
+}
+
+void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n, OverrideSource src) {
+  saveWledStateForOverride();
+  String body = "{\"on\":true,\"seg\":[";
+  bool first = true;
+  for (int i = 0; i < n; i++) {
+    int si = mbSegKeyIndex(segKeys[i]);
+    if (si < 0) continue;
+    uint8_t r, g, b;
+    paletteToRGB(pals[i], r, g, b);
+    for (uint8_t j = 0; j < mbSegMaps[si].count; j++) {
+      appendWledSolidSeg(body, mbSegMaps[si].refs[j], r, g, b, first);
+    }
+  }
+  body += "]}";
+  sendToWLED(body);
+  setOverride(src);
+  if (src == BLE_MAGIC) mbEventTimestamp = millis();
+}
+
+bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, int packetPalCount, OverrideSource src) {
+  if (map.presetId.length() == 0) return false;
+  String preset = getPreset(map.presetId);
+  if (preset.length() == 0) return false;
+  if (!canTakeOverride(src)) return false;
+
+  saveWledStateForOverride();
+  DynamicJsonDocument doc(4096);
+  if (deserializeJson(doc, preset)) return false;
+  DynamicJsonDocument wled(4096);
+  if (deserializeJson(wled, doc["wled"])) return false;
+
+  int slotCount = map.colorSlotCount > 0 ? map.colorSlotCount : packetPalCount;
+  if (slotCount <= 0 && packetPalCount > 0) slotCount = packetPalCount;
+
+  if (slotCount > 0) {
+    uint8_t r0, g0, b0;
+    uint8_t pal0 = packetPalCount > 0 ? packetPals[0] : 0;
+    if (map.colorSlotCount > 0) pal0 = map.colorSlots[0];
+    paletteToRGB(pal0, r0, g0, b0);
+    JsonArray seg = wled["seg"].to<JsonArray>();
+    if (seg.isNull() || seg.size() == 0) {
+      seg = wled.createNestedArray("seg");
+      seg.add<JsonObject>();
+    }
+    JsonObject seg0 = seg[0];
+    JsonArray col = seg0["col"].to<JsonArray>();
+    col.clear();
+    for (int i = 0; i < slotCount; i++) {
+      uint8_t pal = packetPalCount > 0 ? packetPals[i % packetPalCount] : 0;
+      if (map.colorSlotCount > 0) pal = map.colorSlots[i % map.colorSlotCount];
+      uint8_t r, g, b;
+      paletteToRGB(pal, r, g, b);
+      JsonArray rgb = col.createNestedArray();
+      rgb.add(r); rgb.add(g); rgb.add(b);
+    }
+    if (col.size() == 1) {
+      seg0["col"] = col[0];
+    }
+  }
+
+  String wledJson;
+  serializeJson(wled, wledJson);
+  sendToWLED(wledJson);
+  setOverride(src);
+  if (src == BLE_MAGIC) mbEventTimestamp = millis();
+  else if (src == BLE_STARLIGHT) swEventTimestamp = millis();
+  return true;
+}
+
+bool applyMbAnimationKey(const char* key, const uint8_t* pals, int palCount, OverrideSource src) {
+  for (int i = 0; i < 8; i++) {
+    if (strcmp(key, MB_ANIM_KEYS[i]) != 0) continue;
+    if (applyMbPresetWithColors(mbAnimMap[i], pals, palCount, src)) return true;
+    return false;
+  }
+  return false;
+}
+
+bool applyMbPatternKey(const char* patKey, const uint8_t* pals, int palCount, OverrideSource src) {
+  for (int i = 0; i < 5; i++) {
+    if (strcmp(patKey, MB_PAT_KEYS[i]) != 0) continue;
+    if (applyMbPresetWithColors(mbPatMap[i], pals, palCount, src)) return true;
+    return false;
+  }
+  return false;
+}
+
+void applyMbSingle(uint8_t colorByte, OverrideSource src) {
+  if (!canTakeOverride(src)) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  uint8_t mask = (colorByte >> 5) & 0x07;
+  uint8_t pal = colorByte & 0x1F;
+  if (mask == 0) {
+    applyMbSegmentSolid("all", pal, src);
+    return;
+  }
+  const char* keys[5] = { "band0", "band1", "band2", "band3", "band4" };
+  const char* segKeys[5];
+  uint8_t pals[5];
+  int m = 0;
+  for (int i = 0; i < 5; i++) {
+    if (mask & (1 << i)) {
+      segKeys[m] = keys[i];
+      pals[m] = pal;
+      m++;
+    }
+  }
+  if (m == 0) applyMbSegmentSolid("all", pal, src);
+  else applyMbMultiSegmentSolid(segKeys, pals, m, src);
+}
+
+void applyMbDual(uint8_t innerByte, uint8_t outerByte, OverrideSource src) {
+  const char* keys[2] = { "inner", "outer" };
+  uint8_t pals[2] = { (uint8_t)(innerByte & 0x1F), (uint8_t)(outerByte & 0x1F) };
+  applyMbMultiSegmentSolid(keys, pals, 2, src);
+}
+
+void applyMbFive(uint8_t patternNibble, uint8_t tl, uint8_t bl, uint8_t br, uint8_t tr, uint8_t center, OverrideSource src) {
+  if (!canTakeOverride(src)) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  char patKey[2] = { 0, 0 };
+  const char* hex = "0123456789ABCDEF";
+  patKey[0] = hex[patternNibble & 0x0F];
+
+  const char* keys[5] = { "topLeft", "bottomLeft", "bottomRight", "topRight", "center" };
+  uint8_t pals[5] = { tl, bl, br, tr, center };
+
+  if (applyMbPatternKey(patKey, pals, 5, src)) return;
+
+  applyMbMultiSegmentSolid(keys, pals, 5, src);
+}
+
 void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
   if (!canTakeOverride(src)) return;
   if (WiFi.status() != WL_CONNECTED) {
@@ -355,9 +694,8 @@ void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
     return;
   }
   saveWledStateForOverride();
-  String body = "{\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
-                ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) +
-                "]]},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
+  String body = "{" + buildSeg0JsonBody("\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+                ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]") + "}";
   sendToWLED(body);
   setOverride(src);
   if (src == BLE_STARLIGHT) swEventTimestamp = millis();
@@ -394,7 +732,13 @@ void setOverride(OverrideSource src) {
 void saveWledStateForOverride() {
   if (savedWledState.length() > 0) return;
   String state = getFromWLED("/json/state");
-  if (state.length() > 0) savedWledState = state;
+  if (state.length() > 0) {
+    savedWledState = state;
+    Serial.printf("[Override] Saved WLED state (%u bytes)\n", (unsigned)state.length());
+  } else if (baselineWledState.length() > 0) {
+    savedWledState = baselineWledState;
+    Serial.println("[Override] Saved baseline WLED state (GET failed)");
+  }
 }
 
 void clearOverride() {
@@ -402,8 +746,10 @@ void clearOverride() {
   Serial.println("[Override] Cleared");
   if (savedWledState.length() > 0) {
     sendToWLED(savedWledState);
-    restoreSingleSegment();
     savedWledState = "";
+  } else if (baselineWledState.length() > 0) {
+    sendToWLED(baselineWledState);
+    Serial.println("[Override] Restored baseline WLED state");
   }
 }
 
@@ -542,6 +888,19 @@ void handleBLECommand(const String& msg) {
                  "\"speed\":" + String(mbChaseSpeed) + ","
                  "\"thickness\":" + String(mbChaseThickness) + "}";
     bleNotify(ack);
+  }
+
+  // ── Unified MB→WLED mapping ──
+  else if (type == "mb_mapping_config") {
+    if (doc.containsKey("mapping")) {
+      serializeJson(doc["mapping"], mbMappingJson);
+      prefs.begin("config", false);
+      prefs.putString("mbMapping", mbMappingJson);
+      prefs.end();
+      loadMbMappingFromJson();
+      Serial.printf("[MB] Mapping updated (%u bytes)\n", (unsigned)mbMappingJson.length());
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"mb_mapping_config\",\"ok\":true}");
   }
 
   // ── MagicBand config ──
@@ -692,23 +1051,11 @@ void serviceWandTx() {
 
 // Starlight Wand color-cast signature (13-byte payload after 0x8301 CID)
 
-// Palette RGB — from Adafruit magicband_protocol.py (calibrated for LEDs)
-static const uint8_t MB_PALETTE[32][3] = {
-  { 80, 255, 255}, {180,   0, 255}, {  0,   0, 255}, {  0,  20, 120},
-  { 40, 120, 255}, {200,  80, 255}, {200, 180, 255}, {120,   0, 255},
-  {255,  60, 180}, {255,  70, 170}, {255,  80, 160}, {255,  90, 150},
-  {255, 110, 150}, {255, 130, 160}, {255, 160, 170}, {255, 180,   0},
-  {255, 220,   0}, {255, 140,  20}, {180, 255,   0}, {255,  90,   0},
-  {255,  40,   0}, {255,   0,   0}, { 60, 255, 255}, { 40, 240, 255},
-  { 20, 200, 255}, {  0, 255,   0}, { 80, 255,  40}, {255, 200, 180},
-  {255, 200, 180}, {  0,   0,   0}, {255, 140,  60}, {255,   0, 255},
-};
-
 void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b) {
   idx &= 0x1F;
-  r = MB_PALETTE[idx][0];
-  g = MB_PALETTE[idx][1];
-  b = MB_PALETTE[idx][2];
+  r = mbWledColors[idx][0];
+  g = mbWledColors[idx][1];
+  b = mbWledColors[idx][2];
 }
 
 // Strip 0x8301 company ID if present; payload is what Adafruit stores in command_library
@@ -822,25 +1169,26 @@ void serialLogSniffPacket(int rssi, const uint8_t* data, size_t len) {
   Serial.println();
 }
 
-void notifyPaletteColor(uint8_t paletteIdx, OverrideSource src) {
+void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
   uint8_t r, g, b;
   paletteToRGB(paletteIdx, r, g, b);
-  if (src == BLE_MAGIC) {
-    if (!canTakeOverride(src)) {
-      Serial.printf("[MB] palette blocked by override %d\n", (int)currentOverride);
-      return;
-    }
-    applyMagicBandChaseFromAnchor(paletteIdx, BLE_MAGIC);
-    bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-    return;
-  }
   if (!canTakeOverride(src)) {
-    bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
+    if (src == BLE_STARLIGHT) bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
     return;
   }
-  applyFullStripSolid(r, g, b, BLE_STARLIGHT);
-  bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
-            ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+  uint8_t pals[1] = { paletteIdx };
+  if (applyMbAnimationKey("wand", pals, 1, src)) {
+    if (src == BLE_STARLIGHT) {
+      bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
+                ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+    }
+    return;
+  }
+  applyMbSegmentSolid("all", paletteIdx, src);
+  if (src == BLE_STARLIGHT) {
+    bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
+              ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+  }
 }
 
 // Starlight Wand color cast — 13-byte payload, sig CF0B00C42022, palette @ byte 12
@@ -862,7 +1210,7 @@ void handleWandCast(const uint8_t* payload, size_t plen) {
     bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
     return;
   }
-  notifyPaletteColor(paletteIdx, BLE_STARLIGHT);
+  notifyWandPalette(paletteIdx, BLE_STARLIGHT);
 }
 
 // CF9B wiki format — palette in last byte
@@ -877,18 +1225,18 @@ void handleLegacyCf9bCast(const uint8_t* payload, size_t plen) {
     bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
     return;
   }
-  notifyPaletteColor(paletteIdx, BLE_STARLIGHT);
+  notifyWandPalette(paletteIdx, BLE_STARLIGHT);
 }
 
-void applyMbAnimation(const char* label, int fxId, const char* extraSeg = nullptr) {
+void applyMbAnimOpcode(const char* animKey, const char* label) {
   if (!magicBandEnabled) return;
   if (!canTakeOverride(BLE_MAGIC)) return;
+  if (applyMbAnimationKey(animKey, nullptr, 0, BLE_MAGIC)) {
+    bleNotify("{\"type\":\"ble_event\",\"event\":\"" + String(label) + "\"}");
+    return;
+  }
   saveWledStateForOverride();
-  String body = "{\"on\":true,\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
-                ",\"fx\":" + String(fxId);
-  if (extraSeg) body += extraSeg;
-  body += "},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
-  sendToWLED(body);
+  sendToWLED("{\"on\":true," + buildSeg0JsonBody("\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) + ",\"fx\":0") + "}");
   setOverride(BLE_MAGIC);
   mbEventTimestamp = millis();
   bleNotify("{\"type\":\"ble_event\",\"event\":\"" + String(label) + "\"}");
@@ -904,66 +1252,68 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
   Serial.printf("[MB+] func=0x%04X len=%u\n", func, (unsigned)plen);
 
   switch (func) {
-    case 0xE905:  // single palette color
+    case 0xE905:
       if (plen < 9) return;
-      notifyPaletteColor(payload[7] & 0x1F, BLE_MAGIC);
+      applyMbSingle(payload[7], BLE_MAGIC);
+      {
+        uint8_t r, g, b;
+        paletteToRGB(payload[7] & 0x1F, r, g, b);
+        bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+      }
       break;
-    case 0xE906:  // dual palette — use outer ring color
+    case 0xE906:
       if (plen < 10) return;
-      notifyPaletteColor(payload[8] & 0x1F, BLE_MAGIC);
+      applyMbDual(payload[7], payload[8], BLE_MAGIC);
+      {
+        uint8_t r, g, b;
+        paletteToRGB(payload[8] & 0x1F, r, g, b);
+        bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+      }
       break;
-    case 0xE908: {  // 6-bit RGB — full-strip chase with uniform color blocks
+    case 0xE908: {
       if (plen < 12) return;
       uint8_t r = ((payload[8] >> 1) & 0x3F) * 4;
       uint8_t g = ((payload[9] >> 1) & 0x3F) * 4;
       uint8_t b = ((payload[10] >> 1) & 0x3F) * 4;
-      if (!canTakeOverride(BLE_MAGIC)) return;
       saveWledStateForOverride();
-      {
-        static const int positions[5] = {0, 51, 102, 153, 204};
-        String pd = "\"pd\":{\"" + String(WLED_MB_PAL_SLOT) + "\":[";
-        for (int i = 0; i < 5; i++) {
-          if (i > 0) pd += ",";
-          pd += "[" + String(positions[i]) + "," + String(r) + "," + String(g) + "," + String(b) + "]";
-        }
-        pd += "]}";
-        String body = "{" + pd + ",\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
-                      ",\"fx\":" + String(WLED_CHASE_FX) + ",\"sx\":" + String(mbChaseSpeed) +
-                      ",\"grp\":" + String(mbChaseThickness) + ",\"pal\":" + String(WLED_MB_PAL_SLOT) +
-                      "},{\"id\":1,\"stop\":0},{\"id\":2,\"stop\":0},{\"id\":3,\"stop\":0},{\"id\":4,\"stop\":0}]}";
-        sendToWLED(body);
-        setOverride(BLE_MAGIC);
-        mbEventTimestamp = millis();
-      }
+      String body = "{\"on\":true,\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT)
+                  + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}]}";
+      sendToWLED(body);
+      setOverride(BLE_MAGIC);
+      mbEventTimestamp = millis();
       bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
       break;
     }
-    case 0xE909:  // five palette slots — full-strip chase
+    case 0xE909:
       if (plen < 13) return;
       {
-        uint8_t pals[5] = {
-          (uint8_t)(payload[7] & 0x1F),
-          (uint8_t)(payload[10] & 0x1F),
-          (uint8_t)(payload[8] & 0x1F),
-          (uint8_t)(payload[9] & 0x1F),
-          (uint8_t)(payload[11] & 0x1F),
-        };
-        applyMagicBandChase(pals, BLE_MAGIC);
+        uint8_t pat = (payload[7] >> 5) & 0x07;
+        applyMbFive(pat,
+          payload[7] & 0x1F, payload[8] & 0x1F, payload[9] & 0x1F,
+          payload[10] & 0x1F, payload[11] & 0x1F, BLE_MAGIC);
         bleNotify("{\"type\":\"ble_event\",\"event\":\"five_color\"}");
       }
       break;
     case 0xE90C:
-      applyMbAnimation("show_fx", 42);
+      applyMbAnimOpcode("E90C", "show_fx");
       break;
     case 0xE90E:
-      applyMbAnimation("flash", 0, ",\"col\":[[255,255,255]]");
+      applyMbAnimOpcode("E90E", "flash");
+      break;
+    case 0xE90F:
+      applyMbAnimOpcode("E90F", "animation");
+      break;
+    case 0xE910:
+      applyMbAnimOpcode("E910", "animation");
       break;
     case 0xE911:
+      applyMbAnimOpcode("E911", "animation");
+      break;
     case 0xE912:
+      applyMbAnimOpcode("E912", "animation");
+      break;
     case 0xE913:
-    case 0xE90F:
-    case 0xE910:
-      applyMbAnimation("animation", 42);
+      applyMbAnimOpcode("E913", "animation");
       break;
     default:
       Serial.printf("[MB+] unhandled func 0x%04X\n", func);
@@ -977,7 +1327,7 @@ void handleShowPayload(const uint8_t* payload, size_t plen) {
   if (!magicBandEnabled || plen < 2 || payload[0] != 0xE9) return;
   if (!canTakeOverride(BLE_MAGIC)) return;
   Serial.printf("[MB+] show E9 %02X len=%u\n", payload[1], (unsigned)plen);
-  applyMbAnimation("show", 42);
+  applyMbAnimOpcode("E90C", "show");
 }
 
 // Dispatch Disney manufacturer payload (after 0x8301 strip)
@@ -1128,8 +1478,10 @@ void connectToWLED() {
   }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
-    delay(1000);
-    sendToWLED("{\"on\":true,\"bri\":40}");
+    delay(500);
+    snapshotWledBaseline();
+    ensureWledPowerOn();
+    wledWasConnected = true;
   } else {
     Serial.println("\n[WiFi] Failed — will retry");
   }
@@ -1156,7 +1508,10 @@ void setup() {
   mbChaseThickness    = prefs.getUChar("mbGrp", 4);
   if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
+  mbMappingJson       = prefs.getString("mbMapping", "");
   prefs.end();
+  loadMbMappingFromJson();
+  loadWledBaselineFromNvs();
   Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
                 bleScanLogEnabled, mbChaseSpeed, mbChaseThickness);
@@ -1247,6 +1602,10 @@ void loop() {
       Serial.println("[WiFi] Reconnecting...");
       connectToWLED();
     }
+    wledWasConnected = false;
+  } else if (!wledWasConnected) {
+    wledWasConnected = true;
+    snapshotWledBaseline();
   }
   delay(10);
 }

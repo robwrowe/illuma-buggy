@@ -15,6 +15,7 @@ import IconDownload from '@tabler/icons-react-native/dist/esm/icons/IconDownload
 import IconUpload from '@tabler/icons-react-native/dist/esm/icons/IconUpload';
 
 import { useAppStore, RecallState, RecallValue } from '../stores/store';
+import { MbMappingSections } from './MbMappingSections';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
 import { useTheme, ThemeMode } from '../utils/theme';
@@ -247,6 +248,15 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* MB → WLED mapping */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>MagicBand Mapping</Text>
+        <Text style={s.sectionHint}>
+          Colors, animation/pattern presets, and segment layout. Synced to the board on change when connected.
+        </Text>
+        <MbMappingSections colors={colors} isConnected={isConnected} />
+      </View>
+
       {/* Brightness */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Brightness</Text>
@@ -318,9 +328,15 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   section:         { backgroundColor: c.surface, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: c.border, gap: 14 },
   sectionTitle:    { color: c.textSecondary, fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 },
   sectionHint:     { color: c.textMuted, fontSize: 12 },
+  subHead:         { color: c.textSecondary, fontSize: 13, fontWeight: '600', marginTop: 4 },
   row:             { flexDirection: 'row', alignItems: 'center', gap: 10 },
   rowLabel:        { color: c.textPrimary, fontSize: 14, fontWeight: '500' },
   rowHint:         { color: c.textMuted, fontSize: 12, flex: 1 },
+  mapRow:          { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
+  mapValue:        { color: c.primary, fontSize: 13, fontWeight: '600', maxWidth: 120 },
+  paletteRow:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: c.border },
+  paletteSwatch:   { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: c.border },
+  paletteInput:    { backgroundColor: c.background, borderRadius: 8, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 6, fontSize: 12, width: 88, fontFamily: 'monospace' },
   themeRow:        { flexDirection: 'row', gap: 8 },
   themeBtn:        { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt },
   themeBtnText:    { color: c.textMuted, fontSize: 13, fontWeight: '500' },

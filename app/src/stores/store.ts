@@ -113,6 +113,16 @@ export interface DeviceStatus {
   mbTimeoutMs:          number;
 }
 
+import {
+  MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
+} from '../utils/mbConfig';
+
+export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
+export {
+  DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
+  normalizeMbMapping, mbMappingToBlePayload,
+} from '../utils/mbConfig';
+
 // ─────────────────────────────────────────────
 // Store interface
 // ─────────────────────────────────────────────
@@ -186,6 +196,9 @@ interface AppState {
   setMagicBandFivePoint: (val: boolean) => void;
   magicBandTimeoutSec:   number;
   setMagicBandTimeoutSec:(val: number) => void;
+  mbMapping:             MbMappingConfig;
+  setMbMapping:          (config: MbMappingConfig) => void;
+  updateMbMapping:       (patch: Partial<MbMappingConfig>) => void;
   zonesEnabled:          boolean;
   setZonesEnabled:       (val: boolean) => void;
 
@@ -252,6 +265,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   magicBandEnabled:    true,
   magicBandFivePoint:  true,
   magicBandTimeoutSec: 30,
+  mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
   brightnessConfig:    DEFAULT_BRIGHTNESS,
 
@@ -304,6 +318,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
   setMagicBandFivePoint: (val)          => set({ magicBandFivePoint: val }),
   setMagicBandTimeoutSec:(val)          => set({ magicBandTimeoutSec: val }),
+  setMbMapping:          (mbMapping)   => set({ mbMapping: normalizeMbMapping(mbMapping) }),
+  updateMbMapping:       (patch)       => set(s => ({ mbMapping: normalizeMbMapping({ ...s.mbMapping, ...patch }) })),
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
 
   // Persistence
@@ -311,7 +327,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
-                    'magicBandFivePoint','magicBandTimeoutSec','recallState',
+                    'magicBandFivePoint','magicBandTimeoutSec','mbMapping',
+                    'recallState',
                     'customPalettes','paletteSets','activePaletteSetId',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
@@ -328,6 +345,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         magicBandEnabled:   d.magicBandEnabled   ?? true,
         magicBandFivePoint: d.magicBandFivePoint ?? true,
         magicBandTimeoutSec:d.magicBandTimeoutSec ?? 30,
+        mbMapping:          normalizeMbMapping(d.mbMapping),
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     d.customPalettes     ?? [],
         paletteSets:        d.paletteSets        ?? [],
@@ -353,6 +371,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
         ['magicBandFivePoint', JSON.stringify(s.magicBandFivePoint)],
         ['magicBandTimeoutSec',JSON.stringify(s.magicBandTimeoutSec)],
+        ['mbMapping',          JSON.stringify(s.mbMapping)],
         ['recallState',        JSON.stringify(s.recallState)],
         ['customPalettes',     JSON.stringify(s.customPalettes)],
         ['paletteSets',        JSON.stringify(s.paletteSets)],
@@ -426,6 +445,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
       magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
       magicBandTimeoutSec:s.magicBandTimeoutSec,
+      mbMapping:          s.mbMapping,
       customPalettes: s.customPalettes, paletteSets: s.paletteSets,
     };
   },
@@ -443,6 +463,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandEnabled:   data.magicBandEnabled   ?? true,
       magicBandFivePoint: data.magicBandFivePoint ?? true,
       magicBandTimeoutSec:data.magicBandTimeoutSec ?? 30,
+      mbMapping:          normalizeMbMapping(data.mbMapping),
       customPalettes:     data.customPalettes     ?? [],
       paletteSets:        data.paletteSets        ?? [],
     });
