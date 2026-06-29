@@ -8,6 +8,10 @@ import {
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { mbMappingToBlePayload } from '../utils/mbConfig';
+import {
+  buildSegmentHighlightPreview, buildFiveCornerPreview,
+  MB_SEGMENT_SIM_COMMAND, SIM_FIVE_CORNERS,
+} from '../utils/mbSegmentPreview';
 
 type Colors = ReturnType<typeof import('../utils/theme').useTheme>['colors'];
 
@@ -50,6 +54,22 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
 
   const setSegRefs = (segId: MbSegmentId, refs: WledSegRef[]) => {
     push({ ...mbMapping, segments: { ...mbMapping.segments, [segId]: refs } });
+  };
+
+  const previewSegment = (segId: MbSegmentId) => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy to preview on the strip.');
+      return;
+    }
+    bleService.sendWledRaw(buildSegmentHighlightPreview(mbMapping.segments, segId));
+  };
+
+  const previewFiveCorners = () => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy to preview on the strip.');
+      return;
+    }
+    bleService.sendWledRaw(buildFiveCornerPreview(mbMapping.segments));
   };
 
   const s = styles(colors);
@@ -113,10 +133,26 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
 
       <SectionToggle title="MB Segments → WLED Segments" open={expanded === 'seg'}
         onPress={() => setExpanded(expanded === 'seg' ? null : 'seg')} colors={colors} />
-      {expanded === 'seg' && MB_SEGMENT_META.map(({ id, label, hint }) => (
-        <SegEditor key={id} label={label} hint={hint} refs={mbMapping.segments[id]}
-          onChange={refs => setSegRefs(id, refs)} colors={colors} />
-      ))}
+      {expanded === 'seg' && (
+        <>
+          {MB_SEGMENT_META.map(({ id, label, hint }) => (
+            <SegEditor key={id} label={label} hint={hint}
+              simCommand={MB_SEGMENT_SIM_COMMAND[id]}
+              refs={mbMapping.segments[id]}
+              onChange={refs => setSegRefs(id, refs)}
+              onTest={() => previewSegment(id)}
+              canTest={isConnected}
+              colors={colors} />
+          ))}
+          <View style={s.previewAllRow}>
+            <TouchableOpacity style={[s.testBtn, !isConnected && s.testBtnDisabled]}
+              onPress={previewFiveCorners} disabled={!isConnected}>
+              <Text style={s.testBtnText}>Preview 5 corners</Text>
+            </TouchableOpacity>
+            <Text style={s.simHint}>R/G/B/W/Y · WandSim: {SIM_FIVE_CORNERS}</Text>
+          </View>
+        </>
+      )}
 
       <TouchableOpacity style={s.resetBtn} onPress={() => push(JSON.parse(JSON.stringify(DEFAULT_MB_MAPPING)))}>
         <Text style={s.link}>Reset MB mapping to defaults</Text>
@@ -133,9 +169,10 @@ function SectionToggle({ title, open, onPress, colors }: { title: string; open: 
   );
 }
 
-function SegEditor({ label, hint, refs, onChange, colors }: {
-  label: string; hint: string; refs: WledSegRef[];
-  onChange: (refs: WledSegRef[]) => void; colors: Colors;
+function SegEditor({ label, hint, simCommand, refs, onChange, onTest, canTest, colors }: {
+  label: string; hint: string; simCommand: string; refs: WledSegRef[];
+  onChange: (refs: WledSegRef[]) => void; onTest: () => void; canTest: boolean;
+  colors: Colors;
 }) {
   const input = {
     backgroundColor: colors.background, borderRadius: 6, borderWidth: 1, borderColor: colors.borderFocus,
@@ -149,8 +186,17 @@ function SegEditor({ label, hint, refs, onChange, colors }: {
   };
   return (
     <View style={{ marginBottom: 12 }}>
-      <Text style={{ color: colors.textPrimary, fontWeight: '500', fontSize: 13 }}>{label}</Text>
-      <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 4 }}>{hint}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <Text style={{ color: colors.textPrimary, fontWeight: '500', fontSize: 13, flex: 1 }}>{label}</Text>
+        <TouchableOpacity onPress={onTest} disabled={!canTest}
+          style={{ backgroundColor: canTest ? colors.primary : colors.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 }}>
+          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Test</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 2 }}>{hint}</Text>
+      <Text style={{ color: colors.textMuted, fontSize: 10, marginBottom: 4, fontFamily: 'monospace' }}>
+        WandSim: {simCommand}
+      </Text>
       {refs.map((r, i) => (
         <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
           <Text style={{ color: colors.textMuted, fontSize: 11 }}>id</Text>
@@ -185,4 +231,9 @@ const styles = (c: Colors) => ({
   link: { color: c.primary, fontSize: 13, fontWeight: '600' as const },
   slotsInput: { backgroundColor: c.background, borderRadius: 6, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 8, fontSize: 12 },
   resetBtn: { marginTop: 8, marginBottom: 8 },
+  previewAllRow: { marginTop: 4, marginBottom: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: c.border, gap: 6 },
+  testBtn: { alignSelf: 'flex-start' as const, backgroundColor: c.primary, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  testBtnDisabled: { opacity: 0.45 },
+  testBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' as const },
+  simHint: { color: c.textMuted, fontSize: 10, fontFamily: 'monospace' as const },
 });

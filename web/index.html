@@ -165,6 +165,50 @@ const MB_PATTERN_META = [
   { key: 'B', label: 'All on palette B' },
 ];
 
+const STRIP_LED_COUNT = 100;
+const MB_SEGMENT_SIM_COMMAND = {
+  all: 'test all', inner: 'test inner', outer: 'test outer',
+  topLeft: 'test topLeft', topRight: 'test topRight',
+  bottomLeft: 'test bottomLeft', bottomRight: 'test bottomRight',
+  center: 'test center',
+  band0: 'test band0', band1: 'test band1', band2: 'test band2',
+  band3: 'test band3', band4: 'test band4',
+};
+const SIM_FIVE_CORNERS = 'test five';
+const FIVE_CORNER_IDS = ['topLeft', 'bottomLeft', 'bottomRight', 'topRight', 'center'];
+const FIVE_CORNER_RGB = [[255,0,0], [0,255,0], [0,0,255], [255,255,255], [255,255,0]];
+
+function buildSegmentHighlightPreview(segments, target) {
+  const segs = [{ id: 0, start: 0, stop: STRIP_LED_COUNT, fx: 0, col: [[0, 0, 0]] }];
+  (segments[target] || []).forEach(ref => {
+    if (ref.stop <= ref.start) return;
+    segs.push({ id: ref.id, start: ref.start, stop: ref.stop, fx: 0, col: [[255, 255, 255]] });
+  });
+  return { on: true, bri: 255, seg: segs };
+}
+
+function buildFiveCornerPreview(segments) {
+  const segs = [{ id: 0, start: 0, stop: STRIP_LED_COUNT, fx: 0, col: [[0, 0, 0]] }];
+  FIVE_CORNER_IDS.forEach((id, i) => {
+    (segments[id] || []).forEach(ref => {
+      if (ref.stop <= ref.start) return;
+      segs.push({ id: ref.id, start: ref.start, stop: ref.stop, fx: 0, col: [FIVE_CORNER_RGB[i]] });
+    });
+  });
+  return { on: true, bri: 255, seg: segs };
+}
+
+async function postWledState(ip, payload) {
+  const host = ip.trim();
+  if (!host) throw new Error('Enter a WLED IP');
+  const res = await fetch(`http://${host}/json/state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('WLED rejected request');
+}
+
 function normalizeMbMapping(raw) {
   const d = DEFAULT_MB_MAPPING;
   if (!raw || raw.version !== 1) return JSON.parse(JSON.stringify(d));
@@ -1133,7 +1177,7 @@ function BrightnessTab({data, update}) {
   </div>;
 }
 
-function WledSegEditor({label, hint, refs, onChange}) {
+function WledSegEditor({label, hint, simCommand, refs, onChange, onTest}) {
   const update = (idx, field, val) => {
     const n = +val;
     if (isNaN(n)) return;
@@ -1144,8 +1188,16 @@ function WledSegEditor({label, hint, refs, onChange}) {
     onChange([...refs, { id: refs.length, start: last?.stop ?? 0, stop: Math.min((last?.stop ?? 0) + 10, 100) }]);
   };
   return (<div style={{marginBottom:14}}>
-    <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{label}</div>
-    <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>{hint}</div>
+    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,marginBottom:4}}>
+      <div style={{flex:1}}>
+        <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{label}</div>
+        <div style={{fontSize:11,color:'var(--text3)',marginBottom:2}}>{hint}</div>
+        {simCommand && <div style={{fontSize:10,color:'var(--text3)',fontFamily:'monospace'}}>WandSim: {simCommand}</div>}
+      </div>
+      {onTest && (
+        <button onClick={onTest} style={btn('primary',{padding:'4px 10px',fontSize:11,whiteSpace:'nowrap'})}>Test</button>
+      )}
+    </div>
     {refs.map((r, idx) => (
       <div key={idx} style={{display:'flex',gap:8,alignItems:'center',marginBottom:4}}>
         <span style={{fontSize:11,color:'var(--text3)'}}>id</span>
@@ -1182,6 +1234,8 @@ function MbEffectField({label, hint, mapping, presets, onChange}) {
 function SettingsTab({data, update}) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const presets = data.presets || [];
+  const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
+  const [wledPreviewErr, setWledPreviewErr] = useState('');
   const setMb = (patch) => update({ mbMapping: normalizeMbMapping({ ...mb, ...patch }) });
   const setMbColor = (idx, hex) => {
     const colors = [...mb.colors];
@@ -1193,6 +1247,21 @@ function SettingsTab({data, update}) {
   const setAnim = (key, patch) => setMb({ animations: { ...mb.animations, [key]: { ...mb.animations[key], ...patch } } });
   const setPat = (key, patch) => setMb({ patterns: { ...mb.patterns, [key]: { ...mb.patterns[key], ...patch } } });
   const setSeg = (id, refs) => setMb({ segments: { ...mb.segments, [id]: refs } });
+
+  const sendStripPreview = async (payload) => {
+    setWledPreviewErr('');
+    const ip = wledIp.trim();
+    if (!ip) { setWledPreviewErr('Enter a WLED IP to preview on the strip.'); return; }
+    localStorage.setItem('wled-ip', ip);
+    try {
+      await postWledState(ip, payload);
+    } catch {
+      setWledPreviewErr(`Could not reach WLED at ${ip}. Join StrollerNet or the same LAN as the controller.`);
+    }
+  };
+
+  const previewSegment = (segId) => sendStripPreview(buildSegmentHighlightPreview(mb.segments, segId));
+  const previewFiveCorners = () => sendStripPreview(buildFiveCornerPreview(mb.segments));
 
   return <div style={{padding:24,maxWidth:640,overflowY:'auto',height:'100%'}}>
     <div style={{fontWeight:700,fontSize:18,marginBottom:8}}>Settings</div>
@@ -1231,10 +1300,28 @@ function SettingsTab({data, update}) {
     ))}
 
     <SectionHead>MB Segments → WLED Segments</SectionHead>
-    <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>One MB segment can map to multiple WLED segments (id, start%, stop%).</p>
+    <p style={{fontSize:12,color:'var(--text3)',marginBottom:8}}>
+      One MB segment can map to multiple WLED segments (id, start%, stop%). Test sends black + white directly to WLED (same as the app).
+    </p>
+    <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8,flexWrap:'wrap'}}>
+      <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>
+      <input value={wledIp} onChange={e=>{setWledIp(e.target.value); setWledPreviewErr('');}}
+        placeholder="4.3.2.1" style={{...inputStyle,width:140,fontFamily:'monospace',fontSize:12}}/>
+      <span style={{fontSize:10,color:'var(--text3)'}}>Shared with Presets tab · StrollerNet default 4.3.2.1</span>
+    </div>
+    {wledPreviewErr && <div style={{fontSize:11,color:'var(--danger)',marginBottom:8}}>{wledPreviewErr}</div>}
     {MB_SEGMENT_META.map(({id,label,hint})=>(
-      <WledSegEditor key={id} label={label} hint={hint} refs={mb.segments[id]} onChange={refs=>setSeg(id,refs)}/>
+      <WledSegEditor key={id} label={label} hint={hint}
+        simCommand={MB_SEGMENT_SIM_COMMAND[id]}
+        refs={mb.segments[id]} onChange={refs=>setSeg(id,refs)}
+        onTest={()=>previewSegment(id)}/>
     ))}
+    <div style={{marginTop:4,marginBottom:20,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+      <button onClick={previewFiveCorners} style={btn('primary',{padding:'6px 12px',fontSize:12})}>
+        Preview 5 corners (R/G/B/W/Y)
+      </button>
+      <div style={{fontSize:10,color:'var(--text3)',fontFamily:'monospace',marginTop:6}}>WandSim: {SIM_FIVE_CORNERS}</div>
+    </div>
     <button onClick={()=>update({mbMapping:JSON.parse(JSON.stringify(DEFAULT_MB_MAPPING))})} style={{...btn('',{marginBottom:20})}}>Reset MB mapping to defaults</button>
 
     <SectionHead>Recall State</SectionHead>

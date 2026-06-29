@@ -390,6 +390,54 @@ void stopLoops() {
   loopMode = LOOP_NONE;
 }
 
+static void normalizeSegKey(String& s) {
+  s.toLowerCase();
+  s.replace("-", "");
+}
+
+static const uint8_t PAL_WHITE = 27;
+static const uint8_t PAL_OFF = 29;
+
+// Highlight one MB-mapped region on the stroller (white vs off); tests mapping + packet path.
+void handleSegmentTest(const String& rawSeg) {
+  String seg = rawSeg;
+  normalizeSegKey(seg);
+  stopLoops();
+
+  if (seg == "all") {
+    broadcastMbSingle(PAL_WHITE);
+  } else if (seg == "inner") {
+    broadcastMbDual(PAL_WHITE, PAL_OFF);
+  } else if (seg == "outer") {
+    broadcastMbDual(PAL_OFF, PAL_WHITE);
+  } else if (seg == "five") {
+    broadcastMbFive(21, 25, 2, PAL_WHITE, 15);
+  } else if (seg == "topleft") {
+    broadcastMbFive(PAL_WHITE, PAL_OFF, PAL_OFF, PAL_OFF, PAL_OFF);
+  } else if (seg == "topright") {
+    broadcastMbFive(PAL_OFF, PAL_OFF, PAL_OFF, PAL_WHITE, PAL_OFF);
+  } else if (seg == "bottomleft") {
+    broadcastMbFive(PAL_OFF, PAL_WHITE, PAL_OFF, PAL_OFF, PAL_OFF);
+  } else if (seg == "bottomright") {
+    broadcastMbFive(PAL_OFF, PAL_OFF, PAL_WHITE, PAL_OFF, PAL_OFF);
+  } else if (seg == "center") {
+    broadcastMbFive(PAL_OFF, PAL_OFF, PAL_OFF, PAL_OFF, PAL_WHITE);
+  } else if (seg == "band0") {
+    broadcastMbSingle(PAL_WHITE, 1);
+  } else if (seg == "band1") {
+    broadcastMbSingle(PAL_WHITE, 2);
+  } else if (seg == "band2") {
+    broadcastMbSingle(PAL_WHITE, 4);
+  } else if (seg == "band3" || seg == "band4") {
+    Serial.println("[WandSim] E905 mask is 3-bit — use app Settings > Test for band3/band4");
+    return;
+  } else {
+    Serial.printf("[WandSim] Unknown segment '%s' — try: all inner outer topLeft five band0\n", rawSeg.c_str());
+    return;
+  }
+  Serial.printf("[WandSim] test %s\n", rawSeg.c_str());
+}
+
 void printHelp() {
   Serial.println("[WandSim] Commands:");
   Serial.println("  --- Starlight wand ---");
@@ -415,6 +463,10 @@ void printHelp() {
   Serial.println("  mbsweep                  cycle palettes 0-31 every 3s (both bands)");
   Serial.println("  mbloop <0-31|name>       repeat single MB color every 3s");
   Serial.println("  stop                     cancel loop / mbsweep / mbloop");
+  Serial.println("  --- Segment layout test (white highlight on stroller) ---");
+  Serial.println("  test all|inner|outer|topLeft|bottomLeft|bottomRight|topRight|center");
+  Serial.println("  test five                all 5 corners R/G/B/W/Y");
+  Serial.println("  test band0|band1|band2     E905 mask (band3/4: use app Test)");
   Serial.println("  help");
   Serial.println("  Names: 0-31, or hyphenated MB palette names");
   Serial.println("         e.g. red midnight-blue yellow-orange lime-green pink-3");
@@ -474,6 +526,11 @@ void handleLine(String line) {
 
   String parts[8];
   int n = splitWords(lower, parts, 8);
+
+  if (n >= 2 && parts[0] == "test") {
+    handleSegmentTest(parts[1]);
+    return;
+  }
 
   // sw fx <name>
   if (n >= 3 && parts[0] == "sw" && parts[1] == "fx") {

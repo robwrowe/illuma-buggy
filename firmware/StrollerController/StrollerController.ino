@@ -39,6 +39,33 @@ const char* BLE_NAME    = "IllumaBuggy";
 uint8_t mbChaseSpeed     = 128;  // sx — 0 = stationary
 uint8_t mbChaseThickness = 4;    // grp — LEDs per chase block (color width)
 
+// MB→WLED mapping types (must be before any function body — Arduino auto-prototypes)
+#define MB_MAX_SEG_REFS 8
+#define MB_MAX_COLOR_SLOTS 16
+
+struct WledSegRef { uint8_t id; uint16_t start; uint16_t stop; };
+struct MbSegMap { WledSegRef refs[MB_MAX_SEG_REFS]; uint8_t count; };
+struct MbEffectMap {
+  String presetId;
+  uint8_t colorSlots[MB_MAX_COLOR_SLOTS];
+  uint8_t colorSlotCount;
+};
+
+static const char* MB_SEG_KEYS[] = {
+  "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
+  "band0", "band1", "band2", "band3", "band4"
+};
+static const char* MB_ANIM_KEYS[] = { "E90C", "E90E", "E90F", "E910", "E911", "E912", "E913", "wand" };
+static const char* MB_PAT_KEYS[]  = { "3", "4", "5", "8", "B" };
+
+static const uint8_t MB_DEFAULT_COLORS[32][3] = {
+  {0,255,255},{153,0,255},{0,0,255},{0,0,128},{0,102,255},{204,68,255},{204,153,255},{119,0,204},
+  {255,102,178},{255,90,168},{255,80,158},{255,74,148},{255,110,150},{255,130,160},{255,160,170},{255,170,0},
+  {204,204,0},{255,136,0},{170,255,0},{255,102,0},{255,51,0},{255,0,0},
+  {60,255,255},{40,240,255},{20,200,255},{0,255,0},{102,255,40},{255,255,255},{240,240,240},
+  {0,0,0},{255,153,51},{255,0,255}
+};
+
 void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b);
 void loadMbMappingDefaults();
 void loadMbMappingFromJson();
@@ -133,38 +160,10 @@ String baselineWledState  = "";   // snapshot at connect — full /json/state
 String mbMappingJson = "";  // unified MB→WLED mapping (colors, animations, patterns, segments)
 bool   wledWasConnected   = false;
 
-#define MB_MAX_SEG_REFS 8
-#define MB_MAX_COLOR_SLOTS 16
-
-struct WledSegRef { uint8_t id; uint16_t start; uint16_t stop; };
-struct MbSegMap { WledSegRef refs[MB_MAX_SEG_REFS]; uint8_t count; };
-
 uint8_t mbWledColors[32][3];
 MbSegMap mbSegMaps[13];  // parallel to segment key order in JSON
-
-struct MbEffectMap {
-  String presetId;
-  uint8_t colorSlots[MB_MAX_COLOR_SLOTS];
-  uint8_t colorSlotCount;
-};
-
 MbEffectMap mbAnimMap[8];   // E90C,E90E,E90F,E910,E911,E912,E913,wand
 MbEffectMap mbPatMap[5];    // 3,4,5,8,B
-
-static const char* MB_SEG_KEYS[] = {
-  "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
-  "band0", "band1", "band2", "band3", "band4"
-};
-static const char* MB_ANIM_KEYS[] = { "E90C", "E90E", "E90F", "E910", "E911", "E912", "E913", "wand" };
-static const char* MB_PAT_KEYS[]  = { "3", "4", "5", "8", "B" };
-
-static const uint8_t MB_DEFAULT_COLORS[32][3] = {
-  {0,255,255},{153,0,255},{0,0,255},{0,0,128},{0,102,255},{204,68,255},{204,153,255},{119,0,204},
-  {255,102,178},{255,90,168},{255,80,158},{255,74,148},{255,110,150},{255,130,160},{255,160,170},{255,170,0},
-  {204,204,0},{255,136,0},{170,255,0},{255,102,0},{255,51,0},{255,0,0},
-  {60,255,255},{40,240,255},{20,200,255},{0,255,0},{102,255,40},{255,255,255},{240,240,240},
-  {0,0,0},{255,153,51},{255,0,255}
-};
 
 // WiFi reconnect
 unsigned long lastWifiRetry = 0;
