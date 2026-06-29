@@ -1,3 +1,13 @@
+# MagicBand+ Bluetooth Codes (community wiki archive)
+
+> **Illuma Buggy canonical reference:** [disney-ble-protocol.md](./disney-ble-protocol.md) — Adafruit-aligned summary, palette table, Illuma firmware behavior.  
+> **Adafruit source:** [magicband_protocol.py](https://github.com/adafruit/Adafruit_Learning_System_Guides/blob/main/CLUE_BLE_Beacon_Remote/magicband_protocol.py) · [command_library.py](https://github.com/adafruit/Adafruit_Learning_System_Guides/blob/main/CLUE_BLE_Beacon_Remote/command_library.py)  
+> **Starlight wand:** [starlight-wand-codes.md](./starlight-wand-codes.md)
+
+The content below is imported from the [emcot.world MagicBand+ wiki](https://emcot.world/Disney_MagicBand%2B_Bluetooth_Codes) for detailed byte-level breakdowns (timing, vibration, mask palettes, show captures). Where Adafruit and emcot disagree (notably **E906 dual-color** top bits: use **`0x40`** per Adafruit working captures), prefer Adafruit + our `disney-ble-protocol.md`.
+
+---
+
 Disney's MagicBand+ makes use of various BLE features to achieve the things it does.
 
 == Opening Knowledge ==
@@ -48,7 +58,7 @@ See [[Magicband+ Pairing Details]] (Updated 5/15, older info below for now)
 
 == CF0B - Starlight Wand Codes ==
 
-See: [[Disney's Starlight Wand]]
+See: [starlight-wand-codes.md](./starlight-wand-codes.md) and [disney-ble-protocol.md](./disney-ble-protocol.md)
 
 == The cc Broadcast Advertising Codes ==
 Codes starting with cc03 seem to be quite prevalent in the recordings made in the park. Our first guess was that it was an "off" command, however, it's believed that this may be some sort of general "ping" request, to which the magicbands reply with their own CC code (albeit longer). Further recordings will need to be made to figure out what the additional data is coming from the band, and being sent to the band. It could be some sort of location ID to have it ping back with. The CC codes may also be used to put them into high-response mode for more effective shows.

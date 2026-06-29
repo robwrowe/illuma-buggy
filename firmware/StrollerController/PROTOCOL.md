@@ -1,84 +1,161 @@
-# StrollerController v2.0 — BLE Protocol
-#
-# Connect via BLE to "IllumaBuggy"
-# Service UUID:      12345678-1234-1234-1234-123456789abc
-# Command char UUID: 12345678-1234-1234-1234-123456789abd  (WRITE)
-# Notify char UUID:  12345678-1234-1234-1234-123456789abe  (NOTIFY)
-#
-# App writes JSON to CMD char. Board notifies responses on NOTIFY char.
-# All messages are JSON strings.
+# StrollerController — BLE Protocol
 
-# ─────────────────────────────────────────────
-# APP → BOARD (write to CMD characteristic)
-# ─────────────────────────────────────────────
+Connect via BLE to **`IllumaBuggy`**
 
-## Save a preset
-{"type":"preset_save","id":"fantasy","name":"Fantasyland","wled":{"on":true,"bri":200,"seg":[{"fx":0,"col":[[255,100,200]]}]}}
+| Role | UUID |
+|------|------|
+| Service | `12345678-1234-1234-1234-123456789abc` |
+| CMD (write) | `12345678-1234-1234-1234-123456789abd` |
+| NOTIFY | `12345678-1234-1234-1234-123456789abe` |
 
-## Apply a preset (manual override)
+App writes JSON to CMD. Board notifies JSON on NOTIFY. Large responses are chunked (`seq`, `last`, `data`).
+
+Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble-protocol.md)
+
+---
+
+## App → board
+
+### Presets & WLED
+
+```json
+{"type":"preset_save","id":"fantasy","name":"Fantasyland","wled":{"on":true,"bri":200,"seg":[{"fx":0}]}}
 {"type":"preset_apply","id":"fantasy"}
-
-## Delete a preset
 {"type":"preset_delete","id":"fantasy"}
-
-## List all presets (response comes back in chunks)
 {"type":"preset_list"}
-
-## Zone trigger (app evaluated zone, board applies if override allows)
-{"type":"zone_trigger","preset_id":"fantasy"}
-
-## Clear override (resume zone control)
-{"type":"override_clear"}
-
-## Set override mode
-{"type":"override_mode","kill_on_zone":true}   // zone entry kills override
-{"type":"override_mode","kill_on_zone":false}  // override persists until manual clear
-
-## Set brightness (0-255)
-{"type":"brightness","value":180}
-
-## Raw WLED passthrough
 {"type":"wled_raw","wled":{"on":true,"bri":255,"seg":[{"fx":42}]}}
+{"type":"wled_get_effects"}
+{"type":"wled_get_palettes"}
+{"type":"wled_get_fxdata"}
+{"type":"wled_get_state"}
+{"type":"brightness","value":180}
+```
 
-## Get status
+### Zones & overrides
+
+```json
+{"type":"zone_trigger","preset_id":"fantasy"}
+{"type":"override_clear"}
+{"type":"override_mode","kill_on_zone":true}
+```
+
+### Starlight Wand & MagicBand+
+
+```json
+{"type":"sw_config","enabled":true,"timeout_ms":30000}
+{"type":"mb_config","enabled":true,"five_point":true,"timeout_ms":30000}
+{"type":"mb_chase_config","speed":128,"thickness":4}
+{"type":"scan_log_config","enabled":true}
+```
+
+| Field | Notes |
+|-------|-------|
+| `timeout_ms` | `0` = never auto-clear BLE override |
+| `mb_chase_config.speed` | WLED Chase `sx` (0 = stationary) |
+| `mb_chase_config.thickness` | WLED Chase `grp` (pixels per color block) |
+
+### Status
+
+```json
 {"type":"status"}
+```
 
-# ─────────────────────────────────────────────
-# BOARD → APP (notifications on NOTIFY characteristic)
-# ─────────────────────────────────────────────
+---
 
-## Ack
+## Board → app
+
+### Ack / error
+
+```json
 {"type":"ack","action":"preset_apply","id":"fantasy","ok":true}
+{"type":"error","msg":"Failed to fetch effects"}
+```
 
-## Preset list (chunked — reassemble until last=true)
-{"type":"preset_chunk","last":false,"data":[...]}
-{"type":"preset_chunk","last":true,"data":[...]}
+### Status
 
-## Status
-{"type":"status","override":0,"kill_on_zone":false,"brightness":180,"preset":"fantasy","wifi":true}
-# override: 0=NONE 1=ZONE 2=MANUAL 3=BLE_MAGIC 4=BLE_STARLIGHT
+```json
+{
+  "type":"status",
+  "override":0,
+  "kill_on_zone":false,
+  "brightness":180,
+  "preset":"fantasy",
+  "wifi":true,
+  "sw_enabled":true,
+  "sw_timeout_ms":30000,
+  "mb_enabled":true,
+  "mb_five_point":true,
+  "mb_timeout_ms":30000,
+  "mb_chase_speed":128,
+  "mb_chase_thickness":4,
+  "scan_log":true
+}
+```
 
-## MagicBand+ color event
-{"type":"ble_color","r":204,"g":0,"b":255}
+**`override` values:** `0`=NONE · `1`=ZONE · `2`=MANUAL · `3`=BLE_MAGIC · `4`=BLE_STARLIGHT
 
-## Starlight Wand color event
-{"type":"sw_color","palette":4,"r":0,"g":100,"b":255}
+Priority: Starlight Wand > MagicBand+ > Manual > Zone.
 
-## MagicBand+ generic events
-{"type":"ble_event","event":"fireworks"}
+### MagicBand+ events
+
+```json
+{"type":"ble_color","r":255,"g":0,"b":0}
+{"type":"ble_event","event":"five_color"}
 {"type":"ble_event","event":"flash"}
-{"type":"ble_event","event":"vibrate"}
 {"type":"ble_event","event":"animation"}
+{"type":"ble_event","event":"timeout"}
+```
 
-## Starlight Wand events
+### Starlight Wand events
+
+```json
+{"type":"sw_color","palette":4,"r":0,"g":100,"b":255}
 {"type":"sw_event","event":"timeout"}
+{"type":"sw_event","event":"disabled"}
+{"type":"sw_event","event":"blocked"}
+{"type":"sw_event","event":"wifi_down"}
+{"type":"sw_debug","reason":"wand_cast","hex":"8301cf0b…","len":15}
+```
 
-# ─────────────────────────────────────────────
-# GLEDOPTO SETUP
-# ─────────────────────────────────────────────
-# 1. Connect to GLEDOPTO's own AP (WLED-AP / wled1234)
-# 2. Go to 4.3.2.1 in browser
-# 3. Config → WiFi Setup
-# 4. Leave SSID as-is (WLED runs its own AP by default)
-# 5. Logic board connects to it as a station
-# 6. WLED IP on its own AP is always 4.3.2.1
+### Chunked payloads
+
+Reassemble by `type` until `"last":true`:
+
+```json
+{"type":"preset_chunk","seq":0,"last":false,"data":"[…"}
+{"type":"wled_effects","seq":0,"last":false,"data":"[\"Solid\",…"}
+```
+
+App maps: `preset_chunk`→`preset_list_raw`, `wled_effects`→`wled_effects_done`, etc.
+
+---
+
+## USB serial debug (@ 115200)
+
+| Command | Effect |
+|---------|--------|
+| `help` | List commands |
+| `sniff [sec]` | Log all BLE manufacturer data |
+| `sniff off` | Stop sniff |
+| `tx on` | Broadcast WAND-IDLE (wand pairing test) |
+| `tx off` | Normal advertising |
+| `tx cast <0-31>` | WAND-CAST 3 seconds |
+| `chase speed <0-255>` | MB chase speed (persisted NVS) |
+| `chase thick <1-50>` | MB chase thickness (persisted NVS) |
+
+---
+
+## GLEDOPTO / WLED setup
+
+1. Connect to GLEDOPTO AP (`StrollerNet` / board config)
+2. WLED UI at `4.3.2.1`
+3. Logic board joins as WiFi station; POST `/json/state` for LED control
+4. Strip: **100 LEDs**, segment 0 should span full logical run (`stop:100`)
+5. On connect, board sends `{"on":true,"bri":40}` (GLEDOPTO relay needs `on:true`)
+
+---
+
+## Related
+
+- [WandSimulator README](../WandSimulator/README.md) — transmit test packets
+- [docs/starlight-wand-codes.md](../../docs/starlight-wand-codes.md) — wand testing

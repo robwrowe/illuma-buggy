@@ -19,19 +19,19 @@ MagicBands only react when they receive a valid `8301…` advertisement. The
 simulator **re-broadcasts every 200 ms** for several seconds so bands have
 multiple chances to decode the packet.
 
-| Command | Packet | Effect on band |
-|---------|--------|----------------|
-| `mb red` | E905 single | All 5 LEDs solid red |
-| `mb cyan` | E905 single | All LEDs cyan |
-| `mb 21` | E905 single | Palette index 21 (red) |
-| `mb dual 21 0` | E906 | Inner red, outer cyan |
-| `mb rgb 63 0 0` | E908 | Raw 6-bit red |
-| `mb five 0 2 21 8 19` | E909 | Each LED its own palette color |
-| `mb rainbow` | E909 | Preset corner rainbow |
-| `ping` | CC03000000 | Park wake ping |
-| `mbsweep` | E905 loop | Cycle palettes 0–31 every 3s — good for two bands |
-| `mbloop red` | E905 loop | Repeat one color every 3s |
-| `stop` | — | Cancel loops |
+| Command               | Packet      | Effect on band                                    |
+| --------------------- | ----------- | ------------------------------------------------- |
+| `mb red`              | E905 single | All 5 LEDs solid red                              |
+| `mb cyan`             | E905 single | All LEDs cyan                                     |
+| `mb 21`               | E905 single | Palette index 21 (red)                            |
+| `mb dual 21 0`        | E906        | Inner red, outer cyan                             |
+| `mb rgb 63 0 0`       | E908        | Raw 6-bit red                                     |
+| `mb five 0 2 21 8 19` | E909        | Each LED its own palette color                    |
+| `mb rainbow`          | E909        | Preset corner rainbow                             |
+| `ping`                | CC03000000  | Park wake ping                                    |
+| `mbsweep`             | E905 loop   | Cycle palettes 0–31 every 3s — good for two bands |
+| `mbloop red`          | E905 loop   | Repeat one color every 3s                         |
+| `stop`                | —           | Cancel loops                                      |
 
 **Named colors:** `cyan`, `purple`, `blue`, `pink`, `yellow`, `lime`, `orange`, `red`, `green`, `white`
 
@@ -55,12 +55,29 @@ On the stroller board you should see scan lines like:
 
 Wand commands still work:
 
-| Command | Effect |
-|---------|--------|
-| `cast 4` | WAND-CAST (CF0B00C42022) |
-| `legacy 4` | CF9B wiki format |
-| `idle` | 0F11 idle beacon |
-| `loop 4` | Repeat wand cast every 5s |
+| Command    | Effect                    |
+| ---------- | ------------------------- |
+| `cast 4`   | WAND-CAST (CF0B00C42022)  |
+| `legacy 4` | CF9B wiki format          |
+| `idle`     | 0F11 idle beacon          |
+| `loop 4`   | Repeat wand cast every 5s |
+
+### Starlight effects (color + pattern / animation)
+
+Wands listen to **MagicBand+ E9 packets** as well as CF0B color casts:
+
+| Command                                                 | Effect                       |
+| ------------------------------------------------------- | ---------------------------- |
+| `sw list`                                               | List named animation presets |
+| `sw cast red`                                           | CF0B wand-to-wand color      |
+| `sw solid red`                                          | E905 solid color             |
+| `sw pattern spin red`                                   | E909 color + spin pattern    |
+| `sw fx rainbow`                                         | E90C Taste the Rainbow show  |
+| `sw fx flash` / `sparkle` / `pulse` / `circle` / `fade` | Park animations              |
+| `sw combo red sparkle`                                  | CF0B cast then animation     |
+| `swfxloop`                                              | Cycle all presets every 4s   |
+
+Pattern modes: `solid`, `spin`, `all`, `corners`, `middle`
 
 StrollerController serial `sniff 30` captures unknown packets from a physical wand button.
 

@@ -4,6 +4,8 @@ A Disney park stroller LED system. An ESP32-S3 logic board runs custom firmware 
 bridges BLE (app ↔ board) and WiFi (board ↔ WLED LED controller). A React Native/Expo
 app controls everything. A single-file web tool runs locally for park config.
 
+**Protocol docs:** [docs/README.md](docs/README.md) · [docs/disney-ble-protocol.md](docs/disney-ble-protocol.md)
+
 ---
 
 ## Repository layout
@@ -60,9 +62,10 @@ illuma-buggy/
 
 ```
 Phone ←──BLE──→ Logic ESP32-S3 ←──WiFi STA──→ GLEDOPTO AP (StrollerNet / 4.3.2.1)
-                      ↑
-               BLE passive scan
-               (MagicBand+ E9 packets)
+                    ↑
+              BLE passive scan
+         (Starlight Wand + MagicBand+ 0x8301 packets)
+              [optional WandSimulator ESP32 for bench TX]
 ```
 
 - Logic board joins `StrollerNet` as a WiFi station. IP is always `4.3.2.1` (GLEDOPTO is the AP).
@@ -116,13 +119,15 @@ each chunk is itself a valid JSON object with `type`, `seq`, `last`, and `data` 
 | `override_clear` | — | Clear manual/BLE override, restore zone |
 | `override_mode` | `kill_on_zone` (bool) | Configure override behavior |
 | `sw_config` | `enabled` (bool), `timeout_ms` (int) | Starlight Wand config |
-| `mb_config` | `enabled` (bool), `five_point` (bool), `timeout_ms` (int) | MagicBand+ config |
+| `mb_config` | `enabled` (bool), `five_point` (bool), `timeout_ms` (int) | MagicBand+ config (five_point retained in NVS; strip uses full-width chase) |
+| `mb_chase_config` | `speed` (0–255), `thickness` (1–50) | MB+ chase `sx` / `grp` on WLED |
+| `scan_log_config` | `enabled` (bool) | Serial Disney scan hex logging |
 
 ### Firmware → App messages
 
 | `type` | Fields | Description |
 |--------|--------|-------------|
-| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_five_point`, `mb_timeout_ms` | Device state |
+| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_five_point`, `mb_timeout_ms`, `mb_chase_speed`, `mb_chase_thickness`, `scan_log` | Device state |
 | `ack` | `action`, `id?`, `ok?` | Command acknowledgement |
 | `error` | `msg` | Firmware error |
 | `preset_list_raw` | assembled from `preset_chunk` chunks | JSON array of all presets |
@@ -273,19 +278,24 @@ OverrideSource currentOverride;
 unsigned long overrideTimestamp;
 
 // Starlight Wand
-bool starlightEnabled;            // listen for CF9B broadcasts
+bool starlightEnabled;
 unsigned long starlightTimeoutMs; // ms before auto-clear (0 = never)
 unsigned long swEventTimestamp;
 
 // MagicBand
-bool magicBandEnabled;            // listen for E9 show codes
-bool magicBandFivePoint;          // 5-point vs 4-corner mode
-unsigned long magicBandTimeoutMs; // ms before auto-clear (0 = never)
-unsigned long mbEventTimestamp;   // millis() of last MB event
+bool magicBandEnabled;
+bool magicBandFivePoint;          // NVS legacy; WLED uses full-strip chase not corners
+uint8_t mbChaseSpeed;             // WLED Chase sx (0 = static)
+uint8_t mbChaseThickness;         // WLED Chase grp (pixels per block)
+unsigned long magicBandTimeoutMs;
+unsigned long mbEventTimestamp;
 
 // WLED
-String savedWledState;            // saved before MB override, restored after
+#define STRIP_LED_COUNT 100
+String savedWledState;            // saved before BLE override, restored after
 ```
+
+Protocol reference: `docs/disney-ble-protocol.md`, `docs/starlight-wand-codes.md`.
 
 ### FreeRTOS queue (critical)
 
@@ -306,38 +316,41 @@ processPendingCommands();  // does actual HTTP work here
 
 **Never** use `String` in a FreeRTOS queue struct — the internal pointer becomes dangling after the stack copy.
 
-### MagicBand+ E9 packet format
+### Disney BLE packets (scanner)
 
-```
-data[0-1]: manufacturer ID (0x83 0x01)
-data[2]:   0xE9 (MagicBand+ magic byte)
-data[3]:   command (0x05=vibrate, 0x06=flash, 0x08=color, 0x09=fireworks)
-data[4-6]: for 0x08: 6-bit RGB values — must scale: r = (data[4] & 0x3F) * 4
-```
+Manufacturer data uses Disney CID **`8301`**. Payload parsing follows Adafruit `magicband_protocol.py` — see **`docs/disney-ble-protocol.md`**.
 
-### Starlight Wand CF9B packet format
+**MagicBand+ (E1/E2-wrapped E9):** function code at payload[2]<<8 | payload[3], e.g. `0xE905` single color, `0xE909` five-slot pattern, `0xE90C` show FX.
 
-```
-data[0-1]: manufacturer ID (0x83 0x01)
-data[2-3]: 0xCF 0x9B (wand marker)
-data[4..n-2]: device serial / unknown
-data[n-1]: 5-bit palette color index (same table as MB+)
-```
+**Starlight Wand:**
+- **WAND-IDLE** — `0F 11 …` (19 bytes), not an effect
+- **WAND-CAST** — `CF 0B 00 C4 20 22` + 6 rolling + palette (13 bytes)
+- **WAND-CF9B** — legacy `CF 9B …`, palette in last byte
 
-Wand broadcasts use the same corner-segment layout as MB+ color effects.
+**CC03 ping** — wake / prime receiver before some commands.
 
-### Segment layout (MagicBand+ color effects)
+### WLED BLE override mapping (100-LED strip)
 
-```
-Segment 0: LEDs  0-11  (top-left corner)
-Segment 1: LEDs 12-24  (top-right)
-Segment 2: LEDs 25-36  (bottom-left)
-Segment 3: LEDs 37-49  (bottom-right)
-Segment 4: LED  24     (center — only in 5-point mode)
-```
+| BLE source | WLED effect |
+|------------|-------------|
+| MB+ palette / E905 / E906 | Full-strip Chase (`fx:28`), custom 5-color `pd`, `sx`/`grp` from `mb_chase_config` |
+| MB+ E908 / E909 | Chase with packet colors / patterns |
+| MB+ E90C / E90E / E912 / … | Full-strip animation (`fx` from opcode) |
+| Starlight wand cast | Full-strip solid (`fx:0`) — custom wand usermod TBD |
 
-On MB color events, `setupMagicBandSegments()` splits the strip into 5 segments,
-applies color, then `clearOverride()` restores single-segment mode + saved state.
+`clearOverride()` restores saved WLED state + single segment `start:0 stop:100`.
+
+### Serial debug (USB @ 115200)
+
+| Command | Purpose |
+|---------|---------|
+| `help` | Command list |
+| `sniff [sec]` | Log all manufacturer data |
+| `tx on` / `tx off` | Wand idle beacon TX (pairing tests) |
+| `tx cast <N>` | WAND-CAST palette N for 3s |
+| `chase speed <N>` / `chase thick <N>` | MB chase tuning |
+
+Bench broadcaster: `firmware/WandSimulator/` — see `docs/starlight-wand-codes.md`.
 
 ### WLED JSON API endpoints used
 
@@ -463,7 +476,8 @@ Flash via USB. No OTA yet.
 
 ## Pending / roadmap
 
-- [ ] MagicBand+ in-park testing — `0x0b`, `0x0c`, `0x13` animation commands stubbed
+- [ ] WLED usermod — custom Starlight / MB chase effects (replace built-in Chase)
+- [ ] MagicBand+ in-park testing — additional E9 animation opcodes
 - [ ] OTA firmware updates
 - [ ] "Find my stroller" (BLE out-of-range detection)
 - [ ] Park-specific zone profiles (import/export per-park JSON)
