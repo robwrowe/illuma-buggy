@@ -117,6 +117,8 @@ const DEFAULT_DATA = {
   brightnessConfig:{daytime:200,nighttime:80,indoor:120,transitionMinutes:30,solarThresholdDeg:6},
   recallState:{effect:'always',palette:'always',parameters:'memory',color:'memory',segments:'never'},
   overrideKillOnZone:false, magicBandFivePoint:true, bleEffectTransitionMs:700,
+  starlightEnabled:true, starlightTimeoutSec:15,
+  magicBandEnabled:true, magicBandTimeoutSec:15,
   customPalettes:[], paletteSets:[], customSegmentLayouts:[], savedColors:[],
   mbMapping: null, // filled by normalizeMbMapping on load
 };
@@ -139,28 +141,29 @@ const DEFAULT_MB_WLED_COLORS = [
 
 const DEFAULT_MB_MAPPING = {
   version: 1,
+  defaultPresetId: '',
   colors: [...DEFAULT_MB_WLED_COLORS],
   animations: {
-    E90C: { presetId: '', colorSlots: [0, 2, 21, 8, 18] },
-    E90E: { presetId: '', colorSlots: [27] },
+    E90C: { presetId: '', colorSlots: [] },
+    E90E: { presetId: '', colorSlots: [] },
     E90F: { presetId: '', colorSlots: [] },
     E910: { presetId: '', colorSlots: [] },
-    E911: { presetId: '', colorSlots: [21, 0] },
-    E912: { presetId: '', colorSlots: [2, 8] },
-    E913: { presetId: '', colorSlots: [1, 5] },
+    E911: { presetId: '', colorSlots: [] },
+    E912: { presetId: '', colorSlots: [] },
+    E913: { presetId: '', colorSlots: [] },
     wand: { presetId: '', colorSlots: [] },
   },
   swAnimations: {
     wand:     { presetId: '', colorSlots: [] },
-    rainbow:  { presetId: '', colorSlots: [0, 2, 21, 8, 18] },
-    blink:    { presetId: '', colorSlots: [27] },
-    palette5: { presetId: '', colorSlots: [0, 2, 8, 21, 18] },
-    flash:    { presetId: '', colorSlots: [1, 27] },
-    sparkle:  { presetId: '', colorSlots: [2] },
-    pulse:    { presetId: '', colorSlots: [1] },
-    circle:   { presetId: '', colorSlots: [2, 8] },
-    fade:     { presetId: '', colorSlots: [0, 8] },
-    fade2:    { presetId: '', colorSlots: [8, 18] },
+    rainbow:  { presetId: '', colorSlots: [] },
+    blink:    { presetId: '', colorSlots: [] },
+    palette5: { presetId: '', colorSlots: [] },
+    flash:    { presetId: '', colorSlots: [] },
+    sparkle:  { presetId: '', colorSlots: [] },
+    pulse:    { presetId: '', colorSlots: [] },
+    circle:   { presetId: '', colorSlots: [] },
+    fade:     { presetId: '', colorSlots: [] },
+    fade2:    { presetId: '', colorSlots: [] },
   },
   patterns: {
     '3': { presetId: '', colorSlots: [] },
@@ -875,7 +878,11 @@ function normalizeMbMapping(raw) {
       ? src.map(s => ({ id: s.id ?? 0, start: s.start, stop: s.stop }))
       : d.segments[id].map(s => ({ ...s }));
   });
-  return { version: 1, colors, animations, swAnimations, patterns, segments };
+  return {
+    version: 1,
+    defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
+    colors, animations, swAnimations, patterns, segments,
+  };
 }
 
 function mbMappingToBlePayload(config) {
@@ -895,7 +902,15 @@ function mbMappingToBlePayload(config) {
   Object.entries(config.swAnimations || {}).forEach(([k, v]) => { swAnimations[k] = mapEffect(v); });
   const patterns = {};
   Object.entries(config.patterns).forEach(([k, v]) => { patterns[k] = mapEffect(v); });
-  return { version: 1, colors, animations, swAnimations, patterns, segments: config.segments };
+  return {
+    version: 1,
+    defaultPresetId: config.defaultPresetId || '',
+    colors,
+    animations,
+    swAnimations,
+    patterns,
+    segments: config.segments,
+  };
 }
 
 function presetWledForBoard(preset, customSegmentLayouts) {
@@ -3166,55 +3181,165 @@ function BrightnessTab({data, update}) {
   </div>;
 }
 
-function WledSegEditor({label, hint, simCommand, refs, onChange, onTest}) {
-  const update = (idx, field, val) => {
-    const n = +val;
-    if (isNaN(n)) return;
-    onChange(refs.map((r, i) => i === idx ? {...r, [field]: n} : r));
-  };
-  const addRef = () => {
-    const last = refs[refs.length - 1];
-    onChange([...refs, { id: refs.length, start: last?.stop ?? 0, stop: Math.min((last?.stop ?? 0) + 10, 100) }]);
-  };
-  return (<div style={{marginBottom:14}}>
-    <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,marginBottom:4}}>
-      <div style={{flex:1}}>
-        <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{label}</div>
-        <div style={{fontSize:11,color:'var(--text3)',marginBottom:2}}>{hint}</div>
-        {simCommand && <div style={{fontSize:10,color:'var(--text3)',fontFamily:'monospace'}}>WandSim: {simCommand}</div>}
-      </div>
-      {onTest && (
-        <button onClick={onTest} style={btn('primary',{padding:'4px 10px',fontSize:11,whiteSpace:'nowrap'})}>Test</button>
-      )}
-    </div>
-    {refs.map((r, idx) => (
-      <div key={idx} style={{display:'flex',gap:8,alignItems:'center',marginBottom:4}}>
-        <span style={{fontSize:11,color:'var(--text3)'}}>id</span>
-        <input type="number" min={0} max={31} value={r.id} onChange={e=>update(idx,'id',e.target.value)} style={{...inputStyle,width:56,textAlign:'right'}}/>
-        <span style={{fontSize:11,color:'var(--text3)'}}>start</span>
-        <input type="number" min={0} max={100} value={r.start} onChange={e=>update(idx,'start',e.target.value)} style={{...inputStyle,width:72,textAlign:'right'}}/>
-        <span style={{fontSize:11,color:'var(--text3)'}}>stop</span>
-        <input type="number" min={0} max={100} value={r.stop} onChange={e=>update(idx,'stop',e.target.value)} style={{...inputStyle,width:72,textAlign:'right'}}/>
-        {refs.length > 1 && <button onClick={()=>onChange(refs.filter((_,i)=>i!==idx))} style={btn('danger',{padding:'4px 8px',fontSize:11})}>✕</button>}
-      </div>
-    ))}
-    <button onClick={addRef} style={btn('',{padding:'4px 10px',fontSize:11,marginTop:4})}>+ WLED segment</button>
-  </div>);
+function formatWledSegLabel(seg) {
+  return `Seg #${seg.id} · ${seg.start}–${seg.stop}%`;
 }
 
-function MbEffectField({label, hint, mapping, presets, onChange}) {
+function formatWledSegSelectionSummary(refs) {
+  if (!refs?.length) return 'None selected';
+  return refs.map(r => `#${r.id}`).join(' & ');
+}
+
+function refsFromSnapshotIds(snapshot, selectedIds) {
+  const set = new Set(selectedIds);
+  return snapshot.filter(s => set.has(s.id)).map(s => ({ id: s.id, start: s.start, stop: s.stop }));
+}
+
+function toggleSnapshotSelection(snapshot, currentRefs, wledSegId) {
+  const selected = new Set((currentRefs || []).map(r => r.id));
+  if (selected.has(wledSegId)) selected.delete(wledSegId);
+  else selected.add(wledSegId);
+  return refsFromSnapshotIds(snapshot, [...selected]);
+}
+
+function pruneRefsToSnapshot(snapshot, refs) {
+  const ids = (refs || []).map(r => r.id).filter(id => snapshot.some(s => s.id === id));
+  return refsFromSnapshotIds(snapshot, ids);
+}
+
+function buildPresetLayoutPayload(preset, customSegmentLayouts) {
+  if (!preset) return null;
+  const wled = presetWledForBoard(preset, customSegmentLayouts);
+  if (!wled.seg?.length) return null;
+  return { on: true, bri: 255, seg: wled.seg.map(s => ({ ...s })) };
+}
+
+function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCapture, captureLoading, canCapture, snapshot}) {
+  const selectedSummary = formatWledSegSelectionSummary(refs);
+  const toggle = (wledSegId) => onChange(toggleSnapshotSelection(snapshot, refs, wledSegId));
+  const hasSnapshot = snapshot?.length > 0;
+
+  return (
+    <div style={{ marginBottom: 14, padding: 10, background: 'var(--surface2)', borderRadius: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{label}</div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 2 }}>{hint}</div>
+          {simCommand && <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace' }}>WandSim: {simCommand}</div>}
+          <div style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 600, marginTop: 6, fontFamily: 'monospace' }}>
+            → {selectedSummary}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          {onCapture && (
+            <button type="button" onClick={onCapture} disabled={!canCapture || captureLoading}
+              style={btn('', { padding: '4px 10px', fontSize: 11, whiteSpace: 'nowrap', background: 'var(--bg)', border: '1px solid var(--border)' })}>
+              {captureLoading ? '…' : hasSnapshot ? '↻ Capture' : 'Capture'}
+            </button>
+          )}
+          {onTest && (
+            <button type="button" onClick={onTest} style={btn('primary', { padding: '4px 10px', fontSize: 11, whiteSpace: 'nowrap' })}>
+              Test
+            </button>
+          )}
+        </div>
+      </div>
+      {!hasSnapshot ? (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+          Set up the strip layout for this use-case, then Capture to pick WLED segments.
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 10, color: 'var(--text2)', fontFamily: 'monospace', marginBottom: 8, lineHeight: 1.4 }}>
+            Captured: {snapshot.map(formatWledSegLabel).join(' · ')}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {snapshot.map(seg => {
+              const checked = (refs || []).some(r => r.id === seg.id);
+              return (
+                <label key={seg.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+                  background: checked ? 'var(--primary-dim)' : 'var(--bg)',
+                  border: `1px solid ${checked ? 'var(--primary)' : 'var(--border)'}`,
+                }}>
+                  <input type="checkbox" checked={checked} onChange={() => toggle(seg.id)} style={{ width: 16, height: 16 }} />
+                  <span style={{ fontSize: 12, fontFamily: 'monospace', color: checked ? 'var(--primary)' : 'var(--text2)' }}>
+                    {formatWledSegLabel(seg)}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MbEffectField({label, hint, mapping, presets, onChange, compact}) {
+  const [showSlots, setShowSlots] = useState(false);
   const setPreset = (presetId) => onChange({ ...mapping, presetId });
   const setSlots = (v) => {
     const colorSlots = v.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n >= 0 && n <= 31);
     onChange({ ...mapping, colorSlots });
   };
-  return (<Field label={label}>
-    <SearchableSelect value={mapping.presetId || ''} onChange={setPreset} placeholder="Built-in segment colors"
-      options={presets.map(p => ({ value: p.id, label: p.name, searchText: p.name }))}/>
-    <input value={(mapping.colorSlots||[]).join(',')} placeholder="color slots 0-31 (comma-separated)"
-      onChange={e=>setSlots(e.target.value)} style={{...inputStyle,marginTop:6,fontFamily:'monospace',fontSize:12}}/>
-    <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>{hint}</div>
-  </Field>);
+  const presetOpts = presets.map(p => ({ value: p.id, label: p.name, searchText: p.name }));
+  return (
+    <div style={{ marginBottom: compact ? 8 : 14, padding: compact ? 10 : 12, background: 'var(--surface2)', borderRadius: 8 }}>
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{label}</div>
+      {hint && <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>{hint}</div>}
+      <SearchableSelect value={mapping.presetId || ''} onChange={setPreset}
+        placeholder="Use default preset"
+        options={presetOpts}/>
+      <button type="button" onClick={() => setShowSlots(s => !s)}
+        style={{ ...btn('', { marginTop: 6, padding: '2px 0', fontSize: 11, background: 'none', color: 'var(--text3)' }) }}>
+        {showSlots ? '▾ Hide color overrides' : '▸ Optional MB color overrides'}
+      </button>
+      {showSlots && (
+        <input value={(mapping.colorSlots || []).join(',')} placeholder="palette indices 0–31"
+          onChange={e => setSlots(e.target.value)}
+          style={{ ...inputStyle, marginTop: 4, fontFamily: 'monospace', fontSize: 12 }}/>
+      )}
+    </div>
+  );
+}
+
+function BleMappingTabBar({ active, onChange }) {
+  const tabs = [
+    { id: 'device', label: 'Device' },
+    { id: 'sw', label: 'Starlight' },
+    { id: 'mb', label: 'MagicBand' },
+    { id: 'colors', label: 'MB Colors' },
+    { id: 'segments', label: 'Segments' },
+    { id: 'general', label: 'General' },
+  ];
+  return (
+    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
+      {tabs.map(t => (
+        <button key={t.id} type="button" onClick={() => onChange(t.id)}
+          style={{
+            padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            background: active === t.id ? 'var(--primary-dim)' : 'var(--surface2)',
+            color: active === t.id ? 'var(--primary)' : 'var(--text2)',
+            border: active === t.id ? '1px solid var(--primary)' : '1px solid var(--border)',
+          }}>{t.label}</button>
+      ))}
+    </div>
+  );
+}
+
+function DefaultPresetField({ mb, presets, onChange }) {
+  const presetOpts = presets.map(p => ({ value: p.id, label: p.name, searchText: p.name }));
+  return (
+    <div style={{ marginBottom: 16, padding: 12, background: 'var(--primary-dim)', borderRadius: 8, border: '1px solid var(--primary)' }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4, color: 'var(--primary)' }}>Default zone preset</div>
+      <p style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8, lineHeight: 1.45 }}>
+        Same presets as GPS zones. Used for any wand/MB effect without its own preset. Must exist on the board — sync with <strong>📡 Board</strong>.
+      </p>
+      <SearchableSelect value={mb.defaultPresetId || ''} onChange={id => onChange({ defaultPresetId: id })}
+        placeholder="Select a preset…" options={presetOpts}/>
+    </div>
+  );
 }
 
 // ── Settings ───────────────────────────────────────────────────────
@@ -3222,8 +3347,11 @@ function SettingsTab({data, update}) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const presets = data.presets || [];
   const savedColors = data.savedColors || [];
+  const [bleTab, setBleTab] = useState('sw');
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
   const [wledPreviewErr, setWledPreviewErr] = useState('');
+  const [segSnapshots, setSegSnapshots] = useState({});
+  const [segCaptureId, setSegCaptureId] = useState(null);
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
   const setMb = (patch) => update({ mbMapping: normalizeMbMapping({ ...mb, ...patch }) });
   const setMbColor = (idx, hex) => {
@@ -3253,101 +3381,194 @@ function SettingsTab({data, update}) {
   const previewSegment = (segId) => sendStripPreview(buildSegmentHighlightPreview(mb.segments, segId));
   const previewFiveCorners = () => sendStripPreview(buildFiveCornerPreview(mb.segments));
 
-  return <div style={{padding:24,maxWidth:640,overflowY:'auto',height:'100%'}}>
+  const applyDefaultLayout = async () => {
+    setWledPreviewErr('');
+    const preset = presets.find(p => p.id === mb.defaultPresetId);
+    if (!preset) { setWledPreviewErr('Set a default zone preset on the Starlight or MagicBand tab first.'); return; }
+    const payload = buildPresetLayoutPayload(preset, data.customSegmentLayouts);
+    if (!payload) { setWledPreviewErr('Link a segment layout to that preset or save segments in the preset.'); return; }
+    await sendStripPreview(payload);
+  };
+
+  const captureSegSnapshot = async (regionId) => {
+    setSegCaptureId(regionId);
+    setWledPreviewErr('');
+    try {
+      const ip = wledIp.trim();
+      if (!ip) throw new Error('Enter WLED IP');
+      localStorage.setItem('wled-ip', ip);
+      const segments = await fetchWledSegmentsFromIp(ip);
+      if (!segments.length) throw new Error('No active segments in WLED state');
+      setSegSnapshots(prev => ({ ...prev, [regionId]: segments }));
+      const pruned = pruneRefsToSnapshot(segments, mb.segments[regionId]);
+      const cur = mb.segments[regionId] || [];
+      if (pruned.length !== cur.length || pruned.some((r, i) => r.id !== cur[i]?.id)) {
+        setSeg(regionId, pruned);
+      }
+    } catch (e) {
+      setWledPreviewErr(e.message || 'Could not read WLED segments');
+    } finally {
+      setSegCaptureId(null);
+    }
+  };
+
+  return <div style={{padding:24,maxWidth:720,overflowY:'auto',height:'100%'}}>
     <div style={{fontWeight:700,fontSize:18,marginBottom:8}}>Settings</div>
-    <p style={{fontSize:12,color:'var(--text3)',marginBottom:20,lineHeight:1.6}}>
-      MagicBand+ mapping exports with your config. Use <strong>📡 Board</strong> in the header to push settings to the ESP32, or the Android app syncs on connect.
+    <p style={{fontSize:12,color:'var(--text3)',marginBottom:12,lineHeight:1.6}}>
+      Wand and MagicBand effects use the <strong>same presets as GPS zones</strong>. Push mapping + presets with <strong>📡 Board</strong>.
     </p>
 
-    <SectionHead>MB → WLED Colors (32)</SectionHead>
-    <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>Map each MB palette index to a WLED RGB color.</p>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:24}}>
-      {MB_COLOR_NAMES.map((name, idx) => (
-        <div key={idx} style={{padding:8,background:'var(--surface2)',borderRadius:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-            <div style={{width:24,height:24,borderRadius:4,background:mb.colors[idx],border:'1px solid var(--border)',flexShrink:0}}/>
-            <div style={{fontSize:12,fontWeight:600}}>{idx} · {name}</div>
+    <BleMappingTabBar active={bleTab} onChange={setBleTab} />
+
+    {(bleTab === 'sw' || bleTab === 'mb') && (
+      <DefaultPresetField mb={mb} presets={presets} onChange={setMb} />
+    )}
+
+    {bleTab === 'device' && <>
+      <p style={{fontSize:12,color:'var(--text3)',marginBottom:12,lineHeight:1.5}}>
+        Pushed via <strong>📡 Board</strong> or Android app on connect. Timeout = idle seconds since last BLE effect (<code style={{fontFamily:'monospace'}}>0</code> = never).
+      </p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+        <Field label="Starlight Wand enabled">
+          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={data.starlightEnabled!==false}
+              onChange={e=>update({starlightEnabled:e.target.checked})} style={{width:18,height:18}}/>
+            Listen for wand casts &amp; SW animations
+          </label>
+        </Field>
+        <Field label="SW auto-clear (sec)">
+          <input type="number" min={0} max={600} value={data.starlightTimeoutSec ?? 15}
+            onChange={e=>update({starlightTimeoutSec:Math.max(0, parseInt(e.target.value, 10) || 0)})}
+            style={{...inputStyle,width:'100%',fontFamily:'monospace'}}/>
+        </Field>
+        <Field label="MagicBand+ enabled">
+          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={data.magicBandEnabled!==false}
+              onChange={e=>update({magicBandEnabled:e.target.checked})} style={{width:18,height:18}}/>
+            Listen for E9 show / guest commands
+          </label>
+        </Field>
+        <Field label="MB+ auto-clear (sec)">
+          <input type="number" min={0} max={600} value={data.magicBandTimeoutSec ?? 15}
+            onChange={e=>update({magicBandTimeoutSec:Math.max(0, parseInt(e.target.value, 10) || 0)})}
+            style={{...inputStyle,width:'100%',fontFamily:'monospace'}}/>
+        </Field>
+        <Field label="Effect fade (ms)">
+          <input type="number" min={0} max={5000} value={data.bleEffectTransitionMs ?? 700}
+            onChange={e=>update({bleEffectTransitionMs:Math.max(0, parseInt(e.target.value, 10) || 0)})}
+            style={{...inputStyle,width:'100%',fontFamily:'monospace'}}/>
+        </Field>
+        <Field label="MagicBand five-point mode">
+          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={data.magicBandFivePoint!==false}
+              onChange={e=>update({magicBandFivePoint:e.target.checked})} style={{width:18,height:18}}/>
+            4 corners + center (legacy)
+          </label>
+        </Field>
+      </div>
+    </>}
+
+    {bleTab === 'sw' && <>
+      <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>
+        Starlight has priority over MagicBand+. Test with WandSimulator: <code style={{fontFamily:'monospace'}}>sw cast red</code>, <code style={{fontFamily:'monospace'}}>sw fx sparkle</code>.
+      </p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        {SW_ANIMATION_META.map(({key, label, hint})=>(
+          <MbEffectField key={key} label={label} hint={hint} compact
+            mapping={mb.swAnimations?.[key] || DEFAULT_MB_MAPPING.swAnimations[key]} presets={presets}
+            onChange={m=>setSwAnim(key,m)}/>
+        ))}
+      </div>
+    </>}
+
+    {bleTab === 'mb' && <>
+      <SectionHead>Animations</SectionHead>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
+        {MB_ANIMATION_META.filter(a => a.key !== 'wand').map(({key,label})=>(
+          <MbEffectField key={key} label={label} compact
+            mapping={mb.animations[key]} presets={presets}
+            onChange={m=>setAnim(key,m)}/>
+        ))}
+      </div>
+      <SectionHead>Patterns (E909)</SectionHead>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        {MB_PATTERN_META.map(({key,label})=>(
+          <MbEffectField key={key} label={`${key} — ${label}`} compact
+            mapping={mb.patterns[key]} presets={presets}
+            onChange={m=>setPat(key,m)}/>
+        ))}
+      </div>
+    </>}
+
+    {bleTab === 'colors' && <>
+      <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>RGB used when no preset is mapped (solid MB colors).</p>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+        {MB_COLOR_NAMES.map((name, idx) => (
+          <div key={idx} style={{padding:8,background:'var(--surface2)',borderRadius:8}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <div style={{width:24,height:24,borderRadius:4,background:mb.colors[idx],border:'1px solid var(--border)',flexShrink:0}}/>
+              <div style={{fontSize:12,fontWeight:600}}>{idx} · {name}</div>
+            </div>
+            <ColorInput value={mb.colors[idx]} onChange={v => setMbColor(idx, v)} savedColors={savedColors} onSaveColor={saveColor}/>
           </div>
-          <ColorInput value={mb.colors[idx]} onChange={v => setMbColor(idx, v)} savedColors={savedColors} onSaveColor={saveColor}/>
-        </div>
+        ))}
+      </div>
+    </>}
+
+    {bleTab === 'segments' && <>
+      <p style={{fontSize:12,color:'var(--text3)',marginBottom:8,lineHeight:1.5}}>
+        Per region: apply the layout you want on the strip, Capture on that row, then tick which WLED segments map to it (e.g. bottom right → seg #2 &amp; #4).
+      </p>
+      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10,flexWrap:'wrap'}}>
+        <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>
+        <input value={wledIp} onChange={e=>{setWledIp(e.target.value); setWledPreviewErr('');}}
+          placeholder="4.3.2.1" style={{...inputStyle,width:140,fontFamily:'monospace',fontSize:12}}/>
+        <button type="button" onClick={applyDefaultLayout}
+          style={btn('',{padding:'6px 12px',fontSize:12,background:'var(--surface2)',border:'1px solid var(--border)'})}>
+          Apply default preset layout
+        </button>
+      </div>
+      {wledPreviewErr && <div style={{fontSize:11,color:'var(--danger)',marginBottom:8}}>{wledPreviewErr}</div>}
+      {MB_SEGMENT_META.map(({id,label,hint})=>(
+        <WledSegEditor key={id} label={label} hint={hint}
+          simCommand={MB_SEGMENT_SIM_COMMAND[id]}
+          snapshot={segSnapshots[id] || []}
+          captureLoading={segCaptureId === id}
+          canCapture={!!wledIp.trim()}
+          onCapture={() => captureSegSnapshot(id)}
+          refs={mb.segments[id]} onChange={refs=>setSeg(id,refs)}
+          onTest={()=>previewSegment(id)}/>
       ))}
+      <div style={{marginTop:4,marginBottom:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+        <button onClick={previewFiveCorners} style={btn('primary',{padding:'6px 12px',fontSize:12})}>
+          Preview 5 corners
+        </button>
+      </div>
+    </>}
+
+    {bleTab === 'general' && <>
+      <SectionHead>Recall State</SectionHead>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:24}}>
+        {Object.keys(data.recallState||DEFAULT_DATA.recallState).map(k=>(<Field key={k} label={k.charAt(0).toUpperCase()+k.slice(1)}>
+          <SearchableSelect value={(data.recallState||DEFAULT_DATA.recallState)[k]} allowEmpty={false}
+            onChange={v=>update({recallState:{...(data.recallState||DEFAULT_DATA.recallState),[k]:v}})}
+            placeholder={k}
+            options={['always','never','memory'].map(v=>({value:v,label:v,searchText:v}))}/>
+        </Field>))}
+      </div>
+      <Field label="Override kill on zone">
+        <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+          <input type="checkbox" checked={!!data.overrideKillOnZone}
+            onChange={e=>update({overrideKillOnZone:e.target.checked})} style={{width:18,height:18}}/>
+          Clear manual/MB override when entering a zone
+        </label>
+      </Field>
+    </>}
+
+    <div style={{marginTop:20,paddingTop:16,borderTop:'1px solid var(--border)'}}>
+      <button onClick={()=>update({mbMapping:JSON.parse(JSON.stringify(DEFAULT_MB_MAPPING))})}
+        style={btn('',{fontSize:12})}>Reset BLE mapping to defaults</button>
     </div>
-
-    <SectionHead>Starlight Wand → Preset (priority over MB+)</SectionHead>
-    <p style={{fontSize:12,color:'var(--text3)',marginBottom:12,lineHeight:1.5}}>
-      Named wand effects from WandSimulator (<code style={{fontFamily:'monospace'}}>sw fx rainbow</code>, etc.).
-      Requires Starlight Wand enabled on the board. Unmatched E9 packets fall through to MB mapping below.
-    </p>
-    {SW_ANIMATION_META.map(({key, label, hint})=>(
-      <MbEffectField key={key} label={label} hint={hint}
-        mapping={mb.swAnimations?.[key] || DEFAULT_MB_MAPPING.swAnimations[key]} presets={presets}
-        onChange={m=>setSwAnim(key,m)}/>
-    ))}
-
-    <SectionHead>MB Animations → Preset</SectionHead>
-    {MB_ANIMATION_META.map(({key,label})=>(
-      <MbEffectField key={key} label={label} hint="Empty preset = built-in fallback"
-        mapping={mb.animations[key]} presets={presets}
-        onChange={m=>setAnim(key,m)}/>
-    ))}
-
-    <SectionHead>MB Patterns (E909) → Preset</SectionHead>
-    {MB_PATTERN_META.map(({key,label})=>(
-      <MbEffectField key={key} label={`${key} — ${label}`} hint="Pattern nibble from E909 byte"
-        mapping={mb.patterns[key]} presets={presets}
-        onChange={m=>setPat(key,m)}/>
-    ))}
-
-    <SectionHead>MB Segments → WLED Segments</SectionHead>
-    <p style={{fontSize:12,color:'var(--text3)',marginBottom:8}}>
-      One MB segment can map to multiple WLED segments (id, start%, stop%). Test sends black + white directly to WLED (same as the app).
-    </p>
-    <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:8,flexWrap:'wrap'}}>
-      <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>
-      <input value={wledIp} onChange={e=>{setWledIp(e.target.value); setWledPreviewErr('');}}
-        placeholder="4.3.2.1" style={{...inputStyle,width:140,fontFamily:'monospace',fontSize:12}}/>
-      <span style={{fontSize:10,color:'var(--text3)'}}>Shared with Presets tab · StrollerNet default 4.3.2.1</span>
-    </div>
-    {wledPreviewErr && <div style={{fontSize:11,color:'var(--danger)',marginBottom:8}}>{wledPreviewErr}</div>}
-    {MB_SEGMENT_META.map(({id,label,hint})=>(
-      <WledSegEditor key={id} label={label} hint={hint}
-        simCommand={MB_SEGMENT_SIM_COMMAND[id]}
-        refs={mb.segments[id]} onChange={refs=>setSeg(id,refs)}
-        onTest={()=>previewSegment(id)}/>
-    ))}
-    <div style={{marginTop:4,marginBottom:20,paddingTop:12,borderTop:'1px solid var(--border)'}}>
-      <button onClick={previewFiveCorners} style={btn('primary',{padding:'6px 12px',fontSize:12})}>
-        Preview 5 corners (R/G/B/W/Y)
-      </button>
-      <div style={{fontSize:10,color:'var(--text3)',fontFamily:'monospace',marginTop:6}}>WandSim: {SIM_FIVE_CORNERS}</div>
-    </div>
-    <button onClick={()=>update({mbMapping:JSON.parse(JSON.stringify(DEFAULT_MB_MAPPING))})} style={{...btn('',{marginBottom:20})}}>Reset MB mapping to defaults</button>
-
-    <SectionHead>Recall State</SectionHead>
-    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:24}}>
-      {Object.keys(data.recallState||DEFAULT_DATA.recallState).map(k=>(<Field key={k} label={k.charAt(0).toUpperCase()+k.slice(1)}>
-        <SearchableSelect value={(data.recallState||DEFAULT_DATA.recallState)[k]} allowEmpty={false}
-          onChange={v=>update({recallState:{...(data.recallState||DEFAULT_DATA.recallState),[k]:v}})}
-          placeholder={k}
-          options={['always','never','memory'].map(v=>({value:v,label:v,searchText:v}))}/>
-      </Field>))}
-    </div>
-
-    <Field label="Override kill on zone">
-      <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
-        <input type="checkbox" checked={!!data.overrideKillOnZone}
-          onChange={e=>update({overrideKillOnZone:e.target.checked})} style={{width:18,height:18}}/>
-        Clear manual/MB override when entering a zone
-      </label>
-    </Field>
-
-    <Field label="MagicBand five-point mode">
-      <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
-        <input type="checkbox" checked={data.magicBandFivePoint!==false}
-          onChange={e=>update({magicBandFivePoint:e.target.checked})} style={{width:18,height:18}}/>
-        4 corners + center (legacy segment layout flag)
-      </label>
-    </Field>
   </div>;
 }
 

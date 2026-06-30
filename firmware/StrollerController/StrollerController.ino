@@ -129,6 +129,26 @@ uint8_t       lastWandCastPayload[16];
 size_t        lastWandCastLen     = 0;
 unsigned long lastWandCastMs      = 0;
 
+// MB effect dedupe — identical E1/E9 adverts repeat for seconds; re-applying WLED cycles segments
+uint8_t       lastMbEffectPayload[48];
+size_t        lastMbEffectLen = 0;
+const uint8_t* pendingMbEffectPayload = nullptr;
+size_t        pendingMbEffectPayloadLen = 0;
+
+bool mbEffectIsRepeatAdvert(const uint8_t* payload, size_t plen) {
+  if (plen == 0 || lastMbEffectLen == 0) return false;
+  size_t n = plen < sizeof(lastMbEffectPayload) ? plen : sizeof(lastMbEffectPayload);
+  if (n != lastMbEffectLen) return false;
+  if (memcmp(payload, lastMbEffectPayload, n) != 0) return false;
+  return currentOverride == BLE_MAGIC;
+}
+
+void rememberMbEffect(const uint8_t* payload, size_t plen) {
+  if (plen > sizeof(lastMbEffectPayload)) plen = sizeof(lastMbEffectPayload);
+  memcpy(lastMbEffectPayload, payload, plen);
+  lastMbEffectLen = plen;
+}
+
 void touchOverrideIdleTimer(OverrideSource src) {
   unsigned long now = millis();
   if (src == BLE_MAGIC) mbEventTimestamp = now;
@@ -176,6 +196,7 @@ static const uint8_t WAND_CAST_SIG[6] = {0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22};
 String savedWledState   = "";
 String baselineWledState  = "";   // snapshot at connect — full /json/state
 String mbMappingJson = "";  // unified MB→WLED mapping (colors, animations, patterns, segments)
+String bleDefaultPresetId = "";  // fallback — same presets as GPS zones
 bool   wledWasConnected   = false;
 
 uint8_t mbWledColors[32][3];
@@ -593,12 +614,20 @@ void parseSegMapArray(JsonArray arr, MbSegMap& out) {
   }
 }
 
+String resolveEffectPresetId(const MbEffectMap& map) {
+  if (map.presetId.length() > 0) return map.presetId;
+  return bleDefaultPresetId;
+}
+
 void loadMbMappingFromJson() {
   loadMbMappingDefaults();
+  bleDefaultPresetId = "";
   if (mbMappingJson.length() == 0) return;
 
   DynamicJsonDocument doc(12288);
   if (deserializeJson(doc, mbMappingJson)) return;
+
+  bleDefaultPresetId = doc["defaultPresetId"] | "";
 
   if (doc.containsKey("colors")) {
     JsonObject colors = doc["colors"];
@@ -745,19 +774,37 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
 }
 
 bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, int packetPalCount, OverrideSource src) {
-  if (map.presetId.length() == 0) return false;
-  String preset = getPreset(map.presetId);
-  if (preset.length() == 0) return false;
+  String presetId = resolveEffectPresetId(map);
+  if (presetId.length() == 0) return false;
   if (!canTakeOverride(src)) return false;
+
+  int slotCount = map.colorSlotCount > 0 ? map.colorSlotCount : packetPalCount;
+
+  // No MB color override — apply zone preset unchanged (same path as zone_trigger)
+  if (slotCount <= 0) {
+    saveWledStateForOverride();
+    bool ok = applyPreset(presetId);
+    if (ok) {
+      setOverride(src);
+      touchOverrideIdleTimer(src);
+      Serial.printf("[BLE] Applied preset %s (zone-style)\n", presetId.c_str());
+    } else {
+      Serial.printf("[BLE] Preset not found on board: %s\n", presetId.c_str());
+    }
+    return ok;
+  }
+
+  String preset = getPreset(presetId);
+  if (preset.length() == 0) {
+    Serial.printf("[BLE] Preset not found on board: %s\n", presetId.c_str());
+    return false;
+  }
 
   saveWledStateForOverride();
   DynamicJsonDocument doc(4096);
   if (deserializeJson(doc, preset)) return false;
   DynamicJsonDocument wled(4096);
   if (deserializeJson(wled, doc["wled"])) return false;
-
-  int slotCount = map.colorSlotCount > 0 ? map.colorSlotCount : packetPalCount;
-  if (slotCount <= 0 && packetPalCount > 0) slotCount = packetPalCount;
 
   if (slotCount > 0) {
     uint8_t r0, g0, b0;
@@ -994,6 +1041,9 @@ bool canTakeOverride(OverrideSource incoming) {
 void setOverride(OverrideSource src) {
   currentOverride = src;
   overrideTimestamp = millis();
+  if (src == BLE_MAGIC && pendingMbEffectPayload && pendingMbEffectPayloadLen > 0) {
+    rememberMbEffect(pendingMbEffectPayload, pendingMbEffectPayloadLen);
+  }
   Serial.printf("[Override] Set to %d\n", (int)src);
 }
 
@@ -1659,6 +1709,20 @@ void applyMbAnimOpcode(const char* animKey, const char* label) {
 void handleE1E2Payload(const uint8_t* payload, size_t plen) {
   if (plen < 5 || payload[2] != 0xE9) return;
 
+  if (mbEffectIsRepeatAdvert(payload, plen)) {
+    if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
+    return;
+  }
+
+  pendingMbEffectPayload = payload;
+  pendingMbEffectPayloadLen = plen;
+  struct MbPendingGuard {
+    ~MbPendingGuard() {
+      pendingMbEffectPayload = nullptr;
+      pendingMbEffectPayloadLen = 0;
+    }
+  } mbPendingGuard;
+
   uint16_t func = ((uint16_t)payload[2] << 8) | payload[3];
   Serial.printf("[MB+] func=0x%04X len=%u\n", func, (unsigned)plen);
 
@@ -1743,6 +1807,21 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
 // Park show commands (direct E9, no E1/E2 wrapper)
 void handleShowPayload(const uint8_t* payload, size_t plen) {
   if (plen < 2 || payload[0] != 0xE9) return;
+
+  if (mbEffectIsRepeatAdvert(payload, plen)) {
+    if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
+    return;
+  }
+
+  pendingMbEffectPayload = payload;
+  pendingMbEffectPayloadLen = plen;
+  struct MbPendingGuard {
+    ~MbPendingGuard() {
+      pendingMbEffectPayload = nullptr;
+      pendingMbEffectPayloadLen = 0;
+    }
+  } mbPendingGuard;
+
   Serial.printf("[MB+] show E9 %02X len=%u\n", payload[1], (unsigned)plen);
   if (tryApplySwE9Payload(payload, plen, "E90C", "show")) return;
   if (!magicBandEnabled) return;

@@ -86,6 +86,28 @@ export function summarizeLayout(layout: CustomSegmentLayout): string {
     .join(' · ');
 }
 
+/** Apply a preset's segment layout to the strip (for MB region capture workflow). */
+export function buildPresetLayoutPayload(
+  preset: { wled?: { seg?: WledSegmentDef[] }; segmentLayoutId?: string },
+  layouts: CustomSegmentLayout[],
+): { on: boolean; bri: number; seg: WledSegmentDef[] } | null {
+  const linked = preset.segmentLayoutId
+    ? layouts.find(l => l.id === preset.segmentLayoutId)
+    : undefined;
+  if (linked?.segments.length) {
+    return { on: true, bri: 255, seg: linked.segments.map(s => ({ ...s })) };
+  }
+  const seg = preset.wled?.seg;
+  if (Array.isArray(seg) && seg.length > 0) {
+    return {
+      on: true,
+      bri: 255,
+      seg: seg.map(s => normalizeSegmentDef(s)).filter((s): s is WledSegmentDef => s !== null),
+    };
+  }
+  return null;
+}
+
 export function fetchWledSegmentsFromDevice(timeoutMs = 8000): Promise<WledSegmentDef[]> {
   return new Promise((resolve, reject) => {
     if (!bleService.isConnected()) {

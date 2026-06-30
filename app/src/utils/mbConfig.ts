@@ -64,6 +64,8 @@ export interface MbEffectMapping {
 
 export interface MbMappingConfig {
   version: 1;
+  /** Fallback preset when an effect has no presetId — same list as GPS zones */
+  defaultPresetId: string;
   /** WLED hex per MB palette index 0–31 */
   colors: string[];
   animations: Record<MbAnimationKey, MbEffectMapping>;
@@ -94,28 +96,29 @@ const emptyMapping = (): MbEffectMapping => ({ presetId: '', colorSlots: [] });
 
 export const DEFAULT_MB_MAPPING: MbMappingConfig = {
   version: 1,
+  defaultPresetId: '',
   colors: [...DEFAULT_MB_WLED_COLORS],
   animations: {
-    E90C: { presetId: '', colorSlots: [0, 2, 21, 8, 18] },
-    E90E: { presetId: '', colorSlots: [27] },
+    E90C: { presetId: '', colorSlots: [] },
+    E90E: { presetId: '', colorSlots: [] },
     E90F: { presetId: '', colorSlots: [] },
     E910: { presetId: '', colorSlots: [] },
-    E911: { presetId: '', colorSlots: [21, 0] },
-    E912: { presetId: '', colorSlots: [2, 8] },
-    E913: { presetId: '', colorSlots: [1, 5] },
+    E911: { presetId: '', colorSlots: [] },
+    E912: { presetId: '', colorSlots: [] },
+    E913: { presetId: '', colorSlots: [] },
     wand: { presetId: '', colorSlots: [] },
   },
   swAnimations: {
     wand:     { presetId: '', colorSlots: [] },
-    rainbow:  { presetId: '', colorSlots: [0, 2, 21, 8, 18] },
-    blink:    { presetId: '', colorSlots: [27] },
-    palette5: { presetId: '', colorSlots: [0, 2, 8, 21, 18] },
-    flash:    { presetId: '', colorSlots: [1, 27] },
-    sparkle:  { presetId: '', colorSlots: [2] },
-    pulse:    { presetId: '', colorSlots: [1] },
-    circle:   { presetId: '', colorSlots: [2, 8] },
-    fade:     { presetId: '', colorSlots: [0, 8] },
-    fade2:    { presetId: '', colorSlots: [8, 18] },
+    rainbow:  { presetId: '', colorSlots: [] },
+    blink:    { presetId: '', colorSlots: [] },
+    palette5: { presetId: '', colorSlots: [] },
+    flash:    { presetId: '', colorSlots: [] },
+    sparkle:  { presetId: '', colorSlots: [] },
+    pulse:    { presetId: '', colorSlots: [] },
+    circle:   { presetId: '', colorSlots: [] },
+    fade:     { presetId: '', colorSlots: [] },
+    fade2:    { presetId: '', colorSlots: [] },
   },
   patterns: {
     '3': { presetId: '', colorSlots: [] },  // spin → segment solids unless preset set
@@ -237,7 +240,11 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
       ? src.map(s => ({ id: s.id ?? 0, start: s.start, stop: s.stop }))
       : d.segments[id].map(s => ({ ...s }));
   }
-  return { version: 1, colors, animations, swAnimations, patterns, segments };
+  return {
+    version: 1,
+    defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
+    colors, animations, swAnimations, patterns, segments,
+  };
 }
 
 /** Firmware BLE payload */
@@ -269,6 +276,7 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
   }
   return {
     version: 1,
+    defaultPresetId: config.defaultPresetId || '',
     colors,
     animations,
     swAnimations,

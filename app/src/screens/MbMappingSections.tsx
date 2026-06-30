@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
 import {
-  MbMappingConfig, MbEffectMapping, MbSegmentId, WledSegRef, SwAnimationKey,
+  View, Text, TextInput, TouchableOpacity, Alert, Modal, ScrollView, Pressable,
+} from 'react-native';
+import {
+  MbMappingConfig, MbEffectMapping, MbSegmentId, WledSegRef,
   MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
   SW_ANIMATION_META, DEFAULT_MB_MAPPING,
 } from '../utils/mbConfig';
@@ -12,12 +14,158 @@ import {
   buildSegmentHighlightPreview, buildFiveCornerPreview,
   MB_SEGMENT_SIM_COMMAND, SIM_FIVE_CORNERS,
 } from '../utils/mbSegmentPreview';
+import {
+  formatWledSegLabel, formatWledSegSelectionSummary, toggleSnapshotSelection,
+  pruneRefsToSnapshot,
+} from '../utils/mbSegmentAssign';
+import {
+  buildPresetLayoutPayload, fetchWledSegmentsFromDevice, WledSegmentDef,
+} from '../utils/segmentLayouts';
 
 type Colors = ReturnType<typeof import('../utils/theme').useTheme>['colors'];
+type BleTab = 'sw' | 'mb' | 'colors' | 'segments';
+
+const BLE_TABS: { id: BleTab; label: string }[] = [
+  { id: 'sw', label: 'Starlight' },
+  { id: 'mb', label: 'MagicBand' },
+  { id: 'colors', label: 'MB Colors' },
+  { id: 'segments', label: 'Segments' },
+];
+
+function PresetPickerModal({
+  visible, title, presets, selectedId, onSelect, onClose, colors,
+}: {
+  visible: boolean;
+  title: string;
+  presets: { id: string; name: string }[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+  colors: Colors;
+}) {
+  const [q, setQ] = useState('');
+  const filtered = presets.filter(p =>
+    p.name.toLowerCase().includes(q.toLowerCase()),
+  );
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+        onPress={onClose}>
+        <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '70%' }}
+          onPress={e => e.stopPropagation()}>
+          <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+            <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 16 }}>{title}</Text>
+            <Text style={{ color: colors.textMuted, fontSize: 12, marginTop: 4 }}>Same presets as GPS zones</Text>
+            <TextInput
+              style={{
+                marginTop: 10, backgroundColor: colors.background, borderRadius: 8,
+                borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary,
+                padding: 10, fontSize: 14,
+              }}
+              placeholder="Search presets…"
+              placeholderTextColor={colors.textMuted}
+              value={q}
+              onChangeText={setQ}
+              autoCapitalize="none"
+            />
+          </View>
+          <ScrollView style={{ paddingHorizontal: 8 }}>
+            <TouchableOpacity
+              style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
+              onPress={() => { onSelect(''); onClose(); }}>
+              <Text style={{ color: !selectedId ? colors.primary : colors.textSecondary, fontWeight: !selectedId ? '600' : '400' }}>
+                Use default preset
+              </Text>
+            </TouchableOpacity>
+            {filtered.map(p => (
+              <TouchableOpacity key={p.id}
+                style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
+                onPress={() => { onSelect(p.id); onClose(); }}>
+                <Text style={{ color: selectedId === p.id ? colors.primary : colors.textPrimary, fontWeight: selectedId === p.id ? '600' : '400' }}>
+                  {p.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {filtered.length === 0 && (
+              <Text style={{ color: colors.textMuted, padding: 16, textAlign: 'center' }}>No presets — create some on the Presets tab</Text>
+            )}
+          </ScrollView>
+          <TouchableOpacity onPress={onClose} style={{ padding: 16, alignItems: 'center' }}>
+            <Text style={{ color: colors.textMuted }}>Cancel</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function EffectRow({
+  label, hint, mapping, presets, onChange, colors,
+}: {
+  label: string;
+  hint?: string;
+  mapping: MbEffectMapping;
+  presets: { id: string; name: string }[];
+  onChange: (m: MbEffectMapping) => void;
+  colors: Colors;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [showSlots, setShowSlots] = useState(false);
+  const presetName = mapping.presetId
+    ? (presets.find(p => p.id === mapping.presetId)?.name ?? mapping.presetId)
+    : 'Default preset';
+
+  return (
+    <View style={{
+      marginBottom: 8, padding: 10, backgroundColor: colors.background,
+      borderRadius: 8, borderWidth: 1, borderColor: colors.border,
+    }}>
+      <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 13 }}>{label}</Text>
+      {hint ? <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>{hint}</Text> : null}
+      <TouchableOpacity onPress={() => setPickerOpen(true)} style={{ marginTop: 8 }}>
+        <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>{presetName} ›</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={() => setShowSlots(v => !v)}>
+        <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 6 }}>
+          {showSlots ? '▾ Hide color overrides' : '▸ Optional MB color overrides'}
+        </Text>
+      </TouchableOpacity>
+      {showSlots && (
+        <TextInput
+          style={{
+            marginTop: 4, backgroundColor: colors.background, borderRadius: 6,
+            borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary,
+            padding: 8, fontSize: 12, fontFamily: 'monospace',
+          }}
+          placeholder="palette indices 0–31"
+          placeholderTextColor={colors.textMuted}
+          value={mapping.colorSlots.join(',')}
+          onChangeText={v => {
+            const colorSlots = v.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n >= 0 && n <= 31);
+            onChange({ ...mapping, colorSlots });
+          }}
+        />
+      )}
+      <PresetPickerModal
+        visible={pickerOpen}
+        title={label}
+        presets={presets}
+        selectedId={mapping.presetId}
+        onSelect={id => onChange({ ...mapping, presetId: id })}
+        onClose={() => setPickerOpen(false)}
+        colors={colors}
+      />
+    </View>
+  );
+}
 
 export function MbMappingSections({ colors, isConnected }: { colors: Colors; isConnected: boolean }) {
-  const { mbMapping, setMbMapping, presets, saveToStorage } = useAppStore();
-  const [expanded, setExpanded] = useState<'colors' | 'sw' | 'anim' | 'pat' | 'seg' | null>('colors');
+  const { mbMapping, setMbMapping, presets, saveToStorage, customSegmentLayouts } = useAppStore();
+  const [tab, setTab] = useState<BleTab>('sw');
+  const [defaultPickerOpen, setDefaultPickerOpen] = useState(false);
+  const [segSnapshots, setSegSnapshots] = useState<Partial<Record<MbSegmentId, WledSegmentDef[]>>>({});
+  const [segCaptureId, setSegCaptureId] = useState<MbSegmentId | null>(null);
+  const [segSnapshotErr, setSegSnapshotErr] = useState('');
 
   const push = (next: MbMappingConfig) => {
     setMbMapping(next);
@@ -32,17 +180,6 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
     push({ ...mbMapping, colors: colorsArr });
   };
 
-  const pickPreset = (title: string, current: string, onPick: (id: string) => void) => {
-    Alert.alert(title, 'Empty = built-in segment colors', [
-      { text: 'Built-in', onPress: () => onPick('') },
-      ...presets.slice(0, 10).map(p => ({
-        text: p.name,
-        onPress: () => onPick(p.id),
-      })),
-      { text: 'Cancel', style: 'cancel' as const },
-    ]);
-  };
-
   const setEffect = (
     kind: 'animations' | 'patterns' | 'swAnimations',
     key: string,
@@ -50,10 +187,6 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
   ) => {
     const block = { ...mbMapping[kind], [key]: { ...mbMapping[kind][key as keyof typeof mbMapping.animations], ...patch } };
     push({ ...mbMapping, [kind]: block as MbMappingConfig[typeof kind] });
-  };
-
-  const setSwEffect = (key: SwAnimationKey, patch: Partial<MbEffectMapping>) => {
-    setEffect('swAnimations', key, patch);
   };
 
   const setSegRefs = (segId: MbSegmentId, refs: WledSegRef[]) => {
@@ -76,13 +209,137 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
     bleService.sendWledRaw(buildFiveCornerPreview(mbMapping.segments));
   };
 
+  const applyDefaultLayout = () => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy to apply a preset layout.');
+      return;
+    }
+    const preset = presets.find(p => p.id === mbMapping.defaultPresetId);
+    if (!preset) {
+      Alert.alert('No default preset', 'Set a default zone preset on the Starlight or MagicBand tab first.');
+      return;
+    }
+    const payload = buildPresetLayoutPayload(preset, customSegmentLayouts);
+    if (!payload) {
+      Alert.alert('No segment layout', 'Link a segment layout to that preset (Palettes tab) or save segments in the preset.');
+      return;
+    }
+    bleService.sendWledRaw(payload);
+  };
+
+  const captureSegSnapshot = async (segId: MbSegmentId) => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy to read WLED segments from the board.');
+      return;
+    }
+    setSegCaptureId(segId);
+    setSegSnapshotErr('');
+    try {
+      const segments = await fetchWledSegmentsFromDevice();
+      if (!segments.length) throw new Error('No active segments in WLED state');
+      setSegSnapshots(prev => ({ ...prev, [segId]: segments }));
+      const pruned = pruneRefsToSnapshot(segments, mbMapping.segments[segId]);
+      if (pruned.length !== mbMapping.segments[segId].length
+        || pruned.some((r, i) => r.id !== mbMapping.segments[segId][i]?.id)) {
+        setSegRefs(segId, pruned);
+      }
+    } catch (e) {
+      setSegSnapshotErr(e instanceof Error ? e.message : 'Could not read WLED segments');
+    } finally {
+      setSegCaptureId(null);
+    }
+  };
+
   const s = styles(colors);
+  const defaultName = mbMapping.defaultPresetId
+    ? (presets.find(p => p.id === mbMapping.defaultPresetId)?.name ?? mbMapping.defaultPresetId)
+    : 'Not set';
 
   return (
     <>
-      <SectionToggle title="MB → WLED Colors (32)" open={expanded === 'colors'}
-        onPress={() => setExpanded(expanded === 'colors' ? null : 'colors')} colors={colors} />
-      {expanded === 'colors' && MB_COLOR_NAMES.map((name, idx) => (
+      <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 10, lineHeight: 18 }}>
+        Wand and MB effects use the same presets as GPS zones. Sync presets to the board on connect.
+      </Text>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+        {BLE_TABS.map(t => (
+          <TouchableOpacity key={t.id} onPress={() => setTab(t.id)}
+            style={{
+              paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, marginRight: 6,
+              backgroundColor: tab === t.id ? colors.primary + '22' : colors.background,
+              borderWidth: 1, borderColor: tab === t.id ? colors.primary : colors.border,
+            }}>
+            <Text style={{ color: tab === t.id ? colors.primary : colors.textSecondary, fontWeight: '600', fontSize: 13 }}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {(tab === 'sw' || tab === 'mb') && (
+        <View style={{
+          marginBottom: 12, padding: 12, borderRadius: 8,
+          backgroundColor: colors.primary + '18', borderWidth: 1, borderColor: colors.primary,
+        }}>
+          <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Default zone preset</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 4, marginBottom: 8 }}>
+            Used when an effect has no preset assigned
+          </Text>
+          <TouchableOpacity onPress={() => setDefaultPickerOpen(true)}>
+            <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 14 }}>{defaultName} ›</Text>
+          </TouchableOpacity>
+          <PresetPickerModal
+            visible={defaultPickerOpen}
+            title="Default zone preset"
+            presets={presets}
+            selectedId={mbMapping.defaultPresetId}
+            onSelect={id => push({ ...mbMapping, defaultPresetId: id })}
+            onClose={() => setDefaultPickerOpen(false)}
+            colors={colors}
+          />
+        </View>
+      )}
+
+      {tab === 'sw' && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {SW_ANIMATION_META.map(({ key, label, hint }) => (
+            <View key={key} style={{ width: '48%' }}>
+              <EffectRow label={label} hint={hint}
+                mapping={mbMapping.swAnimations[key]}
+                presets={presets}
+                onChange={m => setEffect('swAnimations', key, m)}
+                colors={colors} />
+            </View>
+          ))}
+        </View>
+      )}
+
+      {tab === 'mb' && (
+        <>
+          <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 12, marginBottom: 8, textTransform: 'uppercase' }}>
+            Animations
+          </Text>
+          {MB_ANIMATION_META.filter(a => a.key !== 'wand').map(({ key, label }) => (
+            <EffectRow key={key} label={label}
+              mapping={mbMapping.animations[key]}
+              presets={presets}
+              onChange={m => setEffect('animations', key, m)}
+              colors={colors} />
+          ))}
+          <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 12, marginTop: 12, marginBottom: 8, textTransform: 'uppercase' }}>
+            Patterns (E909)
+          </Text>
+          {MB_PATTERN_META.map(({ key, label }) => (
+            <EffectRow key={key} label={`${key} — ${label}`}
+              mapping={mbMapping.patterns[key]}
+              presets={presets}
+              onChange={m => setEffect('patterns', key, m)}
+              colors={colors} />
+          ))}
+        </>
+      )}
+
+      {tab === 'colors' && MB_COLOR_NAMES.map((name, idx) => (
         <View key={idx} style={s.colorRow}>
           <View style={[s.swatch, { backgroundColor: mbMapping.colors[idx] }]} />
           <View style={{ flex: 1 }}>
@@ -93,164 +350,152 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
         </View>
       ))}
 
-      <SectionToggle title="Starlight Wand → Preset (priority over MB+)" open={expanded === 'sw'}
-        onPress={() => setExpanded(expanded === 'sw' ? null : 'sw')} colors={colors} />
-      {expanded === 'sw' && (
+      {tab === 'segments' && (
         <>
-          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 8 }}>
-            Named wand effects from WandSimulator / in-park E9 broadcasts. Requires Starlight Wand enabled in Settings.
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 8, lineHeight: 18 }}>
+            Per region: apply the layout you want on the strip, Capture on that row, then tick which WLED segments map to it (e.g. bottom right → seg #2 & #4).
           </Text>
-          {SW_ANIMATION_META.map(({ key, label, hint }) => {
-            const m = mbMapping.swAnimations[key];
-            const presetName = m.presetId ? (presets.find(p => p.id === m.presetId)?.name ?? m.presetId) : 'Built-in';
-            return (
-              <View key={key} style={s.effectRow}>
-                <Text style={s.label}>{label}</Text>
-                <Text style={{ color: colors.textMuted, fontSize: 11 }}>{hint}</Text>
-                <TouchableOpacity onPress={() => pickPreset(label, m.presetId, id => setSwEffect(key, { presetId: id }))}>
-                  <Text style={s.link}>{presetName}</Text>
-                </TouchableOpacity>
-                <TextInput style={s.slotsInput} placeholder="color slots 0-31"
-                  value={m.colorSlots.join(',')}
-                  onChangeText={v => {
-                    const colorSlots = v.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n >= 0 && n <= 31);
-                    setSwEffect(key, { colorSlots });
-                  }} />
-              </View>
-            );
-          })}
-        </>
-      )}
-
-      <SectionToggle title="MB Animations → Preset" open={expanded === 'anim'}
-        onPress={() => setExpanded(expanded === 'anim' ? null : 'anim')} colors={colors} />
-      {expanded === 'anim' && MB_ANIMATION_META.map(({ key, label }) => {
-        const m = mbMapping.animations[key];
-        const presetName = m.presetId ? (presets.find(p => p.id === m.presetId)?.name ?? m.presetId) : 'Built-in';
-        return (
-          <View key={key} style={s.effectRow}>
-            <Text style={s.label}>{label}</Text>
-            <TouchableOpacity onPress={() => pickPreset(label, m.presetId, id => setEffect('animations', key, { presetId: id }))}>
-              <Text style={s.link}>{presetName}</Text>
-            </TouchableOpacity>
-            <TextInput style={s.slotsInput} placeholder="color slots 0-31"
-              value={m.colorSlots.join(',')}
-              onChangeText={v => {
-                const colorSlots = v.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n >= 0 && n <= 31);
-                setEffect('animations', key, { colorSlots });
-              }} />
-          </View>
-        );
-      })}
-
-      <SectionToggle title="MB Patterns (E909) → Preset" open={expanded === 'pat'}
-        onPress={() => setExpanded(expanded === 'pat' ? null : 'pat')} colors={colors} />
-      {expanded === 'pat' && MB_PATTERN_META.map(({ key, label }) => {
-        const m = mbMapping.patterns[key];
-        const presetName = m.presetId ? (presets.find(p => p.id === m.presetId)?.name ?? m.presetId) : 'Built-in';
-        return (
-          <View key={key} style={s.effectRow}>
-            <Text style={s.label}>{key} — {label}</Text>
-            <TouchableOpacity onPress={() => pickPreset(label, m.presetId, id => setEffect('patterns', key, { presetId: id }))}>
-              <Text style={s.link}>{presetName}</Text>
-            </TouchableOpacity>
-            <TextInput style={s.slotsInput} placeholder="color slots"
-              value={m.colorSlots.join(',')}
-              onChangeText={v => {
-                const colorSlots = v.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n >= 0 && n <= 31);
-                setEffect('patterns', key, { colorSlots });
-              }} />
-          </View>
-        );
-      })}
-
-      <SectionToggle title="MB Segments → WLED Segments" open={expanded === 'seg'}
-        onPress={() => setExpanded(expanded === 'seg' ? null : 'seg')} colors={colors} />
-      {expanded === 'seg' && (
-        <>
+          <TouchableOpacity
+            onPress={applyDefaultLayout}
+            disabled={!isConnected}
+            style={{
+              alignSelf: 'flex-start', marginBottom: 10, paddingHorizontal: 14, paddingVertical: 8,
+              borderRadius: 8, backgroundColor: isConnected ? colors.surface : colors.border,
+              borderWidth: 1, borderColor: colors.border,
+            }}>
+            <Text style={{ color: isConnected ? colors.textPrimary : colors.textMuted, fontWeight: '600', fontSize: 13 }}>
+              Apply default preset layout
+            </Text>
+          </TouchableOpacity>
+          {segSnapshotErr ? (
+            <Text style={{ color: colors.danger, fontSize: 12, marginBottom: 8 }}>{segSnapshotErr}</Text>
+          ) : null}
           {MB_SEGMENT_META.map(({ id, label, hint }) => (
-            <SegEditor key={id} label={label} hint={hint}
+            <MbSegmentAssignEditor
+              key={id}
+              label={label}
+              hint={hint}
               simCommand={MB_SEGMENT_SIM_COMMAND[id]}
+              snapshot={segSnapshots[id] ?? []}
+              captureLoading={segCaptureId === id}
+              onCapture={() => captureSegSnapshot(id)}
+              canCapture={isConnected}
               refs={mbMapping.segments[id]}
               onChange={refs => setSegRefs(id, refs)}
               onTest={() => previewSegment(id)}
               canTest={isConnected}
-              colors={colors} />
+              colors={colors}
+            />
           ))}
           <View style={s.previewAllRow}>
             <TouchableOpacity style={[s.testBtn, !isConnected && s.testBtnDisabled]}
               onPress={previewFiveCorners} disabled={!isConnected}>
               <Text style={s.testBtnText}>Preview 5 corners</Text>
             </TouchableOpacity>
-            <Text style={s.simHint}>R/G/B/W/Y · WandSim: {SIM_FIVE_CORNERS}</Text>
+            <Text style={s.simHint}>WandSim: {SIM_FIVE_CORNERS}</Text>
           </View>
         </>
       )}
 
       <TouchableOpacity style={s.resetBtn} onPress={() => push(JSON.parse(JSON.stringify(DEFAULT_MB_MAPPING)))}>
-        <Text style={s.link}>Reset MB mapping to defaults</Text>
+        <Text style={s.link}>Reset BLE mapping to defaults</Text>
       </TouchableOpacity>
     </>
   );
 }
 
-function SectionToggle({ title, open, onPress, colors }: { title: string; open: boolean; onPress: () => void; colors: Colors }) {
-  return (
-    <TouchableOpacity onPress={onPress} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-      <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 14 }}>{open ? '▼' : '▶'} {title}</Text>
-    </TouchableOpacity>
-  );
-}
-
-function SegEditor({ label, hint, simCommand, refs, onChange, onTest, canTest, colors }: {
-  label: string; hint: string; simCommand: string; refs: WledSegRef[];
-  onChange: (refs: WledSegRef[]) => void; onTest: () => void; canTest: boolean;
+function MbSegmentAssignEditor({
+  label, hint, simCommand, snapshot, captureLoading, onCapture, canCapture,
+  refs, onChange, onTest, canTest, colors,
+}: {
+  label: string;
+  hint: string;
+  simCommand: string;
+  snapshot: WledSegmentDef[];
+  captureLoading: boolean;
+  onCapture: () => void;
+  canCapture: boolean;
+  refs: WledSegRef[];
+  onChange: (refs: WledSegRef[]) => void;
+  onTest: () => void;
+  canTest: boolean;
   colors: Colors;
 }) {
-  const input = {
-    backgroundColor: colors.background, borderRadius: 6, borderWidth: 1, borderColor: colors.borderFocus,
-    color: colors.textPrimary, padding: 6, fontSize: 12, width: 52, textAlign: 'right' as const,
-  };
-  const update = (i: number, field: keyof WledSegRef, val: string) => {
-    const n = parseInt(val, 10);
-    if (isNaN(n)) return;
-    const next = refs.map((r, j) => j === i ? { ...r, [field]: n } : r);
-    onChange(next);
-  };
+  const summary = formatWledSegSelectionSummary(refs);
+  const hasSnapshot = snapshot.length > 0;
+
   return (
-    <View style={{ marginBottom: 12 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <Text style={{ color: colors.textPrimary, fontWeight: '500', fontSize: 13, flex: 1 }}>{label}</Text>
-        <TouchableOpacity onPress={onTest} disabled={!canTest}
-          style={{ backgroundColor: canTest ? colors.primary : colors.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 }}>
-          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Test</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 2 }}>{hint}</Text>
-      <Text style={{ color: colors.textMuted, fontSize: 10, marginBottom: 4, fontFamily: 'monospace' }}>
-        WandSim: {simCommand}
-      </Text>
-      {refs.map((r, i) => (
-        <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 11 }}>id</Text>
-          <TextInput style={input} value={String(r.id)} keyboardType="number-pad"
-            onChangeText={v => update(i, 'id', v)} />
-          <Text style={{ color: colors.textMuted, fontSize: 11 }}>start</Text>
-          <TextInput style={input} value={String(r.start)} keyboardType="number-pad"
-            onChangeText={v => update(i, 'start', v)} />
-          <Text style={{ color: colors.textMuted, fontSize: 11 }}>stop</Text>
-          <TextInput style={input} value={String(r.stop)} keyboardType="number-pad"
-            onChangeText={v => update(i, 'stop', v)} />
-          {refs.length > 1 && (
-            <TouchableOpacity onPress={() => onChange(refs.filter((_, j) => j !== i))}>
-              <Text style={{ color: colors.danger, fontSize: 12 }}>✕</Text>
-            </TouchableOpacity>
-          )}
+    <View style={{
+      marginBottom: 12, padding: 10, borderRadius: 8,
+      borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 13 }}>{label}</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 2 }}>{hint}</Text>
+          <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 2, fontFamily: 'monospace' }}>WandSim: {simCommand}</Text>
+          <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '600', marginTop: 6, fontFamily: 'monospace' }}>
+            → {summary}
+          </Text>
         </View>
-      ))}
-      <TouchableOpacity onPress={() => onChange([...refs, { id: refs.length, start: 0, stop: 10 }])}>
-        <Text style={{ color: colors.primary, fontSize: 12 }}>+ WLED segment</Text>
-      </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <TouchableOpacity onPress={onCapture} disabled={!canCapture || captureLoading}
+            style={{
+              backgroundColor: canCapture ? colors.surface : colors.border,
+              borderWidth: 1, borderColor: colors.borderFocus,
+              borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4,
+              opacity: captureLoading ? 0.6 : 1,
+            }}>
+            <Text style={{ color: colors.textPrimary, fontSize: 12, fontWeight: '600' }}>
+              {captureLoading ? '…' : hasSnapshot ? '↻' : 'Capture'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onTest} disabled={!canTest}
+            style={{ backgroundColor: canTest ? colors.primary : colors.border, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 }}>
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>Test</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      {!hasSnapshot ? (
+        <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+          Set up the strip layout for this use-case, then Capture to pick WLED segments.
+        </Text>
+      ) : (
+        <>
+          <Text style={{ color: colors.textSecondary, fontSize: 10, fontFamily: 'monospace', marginBottom: 8, lineHeight: 15 }}>
+            Captured: {snapshot.map(formatWledSegLabel).join(' · ')}
+          </Text>
+          {snapshot.map(seg => {
+            const checked = refs.some(r => r.id === seg.id);
+            return (
+              <TouchableOpacity
+                key={seg.id}
+                onPress={() => onChange(toggleSnapshotSelection(snapshot, refs, seg.id))}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 8,
+                  marginBottom: 4, borderRadius: 6,
+                  backgroundColor: checked ? colors.primary + '22' : colors.surface,
+                  borderWidth: 1, borderColor: checked ? colors.primary : colors.border,
+                }}>
+                <View style={{
+                  width: 18, height: 18, borderRadius: 4, borderWidth: 2,
+                  borderColor: checked ? colors.primary : colors.borderFocus,
+                  backgroundColor: checked ? colors.primary : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {checked && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+                </View>
+                <Text style={{
+                  color: checked ? colors.primary : colors.textSecondary,
+                  fontSize: 12, fontFamily: 'monospace', flex: 1,
+                }}>
+                  {formatWledSegLabel(seg)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </>
+      )}
     </View>
   );
 }
@@ -260,10 +505,8 @@ const styles = (c: Colors) => ({
   swatch: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: c.border },
   label: { color: c.textPrimary, fontSize: 13 },
   hexInput: { backgroundColor: c.background, borderRadius: 6, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 6, fontSize: 11, width: 88, fontFamily: 'monospace' as const },
-  effectRow: { marginBottom: 10, gap: 4 },
   link: { color: c.primary, fontSize: 13, fontWeight: '600' as const },
-  slotsInput: { backgroundColor: c.background, borderRadius: 6, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 8, fontSize: 12 },
-  resetBtn: { marginTop: 8, marginBottom: 8 },
+  resetBtn: { marginTop: 16, marginBottom: 8 },
   previewAllRow: { marginTop: 4, marginBottom: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: c.border, gap: 6 },
   testBtn: { alignSelf: 'flex-start' as const, backgroundColor: c.primary, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   testBtnDisabled: { opacity: 0.45 },

@@ -193,7 +193,7 @@ export default function SettingsScreen() {
       {/* Starlight Wand */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Starlight Wand Effects</Text>
-        <Text style={s.sectionHint}>Highest priority. Detects wand casts and named E9 fx (rainbow, sparkle, …). Map presets under MagicBand Mapping → Starlight Wand.</Text>
+        <Text style={s.sectionHint}>Highest priority. Map presets under Wand & MagicBand Presets → Starlight tab.</Text>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>Enable wand effects</Text>
@@ -274,9 +274,9 @@ export default function SettingsScreen() {
 
       {/* MB → WLED mapping */}
       <View style={s.section}>
-        <Text style={s.sectionTitle}>MagicBand Mapping</Text>
+        <Text style={s.sectionTitle}>Wand & MagicBand Presets</Text>
         <Text style={s.sectionHint}>
-          Colors, animation/pattern presets, and segment layout. Synced to the board on change when connected.
+          Same presets as GPS zones. Set a default, then per-effect overrides under Starlight / MagicBand tabs.
         </Text>
         <MbMappingSections colors={colors} isConnected={isConnected} />
       </View>

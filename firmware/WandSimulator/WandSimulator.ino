@@ -14,7 +14,7 @@
 
 #include <NimBLEDevice.h>
 
-static const uint8_t WAND_CAST_SIG[6] = {0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22};
+static const uint8_t WAND_CAST_SIG[6] = { 0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22 };
 static const uint8_t IDLE_PAYLOAD[19] = {
   0x0F, 0x11, 0x01, 0x4B, 0x72, 0x99, 0x08, 0x83, 0x0A, 0x66,
   0xD4, 0x85, 0xCD, 0x9F, 0x95, 0x75, 0xA8, 0xA3, 0x21
@@ -22,7 +22,11 @@ static const uint8_t IDLE_PAYLOAD[19] = {
 
 NimBLEAdvertising* adv = nullptr;
 
-enum LoopMode { LOOP_NONE, LOOP_WAND_CAST, LOOP_MB_SWEEP, LOOP_MB_PALETTE, LOOP_SW_FX };
+enum LoopMode { LOOP_NONE,
+                LOOP_WAND_CAST,
+                LOOP_MB_SWEEP,
+                LOOP_MB_PALETTE,
+                LOOP_SW_FX };
 LoopMode loopMode = LOOP_NONE;
 uint8_t loopPalette = 4;
 uint8_t mbSweepIdx = 0;
@@ -39,43 +43,43 @@ struct HexPreset {
 };
 
 static const uint8_t PRESET_RAINBOW[] = {
-  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0x5D,0x46,0x5B,0xF0,0x05,0x32,0x37,0x48,0xB0
+  0xE1, 0x00, 0xE9, 0x0C, 0x00, 0x0F, 0x0F, 0x5D, 0x46, 0x5B, 0xF0, 0x05, 0x32, 0x37, 0x48, 0xB0
 };
 static const uint8_t PRESET_BLINK[] = {
-  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0x5D,0x46,0x5B,0xF0,0x05,0x32,0x37,0x48,0x95
+  0xE1, 0x00, 0xE9, 0x0C, 0x00, 0x0F, 0x0F, 0x5D, 0x46, 0x5B, 0xF0, 0x05, 0x32, 0x37, 0x48, 0x95
 };
 static const uint8_t PRESET_PALETTE5[] = {
-  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0xB1,0xB9,0xB5,0xB1,0xA2,0x30,0x7B,0x7D,0xB0
+  0xE1, 0x00, 0xE9, 0x0C, 0x00, 0x0F, 0x0F, 0xB1, 0xB9, 0xB5, 0xB1, 0xA2, 0x30, 0x7B, 0x7D, 0xB0
 };
 static const uint8_t PRESET_FLASH[] = {
-  0xE1,0x00,0xE9,0x0E,0x00,0x01,0x0F,0xBD,0xA0,0xA0,0xBD,0xA0,0x59,0x07,0x00,0x48,0xAE,0xB5
+  0xE1, 0x00, 0xE9, 0x0E, 0x00, 0x01, 0x0F, 0xBD, 0xA0, 0xA0, 0xBD, 0xA0, 0x59, 0x07, 0x00, 0x48, 0xAE, 0xB5
 };
 static const uint8_t PRESET_SPARKLE[] = {
-  0xE1,0x00,0xE9,0x10,0x00,0x13,0x48,0x97,0xD0,0x0E,0xA0,0xD1,0x46,0x06,0x0F,0x30,0xD0,0x4E,0x07,0xB0
+  0xE1, 0x00, 0xE9, 0x10, 0x00, 0x13, 0x48, 0x97, 0xD0, 0x0E, 0xA0, 0xD1, 0x46, 0x06, 0x0F, 0x30, 0xD0, 0x4E, 0x07, 0xB0
 };
 static const uint8_t PRESET_PULSE[] = {
-  0xE1,0x00,0xE9,0x13,0x00,0x02,0xD0,0x37,0xF0,0xD2,0x3D,0x05,0x05,0x00,0x0E,0xFA,0x89,0x83,0x51,0x0E,0xE7,0xA0,0xB0
+  0xE1, 0x00, 0xE9, 0x13, 0x00, 0x02, 0xD0, 0x37, 0xF0, 0xD2, 0x3D, 0x05, 0x05, 0x00, 0x0E, 0xFA, 0x89, 0x83, 0x51, 0x0E, 0xE7, 0xA0, 0xB0
 };
 static const uint8_t PRESET_CIRCLE[] = {
-  0xE2,0x00,0xE9,0x12,0x00,0x03,0x0F,0xA2,0xA2,0xA4,0xA4,0xA2,0x30,0xD0,0x37,0xF4,0xD2,0x46,0x00,0x64,0xFC,0xB8
+  0xE2, 0x00, 0xE9, 0x12, 0x00, 0x03, 0x0F, 0xA2, 0xA2, 0xA4, 0xA4, 0xA2, 0x30, 0xD0, 0x37, 0xF4, 0xD2, 0x46, 0x00, 0x64, 0xFC, 0xB8
 };
 static const uint8_t PRESET_FADE[] = {
-  0xE1,0x00,0xE9,0x11,0x00,0x6F,0x0F,0x56,0x48,0x58,0xF4,0x48,0x82,0xD1,0x46,0x02,0x08,0xD0,0x65,0x00,0xB0
+  0xE1, 0x00, 0xE9, 0x11, 0x00, 0x6F, 0x0F, 0x56, 0x48, 0x58, 0xF4, 0x48, 0x82, 0xD1, 0x46, 0x02, 0x08, 0xD0, 0x65, 0x00, 0xB0
 };
 static const uint8_t PRESET_FADE2[] = {
-  0xE1,0x00,0xE9,0x11,0x00,0x0F,0x0F,0x48,0x59,0x58,0xF4,0x48,0x82,0xD1,0x46,0x02,0x0D,0xD0,0x65,0x05,0xB0
+  0xE1, 0x00, 0xE9, 0x11, 0x00, 0x0F, 0x0F, 0x48, 0x59, 0x58, 0xF4, 0x48, 0x82, 0xD1, 0x46, 0x02, 0x0D, 0xD0, 0x65, 0x05, 0xB0
 };
 
 static const HexPreset SW_FX_PRESETS[] = {
-  { "rainbow",  "E90C Taste the Rainbow",      PRESET_RAINBOW,  sizeof(PRESET_RAINBOW),  false },
-  { "blink",    "E90C white blink",            PRESET_BLINK,    sizeof(PRESET_BLINK),    false },
-  { "palette5", "E90C five-palette cycle",     PRESET_PALETTE5, sizeof(PRESET_PALETTE5), false },
-  { "flash",    "E90E purple/white flash",     PRESET_FLASH,    sizeof(PRESET_FLASH),    false },
-  { "sparkle",  "E910 blue sparkle",           PRESET_SPARKLE,  sizeof(PRESET_SPARKLE),  true  },
-  { "pulse",    "E913 purple pulse",           PRESET_PULSE,    sizeof(PRESET_PULSE),    false },
-  { "circle",   "E912 blue circle + vibe",     PRESET_CIRCLE,   sizeof(PRESET_CIRCLE),   true  },
-  { "fade",     "E911 cyan to pink",           PRESET_FADE,     sizeof(PRESET_FADE),     true  },
-  { "fade2",    "E911 pink to green",          PRESET_FADE2,    sizeof(PRESET_FADE2),    false },
+  { "rainbow", "E90C Taste the Rainbow", PRESET_RAINBOW, sizeof(PRESET_RAINBOW), false },
+  { "blink", "E90C white blink", PRESET_BLINK, sizeof(PRESET_BLINK), false },
+  { "palette5", "E90C five-palette cycle", PRESET_PALETTE5, sizeof(PRESET_PALETTE5), false },
+  { "flash", "E90E purple/white flash", PRESET_FLASH, sizeof(PRESET_FLASH), false },
+  { "sparkle", "E910 blue sparkle", PRESET_SPARKLE, sizeof(PRESET_SPARKLE), true },
+  { "pulse", "E913 purple pulse", PRESET_PULSE, sizeof(PRESET_PULSE), false },
+  { "circle", "E912 blue circle + vibe", PRESET_CIRCLE, sizeof(PRESET_CIRCLE), true },
+  { "fade", "E911 cyan to pink", PRESET_FADE, sizeof(PRESET_FADE), true },
+  { "fade2", "E911 pink to green", PRESET_FADE2, sizeof(PRESET_FADE2), false },
 };
 static const size_t SW_FX_PRESET_COUNT = sizeof(SW_FX_PRESETS) / sizeof(SW_FX_PRESETS[0]);
 
@@ -92,8 +96,13 @@ static uint8_t mbColorByte(uint8_t paletteIdx, uint8_t patternNibble) {
 // E905 single palette — mask 0 = all 5 LEDs on band
 static size_t buildMbSingle(uint8_t* out, uint8_t paletteIdx, uint8_t mask = 0,
                             uint8_t timing = 0x09, uint8_t vibration = 0) {
-  out[0] = 0xE1; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x05;
-  out[4] = 0x00; out[5] = timing; out[6] = 0x0E;
+  out[0] = 0xE1;
+  out[1] = 0x00;
+  out[2] = 0xE9;
+  out[3] = 0x05;
+  out[4] = 0x00;
+  out[5] = timing;
+  out[6] = 0x0E;
   out[7] = (uint8_t)(((mask & 0x07) << 5) | (paletteIdx & 0x1F));
   out[8] = mbVibByte(vibration);
   return 9;
@@ -102,8 +111,13 @@ static size_t buildMbSingle(uint8_t* out, uint8_t paletteIdx, uint8_t mask = 0,
 // E906 dual palette (inner ring + outer ring)
 static size_t buildMbDual(uint8_t* out, uint8_t innerIdx, uint8_t outerIdx,
                           uint8_t timing = 0x22, uint8_t vibration = 0) {
-  out[0] = 0xE2; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x06;
-  out[4] = 0x00; out[5] = timing; out[6] = 0x0F;
+  out[0] = 0xE2;
+  out[1] = 0x00;
+  out[2] = 0xE9;
+  out[3] = 0x06;
+  out[4] = 0x00;
+  out[5] = timing;
+  out[6] = 0x0F;
   out[7] = (uint8_t)(0x40 | (innerIdx & 0x1F));
   out[8] = (uint8_t)(0x40 | (outerIdx & 0x1F));
   out[9] = mbVibByte(vibration);
@@ -113,8 +127,14 @@ static size_t buildMbDual(uint8_t* out, uint8_t innerIdx, uint8_t outerIdx,
 // E908 raw 6-bit RGB (each channel 0–63)
 static size_t buildMbRgb(uint8_t* out, uint8_t red, uint8_t green, uint8_t blue,
                          uint8_t timing = 0x0E, uint8_t vibration = 0) {
-  out[0] = 0xE1; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x08;
-  out[4] = 0x00; out[5] = timing; out[6] = 0xD2; out[7] = 0x55;
+  out[0] = 0xE1;
+  out[1] = 0x00;
+  out[2] = 0xE9;
+  out[3] = 0x08;
+  out[4] = 0x00;
+  out[5] = timing;
+  out[6] = 0xD2;
+  out[7] = 0x55;
   out[8] = (uint8_t)((red & 0x3F) << 1);
   out[9] = (uint8_t)((green & 0x3F) << 1);
   out[10] = (uint8_t)((blue & 0x3F) << 1);
@@ -128,8 +148,13 @@ static size_t buildMbFive(uint8_t* out, uint8_t topLeft, uint8_t bottomLeft,
                           uint8_t bottomRight, uint8_t topRight, uint8_t center,
                           uint8_t timing = 0x0E, uint8_t vibration = 0,
                           uint8_t patternNibble = 0x05) {
-  out[0] = 0xE1; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x09;
-  out[4] = 0x00; out[5] = timing; out[6] = 0x0F;
+  out[0] = 0xE1;
+  out[1] = 0x00;
+  out[2] = 0xE9;
+  out[3] = 0x09;
+  out[4] = 0x00;
+  out[5] = timing;
+  out[6] = 0x0F;
   out[7] = mbColorByte(topLeft, patternNibble);
   out[8] = mbColorByte(bottomLeft, patternNibble);
   out[9] = mbColorByte(bottomRight, patternNibble);
@@ -147,7 +172,11 @@ static size_t buildMbFiveUniform(uint8_t* out, uint8_t paletteIdx, uint8_t patte
 
 // CC03000000 — park "ping" (bands may respond / wake)
 static size_t buildPing(uint8_t* out) {
-  out[0] = 0xCC; out[1] = 0x03; out[2] = 0x00; out[3] = 0x00; out[4] = 0x00;
+  out[0] = 0xCC;
+  out[1] = 0x03;
+  out[2] = 0x00;
+  out[3] = 0x00;
+  out[4] = 0x00;
   return 5;
 }
 
@@ -161,18 +190,17 @@ void mfrHex(const uint8_t* data, size_t len) {
   Serial.println();
 }
 
-void pushAdvert(const uint8_t* mfr, size_t mfrLen) {
+void startMfrAdvert(const uint8_t* mfr, size_t mfrLen) {
   NimBLEAdvertisementData advData;
   advData.setManufacturerData(std::string((char*)mfr, mfrLen));
   adv->stop();
   adv->setAdvertisementData(advData);
-  adv->setScanResponseData(advData);
+  adv->setScanResponseData(NimBLEAdvertisementData());
   adv->start();
 }
 
-// Re-broadcast every refreshMs so nearby MagicBands catch the packet
-void broadcastMfr(const uint8_t* payload, size_t plen,
-                  uint32_t durationMs, uint32_t refreshMs = 250) {
+// Hold one continuous advert (Adafruit CLUE pattern) — stop/start every 200ms caused bands to miss packets
+void broadcastMfr(const uint8_t* payload, size_t plen, uint32_t durationMs) {
   if (plen > 27) {
     Serial.println("[TX] payload too long");
     return;
@@ -183,30 +211,33 @@ void broadcastMfr(const uint8_t* payload, size_t plen,
   memcpy(mfr + 2, payload, plen);
   size_t mfrLen = plen + 2;
 
-  Serial.printf("[TX] Broadcasting %ums (%u bytes, refresh %ums): ",
-                durationMs, (unsigned)mfrLen, refreshMs);
+  Serial.printf("[TX] Broadcasting %ums (%u bytes): ", durationMs, (unsigned)mfrLen);
   mfrHex(mfr, mfrLen);
 
+  startMfrAdvert(mfr, mfrLen);
   unsigned long end = millis() + durationMs;
   while ((long)(millis() - end) < 0) {
-    pushAdvert(mfr, mfrLen);
-    unsigned long slice = refreshMs;
-    while (slice > 0) {
-      if (Serial.available()) {
-        adv->stop();
-        Serial.println("[TX] Interrupted");
-        return;
-      }
-      delay(20);
-      if (slice >= 20) slice -= 20; else slice = 0;
+    if (Serial.available()) {
+      adv->stop();
+      Serial.println("[TX] Interrupted");
+      return;
     }
+    delay(25);
   }
   adv->stop();
   Serial.println("[TX] Done");
 }
 
 void broadcastPayload(const uint8_t* payload, size_t plen, uint32_t durationMs = 4000) {
-  broadcastMfr(payload, plen, durationMs, 200);
+  broadcastMfr(payload, plen, durationMs);
+}
+
+// CC03 wake ping primes band receivers (Adafruit uses this before some show fx)
+void broadcastMbPayload(const uint8_t* payload, size_t plen, uint32_t durationMs = 4000) {
+  uint8_t ping[8];
+  size_t pn = buildPing(ping);
+  broadcastMfr(ping, pn, 600);
+  broadcastMfr(payload, plen, durationMs);
 }
 
 // ── High-level broadcasts ───────────────────────────────────────────────────
@@ -230,25 +261,25 @@ void broadcastLegacyCast(uint8_t palette) {
 void broadcastMbSingle(uint8_t palette, uint8_t mask = 0) {
   uint8_t payload[16];
   size_t n = buildMbSingle(payload, palette, mask);
-  broadcastPayload(payload, n, 4000);
+  broadcastMbPayload(payload, n, 4000);
 }
 
 void broadcastMbDual(uint8_t inner, uint8_t outer) {
   uint8_t payload[16];
   size_t n = buildMbDual(payload, inner, outer);
-  broadcastPayload(payload, n, 4000);
+  broadcastMbPayload(payload, n, 4000);
 }
 
 void broadcastMbRgb(uint8_t r, uint8_t g, uint8_t b) {
   uint8_t payload[16];
   size_t n = buildMbRgb(payload, r, g, b);
-  broadcastPayload(payload, n, 4000);
+  broadcastMbPayload(payload, n, 4000);
 }
 
 void broadcastMbFive(uint8_t tl, uint8_t bl, uint8_t br, uint8_t tr, uint8_t c) {
   uint8_t payload[16];
   size_t n = buildMbFive(payload, tl, bl, br, tr, c);
-  broadcastPayload(payload, n, 4000);
+  broadcastMbPayload(payload, n, 4000);
 }
 
 void broadcastMbRainbowFive() {
@@ -289,7 +320,7 @@ void broadcastSwPattern(uint8_t palette, uint8_t patternNibble) {
   uint8_t payload[16];
   size_t n = buildMbFiveUniform(payload, palette, patternNibble);
   Serial.printf("[SW] pattern=%u palette=%u (E909)\n", patternNibble, palette);
-  broadcastPayload(payload, n, 4000);
+  broadcastMbPayload(payload, n, 4000);
 }
 
 // Wand-to-wand color cast + optional follow-up animation on same color
@@ -634,20 +665,22 @@ void serviceLoops() {
       broadcastMbSingle(loopPalette);
       loopNextMs = now + 3000;
       break;
-    case LOOP_MB_SWEEP: {
-      Serial.printf("[WandSim] Sweep palette %u\n", mbSweepIdx);
-      broadcastMbSingle(mbSweepIdx);
-      mbSweepIdx = (uint8_t)((mbSweepIdx + 1) & 0x1F);
-      loopNextMs = now + 3000;
-      break;
-    }
-    case LOOP_SW_FX: {
-      const HexPreset& fx = SW_FX_PRESETS[swFxLoopIdx % SW_FX_PRESET_COUNT];
-      broadcastHexPreset(fx);
-      swFxLoopIdx = (uint8_t)((swFxLoopIdx + 1) % SW_FX_PRESET_COUNT);
-      loopNextMs = now + 4000;
-      break;
-    }
+    case LOOP_MB_SWEEP:
+      {
+        Serial.printf("[WandSim] Sweep palette %u\n", mbSweepIdx);
+        broadcastMbSingle(mbSweepIdx);
+        mbSweepIdx = (uint8_t)((mbSweepIdx + 1) & 0x1F);
+        loopNextMs = now + 3000;
+        break;
+      }
+    case LOOP_SW_FX:
+      {
+        const HexPreset& fx = SW_FX_PRESETS[swFxLoopIdx % SW_FX_PRESET_COUNT];
+        broadcastHexPreset(fx);
+        swFxLoopIdx = (uint8_t)((swFxLoopIdx + 1) % SW_FX_PRESET_COUNT);
+        loopNextMs = now + 4000;
+        break;
+      }
     default:
       break;
   }
@@ -662,9 +695,10 @@ void setup() {
   Serial.println("[WandSim] Starlight wand + MagicBand+ BLE broadcaster");
   Serial.println("[WandSim] Adafruit magicband_protocol.py packet builders");
   NimBLEDevice::init("WandSim");
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
   adv = NimBLEDevice::getAdvertising();
-  adv->setMinInterval(32);
-  adv->setMaxInterval(64);
+  adv->setMinInterval(0x20);  // 20ms — match Adafruit ~25ms interval
+  adv->setMaxInterval(0x30);
   printHelp();
 }
 
