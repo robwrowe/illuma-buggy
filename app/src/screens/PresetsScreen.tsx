@@ -19,7 +19,7 @@ import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
 
 import { useBLE } from '../hooks/useBLE';
-import { useAppStore, Preset, buildRecallPayload } from '../stores/store';
+import { useAppStore, Preset, buildRecallPayload, summarizeLayout } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { generateId } from '../utils/utils';
 import { useTheme } from '../utils/theme';
@@ -28,7 +28,7 @@ export default function PresetsScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const { isConnected } = useBLE();
-  const { presets, wledEffects, wledPalettes, deviceStatus, addOrUpdatePreset, removePreset, saveToStorage } = useAppStore();
+  const { presets, wledEffects, wledPalettes, deviceStatus, customSegmentLayouts, addOrUpdatePreset, removePreset, saveToStorage } = useAppStore();
   const [syncing, setSyncing]       = useState(false);
   const [editingPreset, setEditingPreset] = useState<Preset | null>(null);
   const [showEdit, setShowEdit]     = useState(false);
@@ -94,6 +94,11 @@ export default function PresetsScreen() {
           <View style={s.presetMeta}>
             {item.wled.fxName && <Text style={s.metaTag}>{item.wled.fxName}</Text>}
             {item.wled.palName && <Text style={s.metaTag}>{item.wled.palName}</Text>}
+            {item.segmentLayoutId && (
+              <Text style={s.metaTag}>
+                {customSegmentLayouts.find(l => l.id === item.segmentLayoutId)?.name ?? 'Layout'}
+              </Text>
+            )}
             {isActive && (
               <View style={s.activePill}>
                 <IconCheck size={10} color={colors.primary} />
@@ -150,6 +155,7 @@ export default function PresetsScreen() {
                 preset={editingPreset}
                 effects={wledEffects}
                 palettes={wledPalettes}
+                segmentLayouts={customSegmentLayouts}
                 colors={colors}
                 onChange={setEditingPreset}
                 onSave={saveEdit}
@@ -167,17 +173,22 @@ export default function PresetsScreen() {
 // Edit Panel
 // ─────────────────────────────────────────────
 
-function EditPresetPanel({ preset, effects, palettes, colors, onChange, onSave, onCancel }: {
+function EditPresetPanel({ preset, effects, palettes, segmentLayouts, colors, onChange, onSave, onCancel }: {
   preset: Preset;
   effects: ReturnType<typeof useAppStore>['wledEffects'] extends (infer T)[] ? T[] : never[];
   palettes: ReturnType<typeof useAppStore>['wledPalettes'] extends (infer T)[] ? T[] : never[];
+  segmentLayouts: ReturnType<typeof useAppStore>['customSegmentLayouts'];
   colors: ReturnType<typeof import('../utils/theme').useTheme>['colors'];
   onChange: (p: Preset) => void;
   onSave: () => void;
   onCancel: () => void;
 }) {
-  const [tab, setTab] = useState<'effect' | 'palette' | 'memory'>('effect');
+  const [tab, setTab] = useState<'effect' | 'palette' | 'segments' | 'memory'>('effect');
   const s = editStyles(colors);
+
+  const linkedLayout = preset.segmentLayoutId
+    ? segmentLayouts.find(l => l.id === preset.segmentLayoutId)
+    : undefined;
 
   const update = (key: string, val: unknown) =>
     onChange({ ...preset, wled: { ...preset.wled, [key]: val } });
@@ -199,7 +210,7 @@ function EditPresetPanel({ preset, effects, palettes, colors, onChange, onSave, 
 
       {/* Tab bar */}
       <View style={s.tabs}>
-        {(['effect', 'palette', 'memory'] as const).map(t => (
+        {(['effect', 'palette', 'segments', 'memory'] as const).map(t => (
           <TouchableOpacity key={t} style={[s.tab, tab === t && { borderBottomColor: colors.primary }]} onPress={() => setTab(t)}>
             <Text style={[s.tabText, tab === t && { color: colors.primary }]}>{t.charAt(0).toUpperCase() + t.slice(1)}</Text>
           </TouchableOpacity>
@@ -249,6 +260,50 @@ function EditPresetPanel({ preset, effects, palettes, colors, onChange, onSave, 
               </TouchableOpacity>
             ))}
           </ScrollView>
+        </View>
+      )}
+
+      {tab === 'segments' && (
+        <View style={s.section}>
+          <Text style={s.hint}>Linked layout is applied when recall includes segments (Settings → Recall State).</Text>
+          <TouchableOpacity
+            style={[s.pickerItem, !preset.segmentLayoutId && { backgroundColor: colors.primaryDim }]}
+            onPress={() => onChange({ ...preset, segmentLayoutId: undefined })}
+          >
+            <Text style={s.pickerText}>None (single segment / inline only)</Text>
+            {!preset.segmentLayoutId && <IconCheck size={12} color={colors.primary} />}
+          </TouchableOpacity>
+          <ScrollView style={s.picker} nestedScrollEnabled>
+            {segmentLayouts.length === 0 && (
+              <Text style={[s.hint, { padding: 12 }]}>Create layouts in Palettes → Segments</Text>
+            )}
+            {segmentLayouts.map(layout => (
+              <TouchableOpacity
+                key={layout.id}
+                style={[s.pickerItem, preset.segmentLayoutId === layout.id && { backgroundColor: colors.primaryDim }]}
+                onPress={() => onChange({
+                  ...preset,
+                  segmentLayoutId: layout.id,
+                  memory: { ...preset.memory, segments: true },
+                })}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.pickerText, preset.segmentLayoutId === layout.id && { color: colors.primary }]}>
+                    {layout.name}
+                  </Text>
+                  <Text style={s.hint}>{summarizeLayout(layout)}</Text>
+                </View>
+                {preset.segmentLayoutId === layout.id && <IconCheck size={12} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          {linkedLayout && (
+            <View style={{ marginTop: 8 }}>
+              <Text style={s.label}>Remember segments</Text>
+              <Switch value={preset.memory.segments} onValueChange={v => updateMemory('segments', v)}
+                trackColor={{ false: colors.borderFocus, true: colors.primary }} />
+            </View>
+          )}
         </View>
       )}
 

@@ -139,6 +139,9 @@ class BLEService {
   sendGetPalettes()                                       { return this.send({ type: 'wled_get_palettes' }); }
   sendGetFxData()                                         { return this.send({ type: 'wled_get_fxdata' }); }
   sendGetState()                                          { return this.send({ type: 'wled_get_state' }); }
+  sendBleEffectConfig(transitionMs: number) {
+    return this.send({ type: 'ble_effect_config', transition_ms: transitionMs });
+  }
   sendMbConfig(enabled: boolean, fivePoint: boolean, timeoutMs?: number) {
     const msg: BLEMessage = { type: 'mb_config', enabled, five_point: fivePoint };
     if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;

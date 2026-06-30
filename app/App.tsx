@@ -185,6 +185,7 @@ export default function App() {
       const s = useAppStore.getState();
       await bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
       await bleService.sendMbConfig(s.magicBandEnabled, s.magicBandFivePoint, s.magicBandTimeoutSec * 1000);
+      await bleService.sendBleEffectConfig(s.bleEffectTransitionMs);
       await bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
       await new Promise(r => setTimeout(r, 400));
       await bleService.sendPresetList();

@@ -16,7 +16,7 @@ import IconCheck from '@tabler/icons-react-native/dist/esm/icons/IconCheck';
 import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 
 import { useTheme } from '../utils/theme';
-import { useAppStore, WledEffect, WledPalette, Preset, PresetMemory, buildRecallPayload } from '../stores/store';
+import { useAppStore, WledEffect, WledPalette, Preset, PresetMemory, buildRecallPayload, fetchWledSegmentsFromDevice } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { generateId } from '../utils/utils';
 
@@ -135,9 +135,17 @@ export default function LibraryScreen() {
     });
   };
 
-  const savePreset = () => {
+  const savePreset = async () => {
     if (!presetName.trim()) return;
     const id = generateId();
+    let capturedSeg: object[] | undefined;
+    if (memory.segments && isConnected) {
+      try {
+        capturedSeg = await fetchWledSegmentsFromDevice();
+      } catch {
+        Alert.alert('Segments', 'Could not capture WLED segments — saved without layout.');
+      }
+    }
     const preset: Preset = {
       id,
       name: presetName.trim(),
@@ -152,6 +160,7 @@ export default function LibraryScreen() {
         sx: speed,
         ix: intensity,
         c1, c2, c3, o1, o2, o3,
+        ...(capturedSeg?.length ? { seg: capturedSeg } : {}),
       },
     };
     bleService.sendPresetSave(id, preset.name, preset.wled);

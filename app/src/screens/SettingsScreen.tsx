@@ -34,6 +34,7 @@ export default function SettingsScreen() {
     magicBandEnabled, setMagicBandEnabled,
     magicBandFivePoint, setMagicBandFivePoint,
     magicBandTimeoutSec, setMagicBandTimeoutSec,
+    bleEffectTransitionMs, setBleEffectTransitionMs,
     brightnessConfig, setBrightnessConfig,
     recallState, setRecallState,
     saveToStorage, exportData, importData,
@@ -55,6 +56,10 @@ export default function SettingsScreen() {
     timeoutSec = magicBandTimeoutSec,
   ) => {
     if (isConnected) bleService.sendMbConfig(enabled, fivePoint, timeoutSec * 1000);
+  };
+
+  const pushBleEffectConfig = (transitionMs = bleEffectTransitionMs) => {
+    if (isConnected) bleService.sendBleEffectConfig(transitionMs);
   };
 
   const updateStarlightEnabled = (val: boolean) => {
@@ -242,6 +247,25 @@ export default function SettingsScreen() {
             value={String(magicBandTimeoutSec)}
             onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setMagicBandTimeoutSec(n); }}
             onEndEditing={() => { pushMbConfig(); saveToStorage(); }}
+            keyboardType="number-pad"
+            selectTextOnFocus
+          />
+        </View>
+      </View>
+
+      {/* MB / Wand transition */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Effect Transitions</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Fade duration (ms)</Text>
+            <Text style={s.rowHint}>Crossfade when MB+ or wand effects start and end. 0 = instant (hard cut).</Text>
+          </View>
+          <TextInput
+            style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
+            value={String(bleEffectTransitionMs)}
+            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n) && n >= 0) setBleEffectTransitionMs(n); }}
+            onEndEditing={() => { pushBleEffectConfig(); saveToStorage(); }}
             keyboardType="number-pad"
             selectTextOnFocus
           />

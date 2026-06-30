@@ -72,6 +72,8 @@ export interface Preset {
   name:      string;
   wled:      PresetWled;
   memory:    PresetMemory;
+  /** Saved segment layout library item (used when recall includes segments). */
+  segmentLayoutId?: string;
   createdAt: number;
 }
 
@@ -120,6 +122,15 @@ import {
   BleCapturePacket, BleCaptureSession, BleCaptureDuration,
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
 } from '../utils/bleCapture';
+import {
+  CustomSegmentLayout, normalizeSegmentLayout,
+} from '../utils/segmentLayouts';
+
+export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
+export {
+  buildLayoutPayload, summarizeLayout, fetchWledSegmentsFromDevice,
+  normalizeSegmentDef, parseWledStateSegments,
+} from '../utils/segmentLayouts';
 
 export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
 export {
@@ -159,6 +170,12 @@ interface AppState {
   updatePaletteSet:  (id: string, s: Partial<PaletteSet>) => void;
   removePaletteSet:  (id: string) => void;
   setActivePaletteSet: (id: string | null) => void;
+
+  // Segment layouts (reusable WLED multi-segment configs)
+  customSegmentLayouts:      CustomSegmentLayout[];
+  addCustomSegmentLayout:    (layout: CustomSegmentLayout) => void;
+  updateCustomSegmentLayout: (id: string, layout: Partial<CustomSegmentLayout>) => void;
+  removeCustomSegmentLayout: (id: string) => void;
 
   // Recall state
   recallState:    RecallState;
@@ -202,6 +219,8 @@ interface AppState {
   setMagicBandFivePoint: (val: boolean) => void;
   magicBandTimeoutSec:   number;
   setMagicBandTimeoutSec:(val: number) => void;
+  bleEffectTransitionMs: number;
+  setBleEffectTransitionMs:(val: number) => void;
   mbMapping:             MbMappingConfig;
   setMbMapping:          (config: MbMappingConfig) => void;
   updateMbMapping:       (patch: Partial<MbMappingConfig>) => void;
@@ -261,6 +280,7 @@ export function normalizePreset(p: Partial<Preset> & { id: string; name: string 
     name:      p.name,
     wled:      p.wled ?? { on: true },
     memory:    p.memory ?? DEFAULT_PRESET_MEMORY,
+    segmentLayoutId: p.segmentLayoutId,
     createdAt: p.createdAt ?? Date.now(),
   };
 }
@@ -277,6 +297,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   customPalettes:      [],
   paletteSets:         [],
   activePaletteSetId:  null,
+  customSegmentLayouts: [],
   recallState:         DEFAULT_RECALL,
   zones:               [],
   indoorZones:         [],
@@ -289,6 +310,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   magicBandEnabled:    true,
   magicBandFivePoint:  true,
   magicBandTimeoutSec: 15,
+  bleEffectTransitionMs: 700,
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
   brightnessConfig:    DEFAULT_BRIGHTNESS,
@@ -326,6 +348,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   removePaletteSet: (id)    => set(s => ({ paletteSets: s.paletteSets.filter(ps => ps.id !== id) })),
   setActivePaletteSet: (id) => set({ activePaletteSetId: id }),
 
+  addCustomSegmentLayout: (layout) => set(s => ({
+    customSegmentLayouts: [...s.customSegmentLayouts, layout],
+  })),
+  updateCustomSegmentLayout: (id, patch) => set(s => ({
+    customSegmentLayouts: s.customSegmentLayouts.map(l => l.id === id ? { ...l, ...patch } : l),
+  })),
+  removeCustomSegmentLayout: (id) => set(s => ({
+    customSegmentLayouts: s.customSegmentLayouts.filter(l => l.id !== id),
+    presets: s.presets.map(p => p.segmentLayoutId === id ? { ...p, segmentLayoutId: undefined } : p),
+  })),
+
   // Recall
   setRecallState: (partial) => set(s => ({ recallState: { ...s.recallState, ...partial } })),
 
@@ -351,6 +384,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
   setMagicBandFivePoint: (val)          => set({ magicBandFivePoint: val }),
   setMagicBandTimeoutSec:(val)          => set({ magicBandTimeoutSec: val }),
+  setBleEffectTransitionMs:(val)        => set({ bleEffectTransitionMs: val }),
   setMbMapping:          (mbMapping)   => set({ mbMapping: normalizeMbMapping(mbMapping) }),
   updateMbMapping:       (patch)       => set(s => ({ mbMapping: normalizeMbMapping({ ...s.mbMapping, ...patch }) })),
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
@@ -434,9 +468,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
-                    'magicBandFivePoint','magicBandTimeoutSec','mbMapping',
+                    'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','paletteSets','activePaletteSetId',
+                    'customSegmentLayouts',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
@@ -452,11 +487,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         magicBandEnabled:   d.magicBandEnabled   ?? true,
         magicBandFivePoint: d.magicBandFivePoint ?? true,
         magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
+        bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
         mbMapping:          normalizeMbMapping(d.mbMapping),
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     d.customPalettes     ?? [],
         paletteSets:        d.paletteSets        ?? [],
         activePaletteSetId: d.activePaletteSetId ?? null,
+        customSegmentLayouts: (d.customSegmentLayouts ?? [])
+          .map((l: CustomSegmentLayout) => normalizeSegmentLayout(l))
+          .filter(Boolean) as CustomSegmentLayout[],
         wledEffects:        d.wledEffects        ?? [],
         wledPalettes:       d.wledPalettes       ?? [],
         wledFxData:         d.wledFxData         ?? [],
@@ -481,11 +520,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
         ['magicBandFivePoint', JSON.stringify(s.magicBandFivePoint)],
         ['magicBandTimeoutSec',JSON.stringify(s.magicBandTimeoutSec)],
+        ['bleEffectTransitionMs', JSON.stringify(s.bleEffectTransitionMs)],
         ['mbMapping',          JSON.stringify(s.mbMapping)],
         ['recallState',        JSON.stringify(s.recallState)],
         ['customPalettes',     JSON.stringify(s.customPalettes)],
         ['paletteSets',        JSON.stringify(s.paletteSets)],
         ['activePaletteSetId', JSON.stringify(s.activePaletteSetId)],
+        ['customSegmentLayouts', JSON.stringify(s.customSegmentLayouts)],
         ['wledEffects',        JSON.stringify(s.wledEffects)],
         ['wledPalettes',       JSON.stringify(s.wledPalettes)],
         ['wledFxData',         JSON.stringify(s.wledFxData)],
@@ -565,15 +606,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
       magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
       magicBandTimeoutSec:s.magicBandTimeoutSec,
+      bleEffectTransitionMs: s.bleEffectTransitionMs,
       mbMapping:          s.mbMapping,
       bleCaptureSessions: s.bleCaptureSessions,
       customPalettes: s.customPalettes, paletteSets: s.paletteSets,
+      customSegmentLayouts: s.customSegmentLayouts,
     };
   },
 
   importData: (data: any) => {
     set({
-      presets:            data.presets            ?? [],
+      presets:            (data.presets ?? []).map((p: Preset) => normalizePreset(p)),
       zones:              data.zones              ?? [],
       indoorZones:        data.indoorZones        ?? [],
       brightnessConfig:   data.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
@@ -584,12 +627,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandEnabled:   data.magicBandEnabled   ?? true,
       magicBandFivePoint: data.magicBandFivePoint ?? true,
       magicBandTimeoutSec:data.magicBandTimeoutSec ?? 15,
+      bleEffectTransitionMs: data.bleEffectTransitionMs ?? 700,
       mbMapping:          normalizeMbMapping(data.mbMapping),
       bleCaptureSessions: data.bleCaptureSessions ?? [],
       bleCaptureDurationSec: data.bleCaptureDurationSec ?? 900,
       bleCaptureDraftName:   data.bleCaptureDraftName   ?? 'Parade capture',
       customPalettes:     data.customPalettes     ?? [],
       paletteSets:        data.paletteSets        ?? [],
+      customSegmentLayouts: (data.customSegmentLayouts ?? [])
+        .map((l: CustomSegmentLayout) => normalizeSegmentLayout(l))
+        .filter(Boolean) as CustomSegmentLayout[],
     });
     get().saveToStorage();
   },
@@ -616,21 +663,42 @@ export function buildRecallPayload(preset: Preset, recall: RecallState | undefin
     return memVal;
   };
 
-  if (should('effect', m.effect) && w.fx !== undefined)   { payload.seg = payload.seg ?? [{}]; payload.seg[0].fx = w.fx; }
-  if (should('palette', m.palette) && w.pal !== undefined) { payload.seg = payload.seg ?? [{}]; payload.seg[0].pal = w.pal; }
+  if (should('segments', m.segments)) {
+    const layouts = useAppStore.getState().customSegmentLayouts;
+    const linked = preset.segmentLayoutId
+      ? layouts.find(l => l.id === preset.segmentLayoutId)
+      : undefined;
+    if (linked?.segments.length) {
+      payload.seg = linked.segments.map(seg => ({ ...seg }));
+    } else if (w.seg !== undefined) {
+      payload.seg = w.seg;
+    }
+  }
+
+  if (should('effect', m.effect) && w.fx !== undefined) {
+    payload.seg = payload.seg ?? [{}];
+    payload.seg[0] = { ...payload.seg[0], fx: w.fx };
+  }
+  if (should('palette', m.palette) && w.pal !== undefined) {
+    payload.seg = payload.seg ?? [{}];
+    payload.seg[0] = { ...payload.seg[0], pal: w.pal };
+  }
   if (should('parameters', m.parameters)) {
     payload.seg = payload.seg ?? [{}];
-    if (w.sx !== undefined) payload.seg[0].sx = w.sx;
-    if (w.ix !== undefined) payload.seg[0].ix = w.ix;
-    if (w.c1 !== undefined) payload.seg[0].c1 = w.c1;
-    if (w.c2 !== undefined) payload.seg[0].c2 = w.c2;
-    if (w.c3 !== undefined) payload.seg[0].c3 = w.c3;
-    if (w.o1 !== undefined) payload.seg[0].o1 = w.o1;
-    if (w.o2 !== undefined) payload.seg[0].o2 = w.o2;
-    if (w.o3 !== undefined) payload.seg[0].o3 = w.o3;
+    const s0 = payload.seg[0];
+    if (w.sx !== undefined) s0.sx = w.sx;
+    if (w.ix !== undefined) s0.ix = w.ix;
+    if (w.c1 !== undefined) s0.c1 = w.c1;
+    if (w.c2 !== undefined) s0.c2 = w.c2;
+    if (w.c3 !== undefined) s0.c3 = w.c3;
+    if (w.o1 !== undefined) s0.o1 = w.o1;
+    if (w.o2 !== undefined) s0.o2 = w.o2;
+    if (w.o3 !== undefined) s0.o3 = w.o3;
   }
-  if (should('color', m.color) && w.col !== undefined)       { payload.seg = payload.seg ?? [{}]; payload.seg[0].col = w.col; }
-  if (should('segments', m.segments) && w.seg !== undefined) { payload.seg = w.seg; }
+  if (should('color', m.color) && w.col !== undefined) {
+    payload.seg = payload.seg ?? [{}];
+    payload.seg[0] = { ...payload.seg[0], col: w.col };
+  }
 
   return payload;
 }

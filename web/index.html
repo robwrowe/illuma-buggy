@@ -45,7 +45,7 @@ if (window.MAPS_KEY) window.loadGoogleMaps();
 </script>
 
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 // ── Utilities ──────────────────────────────────────────────────────
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
@@ -61,6 +61,50 @@ function rgbToHex(r, g, b) {
   return '#' + [r, g, b].map(x => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0')).join('');
 }
 
+function normalizeHex(hex) {
+  if (!hex) return null;
+  const h = hex.startsWith('#') ? hex : `#${hex}`;
+  return /^#[0-9a-fA-F]{6}$/.test(h) ? h.toLowerCase() : null;
+}
+
+function hexToRgbTriplet(hex) {
+  const rgb = hexToRgb(normalizeHex(hex) || '#000000');
+  return [rgb.r, rgb.g, rgb.b];
+}
+
+function rgbTripletToHex(rgb) {
+  if (!Array.isArray(rgb) || rgb.length < 3) return '#000000';
+  return rgbToHex(rgb[0], rgb[1], rgb[2]);
+}
+
+function wledColToHexList(col) {
+  if (!col || !col.length) return [];
+  if (typeof col[0] === 'number') return [rgbTripletToHex(col)];
+  return col.map(rgbTripletToHex);
+}
+
+function hexListToWledCol(hexes) {
+  const valid = (hexes || []).map(h => normalizeHex(h)).filter(Boolean);
+  if (!valid.length) return undefined;
+  return valid.map(h => hexToRgbTriplet(h));
+}
+
+function saveColorToLibrary(data, update, hex) {
+  const h = normalizeHex(hex);
+  if (!h) return;
+  if ((data.savedColors || []).some(c => c.hex.toLowerCase() === h)) {
+    alert('That color is already in your library.');
+    return;
+  }
+  const name = prompt('Name for this color:', h);
+  if (name === null) return;
+  update({
+    savedColors: [...(data.savedColors || []), { id: generateId(), name: (name.trim() || h), hex: h }],
+  });
+}
+
+const MAX_EFFECT_COLORS = 3;
+
 const ZONE_COLORS = ['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316','#ec4899','#14b8a6'];
 const PRESET_COLORS = [
   '#ff0000','#ff4400','#ff8800','#ffcc00','#ffff00','#aaff00','#00ff00','#00ff88',
@@ -72,8 +116,8 @@ const DEFAULT_DATA = {
   version:'2.2', presets:[], zones:[], indoorZones:[],
   brightnessConfig:{daytime:200,nighttime:80,indoor:120,transitionMinutes:30,solarThresholdDeg:6},
   recallState:{effect:'always',palette:'always',parameters:'memory',color:'memory',segments:'never'},
-  overrideKillOnZone:false, magicBandFivePoint:true,
-  customPalettes:[], paletteSets:[],
+  overrideKillOnZone:false, magicBandFivePoint:true, bleEffectTransitionMs:700,
+  customPalettes:[], paletteSets:[], customSegmentLayouts:[], savedColors:[],
   mbMapping: null, // filled by normalizeMbMapping on load
 };
 
@@ -209,6 +253,366 @@ async function postWledState(ip, payload) {
   if (!res.ok) throw new Error('WLED rejected request');
 }
 
+function normalizeSegmentDef(raw) {
+  const start = Number(raw.start ?? 0);
+  const stop = Number(raw.stop ?? 0);
+  if (stop <= start) return null;
+  const seg = { id: Number(raw.id ?? 0), start, stop };
+  ['fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col'].forEach(k => {
+    if (raw[k] !== undefined && raw[k] !== null) seg[k] = raw[k];
+  });
+  return seg;
+}
+
+function parseWledStateSegments(state) {
+  const segList = state?.seg ?? state?.state?.seg;
+  if (!Array.isArray(segList)) return [];
+  return segList.map(normalizeSegmentDef).filter(Boolean);
+}
+
+function summarizeLayout(layout) {
+  if (!layout?.segments?.length) return 'No segments';
+  return layout.segments.map(s => `#${s.id} ${s.start}–${s.stop}%`).join(' · ');
+}
+
+function buildLayoutPayload(layout) {
+  return finalizeWledSegmentPayload({ on: true, bri: 255, seg: layout.segments.map(s => ({ ...s })) });
+}
+
+async function fetchWledSegmentsFromIp(ip) {
+  const host = ip.trim();
+  if (!host) throw new Error('Enter a WLED IP');
+  const res = await fetch(`http://${host}/json/state`);
+  if (!res.ok) throw new Error('Could not read WLED state');
+  const state = await res.json();
+  const segments = parseWledStateSegments(state);
+  if (!segments.length) throw new Error('No active segments in WLED state');
+  return segments;
+}
+
+const WLED_EFFECTS_CACHE_KEY = 'wled-effects-cache';
+const WLED_PALETTES_CACHE_KEY = 'wled-palettes-cache';
+
+function loadCachedWledCatalog() {
+  try {
+    return {
+      effects: JSON.parse(localStorage.getItem(WLED_EFFECTS_CACHE_KEY) || '[]'),
+      palettes: JSON.parse(localStorage.getItem(WLED_PALETTES_CACHE_KEY) || '[]'),
+    };
+  } catch {
+    return { effects: [], palettes: [] };
+  }
+}
+
+async function fetchWledCatalog(ip) {
+  const host = ip.trim();
+  const [effRes, palRes] = await Promise.all([
+    fetch(`http://${host}/json/eff`),
+    fetch(`http://${host}/json/pal`),
+  ]);
+  if (!effRes.ok || !palRes.ok) throw new Error('Bad response');
+  const effs = await effRes.json();
+  const pals = await palRes.json();
+  const effects = effs.map((name, id) => ({ id, name })).filter(e => e.name !== 'RSVD' && e.name !== '-');
+  const palettes = pals.map((name, id) => ({ id, name }));
+  localStorage.setItem(WLED_EFFECTS_CACHE_KEY, JSON.stringify(effects));
+  localStorage.setItem(WLED_PALETTES_CACHE_KEY, JSON.stringify(palettes));
+  return { effects, palettes };
+}
+
+function normalizePolygonPoint(p) {
+  if (!p || typeof p !== 'object') return null;
+  if (typeof p.lat === 'number' && typeof p.lng === 'number') return { lat: p.lat, lng: p.lng };
+  if (typeof p.latitude === 'number' && typeof p.longitude === 'number') {
+    return { lat: p.latitude, lng: p.longitude };
+  }
+  return null;
+}
+
+function normalizePolygon(polygon) {
+  return (polygon || []).map(normalizePolygonPoint).filter(Boolean);
+}
+
+function normalizeZoneRecord(zone) {
+  if (!zone) return zone;
+  return { ...zone, polygon: normalizePolygon(zone.polygon) };
+}
+
+function focusMapOnPolygon(mapRef, polygon, padding = 56) {
+  if (!mapRef?.current || !window.google?.maps) return;
+  const pts = normalizePolygon(polygon);
+  if (pts.length < 1) return;
+  const bounds = new google.maps.LatLngBounds();
+  pts.forEach(p => bounds.extend(p));
+  if (pts.length === 1) {
+    mapRef.current.setCenter(pts[0]);
+    mapRef.current.setZoom(17);
+    return;
+  }
+  mapRef.current.fitBounds(bounds, padding);
+}
+
+function presetSelectOptions(presets) {
+  const list = presets || [];
+  const local = list.filter(p => p.wledSlot == null);
+  const wled = list.filter(p => p.wledSlot != null);
+  const toOpt = p => ({
+    value: p.id,
+    label: p.wledSlot != null ? `${p.name} (WLED #${p.wledSlot})` : p.name,
+    searchText: `${p.name} ${p.wledSlot ?? ''} ${p.wled?.fxName || ''} ${p.wled?.palName || ''}`,
+  });
+  const options = [];
+  local.forEach(p => options.push({ ...toOpt(p), group: 'Config presets' }));
+  wled.forEach(p => options.push({ ...toOpt(p), group: 'Imported from WLED' }));
+  return options;
+}
+
+function isWledPresetEntryEmpty(entry) {
+  if (!entry || typeof entry !== 'object') return true;
+  if (entry.n) return false;
+  if (entry.seg) return false;
+  if (entry.on !== undefined) return false;
+  if (entry.bri !== undefined) return false;
+  if (entry.cmd) return false;
+  return true;
+}
+
+function parseWledPresetPayload(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  if (entry.seg || entry.fx !== undefined || entry.on !== undefined || entry.bri !== undefined) return entry;
+  if (typeof entry.cmd === 'string') {
+    const trimmed = entry.cmd.trim();
+    if (trimmed.startsWith('{')) {
+      try { return JSON.parse(trimmed); } catch { return null; }
+    }
+  }
+  return entry;
+}
+
+function wledPresetEntryToIlluma(slot, entry, effects, palettes) {
+  const payload = parseWledPresetPayload(entry);
+  if (!payload) return null;
+  const segs = Array.isArray(payload.seg) ? payload.seg : (payload.seg ? [payload.seg] : []);
+  const seg0 = segs[0] || {};
+  const slotNum = parseInt(slot, 10);
+  const id = `wled-preset-${slot}`;
+  const name = entry.n || payload.n || `WLED Preset ${slot}`;
+  return {
+    id,
+    name,
+    wledSlot: slotNum,
+    createdAt: Date.now(),
+    wled: {
+      on: payload.on !== false,
+      bri: payload.bri,
+      fx: seg0.fx,
+      fxName: effects?.find(e => e.id === seg0.fx)?.name || '',
+      pal: seg0.pal,
+      palName: palettes?.find(p => p.id === seg0.pal)?.name || '',
+      sx: seg0.sx,
+      ix: seg0.ix,
+      c1: seg0.c1,
+      c2: seg0.c2,
+      c3: seg0.c3,
+      o1: seg0.o1,
+      o2: seg0.o2,
+      o3: seg0.o3,
+      col: seg0.col,
+      seg: segs.length ? segs : undefined,
+    },
+    memory: { ...DEFAULT_PRESET_MEMORY },
+  };
+}
+
+async function fetchWledPresetsFile(ip) {
+  const host = ip.trim();
+  const res = await fetch(`http://${host}/presets.json`);
+  if (!res.ok) throw new Error('Could not read presets.json from WLED');
+  return res.json();
+}
+
+function mergeWledPresetsIntoList(existingPresets, wledPresetsRaw, effects, palettes) {
+  const byId = new Map((existingPresets || []).map(p => [p.id, p]));
+  let added = 0;
+  let updated = 0;
+  Object.entries(wledPresetsRaw || {}).forEach(([slot, entry]) => {
+    if (isWledPresetEntryEmpty(entry)) return;
+    const preset = wledPresetEntryToIlluma(slot, entry, effects, palettes);
+    if (!preset) return;
+    if (byId.has(preset.id)) updated += 1;
+    else added += 1;
+    byId.set(preset.id, preset);
+  });
+  return { presets: [...byId.values()], added, updated };
+}
+
+function paletteSelectValue(wled, customPalettes) {
+  if (wled.pal === undefined || wled.pal === null || wled.pal === '') return '';
+  const ci = (customPalettes || []).findIndex((p, i) => 255 - i === wled.pal);
+  if (ci >= 0 && (!wled.palName || customPalettes[ci].name === wled.palName)) {
+    return `custom:${customPalettes[ci].id}`;
+  }
+  return `wled:${wled.pal}`;
+}
+
+const DEFAULT_PRESET_MEMORY = { effect: true, palette: true, parameters: true, color: false, segments: false };
+
+function buildWledCustomPalette(palette) {
+  return palette.colors.map((hex, i) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const pos = Math.round((i / Math.max(palette.colors.length - 1, 1)) * 255);
+    return [pos, r, g, b];
+  });
+}
+
+function buildRecallPayload(preset, recall, customSegmentLayouts) {
+  const r = recall || DEFAULT_DATA.recallState;
+  const w = preset.wled || { on: true };
+  const m = preset.memory || DEFAULT_PRESET_MEMORY;
+  const payload = { on: true, bri: 255 };
+
+  const should = (prop, memVal) => {
+    if (r[prop] === 'always') return true;
+    if (r[prop] === 'never') return false;
+    return memVal;
+  };
+
+  if (should('segments', m.segments)) {
+    const linked = preset.segmentLayoutId
+      ? (customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId)
+      : undefined;
+    if (linked?.segments?.length) {
+      payload.seg = linked.segments.map(seg => ({ ...seg }));
+    } else if (w.seg !== undefined) {
+      payload.seg = w.seg;
+    }
+  }
+  if (should('effect', m.effect) && w.fx !== undefined) {
+    payload.seg = payload.seg ?? [{}];
+    payload.seg[0] = { ...payload.seg[0], fx: w.fx };
+  }
+  if (should('palette', m.palette) && w.pal !== undefined) {
+    payload.seg = payload.seg ?? [{}];
+    payload.seg[0] = { ...payload.seg[0], pal: w.pal };
+  }
+  if (should('parameters', m.parameters)) {
+    payload.seg = payload.seg ?? [{}];
+    const s0 = payload.seg[0];
+    if (w.sx !== undefined) s0.sx = w.sx;
+    if (w.ix !== undefined) s0.ix = w.ix;
+    if (w.c1 !== undefined) s0.c1 = w.c1;
+    if (w.c2 !== undefined) s0.c2 = w.c2;
+    if (w.c3 !== undefined) s0.c3 = w.c3;
+    if (w.o1 !== undefined) s0.o1 = w.o1;
+    if (w.o2 !== undefined) s0.o2 = w.o2;
+    if (w.o3 !== undefined) s0.o3 = w.o3;
+  }
+  if (should('color', m.color) && w.col !== undefined) {
+    payload.seg = payload.seg ?? [{}];
+    payload.seg[0] = { ...payload.seg[0], col: w.col };
+  }
+  return payload;
+}
+
+const WLED_MAX_SEG = 16;
+const TEST_PRESET_RECALL = { effect: 'always', palette: 'always', parameters: 'always', color: 'always', segments: 'always' };
+const TEST_PRESET_MEMORY = { effect: true, palette: true, parameters: true, color: true, segments: true };
+
+function finalizeWledSegmentPayload(payload) {
+  const segs = payload?.seg;
+  if (!Array.isArray(segs) || !segs.length) return payload;
+  const active = segs.filter(s => Number(s.stop ?? 0) > Number(s.start ?? 0));
+  if (!active.length) return payload;
+  const activeIds = new Set(active.map(s => Number(s.id ?? 0)));
+  const merged = active.map(s => ({ ...s }));
+  if (!activeIds.has(0)) merged.push({ id: 0, stop: 0 });
+  for (let id = 1; id < WLED_MAX_SEG; id++) {
+    if (!activeIds.has(id)) merged.push({ id, stop: 0 });
+  }
+  return { ...payload, on: true, bri: payload.bri ?? 255, seg: merged };
+}
+
+function buildTestPresetPayload(preset, customSegmentLayouts) {
+  const p = { ...preset, memory: { ...TEST_PRESET_MEMORY } };
+  const base = buildRecallPayload(p, TEST_PRESET_RECALL, customSegmentLayouts);
+  const w = preset.wled || {};
+  if (base.seg?.length > 1 && (w.fx !== undefined || w.pal !== undefined)) {
+    base.seg = base.seg
+      .filter(s => Number(s.stop ?? 0) > Number(s.start ?? 0))
+      .map(s => ({
+        ...s,
+        ...(w.fx !== undefined ? { fx: w.fx } : {}),
+        ...(w.pal !== undefined ? { pal: w.pal } : {}),
+      }));
+  }
+  return finalizeWledSegmentPayload(base);
+}
+
+function presetUsesCustomPalette(preset, customPalettes) {
+  const pal = preset.wled?.pal;
+  if (pal === undefined || pal === null) return false;
+  return (customPalettes || []).some((p, i) => 255 - i === pal);
+}
+
+async function testPresetOnWled(ip, preset, data) {
+  const host = ip.trim();
+  if (!host) throw new Error('Enter a WLED IP');
+  const customPalettes = data.customPalettes || [];
+  if (customPalettes.length && presetUsesCustomPalette(preset, customPalettes)) {
+    const wledPals = {};
+    customPalettes.forEach((pal, i) => { wledPals[String(i)] = buildWledCustomPalette(pal); });
+    await postWledState(host, { on: true, bri: 255, pd: wledPals });
+  }
+  const payload = buildTestPresetPayload(preset, data.customSegmentLayouts);
+  await postWledState(host, payload);
+}
+
+function buildPaletteSelectOptions(wledPalettes, customPalettes, wled, paletteKnown) {
+  const options = [];
+  if (wled?.pal != null && wled.pal !== '' && !paletteKnown) {
+    options.push({
+      value: `wled:${wled.pal}`,
+      label: `${wled.palName || `Palette #${wled.pal}`} (saved)`,
+      group: 'Saved',
+      searchText: `${wled.palName || ''} ${wled.pal}`,
+    });
+  }
+  (customPalettes || []).forEach((cp, i) => {
+    options.push({
+      value: `custom:${cp.id}`,
+      label: `${cp.name} (#${255 - i})`,
+      group: `Custom — this config (${customPalettes.length})`,
+      searchText: `${cp.name} ${255 - i} custom`,
+    });
+  });
+  [...(wledPalettes || [])]
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    .forEach(pal => {
+      options.push({
+        value: `wled:${pal.id}`,
+        label: `#${pal.id} — ${pal.name}`,
+        group: `WLED (${wledPalettes.length})`,
+        searchText: `${pal.name} ${pal.id}`,
+      });
+    });
+  return options;
+}
+
+function SegmentBar({ segments }) {
+  if (!segments?.length) return null;
+  const colors = ['#a78bfa', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#f97316', '#ec4899', '#84cc16'];
+  return (
+    <div style={{ height: 14, borderRadius: 4, overflow: 'hidden', display: 'flex', background: '#111', border: '1px solid var(--border)' }}>
+      {segments.map((s, i) => (
+        <div key={i} title={`#${s.id} ${s.start}–${s.stop}%`}
+          style={{ flex: Math.max(1, s.stop - s.start), background: colors[s.id % colors.length], minWidth: 2 }} />
+      ))}
+    </div>
+  );
+}
+
 function normalizeMbMapping(raw) {
   const d = DEFAULT_MB_MAPPING;
   if (!raw || raw.version !== 1) return JSON.parse(JSON.stringify(d));
@@ -242,6 +646,11 @@ function normalizeMbMapping(raw) {
 function loadAppData(stored) {
   const merged = stored ? { ...DEFAULT_DATA, ...stored } : { ...DEFAULT_DATA };
   merged.mbMapping = normalizeMbMapping(merged.mbMapping);
+  merged.savedColors = (merged.savedColors || [])
+    .filter(c => c?.id && normalizeHex(c.hex))
+    .map(c => ({ id: c.id, name: c.name || c.hex, hex: normalizeHex(c.hex) }));
+  merged.zones = (merged.zones || []).map(normalizeZoneRecord);
+  merged.indoorZones = (merged.indoorZones || []).map(normalizeZoneRecord);
   return merged;
 }
 
@@ -251,8 +660,8 @@ const LS_PROFILES = 'illuma-buggy-profiles';
 // ── Shared UI ──────────────────────────────────────────────────────
 const btn = (variant, extra={}) => ({
   padding:'7px 14px', borderRadius:8, fontWeight:600, fontSize:13, cursor:'pointer',
-  background: variant==='primary' ? 'var(--primary)' : variant==='danger' ? '#ef444422' : 'var(--surface2)',
-  color: variant==='primary' ? '#fff' : variant==='danger' ? 'var(--danger)' : 'var(--text2)',
+  background: variant==='primary' ? 'var(--primary)' : variant==='success' ? 'var(--success)' : variant==='danger' ? '#ef444422' : 'var(--surface2)',
+  color: variant==='primary' || variant==='success' ? '#fff' : variant==='danger' ? 'var(--danger)' : 'var(--text2)',
   border: variant==='danger' ? '1px solid var(--danger)' : '1px solid var(--border)',
   ...extra,
 });
@@ -266,6 +675,97 @@ function Field({label,children,style={}}) {
     <label style={labelStyle}>{label}</label>
     {children}
   </div>;
+}
+
+function SearchableSelect({
+  value, onChange, options, placeholder = 'Select…', emptyLabel = 'No matches',
+  allowEmpty = true, maxListHeight = 240,
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    const onDoc = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const selected = options.find(o => o.value === value);
+  const q = filter.trim().toLowerCase();
+  const filtered = q
+    ? options.filter(o => (o.searchText || o.label).toLowerCase().includes(q))
+    : options;
+
+  const groups = {};
+  filtered.forEach(o => {
+    const g = o.group || '';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(o);
+  });
+
+  const pick = (v) => {
+    onChange(v);
+    setOpen(false);
+    setFilter('');
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <div onClick={() => setOpen(v => !v)} style={{ ...selectStyle, display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+        <span style={{
+          flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          color: selected ? 'var(--text)' : 'var(--text3)',
+        }}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <span style={{ color: 'var(--text3)', fontSize: 10, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
+      </div>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 2000, marginTop: 4,
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+          overflow: 'hidden', boxShadow: '0 8px 24px #00000066',
+        }}>
+          <div style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>
+            <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search…"
+              style={{ ...inputStyle, padding: '6px 8px', fontSize: 13 }} autoFocus
+              onClick={e => e.stopPropagation()} onKeyDown={e => e.key === 'Escape' && setOpen(false)}/>
+          </div>
+          <div style={{ maxHeight: maxListHeight, overflowY: 'auto' }}>
+            {allowEmpty && (
+              <div onClick={() => pick('')} style={{
+                padding: '8px 12px', cursor: 'pointer', fontSize: 13, color: 'var(--text3)',
+                borderBottom: '1px solid var(--border)',
+              }}>{placeholder}</div>
+            )}
+            {filtered.length === 0 && (
+              <div style={{ padding: 12, fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>{emptyLabel}</div>
+            )}
+            {Object.entries(groups).map(([group, items]) => (
+              <div key={group || '_'}>
+                {group && (
+                  <div style={{
+                    padding: '6px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text3)',
+                    textTransform: 'uppercase', background: 'var(--surface2)',
+                  }}>{group}</div>
+                )}
+                {items.map(o => (
+                  <div key={o.value} onClick={() => pick(o.value)} style={{
+                    padding: '8px 12px', cursor: 'pointer', fontSize: 13,
+                    background: value === o.value ? 'var(--primary-dim)' : 'transparent',
+                    color: value === o.value ? 'var(--primary)' : 'var(--text)',
+                  }}>{o.label}</div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SectionHead({children}) {
@@ -491,10 +991,14 @@ function MapZonesTab({data, update}) {
   const zonePoly = useRef([]);
   const pinMarkers = useRef([]);
   const previewPoly = useRef(null);
+  const editPinMarkers = useRef([]);
+  const editPreviewPoly = useRef(null);
 
   const [drawMode, setDrawMode] = useState('none');
   const [insertMode, setInsertMode] = useState(false);
   const [drawPoints, setDrawPoints] = useState([]);
+  const [editPoints, setEditPoints] = useState([]);
+  const [editInsertMode, setEditInsertMode] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState('');
   const [formPreset, setFormPreset] = useState('');
@@ -503,6 +1007,14 @@ function MapZonesTab({data, update}) {
   const [mapType, setMapType] = useState('satellite');
   const [locationSearch, setLocationSearch] = useState('');
   const [searching, setSearching] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [highlightZoneId, setHighlightZoneId] = useState(null);
+  const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
+  const [wledImportStatus, setWledImportStatus] = useState('');
+  const [wledImporting, setWledImporting] = useState(false);
+  const didFitAllRef = useRef(false);
+
+  const presetOptions = useMemo(() => presetSelectOptions(data.presets), [data.presets]);
 
   // Keep refs current to use inside Google Maps callbacks
   const drawModeRef  = useRef('none');
@@ -511,6 +1023,39 @@ function MapZonesTab({data, update}) {
   drawPtsRef.current  = drawPoints;
   const insertModeRef = useRef(false);
   insertModeRef.current = insertMode;
+  const editPtsRef = useRef([]);
+  const editInsertModeRef = useRef(false);
+  const editingActiveRef = useRef(false);
+  editPtsRef.current = editPoints;
+  editInsertModeRef.current = editInsertMode;
+  editingActiveRef.current = !!(editZone || editIndoor);
+
+  const openZoneEdit = (zone) => {
+    const paths = normalizePolygon(zone.polygon);
+    setHighlightZoneId(zone.id);
+    setEditZone({ ...zone, polygon: paths });
+    setEditIndoor(null);
+    setEditPoints(paths.map(p => ({ ...p })));
+    setEditInsertMode(false);
+    focusMapOnPolygon(gmap, paths);
+  };
+
+  const openIndoorEdit = (zone) => {
+    const paths = normalizePolygon(zone.polygon);
+    setHighlightZoneId(zone.id);
+    setEditIndoor({ ...zone, polygon: paths });
+    setEditZone(null);
+    setEditPoints(paths.map(p => ({ ...p })));
+    setEditInsertMode(false);
+    focusMapOnPolygon(gmap, paths);
+  };
+
+  const closeZoneEdit = () => {
+    setEditZone(null);
+    setEditIndoor(null);
+    setEditPoints([]);
+    setEditInsertMode(false);
+  };
 
   // Init map
   useEffect(() => {
@@ -524,8 +1069,29 @@ function MapZonesTab({data, update}) {
         mapTypeControl:false, streetViewControl:false,
         fullscreenControlOptions:{position:google.maps.ControlPosition.TOP_LEFT},
       });
+      setMapReady(true);
       gmap.current.addListener('click', e => {
         const lat = e.latLng.lat(), lng = e.latLng.lng();
+        if (editingActiveRef.current) {
+          const pts = editPtsRef.current;
+          if (editInsertModeRef.current && pts.length >= 2) {
+            let bestIdx = 0, bestDist = Infinity;
+            for (let i = 0; i < pts.length; i++) {
+              const a = pts[i], b = pts[(i + 1) % pts.length];
+              const midLat = (a.lat + b.lat) / 2, midLng = (a.lng + b.lng) / 2;
+              const d = Math.pow(lat - midLat, 2) + Math.pow(lng - midLng, 2);
+              if (d < bestDist) { bestDist = d; bestIdx = i; }
+            }
+            setEditPoints(prev => {
+              const u = [...prev];
+              u.splice(bestIdx + 1, 0, { lat, lng });
+              return u;
+            });
+          } else {
+            setEditPoints(prev => [...prev, { lat, lng }]);
+          }
+          return;
+        }
         const pts = drawPtsRef.current;
         if (drawModeRef.current === 'none') return;
         if (insertModeRef.current && pts.length >= 2) {
@@ -552,36 +1118,60 @@ function MapZonesTab({data, update}) {
 
   // Redraw zone polygons
   useEffect(() => {
-    if (!gmap.current) return;
+    if (!gmap.current || !mapReady) return;
     zonePoly.current.forEach(p => p.setMap(null));
     zonePoly.current = [];
     const COLORS = ['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316','#ec4899','#14b8a6'];
     data.zones.forEach((z,i) => {
+      if (editZone?.id === z.id) return;
+      const paths = normalizePolygon(z.polygon);
+      if (paths.length < 3) return;
       const c = COLORS[i % COLORS.length];
+      const highlighted = highlightZoneId === z.id;
       const poly = new google.maps.Polygon({
-        paths:z.polygon.map(p=>({lat:p.lat,lng:p.lng})),
-        fillColor:c, fillOpacity:0.2,
-        strokeColor:z.enabled?c:'#666', strokeWeight:2,
+        paths,
+        fillColor:c, fillOpacity: highlighted ? 0.35 : 0.2,
+        strokeColor: z.enabled ? c : '#666',
+        strokeWeight: highlighted ? 4 : 2,
         map:gmap.current,
+        zIndex: highlighted ? 2 : 1,
       });
-      poly.addListener('click', () => setEditZone({...z}));
+      poly.addListener('click', () => openZoneEdit({ ...z, polygon: paths }));
       zonePoly.current.push(poly);
     });
     data.indoorZones.forEach(z => {
+      if (editIndoor?.id === z.id) return;
+      const paths = normalizePolygon(z.polygon);
+      if (paths.length < 3) return;
+      const highlighted = highlightZoneId === z.id;
       const poly = new google.maps.Polygon({
-        paths:z.polygon.map(p=>({lat:p.lat,lng:p.lng})),
-        fillColor:'#60a5fa', fillOpacity:0.15,
-        strokeColor:z.enabled?'#60a5fa':'#666', strokeWeight:2,
+        paths,
+        fillColor:'#60a5fa', fillOpacity: highlighted ? 0.28 : 0.15,
+        strokeColor: z.enabled ? '#60a5fa' : '#666',
+        strokeWeight: highlighted ? 4 : 2,
         map:gmap.current,
+        zIndex: highlighted ? 2 : 1,
       });
-      poly.addListener('click', () => setEditIndoor({...z}));
+      poly.addListener('click', () => openIndoorEdit({ ...z, polygon: paths }));
       zonePoly.current.push(poly);
     });
-  }, [data.zones, data.indoorZones]);
+  }, [data.zones, data.indoorZones, mapReady, highlightZoneId, editZone?.id, editIndoor?.id]);
+
+  // Fit map to all zones once when map first becomes ready
+  useEffect(() => {
+    if (!mapReady || !gmap.current || didFitAllRef.current) return;
+    const all = [...data.zones, ...data.indoorZones];
+    const polys = all.map(z => normalizePolygon(z.polygon)).filter(p => p.length >= 3);
+    if (!polys.length) return;
+    const bounds = new google.maps.LatLngBounds();
+    polys.forEach(poly => poly.forEach(p => bounds.extend(p)));
+    gmap.current.fitBounds(bounds, 80);
+    didFitAllRef.current = true;
+  }, [mapReady, data.zones, data.indoorZones]);
 
   // Redraw draggable pin markers
   useEffect(() => {
-    if (!gmap.current) return;
+    if (!gmap.current || !mapReady) return;
     pinMarkers.current.forEach(m => m.setMap(null));
     pinMarkers.current = [];
     if (previewPoly.current) { previewPoly.current.setMap(null); previewPoly.current = null; }
@@ -622,30 +1212,111 @@ function MapZonesTab({data, update}) {
         map:gmap.current,
       });
     }
-  }, [drawPoints]);
+  }, [drawPoints, mapReady]);
+
+  // Draggable pins while editing an existing zone
+  useEffect(() => {
+    if (!gmap.current || !mapReady) return;
+    editPinMarkers.current.forEach(m => m.setMap(null));
+    editPinMarkers.current = [];
+    if (editPreviewPoly.current) { editPreviewPoly.current.setMap(null); editPreviewPoly.current = null; }
+    if (!editZone && !editIndoor) return;
+
+    const stroke = editZone ? '#a78bfa' : '#60a5fa';
+    editPoints.forEach((pt, i) => {
+      const m = new google.maps.Marker({
+        position: { lat: pt.lat, lng: pt.lng },
+        map: gmap.current,
+        draggable: true,
+        label: { text: String(i + 1), color: '#fff', fontWeight: 'bold', fontSize: '11px' },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          fillColor: '#f59e0b',
+          fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2, scale: 11,
+        },
+        zIndex: 2000 + i,
+        title: `Pin ${i + 1} — drag to move, right-click to delete`,
+        cursor: 'move',
+      });
+      m.addListener('dragend', e => {
+        const lat = e.latLng.lat(), lng = e.latLng.lng();
+        setEditPoints(prev => { const u = [...prev]; u[i] = { lat, lng }; return u; });
+      });
+      m.addListener('rightclick', () => {
+        setEditPoints(prev => (prev.length <= 3 ? prev : prev.filter((_, j) => j !== i)));
+      });
+      editPinMarkers.current.push(m);
+    });
+
+    if (editPoints.length >= 3) {
+      editPreviewPoly.current = new google.maps.Polygon({
+        paths: editPoints.map(p => ({ lat: p.lat, lng: p.lng })),
+        fillColor: stroke, fillOpacity: 0.22,
+        strokeColor: stroke, strokeWeight: 3,
+        map: gmap.current,
+        zIndex: 3,
+      });
+    }
+  }, [editPoints, editZone, editIndoor, mapReady]);
+
+  const importWledPresets = async () => {
+    const ip = wledIp.trim();
+    if (!ip) {
+      setWledImportStatus('Enter a WLED IP first.');
+      return;
+    }
+    localStorage.setItem('wled-ip', ip);
+    setWledImporting(true);
+    setWledImportStatus('');
+    try {
+      const [{ effects, palettes }, wledPresetsRaw] = await Promise.all([
+        fetchWledCatalog(ip),
+        fetchWledPresetsFile(ip),
+      ]);
+      const { presets, added, updated } = mergeWledPresetsIntoList(data.presets, wledPresetsRaw, effects, palettes);
+      update({ presets });
+      const total = added + updated;
+      setWledImportStatus(total
+        ? `Imported ${added} new and refreshed ${updated} WLED preset${total !== 1 ? 's' : ''}. Assign them to zones below.`
+        : 'No presets found in presets.json on WLED.');
+    } catch {
+      setWledImportStatus(`Could not import from ${ip}. Join StrollerNet or the same LAN and confirm presets.json is available.`);
+    } finally {
+      setWledImporting(false);
+    }
+  };
+
+  const flyToZone = (zone, isIndoor = false) => {
+    setHighlightZoneId(zone.id);
+    focusMapOnPolygon(gmap, zone.polygon);
+    if (isIndoor) setEditIndoor(null);
+    else setEditZone(null);
+  };
 
   const commitZone = () => {
     if (!formName.trim()) return alert('Enter a name');
     if (drawMode === 'preset' && !formPreset) return alert('Select a preset');
     if (drawPoints.length < 3) return alert('Draw at least 3 points');
     if (drawMode === 'preset') {
-      update({zones:[...data.zones,{id:generateId(),name:formName,polygon:drawPoints,presetId:formPreset,enabled:true}]});
+      update({zones:[...data.zones,{id:generateId(),name:formName,polygon:normalizePolygon(drawPoints),presetId:formPreset,enabled:true}]});
     } else {
-      update({indoorZones:[...data.indoorZones,{id:generateId(),name:formName,polygon:drawPoints,enabled:true}]});
+      update({indoorZones:[...data.indoorZones,{id:generateId(),name:formName,polygon:normalizePolygon(drawPoints),enabled:true}]});
     }
     setShowForm(false); setDrawPoints([]); setDrawMode('none'); setFormName(''); setFormPreset('');
   };
 
   const saveZoneEdit = () => {
-    if (editZone)   update({zones:      data.zones.map(z => z.id===editZone.id ? editZone : z)});
-    if (editIndoor) update({indoorZones:data.indoorZones.map(z => z.id===editIndoor.id ? editIndoor : z)});
-    setEditZone(null); setEditIndoor(null);
+    const poly = normalizePolygon(editPoints);
+    if (poly.length < 3) return alert('Zone needs at least 3 points');
+    if (editZone)   update({ zones: data.zones.map(z => z.id === editZone.id ? { ...editZone, polygon: poly } : z) });
+    if (editIndoor) update({ indoorZones: data.indoorZones.map(z => z.id === editIndoor.id ? { ...editIndoor, polygon: poly } : z) });
+    closeZoneEdit();
   };
 
   const deleteZoneEdit = () => {
-    if (editZone)   update({zones:      data.zones.filter(z => z.id!==editZone.id)});
-    if (editIndoor) update({indoorZones:data.indoorZones.filter(z => z.id!==editIndoor.id)});
-    setEditZone(null); setEditIndoor(null);
+    if (editZone)   update({ zones: data.zones.filter(z => z.id !== editZone.id) });
+    if (editIndoor) update({ indoorZones: data.indoorZones.filter(z => z.id !== editIndoor.id) });
+    closeZoneEdit();
   };
 
   const searchLocation = async () => {
@@ -687,16 +1358,38 @@ function MapZonesTab({data, update}) {
         </button>
       </div>
 
+      {/* WLED presets for zones */}
+      <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>WLED Presets</div>
+      <div style={{display:'flex',gap:4,marginBottom:4}}>
+        <input value={wledIp} onChange={e => { setWledIp(e.target.value); setWledImportStatus(''); }}
+          placeholder="4.3.2.1" style={{...inputStyle,flex:1,padding:'5px 8px',fontSize:11,fontFamily:'monospace'}}
+          onKeyDown={e => e.key === 'Enter' && importWledPresets()}/>
+        <button type="button" onClick={importWledPresets} disabled={wledImporting}
+          style={btn('primary',{padding:'5px 8px',fontSize:11,whiteSpace:'nowrap'})}>
+          {wledImporting ? '…' : 'Import'}
+        </button>
+      </div>
+      {wledImportStatus && (
+        <div style={{fontSize:10,color:wledImportStatus.startsWith('Imported') || wledImportStatus.startsWith('No presets') ? 'var(--success)' : 'var(--danger)',lineHeight:1.4,marginBottom:4}}>
+          {wledImportStatus}
+        </div>
+      )}
+      <div style={{fontSize:10,color:'var(--text3)',marginBottom:8,lineHeight:1.4}}>
+        Pulls presets from WLED <code style={{fontFamily:'monospace'}}>presets.json</code> into this config so you can assign them to zones.
+      </div>
+
       {/* Draw controls */}
       <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>Draw Zone</div>
       {drawMode === 'none' ? (<>
         <button onClick={()=>setDrawMode('preset')} style={btn('primary',{width:'100%'})}>+ Preset Zone</button>
         <button onClick={()=>setDrawMode('indoor')} style={btn('',{width:'100%',color:'var(--indoor)',borderColor:'var(--indoor)'})}>+ Indoor Zone</button>
-        <select value={mapType} onChange={e=>{setMapType(e.target.value);gmap.current?.setMapTypeId(e.target.value);}} style={selectStyle}>
-          <option value="satellite">Satellite</option>
-          <option value="hybrid">Hybrid</option>
-          <option value="roadmap">Roadmap</option>
-        </select>
+        <SearchableSelect value={mapType} onChange={v => { setMapType(v); gmap.current?.setMapTypeId(v); }}
+          placeholder="Map type" allowEmpty={false}
+          options={[
+            { value: 'satellite', label: 'Satellite', searchText: 'satellite' },
+            { value: 'hybrid', label: 'Hybrid', searchText: 'hybrid' },
+            { value: 'roadmap', label: 'Roadmap', searchText: 'roadmap' },
+          ]}/>
       </>) : (<>
         <div style={{fontSize:12,color:'var(--text2)',lineHeight:1.5}}>
           Click map to place pins.<br/>
@@ -719,18 +1412,39 @@ function MapZonesTab({data, update}) {
       {data.zones.map((z,i) => {
         const COLORS=['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316'];
         const c=COLORS[i%COLORS.length];
-        return (<div key={z.id} style={{background:'var(--surface2)',borderRadius:8,padding:8,borderLeft:`3px solid ${c}`,cursor:'pointer'}} onClick={()=>setEditZone({...z})}>
-          <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
-          <div style={{fontSize:11,color:'var(--text3)'}}>{data.presets.find(p=>p.id===z.presetId)?.name||'No preset'}</div>
-          <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
+        const preset = data.presets.find(p => p.id === z.presetId);
+        const highlighted = highlightZoneId === z.id;
+        return (<div key={z.id}
+          onClick={() => flyToZone(z)}
+          style={{background: highlighted ? 'var(--primary-dim)' : 'var(--surface2)',borderRadius:8,padding:8,borderLeft:`3px solid ${c}`,cursor:'pointer',border: highlighted ? '1px solid var(--primary)' : '1px solid transparent'}}>
+          <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
+              <div style={{fontSize:11,color:'var(--text3)'}}>{preset?.name || 'No preset'}</div>
+              <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
+            </div>
+            <button type="button" title="Edit zone" onClick={e => { e.stopPropagation(); openZoneEdit(z); }}
+              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>✎</button>
+          </div>
         </div>);
       })}
       <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>Indoor Zones ({data.indoorZones.length})</div>
       {data.indoorZones.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>None yet</div>}
-      {data.indoorZones.map(z => (<div key={z.id} style={{background:'var(--surface2)',borderRadius:8,padding:8,borderLeft:'3px solid #60a5fa',cursor:'pointer'}} onClick={()=>setEditIndoor({...z})}>
-        <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
-        <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
-      </div>))}
+      {data.indoorZones.map(z => {
+        const highlighted = highlightZoneId === z.id;
+        return (<div key={z.id}
+          onClick={() => flyToZone(z, true)}
+          style={{background: highlighted ? 'var(--primary-dim)' : 'var(--surface2)',borderRadius:8,padding:8,borderLeft:'3px solid #60a5fa',cursor:'pointer',border: highlighted ? '1px solid var(--primary)' : '1px solid transparent'}}>
+          <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
+              <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
+            </div>
+            <button type="button" title="Edit zone" onClick={e => { e.stopPropagation(); openIndoorEdit(z); }}
+              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>✎</button>
+          </div>
+        </div>);
+      })}
     </div>
 
     {/* Map */}
@@ -745,22 +1459,40 @@ function MapZonesTab({data, update}) {
     {showForm && (<Modal title={drawMode==='preset'?'New Preset Zone':'New Indoor Zone'} onClose={()=>setShowForm(false)}>
       <Field label="Name"><input value={formName} onChange={e=>setFormName(e.target.value)} placeholder={drawMode==='preset'?'e.g. Fantasyland':'e.g. Inside castle'} style={inputStyle} autoFocus/></Field>
       {drawMode==='preset' && (<Field label="Preset">
-        <select value={formPreset} onChange={e=>setFormPreset(e.target.value)} style={selectStyle}>
-          <option value="">Select preset…</option>
-          {data.presets.map(p=>(<option key={p.id} value={p.id}>{p.name}</option>))}
-        </select>
+        {presetOptions.length === 0 ? (
+          <div style={{fontSize:12,color:'var(--text3)'}}>No presets yet — import from WLED above or create on the Presets tab.</div>
+        ) : (
+          <SearchableSelect value={formPreset} onChange={setFormPreset} placeholder="Select preset…"
+            maxListHeight={280} options={presetOptions}/>
+        )}
       </Field>)}
       <ModalBtns onCancel={()=>setShowForm(false)} onSave={commitZone}/>
     </Modal>)}
 
     {/* Edit zone */}
-    {(editZone||editIndoor) && (<Modal title={editZone?'Edit Preset Zone':'Edit Indoor Zone'} onClose={()=>{setEditZone(null);setEditIndoor(null);}}>
+    {(editZone||editIndoor) && (<Modal title={editZone?'Edit Preset Zone':'Edit Indoor Zone'} onClose={closeZoneEdit} width={440}>
+      <div style={{fontSize:12,color:'var(--text3)',lineHeight:1.5,marginBottom:10}}>
+        Drag numbered pins on the map to reshape the zone. Click the map to add a pin, or right-click a pin to remove it (minimum 3).
+      </div>
+      <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+        {editPoints.length >= 3 && (
+          <button type="button" onClick={() => setEditInsertMode(v => !v)}
+            style={btn(editInsertMode ? 'warning' : '', { fontSize: 11, padding: '5px 10px', borderColor: editInsertMode ? 'var(--warning)' : 'var(--border)', color: editInsertMode ? 'var(--warning)' : 'var(--text2)' })}>
+            {editInsertMode ? '⊕ Insert on edge' : '⊕ Insert between pins'}
+          </button>
+        )}
+        {editPoints.length > 0 && (
+          <button type="button" onClick={() => setEditPoints(p => p.slice(0, -1))} style={btn('', { fontSize: 11, padding: '5px 10px' })}>↩ Undo last pin</button>
+        )}
+        <button type="button" onClick={() => focusMapOnPolygon(gmap, editPoints)} style={btn('', { fontSize: 11, padding: '5px 10px' })}>Show on map</button>
+        <span style={{fontSize:11,color:'var(--text3)',alignSelf:'center'}}>{editPoints.length} pin{editPoints.length !== 1 ? 's' : ''}</span>
+      </div>
       {editZone && (<>
         <Field label="Name"><input value={editZone.name} onChange={e=>setEditZone({...editZone,name:e.target.value})} style={inputStyle}/></Field>
         <Field label="Preset">
-          <select value={editZone.presetId} onChange={e=>setEditZone({...editZone,presetId:e.target.value})} style={selectStyle}>
-            {data.presets.map(p=>(<option key={p.id} value={p.id}>{p.name}</option>))}
-          </select>
+          <SearchableSelect value={editZone.presetId} onChange={v => setEditZone({ ...editZone, presetId: v })}
+            placeholder="Select preset…" allowEmpty={false} maxListHeight={280}
+            options={presetOptions}/>
         </Field>
         <Field label="Enabled"><input type="checkbox" checked={editZone.enabled} onChange={e=>setEditZone({...editZone,enabled:e.target.checked})} style={{width:18,height:18}}/></Field>
       </>)}
@@ -770,7 +1502,7 @@ function MapZonesTab({data, update}) {
       </>)}
       <div style={{display:'flex',gap:8,marginTop:4}}>
         <button onClick={deleteZoneEdit} style={btn('danger',{flex:1})}>Delete</button>
-        <button onClick={()=>{setEditZone(null);setEditIndoor(null);}} style={btn('',{flex:1})}>Cancel</button>
+        <button onClick={closeZoneEdit} style={btn('',{flex:1})}>Cancel</button>
         <button onClick={saveZoneEdit} style={btn('primary',{flex:1})}>Save</button>
       </div>
     </Modal>)}
@@ -789,6 +1521,16 @@ function PresetsTab({data, update}) {
   const [wledStatus, setWledStatus] = useState('idle'); // idle | connecting | connected | error
   const [wledEffects, setWledEffects]   = useState([]);
   const [wledPalettes, setWledPalettes] = useState([]);
+  const [effectFilter, setEffectFilter] = useState('');
+  const [presetTestStatus, setPresetTestStatus] = useState('idle'); // idle | testing | ok | error
+  const [presetTestErr, setPresetTestErr] = useState('');
+
+  useEffect(() => {
+    const cached = loadCachedWledCatalog();
+    if (cached.effects.length) setWledEffects(cached.effects);
+    if (cached.palettes.length) setWledPalettes(cached.palettes);
+    if (cached.effects.length || cached.palettes.length) setWledStatus('connected');
+  }, []);
 
   const blank = () => ({
     id:generateId(), name:'', createdAt:Date.now(),
@@ -810,15 +1552,9 @@ function PresetsTab({data, update}) {
     localStorage.setItem('wled-ip', wledIp);
     setWledStatus('connecting');
     try {
-      const [effRes, palRes] = await Promise.all([
-        fetch(`http://${wledIp}/json/eff`),
-        fetch(`http://${wledIp}/json/pal`),
-      ]);
-      if (!effRes.ok || !palRes.ok) throw new Error('Bad response');
-      const effs = await effRes.json();
-      const pals = await palRes.json();
-      setWledEffects(effs.map((name,id) => ({id,name})).filter(e=>e.name!=='RSVD'&&e.name!=='-'));
-      setWledPalettes(pals.map((name,id) => ({id,name})));
+      const { effects, palettes } = await fetchWledCatalog(wledIp);
+      setWledEffects(effects);
+      setWledPalettes(palettes);
       setWledStatus('connected');
     } catch(e) {
       setWledStatus('error');
@@ -826,13 +1562,74 @@ function PresetsTab({data, update}) {
     }
   };
 
-  const applyWledEffect = (eff) => {
-    if (!sel) return;
-    setSel(s => ({...s, wled:{...s.wled, fx:eff.id, fxName:eff.name}}));
+  const customPalettes = data.customPalettes || [];
+  const paletteKnown = sel && (
+    customPalettes.some((p, i) => 255 - i === sel.wled.pal && p.name === sel.wled.palName) ||
+    wledPalettes.some(p => p.id === sel.wled.pal)
+  );
+  const sortedEffects = useMemo(
+    () => [...wledEffects].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
+    [wledEffects],
+  );
+  const filteredEffects = useMemo(() => {
+    const q = effectFilter.trim().toLowerCase();
+    if (!q) return sortedEffects;
+    return sortedEffects.filter(e =>
+      e.name.toLowerCase().includes(q) || String(e.id).includes(q),
+    );
+  }, [sortedEffects, effectFilter]);
+  const paletteOptions = useMemo(
+    () => buildPaletteSelectOptions(wledPalettes, customPalettes, sel?.wled, paletteKnown),
+    [wledPalettes, customPalettes, sel?.wled, paletteKnown],
+  );
+
+  const testPreset = async (preset) => {
+    setPresetTestErr('');
+    setPresetTestStatus('testing');
+    const ip = wledIp.trim();
+    if (!ip) {
+      setPresetTestStatus('error');
+      setPresetTestErr('Enter a WLED IP in WLED Connect (left panel).');
+      return;
+    }
+    localStorage.setItem('wled-ip', ip);
+    try {
+      await testPresetOnWled(ip, preset, data);
+      setPresetTestStatus('ok');
+      setTimeout(() => setPresetTestStatus('idle'), 2500);
+    } catch {
+      setPresetTestStatus('error');
+      setPresetTestErr(`Could not reach WLED at ${ip}. Join StrollerNet or the same LAN as the controller.`);
+    }
   };
-  const applyWledPalette = (pal) => {
-    if (!sel) return;
-    setSel(s => ({...s, wled:{...s.wled, pal:pal.id, palName:pal.name}}));
+
+  const applyPalettePick = (v) => {
+    if (!v) {
+      setSel(s => ({ ...s, wled: { ...s.wled, pal: undefined, palName: '' } }));
+      return;
+    }
+    if (v.startsWith('custom:')) {
+      const cpId = v.slice(7);
+      const i = customPalettes.findIndex(p => p.id === cpId);
+      if (i < 0) return;
+      setSel(s => ({ ...s, wled: { ...s.wled, pal: 255 - i, palName: customPalettes[i].name } }));
+    } else if (v.startsWith('wled:')) {
+      const id = parseInt(v.slice(5), 10);
+      const pal = wledPalettes.find(p => p.id === id);
+      setSel(s => ({ ...s, wled: { ...s.wled, pal: id, palName: pal?.name || s.wled.palName } }));
+    }
+  };
+
+  const savedColors = data.savedColors || [];
+  const saveColor = (hex) => saveColorToLibrary(data, update, hex);
+  const effectHexes = sel ? wledColToHexList(sel.wled.col) : [];
+  const setEffectHexes = (hexes) => {
+    const col = hexListToWledCol(hexes);
+    setSel(s => ({
+      ...s,
+      wled: { ...s.wled, col },
+      memory: { ...s.memory, color: hexes.length > 0 ? true : s.memory.color },
+    }));
   };
 
   return (<div style={{display:'flex',height:'100%'}}>
@@ -858,10 +1655,22 @@ function PresetsTab({data, update}) {
       <div style={{overflowY:'auto',flex:1}}>
         {data.presets.length===0 && <div style={{padding:16,color:'var(--text3)',fontSize:13}}>No presets yet.</div>}
         {data.presets.map(p=>(<div key={p.id}
-          onClick={()=>{setSel({...p,wled:{...p.wled},memory:{...p.memory}});setIsNew(false);setPtab('effect');}}
+          onClick={()=>{setSel({...p,wled:{...p.wled},memory:{...p.memory}});setIsNew(false);setPtab('effect');setPresetTestStatus('idle');setPresetTestErr('');}}
           style={{padding:'10px 12px',borderBottom:'1px solid var(--border)',cursor:'pointer',background:sel?.id===p.id?'var(--primary-dim)':'transparent'}}>
-          <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
-          <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{p.wled.fxName||'—'} · {p.wled.palName||'—'}</div>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
+              <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>
+                {p.wled.fxName||'—'} · {p.wled.palName||'—'}
+                {p.segmentLayoutId && (() => {
+                  const lay = (data.customSegmentLayouts||[]).find(l => l.id === p.segmentLayoutId);
+                  return lay ? ` · ${lay.name}` : ' · layout';
+                })()}
+              </div>
+            </div>
+            <button type="button" title="Test on strip" onClick={e=>{e.stopPropagation();testPreset(p);}}
+              style={btn('primary',{padding:'4px 8px',fontSize:11,flexShrink:0})}>▶</button>
+          </div>
         </div>))}
       </div>
     </div>
@@ -872,15 +1681,27 @@ function PresetsTab({data, update}) {
         <input value={sel.name} onChange={e=>setSel({...sel,name:e.target.value})} placeholder="Preset name"
           style={{...inputStyle,fontSize:16,fontWeight:600,flex:1,marginRight:12}}/>
         <div style={{display:'flex',gap:8}}>
+          <button type="button" onClick={() => testPreset(sel)} disabled={presetTestStatus === 'testing'}
+            style={btn(presetTestStatus === 'ok' ? 'success' : 'primary', { fontSize: 12 })}>
+            {presetTestStatus === 'testing' ? 'Testing…' : presetTestStatus === 'ok' ? 'Sent ✓' : 'Test on strip'}
+          </button>
           {!isNew && <button onClick={()=>del(sel.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
           <button onClick={()=>setSel(null)} style={btn('',{fontSize:12})}>Cancel</button>
           <button onClick={save} style={btn('primary',{fontSize:12})}>Save</button>
         </div>
       </div>
+      {presetTestErr && (
+        <div style={{fontSize:12,color:'var(--danger)',padding:'8px 12px',background:'#ef444422',borderRadius:8,border:'1px solid var(--danger)'}}>
+          {presetTestErr}
+        </div>
+      )}
+      {!presetTestErr && presetTestStatus === 'ok' && (
+        <div style={{fontSize:12,color:'var(--success)'}}>Preset sent to WLED at {wledIp.trim()}.</div>
+      )}
 
       {/* Sub-tabs */}
       <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
-        {['effect','palette','params','memory'].map(t=>(<button key={t} onClick={()=>setPtab(t)} style={{
+        {['effect','palette','colors','segments','params','memory'].map(t=>(<button key={t} onClick={()=>setPtab(t)} style={{
           padding:'8px 16px',background:'none',border:'none',
           borderBottom:ptab===t?'2px solid var(--primary)':'2px solid transparent',
           color:ptab===t?'var(--primary)':'var(--text2)',fontWeight:600,fontSize:13,cursor:'pointer',
@@ -888,69 +1709,174 @@ function PresetsTab({data, update}) {
       </div>
 
       {/* Effect tab */}
-      {ptab==='effect' && (<div style={{display:'flex',gap:12,flex:1,minHeight:0}}>
-        <div style={{flex:1,display:'flex',flexDirection:'column',gap:8}}>
-          <Field label="Effect Name (manual)">
-            <input value={sel.wled.fxName||''} onChange={e=>w('fxName',e.target.value)} placeholder="e.g. Rainbow" style={inputStyle}/>
-          </Field>
-          <Field label="Effect ID">
-            <input type="number" value={sel.wled.fx??''} onChange={e=>w('fx',parseInt(e.target.value))} placeholder="0" style={inputStyle}/>
-          </Field>
-        </div>
-        {wledStatus==='connected' && (<div style={{width:220,display:'flex',flexDirection:'column',gap:4}}>
-          <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>From WLED ({wledEffects.length})</div>
-          <input placeholder="Filter effects…" style={{...inputStyle,padding:'5px 8px',fontSize:12}} onChange={e=>{
-            const v=e.target.value.toLowerCase();
-            document.querySelectorAll('.eff-item').forEach(el=>{el.style.display=el.dataset.name.includes(v)?'':'none';});
-          }}/>
-          <div style={{overflowY:'auto',maxHeight:320,border:'1px solid var(--border)',borderRadius:8}}>
-            {wledEffects.map(eff=>(<div key={eff.id} className="eff-item" data-name={eff.name.toLowerCase()}
-              onClick={()=>applyWledEffect(eff)}
-              style={{padding:'6px 10px',cursor:'pointer',fontSize:12,borderBottom:'1px solid var(--border)',
-                background:sel.wled.fx===eff.id?'var(--primary-dim)':'transparent',
-                color:sel.wled.fx===eff.id?'var(--primary)':'var(--text)'}}>
-              {eff.name}
-            </div>))}
+      {ptab==='effect' && (<div style={{maxWidth:520,display:'flex',flexDirection:'column',gap:12}}>
+        {sel.wled.fx != null && sel.wled.fx !== '' && (
+          <div style={{padding:'8px 12px',borderRadius:8,background:'var(--primary-dim)',border:'1px solid var(--border)'}}>
+            <div style={{fontSize:11,color:'var(--text2)',marginBottom:2}}>Selected</div>
+            <div style={{fontSize:14,fontWeight:600}}>
+              {sel.wled.fxName || 'Unnamed effect'}
+              <span style={{fontWeight:400,color:'var(--text3)',marginLeft:6}}>#{sel.wled.fx}</span>
+            </div>
           </div>
-        </div>)}
+        )}
+        {wledEffects.length > 0 ? (<>
+          <Field label={`Filter effects (${filteredEffects.length} of ${wledEffects.length})`}>
+            <input value={effectFilter} onChange={e => setEffectFilter(e.target.value)}
+              placeholder="Type to filter by name or ID…" style={inputStyle}/>
+          </Field>
+          <div style={{overflowY:'auto',maxHeight:360,border:'1px solid var(--border)',borderRadius:8}}>
+            {filteredEffects.length === 0 && (
+              <div style={{padding:16,color:'var(--text3)',fontSize:13,textAlign:'center'}}>No effects match</div>
+            )}
+            {filteredEffects.map(eff => (
+              <div key={eff.id}
+                onClick={() => setSel(s => ({ ...s, wled: { ...s.wled, fx: eff.id, fxName: eff.name } }))}
+                style={{padding:'8px 12px',cursor:'pointer',fontSize:13,borderBottom:'1px solid var(--border)',
+                  background: sel.wled.fx === eff.id ? 'var(--primary-dim)' : 'transparent',
+                  color: sel.wled.fx === eff.id ? 'var(--primary)' : 'var(--text)'}}>
+                {eff.name}
+                <span style={{color:'var(--text3)',fontSize:11,marginLeft:6}}>#{eff.id}</span>
+              </div>
+            ))}
+          </div>
+          {sel.wled.fx != null && sel.wled.fx !== '' && (
+            <button type="button" onClick={() => setSel(s => ({ ...s, wled: { ...s.wled, fx: undefined, fxName: '' } }))}
+              style={btn('', { fontSize: 12, alignSelf: 'flex-start' })}>Clear selection</button>
+          )}
+        </>) : (
+          <div style={{fontSize:11,color:'var(--text3)'}}>
+            Use WLED Connect in the left panel to fetch the effect list. Lists are cached in the browser after the first successful connect.
+          </div>
+        )}
+        <details style={{fontSize:12,color:'var(--text2)'}}>
+          <summary style={{cursor:'pointer',userSelect:'none'}}>Manual override</summary>
+          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:8}}>
+            <Field label="Effect name">
+              <input value={sel.wled.fxName||''} onChange={e=>w('fxName',e.target.value)} placeholder="e.g. Rainbow" style={inputStyle}/>
+            </Field>
+            <Field label="Effect ID">
+              <input type="number" value={sel.wled.fx??''} onChange={e=>w('fx',e.target.value===''?undefined:parseInt(e.target.value,10))} placeholder="0" style={inputStyle}/>
+            </Field>
+          </div>
+        </details>
       </div>)}
 
       {/* Palette tab */}
-      {ptab==='palette' && (<div style={{display:'flex',gap:12,flex:1,minHeight:0}}>
-        <div style={{flex:1,display:'flex',flexDirection:'column',gap:8}}>
-          <Field label="Palette Name (manual)">
-            <input value={sel.wled.palName||''} onChange={e=>w('palName',e.target.value)} placeholder="e.g. Rainbow" style={inputStyle}/>
-          </Field>
-          <Field label="Palette ID">
-            <input type="number" value={sel.wled.pal??''} onChange={e=>w('pal',parseInt(e.target.value))} placeholder="0" style={inputStyle}/>
-          </Field>
-          {data.customPalettes?.length>0 && (<>
-            <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>Custom Palettes</div>
-            {data.customPalettes.map((cp,i)=>(<div key={cp.id} onClick={()=>{w('pal',255-i);w('palName',cp.name);}}
-              style={{display:'flex',alignItems:'center',gap:8,padding:'6px 10px',borderRadius:8,cursor:'pointer',
-                background:sel.wled.palName===cp.name?'var(--primary-dim)':'var(--surface2)'}}>
-              <div style={{display:'flex',gap:2}}>{cp.colors.map((c,j)=>(<div key={j} style={{width:14,height:14,borderRadius:2,background:c}}/>))}</div>
-              <span style={{fontSize:13,flex:1}}>{cp.name}</span>
-              {sel.wled.palName===cp.name && <span style={{color:'var(--primary)',fontSize:13}}>✓</span>}
-            </div>))}
-          </>)}
-        </div>
-        {wledStatus==='connected' && (<div style={{width:220,display:'flex',flexDirection:'column',gap:4}}>
-          <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>From WLED ({wledPalettes.length})</div>
-          <input placeholder="Filter palettes…" style={{...inputStyle,padding:'5px 8px',fontSize:12}} onChange={e=>{
-            const v=e.target.value.toLowerCase();
-            document.querySelectorAll('.pal-item').forEach(el=>{el.style.display=el.dataset.name.includes(v)?'':'none';});
-          }}/>
-          <div style={{overflowY:'auto',maxHeight:320,border:'1px solid var(--border)',borderRadius:8}}>
-            {wledPalettes.map(pal=>(<div key={pal.id} className="pal-item" data-name={pal.name.toLowerCase()}
-              onClick={()=>applyWledPalette(pal)}
-              style={{padding:'6px 10px',cursor:'pointer',fontSize:12,borderBottom:'1px solid var(--border)',
-                background:sel.wled.pal===pal.id?'var(--primary-dim)':'transparent',
-                color:sel.wled.pal===pal.id?'var(--primary)':'var(--text)'}}>
-              <span style={{color:'var(--text3)',marginRight:6,fontSize:10}}>#{pal.id}</span>{pal.name}
-            </div>))}
+      {ptab==='palette' && (<div style={{maxWidth:520,display:'flex',flexDirection:'column',gap:12}}>
+        <Field label="Color palette">
+          <SearchableSelect value={paletteSelectValue(sel.wled, customPalettes)} onChange={applyPalettePick}
+            placeholder="— Select palette —" maxListHeight={320}
+            options={paletteOptions}/>
+        </Field>
+        {sel.wled.pal != null && sel.wled.pal !== '' && (
+          <div style={{fontSize:12,color:'var(--text3)'}}>
+            {sel.wled.palName || 'Unnamed palette'} · ID {sel.wled.pal}
           </div>
-        </div>)}
+        )}
+        {customPalettes.length > 0 && (
+          <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+            {customPalettes.map(cp => (
+              <div key={cp.id} title={cp.name} style={{display:'flex',gap:2,padding:4,borderRadius:6,background:'var(--surface2)',border:'1px solid var(--border)'}}>
+                {cp.colors.slice(0, 6).map((c, j) => (
+                  <div key={j} style={{width:14,height:14,borderRadius:2,background:c}}/>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        {wledPalettes.length === 0 && customPalettes.length === 0 && (
+          <div style={{fontSize:11,color:'var(--text3)'}}>
+            Create palettes under the Palettes tab, or connect to WLED for built-in palette names.
+          </div>
+        )}
+        <details style={{fontSize:12,color:'var(--text2)'}}>
+          <summary style={{cursor:'pointer',userSelect:'none'}}>Manual override</summary>
+          <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:8}}>
+            <Field label="Palette name">
+              <input value={sel.wled.palName||''} onChange={e=>w('palName',e.target.value)} placeholder="e.g. Rainbow" style={inputStyle}/>
+            </Field>
+            <Field label="Palette ID">
+              <input type="number" value={sel.wled.pal??''} onChange={e=>w('pal',e.target.value===''?undefined:parseInt(e.target.value,10))} placeholder="0" style={inputStyle}/>
+            </Field>
+          </div>
+        </details>
+      </div>)}
+
+      {/* Colors tab — WLED effect col */}
+      {ptab==='colors' && (<div style={{maxWidth:520,display:'flex',flexDirection:'column',gap:12}}>
+        <div style={{fontSize:12,color:'var(--text3)',lineHeight:1.5}}>
+          Effect colors (WLED <code style={{fontFamily:'monospace'}}>col</code>). Used for solid, dual, triple, and similar effects.
+          Honored when Settings → Recall State includes color (or preset memory has color checked).
+        </div>
+        {effectHexes.length === 0 && (
+          <div style={{fontSize:12,color:'var(--text3)'}}>No effect colors set — add one for effects that use custom RGB instead of a palette.</div>
+        )}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+          {effectHexes.map((hex, i) => (
+            <div key={i}>
+              <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',marginBottom:6}}>Color {i + 1}</div>
+              <ColorCell color={hex} savedColors={savedColors} onSaveColor={saveColor}
+                onRemove={effectHexes.length > 1 ? () => {
+                  const next = effectHexes.filter((_, j) => j !== i);
+                  setEffectHexes(next);
+                } : null}
+                onChange={nc => {
+                  const next = [...effectHexes];
+                  next[i] = nc;
+                  setEffectHexes(next);
+                }}/>
+            </div>
+          ))}
+        </div>
+        {effectHexes.length < MAX_EFFECT_COLORS && (
+          <button type="button" onClick={() => setEffectHexes([...effectHexes, '#ffffff'])}
+            style={btn('', { alignSelf: 'flex-start', fontSize: 12 })}>+ Add color ({effectHexes.length}/{MAX_EFFECT_COLORS})</button>
+        )}
+        {effectHexes.length > 0 && (
+          <button type="button" onClick={() => setEffectHexes([])}
+            style={btn('danger', { alignSelf: 'flex-start', fontSize: 12 })}>Clear all colors</button>
+        )}
+        <Field label="Remember color at recall">
+          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}}>
+            <input type="checkbox" checked={sel.memory.color} onChange={e=>m('color',e.target.checked)} style={{width:18,height:18}}/>
+            Include in preset when global recall is &quot;memory&quot;
+          </label>
+        </Field>
+      </div>)}
+
+      {/* Segments tab — link saved layout library item */}
+      {ptab==='segments' && (<div style={{display:'flex',flexDirection:'column',gap:10,maxWidth:520}}>
+        <div style={{fontSize:12,color:'var(--text3)'}}>
+          Linked layout applies when recall includes segments (Settings → Recall State). Create layouts in Palettes → Segments.
+        </div>
+        <div onClick={()=>setSel(s=>({...s,segmentLayoutId:undefined}))}
+          style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',borderRadius:8,cursor:'pointer',
+            background:!sel.segmentLayoutId?'var(--primary-dim)':'var(--surface2)',border:'1px solid var(--border)'}}>
+          <span style={{fontSize:13,flex:1}}>None (single segment only)</span>
+          {!sel.segmentLayoutId && <span style={{color:'var(--primary)'}}>✓</span>}
+        </div>
+        {(data.customSegmentLayouts||[]).length===0 && (
+          <div style={{fontSize:12,color:'var(--text3)'}}>No segment layouts yet — add them on the Palettes tab.</div>
+        )}
+        {(data.customSegmentLayouts||[]).map(layout=>(
+          <div key={layout.id} onClick={()=>setSel(s=>({
+            ...s, segmentLayoutId: layout.id, memory: { ...s.memory, segments: true },
+          }))}
+            style={{padding:'10px 12px',borderRadius:8,cursor:'pointer',border:'1px solid var(--border)',
+              background:sel.segmentLayoutId===layout.id?'var(--primary-dim)':'var(--surface2)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <span style={{fontSize:13,fontWeight:600,flex:1}}>{layout.name}</span>
+              {sel.segmentLayoutId===layout.id && <span style={{color:'var(--primary)'}}>✓</span>}
+            </div>
+            <SegmentBar segments={layout.segments}/>
+            <div style={{fontSize:10,color:'var(--text3)',marginTop:4,fontFamily:'monospace'}}>{summarizeLayout(layout)}</div>
+          </div>
+        ))}
+        {sel.segmentLayoutId && (
+          <Field label="Remember segments at recall">
+            <input type="checkbox" checked={sel.memory.segments} onChange={e=>m('segments',e.target.checked)} style={{width:18,height:18}}/>
+          </Field>
+        )}
       </div>)}
 
       {/* Params tab */}
@@ -988,17 +1914,22 @@ const PALETTE_SWATCHES = [
   '#444444','#000000','#ff6666','#66ff66','#6666ff','#ffaa44',
 ];
 
-function ColorCell({color, onChange, onRemove}) {
+function ColorCell({ color, onChange, onRemove, savedColors, onSaveColor }) {
   const [mode, setMode] = useState('swatches'); // swatches | hex | rgb
   const rgb = hexToRgb(color || '#000000');
   const [hexInput, setHexInput] = useState(color);
+  const library = savedColors || [];
 
   useEffect(() => { setHexInput(color); }, [color]);
 
   const applyHex = (v) => {
-    const h = v.startsWith('#') ? v : '#'+v;
-    if (/^#[0-9a-fA-F]{6}$/.test(h)) onChange(h);
+    const h = normalizeHex(v);
+    if (h) onChange(h);
     setHexInput(v);
+  };
+
+  const saveCurrent = () => {
+    if (onSaveColor) onSaveColor(color);
   };
 
   return (<div style={{background:'var(--surface2)',borderRadius:10,padding:10,display:'flex',flexDirection:'column',gap:8}}>
@@ -1014,6 +1945,19 @@ function ColorCell({color, onChange, onRemove}) {
         color:mode===m?'#fff':'var(--text2)',
       }}>{m.charAt(0).toUpperCase()+m.slice(1)}</button>))}
     </div>
+
+    {library.length > 0 && (
+      <div>
+        <div style={{fontSize:10,fontWeight:700,color:'var(--text3)',textTransform:'uppercase',letterSpacing:0.5,marginBottom:4}}>Saved colors</div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+          {library.map(sc => (
+            <div key={sc.id} title={sc.name} onClick={() => onChange(sc.hex)}
+              style={{width:20,height:20,borderRadius:3,background:sc.hex,cursor:'pointer',flexShrink:0,
+                outline:sc.hex.toLowerCase()===color.toLowerCase()?'2px solid white':'1px solid #ffffff22',outlineOffset:1}}/>
+          ))}
+        </div>
+      </div>
+    )}
 
     {mode==='swatches' && (<div style={{display:'flex',flexWrap:'wrap',gap:3}}>
       {PALETTE_SWATCHES.map(sw=>(<div key={sw} onClick={()=>onChange(sw)}
@@ -1031,34 +1975,100 @@ function ColorCell({color, onChange, onRemove}) {
         style={{...inputStyle,fontFamily:'monospace',fontSize:13,flex:1,padding:'5px 8px'}}/>
     </div>)}
 
-    {mode==='rgb' && (<div style={{display:'flex',flexDirection:'column',gap:4}}>
-      {[['R',rgb.r,'#ff4444'],['G',rgb.g,'#44ff44'],['B',rgb.b,'#4488ff']].map(([ch,val,trackColor])=>(<div key={ch} style={{display:'flex',alignItems:'center',gap:6}}>
-        <span style={{fontSize:11,fontWeight:700,color:'var(--text2)',width:14}}>{ch}</span>
-        <input type="range" min={0} max={255} value={val}
-          onChange={e=>{
-            const nv=+e.target.value;
-            onChange(rgbToHex(ch==='R'?nv:rgb.r, ch==='G'?nv:rgb.g, ch==='B'?nv:rgb.b));
-          }}
-          style={{flex:1,accentColor:trackColor,height:16}}/>
-        <span style={{fontSize:10,fontFamily:'monospace',color:'var(--text3)',width:24,textAlign:'right'}}>{val}</span>
-      </div>))}
+    {mode==='rgb' && (<div style={{display:'flex',flexDirection:'column',gap:6}}>
+      {[['R', rgb.r], ['G', rgb.g], ['B', rgb.b]].map(([ch, val]) => (
+        <div key={ch} style={{display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:11,fontWeight:700,color:'var(--text2)',width:14}}>{ch}</span>
+          <input type="number" min={0} max={255} value={val}
+            onChange={e => {
+              const nv = Math.max(0, Math.min(255, parseInt(e.target.value, 10) || 0));
+              onChange(rgbToHex(ch === 'R' ? nv : rgb.r, ch === 'G' ? nv : rgb.g, ch === 'B' ? nv : rgb.b));
+            }}
+            style={{...inputStyle, width: 56, textAlign: 'right', fontSize: 12, padding: '4px 6px', fontFamily: 'monospace'}}/>
+          <input type="range" min={0} max={255} value={val}
+            onChange={e => {
+              const nv = +e.target.value;
+              onChange(rgbToHex(ch === 'R' ? nv : rgb.r, ch === 'G' ? nv : rgb.g, ch === 'B' ? nv : rgb.b));
+            }}
+            style={{flex: 1, accentColor: ch === 'R' ? '#ff4444' : ch === 'G' ? '#44ff44' : '#4488ff', height: 16}}/>
+        </div>
+      ))}
     </div>)}
 
-    {onRemove && (<button onClick={onRemove} style={btn('danger',{width:'100%',padding:'3px 0',fontSize:11})}>Remove</button>)}
+    <div style={{display:'flex',gap:6}}>
+      {onSaveColor && (
+        <button type="button" onClick={saveCurrent} style={btn('', { flex: 1, padding: '4px 0', fontSize: 11 })}>Save to library</button>
+      )}
+      {onRemove && (
+        <button type="button" onClick={onRemove} style={btn('danger', { flex: 1, padding: '4px 0', fontSize: 11 })}>Remove</button>
+      )}
+    </div>
   </div>);
+}
+
+function ColorInput({ value, onChange, savedColors, onSaveColor }) {
+  const [showPicker, setShowPicker] = useState(false);
+  const library = savedColors || [];
+
+  if (showPicker) {
+    return (
+      <div style={{ marginTop: 4 }}>
+        <ColorCell color={value} onChange={onChange} savedColors={savedColors} onSaveColor={onSaveColor} />
+        <button type="button" onClick={() => setShowPicker(false)} style={{ ...btn('', { width: '100%', marginTop: 6, fontSize: 11 }) }}>Done</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        <div role="button" tabIndex={0} onClick={() => setShowPicker(true)}
+          style={{ width: 24, height: 24, borderRadius: 4, background: value, border: '1px solid var(--border)', cursor: 'pointer', flexShrink: 0 }}/>
+        <input value={value}
+          onChange={e => { const v = e.target.value; if (/^#?[0-9a-fA-F]{6}$/.test(v)) onChange(v.startsWith('#') ? v : `#${v}`); }}
+          style={{ ...inputStyle, width: 88, padding: '4px 6px', fontSize: 11, fontFamily: 'monospace' }}/>
+        <button type="button" onClick={() => setShowPicker(true)} title="Full picker"
+          style={btn('', { padding: '4px 8px', fontSize: 11 })}>⋯</button>
+        {onSaveColor && (
+          <button type="button" onClick={() => onSaveColor(value)} title="Save to library"
+            style={btn('', { padding: '4px 8px', fontSize: 11 })}>★</button>
+        )}
+      </div>
+      {library.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 4 }}>
+          {library.map(sc => (
+            <div key={sc.id} title={sc.name} onClick={() => onChange(sc.hex)}
+              style={{ width: 14, height: 14, borderRadius: 2, background: sc.hex, cursor: 'pointer', border: '1px solid #ffffff22' }}/>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Palettes ───────────────────────────────────────────────────────
 function PalettesTab({data, update}) {
   const palettes = data.customPalettes || [];
   const sets     = data.paletteSets    || [];
+  const layouts  = data.customSegmentLayouts || [];
+  const savedColors = data.savedColors || [];
   const [ptab, setPtab] = useState('palettes');
   const [editP, setEditP] = useState(null);
   const [editS, setEditS] = useState(null);
+  const [editL, setEditL] = useState(null);
+  const [editSc, setEditSc] = useState(null);
   const [isNew, setIsNew] = useState(false);
+  const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
+  const [capturing, setCapturing] = useState(false);
+  const saveColor = (hex) => saveColorToLibrary(data, update, hex);
 
   const blankPal = () => ({id:generateId(),name:'',colors:['#a78bfa','#22c55e','#f59e0b']});
+  const blankSavedColor = () => ({ id: generateId(), name: '', hex: '#ffffff' });
   const blankSet = () => ({id:generateId(),name:'',paletteIds:[]});
+  const blankLayout = () => ({
+    id: generateId(), name: '', createdAt: Date.now(),
+    segments: [{ id: 0, start: 0, stop: 100 }],
+  });
 
   const savePal = () => {
     if (!editP.name.trim()) return alert('Enter a name');
@@ -1079,17 +2089,70 @@ function PalettesTab({data, update}) {
     setEditS(null);
   };
   const delSet = id => { if(!confirm('Delete set?')) return; update({paletteSets:sets.filter(s=>s.id!==id)}); setEditS(null); };
+  const saveSc = () => {
+    if (!editSc.name.trim()) return alert('Enter a name');
+    const hex = normalizeHex(editSc.hex);
+    if (!hex) return alert('Enter a valid hex color');
+    const entry = { ...editSc, name: editSc.name.trim(), hex };
+    update({ savedColors: isNew ? [...savedColors, entry] : savedColors.map(c => c.id === entry.id ? entry : c) });
+    setEditSc(null);
+  };
+  const delSc = id => {
+    if (!confirm('Delete saved color?')) return;
+    update({ savedColors: savedColors.filter(c => c.id !== id) });
+    setEditSc(null);
+  };
   const toggleInSet = id => setEditS(s=>({...s,paletteIds:s.paletteIds.includes(id)?s.paletteIds.filter(p=>p!==id):[...s.paletteIds,id]}));
   const moveInSet = (from,to) => setEditS(s=>{const ids=[...s.paletteIds];const[x]=ids.splice(from,1);ids.splice(to,0,x);return{...s,paletteIds:ids};});
+
+  const saveLayout = () => {
+    if (!editL.name.trim()) return alert('Enter a name');
+    if (!editL.segments.length) return alert('Add at least one segment');
+    update({ customSegmentLayouts: isNew ? [...layouts, editL] : layouts.map(l => l.id === editL.id ? editL : l) });
+    setEditL(null);
+  };
+  const delLayout = id => {
+    if (!confirm('Delete this segment layout?')) return;
+    update({
+      customSegmentLayouts: layouts.filter(l => l.id !== id),
+      presets: (data.presets || []).map(p => p.segmentLayoutId === id ? { ...p, segmentLayoutId: undefined } : p),
+    });
+    setEditL(null);
+  };
+  const updateLayoutSeg = (idx, field, val) => {
+    const n = +val;
+    if (isNaN(n)) return;
+    setEditL(l => ({ ...l, segments: l.segments.map((s, i) => i === idx ? { ...s, [field]: n } : s) }));
+  };
+  const captureFromWled = async () => {
+    localStorage.setItem('wled-ip', wledIp.trim());
+    setCapturing(true);
+    try {
+      const segments = await fetchWledSegmentsFromIp(wledIp);
+      setEditL(l => l ? { ...l, segments } : { ...blankLayout(), segments });
+    } catch (e) {
+      alert(e.message || 'Capture failed');
+    } finally {
+      setCapturing(false);
+    }
+  };
+  const applyLayout = async (layout) => {
+    localStorage.setItem('wled-ip', wledIp.trim());
+    try {
+      await postWledState(wledIp, buildLayoutPayload(layout));
+    } catch (e) {
+      alert(e.message || 'Apply failed');
+    }
+  };
 
   return <div style={{display:'flex',height:'100%'}}>
     {/* List panel */}
     <div style={{width:260,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column'}}>
       <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
-        {['palettes','sets'].map(t=>(<button key={t} onClick={()=>setPtab(t)} style={{
+        {['palettes','colors','sets','segments'].map(t=>(<button key={t} onClick={()=>{setPtab(t);setEditP(null);setEditS(null);setEditL(null);setEditSc(null);}} style={{
           flex:1,padding:'10px 0',background:'none',border:'none',borderBottom:ptab===t?'2px solid var(--primary)':'2px solid transparent',
-          color:ptab===t?'var(--primary)':'var(--text2)',fontWeight:600,fontSize:13,cursor:'pointer',marginBottom:-1,
-        }}>{t==='palettes'?`Palettes (${palettes.length})`:`Sets (${sets.length})`}</button>))}
+          color:ptab===t?'var(--primary)':'var(--text2)',fontWeight:600,fontSize:12,cursor:'pointer',marginBottom:-1,
+        }}>{t==='palettes'?`Palettes (${palettes.length})`:t==='colors'?`Colors (${savedColors.length})`:t==='sets'?`Sets (${sets.length})`:`Segments (${layouts.length})`}</button>))}
       </div>
       <div style={{overflowY:'auto',flex:1,padding:10}}>
         {ptab==='palettes' && <>
@@ -1099,6 +2162,18 @@ function PalettesTab({data, update}) {
             style={{...cardStyle,cursor:'pointer',background:editP?.id===p.id?'var(--primary-dim)':'var(--surface)',marginBottom:8}}>
             <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>{p.name}</div>
             <PaletteGradient colors={p.colors} height={18}/>
+          </div>))}
+        </>}
+        {ptab==='colors' && <>
+          <button onClick={()=>{setEditSc(blankSavedColor());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Saved Color</button>
+          {savedColors.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No saved colors yet — save from any color picker or add one here.</div>}
+          {savedColors.map(c=>(<div key={c.id} onClick={()=>{setEditSc({...c});setIsNew(false);}}
+            style={{...cardStyle,cursor:'pointer',background:editSc?.id===c.id?'var(--primary-dim)':'var(--surface)',marginBottom:8,display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:28,height:28,borderRadius:6,background:c.hex,border:'1px solid var(--border)',flexShrink:0}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13}}>{c.name}</div>
+              <div style={{fontSize:11,color:'var(--text3)',fontFamily:'monospace'}}>{c.hex}</div>
+            </div>
           </div>))}
         </>}
         {ptab==='sets' && <>
@@ -1111,6 +2186,22 @@ function PalettesTab({data, update}) {
             <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
               {s.paletteIds.map(id=>{const pal=palettes.find(p=>p.id===id);return pal?.colors.slice(0,4).map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:2,background:c}}/>) })}
             </div>
+          </div>))}
+        </>}
+        {ptab==='segments' && <>
+          <div style={{marginBottom:10,padding:8,background:'var(--surface2)',borderRadius:8,display:'flex',flexDirection:'column',gap:6}}>
+            <div style={{fontSize:10,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>WLED IP</div>
+            <input value={wledIp} onChange={e=>setWledIp(e.target.value)} placeholder="4.3.2.1"
+              style={{...inputStyle,padding:'5px 8px',fontSize:11,fontFamily:'monospace'}}/>
+          </div>
+          <button onClick={()=>{setEditL(blankLayout());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Layout</button>
+          {layouts.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No segment layouts yet</div>}
+          {layouts.map(l=>(<div key={l.id}
+            style={{...cardStyle,cursor:'pointer',background:editL?.id===l.id?'var(--primary-dim)':'var(--surface)',marginBottom:8,padding:10}}
+            onClick={()=>{setEditL({...l,segments:l.segments.map(s=>({...s}))});setIsNew(false);}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>{l.name}</div>
+            <SegmentBar segments={l.segments}/>
+            <div style={{fontSize:10,color:'var(--text3)',marginTop:4,fontFamily:'monospace'}}>{summarizeLayout(l)}</div>
           </div>))}
         </>}
       </div>
@@ -1129,12 +2220,27 @@ function PalettesTab({data, update}) {
         {editP.colors.map((c,i)=>(<ColorCell key={i} color={c}
             onRemove={editP.colors.length>2?()=>setEditP({...editP,colors:editP.colors.filter((_,j)=>j!==i)}):null}
             onChange={nc=>{const cl=[...editP.colors];cl[i]=nc;setEditP({...editP,colors:cl});}}
+            savedColors={savedColors} onSaveColor={saveColor}
           />))}
       </div>
       {editP.colors.length < 16 && (
         <button onClick={()=>setEditP({...editP,colors:[...editP.colors,'#ffffff']})} style={{...btn('',{width:'100%',marginBottom:12})}}>+ Add Color</button>
       )}
       <button onClick={savePal} style={btn('primary')}>Save Palette</button>
+    </div>}
+
+    {editSc && ptab==='colors' && <div style={{flex:1,overflowY:'auto',padding:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Saved Color':'Edit Saved Color'}</span>
+        {!isNew && <button onClick={()=>delSc(editSc.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+      </div>
+      <Field label="Name">
+        <input value={editSc.name} onChange={e=>setEditSc({...editSc,name:e.target.value})} placeholder="e.g. Castle purple" style={inputStyle} autoFocus/>
+      </Field>
+      <ColorCell color={editSc.hex} savedColors={savedColors}
+        onChange={hex=>setEditSc({...editSc,hex})}
+        onSaveColor={saveColor}/>
+      <button onClick={saveSc} style={{...btn('primary'),marginTop:12}}>Save Color</button>
     </div>}
 
     {/* Set editor */}
@@ -1159,6 +2265,60 @@ function PalettesTab({data, update}) {
       </div>))}
       <button onClick={saveSet} style={{...btn('primary'),marginTop:16}}>Save Set</button>
     </div>}
+
+    {/* Segment layout editor */}
+    {editL && ptab==='segments' && <div style={{flex:1,overflowY:'auto',padding:20}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Segment Layout':'Edit Segment Layout'}</span>
+        <div style={{display:'flex',gap:8}}>
+          {!isNew && <button onClick={()=>applyLayout(editL)} style={btn('primary',{fontSize:12})}>Apply to WLED</button>}
+          {!isNew && <button onClick={()=>delLayout(editL.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+        </div>
+      </div>
+      <Field label="Name">
+        <input value={editL.name} onChange={e=>setEditL({...editL,name:e.target.value})} placeholder="e.g. Five corners" style={inputStyle} autoFocus/>
+      </Field>
+      <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
+        <button onClick={captureFromWled} disabled={capturing} style={btn('',{fontSize:12})}>
+          {capturing ? 'Capturing…' : 'Capture from WLED'}
+        </button>
+        {!isNew && <button onClick={()=>applyLayout(editL)} style={btn('primary',{fontSize:12})}>Apply to WLED</button>}
+      </div>
+      {editL.segments.length > 0 && (
+        <div style={{marginBottom:12}}><Field label="Preview"><SegmentBar segments={editL.segments}/></Field></div>
+      )}
+      <SectionHead>Segments (id, start%, stop%)</SectionHead>
+      {editL.segments.map((seg, idx) => (
+        <div key={idx} style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
+          <input type="number" min={0} max={31} value={seg.id} onChange={e=>updateLayoutSeg(idx,'id',e.target.value)}
+            style={{...inputStyle,width:52,textAlign:'right',fontSize:12}} title="id"/>
+          <input type="number" min={0} max={100} value={seg.start} onChange={e=>updateLayoutSeg(idx,'start',e.target.value)}
+            style={{...inputStyle,width:64,textAlign:'right',fontSize:12}} title="start %"/>
+          <input type="number" min={0} max={100} value={seg.stop} onChange={e=>updateLayoutSeg(idx,'stop',e.target.value)}
+            style={{...inputStyle,width:64,textAlign:'right',fontSize:12}} title="stop %"/>
+          {editL.segments.length > 1 && (
+            <button onClick={()=>setEditL({...editL,segments:editL.segments.filter((_,i)=>i!==idx)})}
+              style={btn('danger',{padding:'4px 8px',fontSize:11})}>✕</button>
+          )}
+        </div>
+      ))}
+      <button onClick={()=>setEditL({
+        ...editL,
+        segments: [...editL.segments, {
+          id: editL.segments.length,
+          start: editL.segments[editL.segments.length - 1]?.stop ?? 0,
+          stop: 100,
+        }],
+      })} style={{...btn('',{width:'100%',marginBottom:12,fontSize:12})}}>+ Add segment</button>
+      <button onClick={saveLayout} style={btn('primary')}>Save Layout</button>
+    </div>}
+
+    {ptab==='segments' && !editL && (
+      <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text3)',fontSize:14,padding:20,textAlign:'center'}}>
+        Select a layout or click + New Layout<br/>
+        <span style={{fontSize:12,marginTop:8,display:'block'}}>Set WLED IP and use Capture from WLED after configuring segments on the strip</span>
+      </div>
+    )}
   </div>;
 }
 
@@ -1227,10 +2387,8 @@ function MbEffectField({label, hint, mapping, presets, onChange}) {
     onChange({ ...mapping, colorSlots });
   };
   return (<Field label={label}>
-    <select value={mapping.presetId||''} onChange={e=>setPreset(e.target.value)} style={{...inputStyle,cursor:'pointer'}}>
-      <option value="">Built-in segment colors</option>
-      {presets.map(p=>(<option key={p.id} value={p.id}>{p.name}</option>))}
-    </select>
+    <SearchableSelect value={mapping.presetId || ''} onChange={setPreset} placeholder="Built-in segment colors"
+      options={presets.map(p => ({ value: p.id, label: p.name, searchText: p.name }))}/>
     <input value={(mapping.colorSlots||[]).join(',')} placeholder="color slots 0-31 (comma-separated)"
       onChange={e=>setSlots(e.target.value)} style={{...inputStyle,marginTop:6,fontFamily:'monospace',fontSize:12}}/>
     <div style={{fontSize:11,color:'var(--text3)',marginTop:4}}>{hint}</div>
@@ -1241,8 +2399,10 @@ function MbEffectField({label, hint, mapping, presets, onChange}) {
 function SettingsTab({data, update}) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const presets = data.presets || [];
+  const savedColors = data.savedColors || [];
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
   const [wledPreviewErr, setWledPreviewErr] = useState('');
+  const saveColor = (hex) => saveColorToLibrary(data, update, hex);
   const setMb = (patch) => update({ mbMapping: normalizeMbMapping({ ...mb, ...patch }) });
   const setMbColor = (idx, hex) => {
     const colors = [...mb.colors];
@@ -1280,14 +2440,12 @@ function SettingsTab({data, update}) {
     <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>Map each MB palette index to a WLED RGB color.</p>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:24}}>
       {MB_COLOR_NAMES.map((name, idx) => (
-        <div key={idx} style={{display:'flex',alignItems:'center',gap:8,padding:8,background:'var(--surface2)',borderRadius:8}}>
-          <div style={{width:24,height:24,borderRadius:4,background:mb.colors[idx],border:'1px solid var(--border)'}}/>
-          <div style={{flex:1,minWidth:0}}>
+        <div key={idx} style={{padding:8,background:'var(--surface2)',borderRadius:8}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+            <div style={{width:24,height:24,borderRadius:4,background:mb.colors[idx],border:'1px solid var(--border)',flexShrink:0}}/>
             <div style={{fontSize:12,fontWeight:600}}>{idx} · {name}</div>
           </div>
-          <input value={mb.colors[idx]}
-            onChange={e=>{const v=e.target.value; if(/^#?[0-9a-fA-F]{6}$/.test(v)) setMbColor(idx,v.startsWith('#')?v:'#'+v);}}
-            style={{...inputStyle,width:88,padding:'4px 6px',fontSize:11,fontFamily:'monospace'}}/>
+          <ColorInput value={mb.colors[idx]} onChange={v => setMbColor(idx, v)} savedColors={savedColors} onSaveColor={saveColor}/>
         </div>
       ))}
     </div>
@@ -1334,11 +2492,10 @@ function SettingsTab({data, update}) {
     <SectionHead>Recall State</SectionHead>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:24}}>
       {Object.keys(data.recallState||DEFAULT_DATA.recallState).map(k=>(<Field key={k} label={k.charAt(0).toUpperCase()+k.slice(1)}>
-        <select value={(data.recallState||DEFAULT_DATA.recallState)[k]}
-          onChange={e=>update({recallState:{...(data.recallState||DEFAULT_DATA.recallState),[k]:e.target.value}})}
-          style={{...inputStyle,cursor:'pointer'}}>
-          {['always','never','memory'].map(v=>(<option key={v} value={v}>{v}</option>))}
-        </select>
+        <SearchableSelect value={(data.recallState||DEFAULT_DATA.recallState)[k]} allowEmpty={false}
+          onChange={v=>update({recallState:{...(data.recallState||DEFAULT_DATA.recallState),[k]:v}})}
+          placeholder={k}
+          options={['always','never','memory'].map(v=>({value:v,label:v,searchText:v}))}/>
       </Field>))}
     </div>
 

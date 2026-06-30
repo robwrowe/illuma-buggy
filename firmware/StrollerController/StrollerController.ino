@@ -94,6 +94,7 @@ unsigned long starlightTimeoutMs  = 15000;  // ms before wand effect auto-clears
 bool          magicBandEnabled    = true;
 bool          magicBandFivePoint  = true;   // true = 4 corners + center, false = 4 corners only
 unsigned long magicBandTimeoutMs  = 15000;  // ms before MB override auto-clears (0 = never)
+unsigned long bleEffectTransitionMs = 700;  // fade in/out for MB+SW effects (0 = instant)
 bool          bleScanLogEnabled   = true;   // Serial hex dump of Disney scan packets
 
 // BLE effect timeout tracking
@@ -326,6 +327,19 @@ bool sendToWLED(const String& jsonBody) {
   return ok;
 }
 
+// WLED JSON API: "transition" = duration in 100ms units for this state change
+String injectWledTransition(const String& jsonBody, unsigned long transitionMs) {
+  if (transitionMs == 0 || jsonBody.length() < 2 || jsonBody.charAt(0) != '{') return jsonBody;
+  unsigned tenths = transitionMs / 100;
+  if (tenths == 0) tenths = 1;
+  if (tenths > 655) tenths = 655;
+  return "{\"transition\":" + String(tenths) + "," + jsonBody.substring(1);
+}
+
+bool sendToWLEDForBleEffect(const String& jsonBody) {
+  return sendToWLED(injectWledTransition(jsonBody, bleEffectTransitionMs));
+}
+
 // GET a WLED endpoint and return the response body
 String getFromWLED(const String& path) {
   if (WiFi.status() != WL_CONNECTED) return "";
@@ -456,7 +470,7 @@ void applyMagicBandChase(const uint8_t paletteIdxs[5], OverrideSource src) {
   Serial.printf("[MB] Chase spd=%u thick=%u pals=%u,%u,%u,%u,%u\n",
                 mbChaseSpeed, mbChaseThickness,
                 paletteIdxs[0], paletteIdxs[1], paletteIdxs[2], paletteIdxs[3], paletteIdxs[4]);
-  sendToWLED(buildMagicBandChaseJson(paletteIdxs));
+  sendToWLEDForBleEffect(buildMagicBandChaseJson(paletteIdxs));
   setOverride(src);
   touchOverrideIdleTimer(src);
 }
@@ -557,6 +571,38 @@ int mbSegKeyIndex(const char* key) {
   return -1;
 }
 
+#define MB_WLED_MAX_SEG 16
+
+void appendDisableWledSegment(String& body, uint8_t segId, bool& first) {
+  if (!first) body += ",";
+  first = false;
+  body += "{\"id\":" + String(segId) + ",\"stop\":0}";
+}
+
+void appendDisableInactiveSegments(String& body, bool& first,
+                                  const uint8_t* activeIds, uint8_t activeCount, bool disableSeg0) {
+  if (disableSeg0) appendDisableWledSegment(body, 0, first);
+  for (uint8_t id = 1; id < MB_WLED_MAX_SEG; id++) {
+    bool keep = false;
+    for (uint8_t i = 0; i < activeCount; i++) {
+      if (activeIds[i] == id) { keep = true; break; }
+    }
+    if (!keep) appendDisableWledSegment(body, id, first);
+  }
+}
+
+void collectActiveSegIds(const MbSegMap& map, uint8_t* out, uint8_t& count) {
+  count = 0;
+  for (uint8_t i = 0; i < map.count; i++) {
+    uint8_t id = map.refs[i].id;
+    bool dup = false;
+    for (uint8_t j = 0; j < count; j++) {
+      if (out[j] == id) { dup = true; break; }
+    }
+    if (!dup && count < MB_MAX_SEG_REFS * 5) out[count++] = id;
+  }
+}
+
 void appendWledSolidSeg(String& body, const WledSegRef& ref, uint8_t r, uint8_t g, uint8_t b, bool& first) {
   if (ref.stop <= ref.start) return;
   if (!first) body += ",";
@@ -573,19 +619,40 @@ void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src)
   MbSegMap& map = mbSegMaps[si];
   if (map.count == 0) return;
   saveWledStateForOverride();
+  uint8_t activeIds[MB_MAX_SEG_REFS];
+  uint8_t activeCount = 0;
+  collectActiveSegIds(map, activeIds, activeCount);
+  bool disableSeg0 = (strcmp(segKey, "all") != 0);
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
+  appendDisableInactiveSegments(body, first, activeIds, activeCount, disableSeg0);
   for (uint8_t i = 0; i < map.count; i++) appendWledSolidSeg(body, map.refs[i], r, g, b, first);
   body += "]}";
-  sendToWLED(body);
+  sendToWLEDForBleEffect(body);
   setOverride(src);
   touchOverrideIdleTimer(src);
 }
 
 void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n, OverrideSource src) {
   saveWledStateForOverride();
+  uint8_t activeIds[MB_MAX_SEG_REFS * 5];
+  uint8_t activeCount = 0;
+  for (int i = 0; i < n; i++) {
+    int si = mbSegKeyIndex(segKeys[i]);
+    if (si < 0) continue;
+    for (uint8_t j = 0; j < mbSegMaps[si].count; j++) {
+      uint8_t id = mbSegMaps[si].refs[j].id;
+      bool dup = false;
+      for (uint8_t k = 0; k < activeCount; k++) {
+        if (activeIds[k] == id) { dup = true; break; }
+      }
+      if (!dup && activeCount < sizeof(activeIds)) activeIds[activeCount++] = id;
+    }
+  }
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
+  // Zone presets use segment 0 full-strip — must disable before split layout
+  appendDisableInactiveSegments(body, first, activeIds, activeCount, true);
   for (int i = 0; i < n; i++) {
     int si = mbSegKeyIndex(segKeys[i]);
     if (si < 0) continue;
@@ -596,7 +663,7 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
     }
   }
   body += "]}";
-  sendToWLED(body);
+  sendToWLEDForBleEffect(body);
   setOverride(src);
   touchOverrideIdleTimer(src);
 }
@@ -644,7 +711,8 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
 
   String wledJson;
   serializeJson(wled, wledJson);
-  sendToWLED(wledJson);
+  disableMbSplitSegments();
+  sendToWLEDForBleEffect(wledJson);
   setOverride(src);
   touchOverrideIdleTimer(src);
   return true;
@@ -720,11 +788,26 @@ void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
     return;
   }
   saveWledStateForOverride();
-  String body = "{" + buildSeg0JsonBody("\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
-                ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]") + "}";
-  sendToWLED(body);
+  uint8_t id0 = 0;
+  String body = "{\"on\":true,\"seg\":[";
+  bool first = true;
+  appendDisableInactiveSegments(body, first, &id0, 1, false);
+  body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT)
+       + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
+  body += "]}";
+  sendToWLEDForBleEffect(body);
   setOverride(src);
   touchOverrideIdleTimer(src);
+}
+
+void disableMbSplitSegments() {
+  String body = "{\"seg\":[";
+  bool first = true;
+  for (uint8_t id = 1; id < MB_WLED_MAX_SEG; id++) {
+    appendDisableWledSegment(body, id, first);
+  }
+  body += "]}";
+  sendToWLED(body);
 }
 
 // ─────────────────────────────────────────────
@@ -767,13 +850,15 @@ void saveWledStateForOverride() {
 }
 
 void clearOverride() {
+  OverrideSource prev = currentOverride;
   currentOverride = NONE;
   Serial.println("[Override] Cleared");
+  unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
   if (savedWledState.length() > 0) {
-    sendToWLED(savedWledState);
+    sendToWLED(injectWledTransition(savedWledState, fadeMs));
     savedWledState = "";
   } else if (baselineWledState.length() > 0) {
-    sendToWLED(baselineWledState);
+    sendToWLED(injectWledTransition(baselineWledState, fadeMs));
     Serial.println("[Override] Restored baseline WLED state");
   }
 }
@@ -907,6 +992,18 @@ void handleBLECommand(const String& msg) {
     Serial.printf("[Capture] app recording %s\n", bleCaptureToApp ? "ON" : "OFF");
   }
 
+  // ── MB / SW effect fade ──
+  else if (type == "ble_effect_config") {
+    if (doc.containsKey("transition_ms")) {
+      bleEffectTransitionMs = (unsigned long)doc["transition_ms"].as<long>();
+    }
+    prefs.begin("config", false);
+    prefs.putULong("bleTransMs", bleEffectTransitionMs);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"ble_effect_config\","
+              "\"transition_ms\":" + String(bleEffectTransitionMs) + "}");
+  }
+
   // ── Starlight Wand config ──
   else if (type == "sw_config") {
     if (doc.containsKey("enabled"))    starlightEnabled   = doc["enabled"].as<bool>();
@@ -980,6 +1077,7 @@ void handleBLECommand(const String& msg) {
       "\"mb_enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
       "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
       "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) + ","
+      "\"ble_transition_ms\":" + String(bleEffectTransitionMs) + ","
       "\"mb_chase_speed\":" + String(mbChaseSpeed) + ","
       "\"mb_chase_thickness\":" + String(mbChaseThickness) + ","
       "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") + ","
@@ -1350,7 +1448,13 @@ void applyMbAnimOpcode(const char* animKey, const char* label) {
     return;
   }
   saveWledStateForOverride();
-  sendToWLED("{\"on\":true," + buildSeg0JsonBody("\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) + ",\"fx\":0") + "}");
+  uint8_t id0 = 0;
+  String body = "{\"on\":true,\"seg\":[";
+  bool first = true;
+  appendDisableInactiveSegments(body, first, &id0, 1, false);
+  body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) + ",\"fx\":0}";
+  body += "]}";
+  sendToWLEDForBleEffect(body);
   setOverride(BLE_MAGIC);
   touchOverrideIdleTimer(BLE_MAGIC);
   bleNotify("{\"type\":\"ble_event\",\"event\":\"" + String(label) + "\"}");
@@ -1389,12 +1493,7 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       uint8_t r = ((payload[8] >> 1) & 0x3F) * 4;
       uint8_t g = ((payload[9] >> 1) & 0x3F) * 4;
       uint8_t b = ((payload[10] >> 1) & 0x3F) * 4;
-      saveWledStateForOverride();
-      String body = "{\"on\":true,\"seg\":[{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT)
-                  + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}]}";
-      sendToWLED(body);
-      setOverride(BLE_MAGIC);
-      touchOverrideIdleTimer(BLE_MAGIC);
+      applyFullStripSolid(r, g, b, BLE_MAGIC);
       bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
       break;
     }
@@ -1621,6 +1720,7 @@ void setup() {
   magicBandFivePoint  = prefs.getBool("mb5pt", true);
   overrideKillOnZone  = prefs.getBool("killOnZone", false);
   magicBandTimeoutMs  = prefs.getULong("mbTimeout", 15000);
+  bleEffectTransitionMs = prefs.getULong("bleTransMs", 700);
   mbChaseSpeed        = prefs.getUChar("mbSpd", 128);
   mbChaseThickness    = prefs.getUChar("mbGrp", 4);
   if (mbChaseThickness < 1) mbChaseThickness = 4;
@@ -1629,9 +1729,9 @@ void setup() {
   prefs.end();
   loadMbMappingFromJson();
   loadWledBaselineFromNvs();
-  Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u\n",
+  Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
-                bleScanLogEnabled, mbChaseSpeed, mbChaseThickness);
+                bleScanLogEnabled, mbChaseSpeed, mbChaseThickness, bleEffectTransitionMs);
 
   prefs.begin("presets", false);
   prefs.end();

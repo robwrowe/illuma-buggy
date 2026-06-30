@@ -14,11 +14,13 @@ import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
 import IconPencil from '@tabler/icons-react-native/dist/esm/icons/IconPencil';
 import IconCheck from '@tabler/icons-react-native/dist/esm/icons/IconCheck';
 
-import { useAppStore, CustomPalette, PaletteSet } from '../stores/store';
+import { useAppStore, CustomPalette, PaletteSet, CustomSegmentLayout, WledSegmentDef, summarizeLayout, buildLayoutPayload, fetchWledSegmentsFromDevice } from '../stores/store';
+import { bleService } from '../services/BLEService';
+import { useBLE } from '../hooks/useBLE';
 import { useTheme } from '../utils/theme';
 import { generateId } from '../utils/utils';
 
-type TabType = 'palettes' | 'sets';
+type TabType = 'palettes' | 'sets' | 'segments';
 
 const PRESET_COLORS = [
   '#ff0000','#ff4400','#ff8800','#ffcc00','#ffff00',
@@ -29,15 +31,19 @@ const PRESET_COLORS = [
 export default function PalettesScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
+  const { isConnected } = useBLE();
   const {
     customPalettes, addCustomPalette, updateCustomPalette, removeCustomPalette,
     paletteSets, addPaletteSet, updatePaletteSet, removePaletteSet,
+    customSegmentLayouts, addCustomSegmentLayout, updateCustomSegmentLayout, removeCustomSegmentLayout,
     saveToStorage,
   } = useAppStore();
 
   const [tab, setTab]               = useState<TabType>('palettes');
   const [editPalette, setEditPalette] = useState<CustomPalette | null>(null);
   const [editSet, setEditSet]         = useState<PaletteSet | null>(null);
+  const [editLayout, setEditLayout]   = useState<CustomSegmentLayout | null>(null);
+  const [capturingLayout, setCapturingLayout] = useState(false);
   const [isNew, setIsNew]             = useState(false);
 
   // ── Palette editing ──
@@ -123,14 +129,80 @@ export default function PalettesScreen() {
     setEditSet({ ...editSet, paletteIds: ids });
   };
 
+  // ── Segment layout editing ──
+
+  const newLayout = (): CustomSegmentLayout => ({
+    id: generateId(), name: '', segments: [{ id: 0, start: 0, stop: 100 }], createdAt: Date.now(),
+  });
+
+  const openNewLayout = () => { setEditLayout(newLayout()); setIsNew(true); };
+  const openEditLayout = (layout: CustomSegmentLayout) => {
+    setEditLayout({ ...layout, segments: layout.segments.map(seg => ({ ...seg })) });
+    setIsNew(false);
+  };
+
+  const saveLayout = () => {
+    if (!editLayout) return;
+    if (!editLayout.name.trim()) { Alert.alert('Name required'); return; }
+    if (editLayout.segments.length === 0) { Alert.alert('Add at least one segment'); return; }
+    if (isNew) addCustomSegmentLayout(editLayout);
+    else updateCustomSegmentLayout(editLayout.id, editLayout);
+    saveToStorage();
+    setEditLayout(null);
+  };
+
+  const deleteLayout = (id: string) => {
+    Alert.alert('Delete Layout', 'Delete this segment layout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => {
+        removeCustomSegmentLayout(id);
+        saveToStorage();
+        setEditLayout(null);
+      }},
+    ]);
+  };
+
+  const updateLayoutSeg = (idx: number, field: keyof WledSegmentDef, val: string) => {
+    if (!editLayout) return;
+    const n = parseInt(val, 10);
+    if (isNaN(n)) return;
+    const segments = editLayout.segments.map((seg, i) => i === idx ? { ...seg, [field]: n } : seg);
+    setEditLayout({ ...editLayout, segments });
+  };
+
+  const captureLayoutFromDevice = async () => {
+    if (!isConnected) { Alert.alert('Not connected', 'Connect to IllumaBuggy first.'); return; }
+    setCapturingLayout(true);
+    try {
+      const segments = await fetchWledSegmentsFromDevice();
+      if (segments.length === 0) {
+        Alert.alert('No segments', 'WLED returned no active segments.');
+        return;
+      }
+      if (editLayout) setEditLayout({ ...editLayout, segments });
+      else setEditLayout({ ...newLayout(), segments });
+    } catch (e) {
+      Alert.alert('Capture failed', e instanceof Error ? e.message : 'Could not read WLED state');
+    } finally {
+      setCapturingLayout(false);
+    }
+  };
+
+  const applyLayoutToDevice = (layout: CustomSegmentLayout) => {
+    if (!isConnected) { Alert.alert('Not connected'); return; }
+    bleService.sendWledRaw(buildLayoutPayload(layout));
+  };
+
   return (
     <View style={s.container}>
       {/* Tab bar */}
       <View style={s.tabBar}>
-        {(['palettes', 'sets'] as TabType[]).map(t => (
+        {(['palettes', 'sets', 'segments'] as TabType[]).map(t => (
           <TouchableOpacity key={t} style={[s.tab, tab === t && s.tabActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabText, tab === t && s.tabTextActive]}>
-              {t === 'palettes' ? `Palettes (${customPalettes.length})` : `Sets (${paletteSets.length})`}
+              {t === 'palettes' ? `Palettes (${customPalettes.length})`
+                : t === 'sets' ? `Sets (${paletteSets.length})`
+                : `Segments (${customSegmentLayouts.length})`}
             </Text>
           </TouchableOpacity>
         ))}
@@ -216,6 +288,43 @@ export default function PalettesScreen() {
                 <IconTrash size={15} color={colors.danger} />
               </TouchableOpacity>
             </TouchableOpacity>
+          )}
+        />
+      )}
+
+      {tab === 'segments' && (
+        <FlatList
+          data={customSegmentLayouts}
+          keyExtractor={l => l.id}
+          contentContainerStyle={s.list}
+          ListEmptyComponent={
+            <View style={s.empty}>
+              <Text style={s.emptyText}>No segment layouts yet</Text>
+              <Text style={s.hint}>Save multi-segment WLED layouts and attach them to presets</Text>
+            </View>
+          }
+          ListFooterComponent={
+            <TouchableOpacity style={s.addBtn} onPress={openNewLayout}>
+              <IconPlus size={16} color={colors.primary} />
+              <Text style={s.addBtnText}>New Segment Layout</Text>
+            </TouchableOpacity>
+          }
+          renderItem={({ item }) => (
+            <View style={s.card}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => openEditLayout(item)}>
+                <Text style={s.cardTitle}>{item.name}</Text>
+                <Text style={s.hint}>{summarizeLayout(item)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => applyLayoutToDevice(item)} style={s.iconBtn} disabled={!isConnected}>
+                <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '600' }}>Apply</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => openEditLayout(item)} style={s.iconBtn}>
+                <IconPencil size={15} color={colors.textMuted} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => deleteLayout(item.id)} style={s.iconBtn}>
+                <IconTrash size={15} color={colors.danger} />
+              </TouchableOpacity>
+            </View>
           )}
         />
       )}
@@ -372,6 +481,76 @@ export default function PalettesScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Edit segment layout modal */}
+      <Modal visible={!!editLayout} animationType="slide" transparent>
+        <View style={s.overlay}>
+          <View style={s.modal}>
+            <ScrollView contentContainerStyle={s.modalContent}>
+              <Text style={s.modalTitle}>{isNew ? 'New Segment Layout' : 'Edit Segment Layout'}</Text>
+
+              <Text style={s.fieldLabel}>Name</Text>
+              <TextInput style={s.input} value={editLayout?.name ?? ''}
+                onChangeText={v => editLayout && setEditLayout({ ...editLayout, name: v })}
+                placeholder="e.g. Five corners" placeholderTextColor={colors.textMuted} />
+
+              <TouchableOpacity style={[s.addColorBtn, !isConnected && { opacity: 0.5 }]}
+                onPress={captureLayoutFromDevice} disabled={!isConnected || capturingLayout}>
+                <Text style={s.addColorBtnText}>
+                  {capturingLayout ? 'Capturing…' : 'Capture from WLED'}
+                </Text>
+              </TouchableOpacity>
+
+              <Text style={s.fieldLabel}>Segments (id, start%, stop%)</Text>
+              {editLayout?.segments.map((seg, idx) => (
+                <View key={idx} style={s.segRow}>
+                  <TextInput style={s.segInput} value={String(seg.id)} keyboardType="number-pad"
+                    onChangeText={v => updateLayoutSeg(idx, 'id', v)} />
+                  <TextInput style={s.segInput} value={String(seg.start)} keyboardType="number-pad"
+                    onChangeText={v => updateLayoutSeg(idx, 'start', v)} />
+                  <TextInput style={s.segInput} value={String(seg.stop)} keyboardType="number-pad"
+                    onChangeText={v => updateLayoutSeg(idx, 'stop', v)} />
+                  {editLayout.segments.length > 1 && (
+                    <TouchableOpacity onPress={() => setEditLayout({
+                      ...editLayout,
+                      segments: editLayout.segments.filter((_, i) => i !== idx),
+                    })}>
+                      <IconTrash size={14} color={colors.danger} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+
+              <TouchableOpacity style={s.addColorBtn} onPress={() => editLayout && setEditLayout({
+                ...editLayout,
+                segments: [...editLayout.segments, {
+                  id: editLayout.segments.length,
+                  start: editLayout.segments[editLayout.segments.length - 1]?.stop ?? 0,
+                  stop: 100,
+                }],
+              })}>
+                <IconPlus size={14} color={colors.primary} />
+                <Text style={s.addColorBtnText}>Add segment</Text>
+              </TouchableOpacity>
+
+              <View style={s.modalBtns}>
+                {!isNew && editLayout && (
+                  <TouchableOpacity style={[s.btn, { borderColor: colors.danger }]}
+                    onPress={() => deleteLayout(editLayout.id)}>
+                    <Text style={[s.btnText, { color: colors.danger }]}>Delete</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity style={s.btn} onPress={() => setEditLayout(null)}>
+                  <Text style={s.btnText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.btn, s.btnPrimary]} onPress={saveLayout}>
+                  <Text style={[s.btnText, { color: '#fff' }]}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -418,4 +597,6 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   badge:           { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 },
   orderRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: c.border },
   orderBtn:        { color: c.textSecondary, fontSize: 16, padding: 4 },
+  segRow:          { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  segInput:        { flex: 1, backgroundColor: c.background, borderRadius: 6, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 8, fontSize: 12, textAlign: 'right' as const },
 });
