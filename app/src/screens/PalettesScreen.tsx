@@ -564,7 +564,7 @@ export default function PalettesScreen() {
                 </Text>
               </TouchableOpacity>
 
-              <Text style={s.fieldLabel}>Segments (id, start%, stop%)</Text>
+              <Text style={s.fieldLabel}>Segments (id, start LED, stop LED)</Text>
               {editLayout?.segments.map((seg, idx) => (
                 <View key={idx} style={s.segRow}>
                   <TextInput style={s.segInput} value={String(seg.id)} keyboardType="number-pad"

@@ -13,6 +13,7 @@ import { mbMappingToBlePayload } from '../utils/mbConfig';
 import {
   buildSegmentHighlightPreview, buildFiveCornerPreview,
   MB_SEGMENT_SIM_COMMAND, SIM_FIVE_CORNERS,
+  findMbSegIdConflicts, centerMatchesRegion,
 } from '../utils/mbSegmentPreview';
 import {
   formatWledSegLabel, formatWledSegSelectionSummary, toggleSnapshotSelection,
@@ -255,6 +256,8 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
   const defaultName = mbMapping.defaultPresetId
     ? (presets.find(p => p.id === mbMapping.defaultPresetId)?.name ?? mbMapping.defaultPresetId)
     : 'Not set';
+  const segIdConflicts = findMbSegIdConflicts(mbMapping.segments);
+  const centerDupInner = centerMatchesRegion(mbMapping.segments, 'inner');
 
   return (
     <>
@@ -371,6 +374,26 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
           {segSnapshotErr ? (
             <Text style={{ color: colors.danger, fontSize: 12, marginBottom: 8 }}>{segSnapshotErr}</Text>
           ) : null}
+          {(segIdConflicts.length > 0 || centerDupInner) && (
+            <View style={{
+              marginBottom: 10, padding: 10, borderRadius: 8,
+              backgroundColor: colors.danger + '18', borderWidth: 1, borderColor: colors.danger,
+            }}>
+              <Text style={{ color: colors.danger, fontWeight: '700', fontSize: 12, marginBottom: 4 }}>
+                Segment id conflict
+              </Text>
+              {centerDupInner && (
+                <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginBottom: 4 }}>
+                  Center uses the same segment ids as Inner — for E909 center, map the band center LED to its own WLED segment (often a single small range), not the inner ring.
+                </Text>
+              )}
+              {segIdConflicts.map(c => (
+                <Text key={c.id} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginBottom: 2 }}>
+                  Seg #{c.id} has different ranges ({c.ranges.join(' vs ')}) in {c.regions.join(', ')} — WLED only keeps one range per id.
+                </Text>
+              ))}
+            </View>
+          )}
           {MB_SEGMENT_META.map(({ id, label, hint }) => (
             <MbSegmentAssignEditor
               key={id}
@@ -495,7 +518,7 @@ function MbSegmentAssignEditor({
           {!isValidSegRef(ref) ? (
             <Text style={{ color: colors.danger, fontSize: 10, flex: 1 }}>invalid</Text>
           ) : (
-            <Text style={{ color: colors.textMuted, fontSize: 10, flex: 1, fontFamily: 'monospace' }}>%</Text>
+            <Text style={{ color: colors.textMuted, fontSize: 10, flex: 1, fontFamily: 'monospace' }}>LED</Text>
           )}
           <TouchableOpacity onPress={() => onChange(removeRefAt(refs, index))}
             style={{ paddingHorizontal: 8, paddingVertical: 4 }}>

@@ -19,6 +19,14 @@ export interface WledSegmentDef {
   o2?: boolean;
   o3?: boolean;
   col?: number[][];
+  of?: number;
+  grp?: number;
+  spc?: number;
+  bm?: number;
+  rev?: boolean;
+  mi?: boolean;
+  bri?: number;
+  on?: boolean;
 }
 
 export interface CustomSegmentLayout {
@@ -30,6 +38,7 @@ export interface CustomSegmentLayout {
 
 const LAYOUT_FIELDS: (keyof WledSegmentDef)[] = [
   'id', 'start', 'stop', 'fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col',
+  'of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on',
 ];
 
 export function normalizeSegmentDef(raw: Partial<WledSegmentDef>): WledSegmentDef | null {
@@ -79,10 +88,33 @@ export function buildLayoutPayload(layout: CustomSegmentLayout): { on: boolean; 
   return { on: true, seg: layout.segments.map(s => ({ ...s })) };
 }
 
+export function activeSegmentsFromPreset(
+  preset: { wled?: { seg?: WledSegmentDef[] }; segmentLayoutId?: string },
+  layouts: CustomSegmentLayout[],
+): WledSegmentDef[] {
+  if (preset.segmentLayoutId) {
+    const layout = layouts.find(l => l.id === preset.segmentLayoutId);
+    if (layout?.segments.length) return layout.segments;
+  }
+  return preset.wled?.seg || [];
+}
+
+export function presetHasPerSegmentRecall(
+  preset: { wled?: { seg?: WledSegmentDef[] }; segmentLayoutId?: string },
+  layouts: CustomSegmentLayout[],
+): boolean {
+  const active = activeSegmentsFromPreset(preset, layouts).filter(s => s.stop > s.start);
+  if (active.length <= 1) return false;
+  return active.some(s =>
+    s.fx !== undefined || s.pal !== undefined || s.col !== undefined
+    || ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].some(k => (s as Record<string, unknown>)[k] !== undefined),
+  );
+}
+
 export function summarizeLayout(layout: CustomSegmentLayout): string {
   if (layout.segments.length === 0) return 'No segments';
   return layout.segments
-    .map(s => `#${s.id} ${s.start}–${s.stop}%`)
+    .map(s => `#${s.id} LED ${s.start}–${s.stop}`)
     .join(' · ');
 }
 

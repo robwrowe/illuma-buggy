@@ -420,15 +420,43 @@ async function postWledState(ip, payload) {
   if (!res.ok) throw new Error('WLED rejected request');
 }
 
+const SEGMENT_LAYOUT_FIELDS = [
+  'fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col',
+  'of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on',
+];
+
+const WLED_BLEND_MODES = [
+  { value: 0, label: 'Normal' },
+  { value: 1, label: 'Additive' },
+  { value: 2, label: 'Subtractive' },
+  { value: 3, label: 'Multiply' },
+];
+
 function normalizeSegmentDef(raw) {
   const start = Number(raw.start ?? 0);
   const stop = Number(raw.stop ?? 0);
   if (stop <= start) return null;
   const seg = { id: Number(raw.id ?? 0), start, stop };
-  ['fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col'].forEach(k => {
+  SEGMENT_LAYOUT_FIELDS.forEach(k => {
     if (raw[k] !== undefined && raw[k] !== null) seg[k] = raw[k];
   });
   return seg;
+}
+
+function formatSegRange(seg) {
+  const start = Number(seg?.start ?? 0);
+  const stop = Number(seg?.stop ?? 0);
+  if (stop <= start) return 'LED ?';
+  if (stop - start === 1) return `LED ${start}`;
+  return `LED ${start}-${stop - 1}`;
+}
+
+function formatSegLabel(seg) {
+  return `Seg #${seg.id} · ${formatSegRange(seg)}`;
+}
+
+function isActiveSegment(seg) {
+  return Number(seg?.stop ?? 0) > Number(seg?.start ?? 0);
 }
 
 function parseWledStateSegments(state) {
@@ -439,7 +467,7 @@ function parseWledStateSegments(state) {
 
 function summarizeLayout(layout) {
   if (!layout?.segments?.length) return 'No segments';
-  return layout.segments.map(s => `#${s.id} ${s.start}–${s.stop}%`).join(' · ');
+  return layout.segments.map(formatSegLabel).join(' · ');
 }
 
 function buildLayoutPayload(layout) {
@@ -461,34 +489,8 @@ async function fetchWledSegmentsFromIp(ip) {
   return segments;
 }
 
-const WLED_CUSTOM_PALETTE_ID_BASE = 200;
-
-function wledPalIdFromPdSlot(slot) {
-  return WLED_CUSTOM_PALETTE_ID_BASE - slot;
-}
-
-function findCustomPaletteByPalId(customPalettes, palId) {
-  if (palId == null || palId === '') return null;
-  const list = customPalettes || [];
-  const direct = list.find(p => p.wledPalId === palId);
-  if (direct) return direct;
-  const bySlot = list.find(p => p.wledPdSlot != null && wledPalIdFromPdSlot(p.wledPdSlot) === palId);
-  if (bySlot) return bySlot;
-  const legacyIdx = 255 - palId;
-  if (legacyIdx >= 0 && legacyIdx < list.length) return list[legacyIdx];
-  return null;
-}
-
-function customPalettePalId(palette, indexInList) {
-  if (palette?.wledPalId != null) return palette.wledPalId;
-  if (palette?.wledPdSlot != null) return wledPalIdFromPdSlot(palette.wledPdSlot);
-  return wledPalIdFromPdSlot(indexInList);
-}
-
-function resolvePaletteName(pal, palettes, customPalettes) {
+function resolvePaletteName(pal, palettes) {
   if (pal == null || pal === '') return '';
-  const cp = findCustomPaletteByPalId(customPalettes, pal);
-  if (cp) return cp.name;
   return (palettes || []).find(p => p.id === pal)?.name || `Palette ${pal}`;
 }
 
@@ -496,21 +498,162 @@ const DEFAULT_WLED_CAPTURE_OPTS = {
   effect: true, palette: true, parameters: true, color: true, segments: true,
 };
 
-const WLED_CAPTURE_LABELS = {
-  effect: { title: 'Effect', hint: 'fx + effect name from segment 0' },
-  palette: { title: 'Palette', hint: 'pal + palette name from segment 0' },
-  parameters: { title: 'Parameters', hint: 'Speed, intensity, custom sliders (sx, ix, c1–c3, o1–o3)' },
-  color: { title: 'Effect colors', hint: 'RGB slots (col) for solid / dual / triple effects' },
-  segments: { title: 'Segment layout', hint: 'Active segment ranges (id, start%, stop%)' },
-};
+function wledCaptureLabels() {
+  return {
+    effect: { title: 'Effect', hint: 'fx + effect name from segment 0' },
+    palette: { title: 'Palette', hint: 'pal + palette name from segment 0' },
+    parameters: { title: 'Parameters', hint: 'Speed, intensity, custom sliders (sx, ix, c1-c3, o1-o3)' },
+    color: { title: 'Effect colors', hint: 'RGB slots (col) for solid / dual / triple effects' },
+    segments: { title: 'Segment layout', hint: 'Active segment ranges (id, start LED, stop LED)' },
+  };
+}
+
+function captureSegmentFromRaw(raw, opts) {
+  const seg = {};
+  if (opts.segments) {
+    seg.id = Number(raw.id ?? 0);
+    seg.start = Number(raw.start ?? 0);
+    seg.stop = Number(raw.stop ?? 0);
+    ['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'].forEach(k => {
+      if (raw[k] !== undefined && raw[k] !== null) seg[k] = raw[k];
+    });
+  } else if (raw.id !== undefined && raw.id !== null) {
+    seg.id = Number(raw.id);
+  }
+  if (opts.effect && raw.fx !== undefined && raw.fx !== null) seg.fx = raw.fx;
+  if (opts.palette && raw.pal !== undefined && raw.pal !== null) seg.pal = raw.pal;
+  if (opts.parameters) {
+    ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
+      if (raw[k] !== undefined && raw[k] !== null) seg[k] = raw[k];
+    });
+  }
+  if (opts.color && raw.col !== undefined && raw.col !== null) {
+    seg.col = Array.isArray(raw.col?.[0]) ? raw.col.map(c => [...c]) : [...raw.col];
+  }
+  return seg;
+}
+
+function mergeSegmentsById(base, incoming) {
+  const map = new Map();
+  (base || []).forEach(seg => map.set(Number(seg.id ?? 0), { ...seg }));
+  (incoming || []).forEach(seg => {
+    const id = Number(seg.id ?? 0);
+    map.set(id, { ...(map.get(id) || { id }), ...seg, id });
+  });
+  return [...map.values()].sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0));
+}
+
+function collectPresetSegProps(seg) {
+  const out = {};
+  ['fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col'].forEach(k => {
+    if (seg?.[k] !== undefined && seg?.[k] !== null) out[k] = seg[k];
+  });
+  return out;
+}
+
+function segmentHasDistinctProps(seg) {
+  return Object.keys(collectPresetSegProps(seg)).length > 0;
+}
+
+function activeSegmentsFromPreset(preset, customSegmentLayouts) {
+  const w = preset?.wled || {};
+  const linked = preset?.segmentLayoutId
+    ? (customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId)
+    : undefined;
+  const fromLayout = linked?.segments?.map(s => normalizeSegmentDef(s)).filter(Boolean) || [];
+  const fromPreset = (w.seg || []).map(s => normalizeSegmentDef(s)).filter(Boolean);
+  const merged = mergeSegmentsById(fromLayout, fromPreset);
+  return merged.filter(isActiveSegment);
+}
+
+function findMbSegIdConflicts(mapping) {
+  const seen = new Map();
+  const conflicts = [];
+  Object.entries(mapping?.segments || {}).forEach(([region, refs]) => {
+    (refs || []).forEach(ref => {
+      const key = Number(ref.id ?? -1);
+      const range = formatSegRange(ref);
+      if (!seen.has(key)) {
+        seen.set(key, { region, range });
+        return;
+      }
+      const prior = seen.get(key);
+      if (prior.range !== range) {
+        conflicts.push({
+          id: key,
+          a: `${prior.region}: ${prior.range}`,
+          b: `${region}: ${range}`,
+        });
+      }
+    });
+  });
+  return conflicts;
+}
+
+function presetHasPerSegmentRecall(preset, recall, customSegmentLayouts) {
+  const r = recall || DEFAULT_DATA.recallState;
+  const segs = activeSegmentsFromPreset(preset, customSegmentLayouts);
+  if (segs.length <= 1) return false;
+  return segs.some(seg => {
+    const props = collectPresetSegProps(seg);
+    return (r.effect !== 'never' && props.fx !== undefined)
+      || (r.palette !== 'never' && props.pal !== undefined)
+      || (r.parameters !== 'never' && ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].some(k => props[k] !== undefined))
+      || (r.color !== 'never' && props.col !== undefined);
+  });
+}
+
+function applyRecallFilterToSegments(segments, wled, memory, recall) {
+  const r = recall || DEFAULT_DATA.recallState;
+  const m = memory || DEFAULT_PRESET_MEMORY;
+  const should = (prop, memVal) => {
+    if (r[prop] === 'always') return true;
+    if (r[prop] === 'never') return false;
+    return !!memVal;
+  };
+  return (segments || []).map((seg, index) => {
+    const out = { id: Number(seg.id ?? index) };
+    if (should('segments', m.segments)) {
+      out.start = Number(seg.start ?? 0);
+      out.stop = Number(seg.stop ?? 0);
+      ['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'].forEach(k => {
+        if (seg[k] !== undefined && seg[k] !== null) out[k] = seg[k];
+      });
+    }
+    if (should('effect', m.effect) && (seg.fx !== undefined || wled.fx !== undefined)) out.fx = seg.fx ?? wled.fx;
+    if (should('palette', m.palette) && (seg.pal !== undefined || wled.pal !== undefined)) out.pal = seg.pal ?? wled.pal;
+    if (should('parameters', m.parameters)) {
+      ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
+        if (seg[k] !== undefined || wled[k] !== undefined) out[k] = seg[k] ?? wled[k];
+      });
+    }
+    if (should('color', m.color) && (seg.col !== undefined || wled.col !== undefined)) {
+      const col = seg.col ?? wled.col;
+      out.col = Array.isArray(col?.[0]) ? col.map(c => [...c]) : col;
+    }
+    return out;
+  });
+}
+
+function applyPresetPropsToAllSegments(segments, wled) {
+  const list = (segments || []).length ? segments : [{ id: 0 }];
+  return list.map((seg, idx) => {
+    const out = { ...seg, id: Number(seg.id ?? idx) };
+    ['fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col'].forEach(k => {
+      if (wled[k] !== undefined && wled[k] !== null) out[k] = wled[k];
+    });
+    return out;
+  });
+}
 
 function applyWledStateCapture(preset, state, catalog, opts, updateMemory = true) {
-  const segments = parseWledStateSegments(state);
-  const primary = segments[0];
+  const rawSegs = parseWledStateSegments(state);
+  const primary = rawSegs[0];
   if (!primary) throw new Error('No active segments in WLED state');
   const wled = { ...preset.wled };
   const memory = { ...preset.memory };
   let segmentLayoutId = preset.segmentLayoutId;
+  const capturedSegs = rawSegs.map(seg => captureSegmentFromRaw(seg, opts)).filter(Boolean);
 
   if (opts.effect) {
     if (primary.fx === undefined) throw new Error('Segment 0 has no effect (fx) to import');
@@ -521,7 +664,7 @@ function applyWledStateCapture(preset, state, catalog, opts, updateMemory = true
   if (opts.palette) {
     if (primary.pal === undefined) throw new Error('Segment 0 has no palette (pal) to import');
     wled.pal = primary.pal;
-    wled.palName = resolvePaletteName(primary.pal, catalog.palettes, catalog.customPalettes);
+    wled.palName = resolvePaletteName(primary.pal, catalog.palettes);
     if (updateMemory) memory.palette = true;
   }
   if (opts.parameters) {
@@ -539,12 +682,12 @@ function applyWledStateCapture(preset, state, catalog, opts, updateMemory = true
       if (updateMemory) memory.color = false;
     }
   }
-  if (opts.segments) {
-    if (segments.length > 0) {
-      wled.seg = segments.map(s => ({ id: s.id, start: s.start, stop: s.stop }));
-      segmentLayoutId = undefined;
-      if (updateMemory) memory.segments = segments.length > 0;
-    }
+  if (capturedSegs.length && (opts.effect || opts.palette || opts.parameters || opts.color || opts.segments)) {
+    wled.seg = capturedSegs.filter(seg => !opts.segments || isActiveSegment(seg));
+    segmentLayoutId = undefined;
+  }
+  if (opts.segments && capturedSegs.length > 0) {
+    if (updateMemory) memory.segments = capturedSegs.some(isActiveSegment);
   }
 
   return { ...preset, wled, memory, segmentLayoutId };
@@ -706,110 +849,12 @@ function mergeWledPresetsIntoList(existingPresets, wledPresetsRaw, effects, pale
   return { presets: [...byId.values()], added, updated };
 }
 
-function paletteSelectValue(wled, customPalettes) {
+function paletteSelectValue(wled) {
   if (wled.pal === undefined || wled.pal === null || wled.pal === '') return '';
-  const ci = (customPalettes || []).findIndex((p, i) => customPalettePalId(p, i) === wled.pal);
-  if (ci >= 0 && (!wled.palName || customPalettes[ci].name === wled.palName)) {
-    return `custom:${customPalettes[ci].id}`;
-  }
   return `wled:${wled.pal}`;
 }
 
 const DEFAULT_PRESET_MEMORY = { effect: true, palette: true, parameters: true, color: false, segments: false };
-
-function buildWledCustomPalette(palette) {
-  return palette.colors.map((hex, i) => {
-    const { r, g, b } = hexToRgb(hex);
-    const pos = Math.round((i / Math.max(palette.colors.length - 1, 1)) * 255);
-    return [pos, r, g, b];
-  });
-}
-
-/** WLED /paletteN.json file body — flat [pos,r,g,b, …] array */
-function buildWledPaletteFile(palette) {
-  const flat = [];
-  palette.colors.forEach((hex, i) => {
-    const { r, g, b } = hexToRgb(hex);
-    const pos = Math.round((i / Math.max(palette.colors.length - 1, 1)) * 255);
-    flat.push(pos, r, g, b);
-  });
-  return { palette: flat };
-}
-
-function assignWledPdSlots(customPalettes) {
-  const used = new Set((customPalettes || []).map(p => p.wledPdSlot).filter(s => s != null && s >= 0));
-  let next = 0;
-  const takeSlot = () => {
-    while (used.has(next)) next += 1;
-    const s = next;
-    used.add(s);
-    next += 1;
-    return s;
-  };
-  return (customPalettes || []).map(p => {
-    const slot = p.wledPdSlot != null && p.wledPdSlot >= 0 ? p.wledPdSlot : takeSlot();
-    return { ...p, wledPdSlot: slot, wledPalId: wledPalIdFromPdSlot(slot) };
-  });
-}
-
-async function uploadWledPaletteFile(ip, slot, palette) {
-  const host = ip.trim();
-  const body = JSON.stringify(buildWledPaletteFile(palette));
-  const blob = new Blob([body], { type: 'application/json' });
-  const form = new FormData();
-  form.append('data', blob, `/palette${slot}.json`);
-  const res = await fetch(`http://${host}/upload`, { method: 'POST', body: form });
-  if (!res.ok) throw new Error(`WLED rejected palette upload (slot ${slot})`);
-}
-
-async function syncCustomPalettesToWled(ip, customPalettes) {
-  const host = ip.trim();
-  if (!host) throw new Error('Enter a WLED IP');
-  const list = assignWledPdSlots(customPalettes);
-  for (const p of list) {
-    await uploadWledPaletteFile(host, p.wledPdSlot, p);
-  }
-  await new Promise(r => setTimeout(r, 350));
-  return list;
-}
-
-function migratePresetPaletteIds(presets, customPalettes) {
-  return (presets || []).map(preset => {
-    const pal = preset.wled?.pal;
-    if (pal == null) return preset;
-    const cp = findCustomPaletteByPalId(customPalettes, pal);
-    if (!cp?.wledPalId || cp.wledPalId === pal) return preset;
-    return { ...preset, wled: { ...preset.wled, pal: cp.wledPalId } };
-  });
-}
-
-function fixPayloadCustomPaletteIds(payload, customPalettes) {
-  if (!payload?.seg || !customPalettes?.length) return payload;
-  const segs = payload.seg.map(seg => {
-    if (seg.pal == null) return seg;
-    const cp = findCustomPaletteByPalId(customPalettes, seg.pal);
-    if (!cp?.wledPalId || cp.wledPalId === seg.pal) return seg;
-    return { ...seg, pal: cp.wledPalId };
-  });
-  return { ...payload, seg: segs };
-}
-
-async function findPalettePreviewFx(ip) {
-  try {
-    const res = await fetch(`http://${ip.trim()}/json/eff`);
-    if (!res.ok) return null;
-    const names = await res.json();
-    const prefer = ['Palette', 'Colorwave', 'Chase 2', 'Running', 'Chase'];
-    for (const name of prefer) {
-      const idx = names.indexOf(name);
-      if (idx >= 0) return idx;
-    }
-    const fuzzy = names.findIndex(n => /palette|colorwave|chase/i.test(n));
-    return fuzzy >= 0 ? fuzzy : null;
-  } catch {
-    return null;
-  }
-}
 
 function buildRecallPayload(preset, recall, customSegmentLayouts) {
   const r = recall || DEFAULT_DATA.recallState;
@@ -823,26 +868,25 @@ function buildRecallPayload(preset, recall, customSegmentLayouts) {
     return memVal;
   };
 
-  if (should('segments', m.segments)) {
-    const linked = preset.segmentLayoutId
-      ? (customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId)
-      : undefined;
-    if (linked?.segments?.length) {
-      payload.seg = linked.segments.map(seg => ({ ...seg }));
-    } else if (w.seg !== undefined) {
-      payload.seg = w.seg;
-    }
+  const activeSegments = activeSegmentsFromPreset(preset, customSegmentLayouts);
+  const hasPerSegment = presetHasPerSegmentRecall(preset, r, customSegmentLayouts);
+
+  if (hasPerSegment && activeSegments.length > 0) {
+    payload.seg = applyRecallFilterToSegments(activeSegments, w, m, r);
+    return payload;
   }
+
+  if (should('segments', m.segments)) payload.seg = activeSegments;
   if (should('effect', m.effect) && w.fx !== undefined) {
-    payload.seg = payload.seg ?? [{}];
+    payload.seg = payload.seg ?? [{ id: 0 }];
     payload.seg[0] = { ...payload.seg[0], fx: w.fx };
   }
   if (should('palette', m.palette) && w.pal !== undefined) {
-    payload.seg = payload.seg ?? [{}];
+    payload.seg = payload.seg ?? [{ id: 0 }];
     payload.seg[0] = { ...payload.seg[0], pal: w.pal };
   }
   if (should('parameters', m.parameters)) {
-    payload.seg = payload.seg ?? [{}];
+    payload.seg = payload.seg ?? [{ id: 0 }];
     const s0 = payload.seg[0];
     if (w.sx !== undefined) s0.sx = w.sx;
     if (w.ix !== undefined) s0.ix = w.ix;
@@ -854,7 +898,7 @@ function buildRecallPayload(preset, recall, customSegmentLayouts) {
     if (w.o3 !== undefined) s0.o3 = w.o3;
   }
   if (should('color', m.color) && w.col !== undefined) {
-    payload.seg = payload.seg ?? [{}];
+    payload.seg = payload.seg ?? [{ id: 0 }];
     payload.seg[0] = { ...payload.seg[0], col: w.col };
   }
   return payload;
@@ -880,58 +924,17 @@ function finalizeWledSegmentPayload(payload) {
 
 function buildTestPresetPayload(preset, customSegmentLayouts) {
   const p = { ...preset, memory: { ...TEST_PRESET_MEMORY } };
-  const base = buildRecallPayload(p, TEST_PRESET_RECALL, customSegmentLayouts);
-  const w = preset.wled || {};
-  if (base.seg?.length > 1 && (w.fx !== undefined || w.pal !== undefined)) {
-    base.seg = base.seg
-      .filter(s => Number(s.stop ?? 0) > Number(s.start ?? 0))
-      .map(s => ({
-        ...s,
-        ...(w.fx !== undefined ? { fx: w.fx } : {}),
-        ...(w.pal !== undefined ? { pal: w.pal } : {}),
-      }));
-  }
-  return finalizeWledSegmentPayload(base);
-}
-
-function presetUsesCustomPalette(preset, customPalettes) {
-  const pal = preset.wled?.pal;
-  if (pal === undefined || pal === null) return false;
-  return !!findCustomPaletteByPalId(customPalettes, pal);
+  return finalizeWledSegmentPayload(buildRecallPayload(p, TEST_PRESET_RECALL, customSegmentLayouts));
 }
 
 async function testPresetOnWled(ip, preset, data) {
   const host = ip.trim();
   if (!host) throw new Error('Enter a WLED IP');
-  let customPalettes = data.customPalettes || [];
-  if (customPalettes.length && presetUsesCustomPalette(preset, customPalettes)) {
-    customPalettes = await syncCustomPalettesToWled(host, customPalettes);
-  }
-  let payload = buildTestPresetPayload(preset, data.customSegmentLayouts);
-  payload = fixPayloadCustomPaletteIds(payload, customPalettes);
+  const payload = buildTestPresetPayload(preset, data.customSegmentLayouts);
   await postWledState(host, payload);
-  return { customPalettes, presets: migratePresetPaletteIds(data.presets, customPalettes) };
 }
 
-async function uploadCustomPalettesToWled(ip, customPalettes) {
-  return syncCustomPalettesToWled(ip, customPalettes);
-}
-
-/** Upload palettes to WLED filesystem and set one active on segment 0 */
-async function applyCustomPaletteToWled(ip, paletteId, customPalettes) {
-  const host = ip.trim();
-  if (!host) throw new Error('Enter a WLED IP');
-  const synced = await syncCustomPalettesToWled(host, customPalettes);
-  const pal = synced.find(p => p.id === paletteId);
-  if (!pal) throw new Error('Palette not found in config');
-  const previewFx = await findPalettePreviewFx(host);
-  const seg = { id: 0, pal: pal.wledPalId };
-  if (previewFx != null) seg.fx = previewFx;
-  await postWledState(host, { on: true, bri: 255, seg: [seg] });
-  return synced;
-}
-
-function buildPaletteSelectOptions(wledPalettes, customPalettes, wled, paletteKnown) {
+function buildPaletteSelectOptions(wledPalettes, wled, paletteKnown) {
   const options = [];
   if (wled?.pal != null && wled.pal !== '' && !paletteKnown) {
     options.push({
@@ -941,15 +944,6 @@ function buildPaletteSelectOptions(wledPalettes, customPalettes, wled, paletteKn
       searchText: `${wled.palName || ''} ${wled.pal}`,
     });
   }
-  (customPalettes || []).forEach((cp, i) => {
-    const palId = customPalettePalId(cp, i);
-    options.push({
-      value: `custom:${cp.id}`,
-      label: `${cp.name}${cp.wledPalId != null ? ` (WLED #${cp.wledPalId})` : ` → #${palId}`}`,
-      group: `Custom — this config (${customPalettes.length})`,
-      searchText: `${cp.name} ${palId} custom ${cp.wledPdSlot ?? ''}`,
-    });
-  });
   [...(wledPalettes || [])]
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
     .forEach(pal => {
@@ -969,7 +963,7 @@ function SegmentBar({ segments }) {
   return (
     <div style={{ height: 14, borderRadius: 4, overflow: 'hidden', display: 'flex', background: '#111', border: '1px solid var(--border)' }}>
       {segments.map((s, i) => (
-        <div key={i} title={`#${s.id} ${s.start}–${s.stop}%`}
+        <div key={i} title={formatSegLabel(s)}
           style={{ flex: Math.max(1, s.stop - s.start), background: colors[s.id % colors.length], minWidth: 2 }} />
       ))}
     </div>
@@ -1054,9 +1048,21 @@ function mbMappingToBlePayload(config) {
 
 function presetWledForBoard(preset, customSegmentLayouts) {
   const wled = JSON.parse(JSON.stringify(preset.wled || { on: true }));
+  const layoutSegs = preset.segmentLayoutId
+    ? ((customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId)?.segments || [])
+    : [];
   if (preset.segmentLayoutId) {
     const layout = (customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId);
     if (layout?.segments?.length) wled.seg = layout.segments.map(s => ({ ...s }));
+  }
+  if (!wled.seg?.length && layoutSegs.length) wled.seg = layoutSegs.map(s => ({ ...s }));
+  const perSegment = presetHasPerSegmentRecall(
+    { ...preset, wled: { ...wled, seg: wled.seg } },
+    TEST_PRESET_RECALL,
+    customSegmentLayouts,
+  );
+  if (wled.seg?.length > 1 && !perSegment) {
+    wled.seg = applyPresetPropsToAllSegments(wled.seg, wled);
   }
   return wled;
 }
@@ -1290,8 +1296,8 @@ function loadAppData(stored) {
     .filter(c => c?.id && normalizeHex(c.hex))
     .map(c => ({ id: c.id, name: c.name || c.hex, hex: normalizeHex(c.hex), tags: normalizeTags(c.tags) }));
   merged.presets = (merged.presets || []).map(p => ({ ...p, tags: normalizeTags(p.tags) }));
-  merged.customPalettes = (merged.customPalettes || []).map(p => ({ ...p, tags: normalizeTags(p.tags) }));
-  merged.paletteSets = (merged.paletteSets || []).map(s => ({ ...s, tags: normalizeTags(s.tags) }));
+  merged.customPalettes = [];
+  merged.paletteSets = [];
   merged.zones = (merged.zones || []).map(normalizeZoneRecord);
   merged.indoorZones = (merged.indoorZones || []).map(normalizeZoneRecord);
   return merged;
@@ -1474,13 +1480,6 @@ function ColorSwatch({colors,size=14,gap=3,max=999}) {
   </div>;
 }
 
-function PaletteGradient({colors,height=24}) {
-  if (!colors || colors.length < 2) return null;
-  return <div style={{height,borderRadius:6,overflow:'hidden',flexDirection:'row',display:'flex',border:'1px solid var(--border)'}}>
-    {colors.map((c,i) => <div key={i} style={{flex:1,background:c}}/>)}
-  </div>;
-}
-
 // ── Board BLE sync ───────────────────────────────────────────────────
 function BoardSyncModal({ data, onClose }) {
   const [connected, setConnected] = useState(webBleBoard.connected);
@@ -1529,7 +1528,7 @@ function BoardSyncModal({ data, onClose }) {
         <div style={{ fontWeight: 600, marginBottom: 4 }}>Syncs to ESP32</div>
         Presets ({presetCount}), MB mapping, MB/Starlight config, effect transitions, override mode
         <div style={{ fontWeight: 600, margin: '8px 0 4px' }}>Stays in browser / phone only</div>
-        GPS zones, brightness schedule, recall state, custom palettes (import those on the app, or test presets via WLED WiFi)
+        GPS zones, brightness schedule, recall state, segment layouts
       </div>
       {!supported && (
         <div style={{ fontSize: 12, color: 'var(--danger)' }}>
@@ -1707,7 +1706,7 @@ function App() {
     {/* Profiles modal */}
     {showProfiles && <Modal title="🗂 Profiles" onClose={() => setShowProfiles(false)} width={460}>
       <p style={{fontSize:12,color:'var(--text3)'}}>
-        Profiles save your full config (zones, presets, palettes, settings) to a named slot in browser storage.
+        Profiles save your full config (zones, presets, segment layouts, settings) to a named slot in browser storage.
         Perfect for separate configs per park — load one before you leave the house.
       </p>
       <div style={{display:'flex',gap:8}}>
@@ -1724,7 +1723,7 @@ function App() {
             <div style={{flex:1}}>
               <div style={{fontWeight:600,fontSize:14}}>{name}</div>
               <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>
-                {prof.presets?.length||0} presets · {prof.zones?.length||0} zones · {prof.customPalettes?.length||0} palettes
+                {prof.presets?.length||0} presets · {prof.zones?.length||0} zones · {prof.customSegmentLayouts?.length||0} layouts
                 {prof.savedAt && ' · ' + new Date(prof.savedAt).toLocaleDateString()}
               </div>
             </div>
@@ -2357,9 +2356,7 @@ function PresetsTab({data, update}) {
     }
   };
 
-  const customPalettes = data.customPalettes || [];
   const paletteKnown = sel && (
-    customPalettes.some((p, i) => customPalettePalId(p, i) === sel.wled.pal && p.name === sel.wled.palName) ||
     wledPalettes.some(p => p.id === sel.wled.pal)
   );
   const sortedEffects = useMemo(
@@ -2374,8 +2371,8 @@ function PresetsTab({data, update}) {
     );
   }, [sortedEffects, effectFilter]);
   const paletteOptions = useMemo(
-    () => buildPaletteSelectOptions(wledPalettes, customPalettes, sel?.wled, paletteKnown),
-    [wledPalettes, customPalettes, sel?.wled, paletteKnown],
+    () => buildPaletteSelectOptions(wledPalettes, sel?.wled, paletteKnown),
+    [wledPalettes, sel?.wled, paletteKnown],
   );
 
   const testPreset = async (preset) => {
@@ -2389,13 +2386,7 @@ function PresetsTab({data, update}) {
     }
     localStorage.setItem('wled-ip', ip);
     try {
-      const result = await testPresetOnWled(ip, preset, data);
-      if (result?.customPalettes) {
-        update({
-          customPalettes: result.customPalettes,
-          presets: result.presets ?? data.presets,
-        });
-      }
+      await testPresetOnWled(ip, preset, data);
       setPresetTestStatus('ok');
       setTimeout(() => setPresetTestStatus('idle'), 2500);
     } catch {
@@ -2409,12 +2400,7 @@ function PresetsTab({data, update}) {
       setSel(s => ({ ...s, wled: { ...s.wled, pal: undefined, palName: '' } }));
       return;
     }
-    if (v.startsWith('custom:')) {
-      const cpId = v.slice(7);
-      const i = customPalettes.findIndex(p => p.id === cpId);
-      if (i < 0) return;
-      setSel(s => ({ ...s, wled: { ...s.wled, pal: customPalettePalId(customPalettes[i], i), palName: customPalettes[i].name } }));
-    } else if (v.startsWith('wled:')) {
+    if (v.startsWith('wled:')) {
       const id = parseInt(v.slice(5), 10);
       const pal = wledPalettes.find(p => p.id === id);
       setSel(s => ({ ...s, wled: { ...s.wled, pal: id, palName: pal?.name || s.wled.palName } }));
@@ -2461,7 +2447,7 @@ function PresetsTab({data, update}) {
         } catch { /* names may fall back to IDs */ }
       }
       setSel(s => applyWledStateCapture(s, state, {
-        effects, palettes, customPalettes: data.customPalettes || [],
+        effects, palettes,
       }, captureOpts, captureUpdateMemory));
       setShowCapture(false);
       setCaptureErr('');
@@ -2619,7 +2605,7 @@ function PresetsTab({data, update}) {
       {/* Palette tab */}
       {ptab==='palette' && (<div style={{maxWidth:520,display:'flex',flexDirection:'column',gap:12}}>
         <Field label="Color palette">
-          <SearchableSelect value={paletteSelectValue(sel.wled, customPalettes)} onChange={applyPalettePick}
+          <SearchableSelect value={paletteSelectValue(sel.wled)} onChange={applyPalettePick}
             placeholder="— Select palette —" maxListHeight={320}
             options={paletteOptions}/>
         </Field>
@@ -2628,20 +2614,9 @@ function PresetsTab({data, update}) {
             {sel.wled.palName || 'Unnamed palette'} · ID {sel.wled.pal}
           </div>
         )}
-        {customPalettes.length > 0 && (
-          <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
-            {customPalettes.map(cp => (
-              <div key={cp.id} title={cp.name} style={{display:'flex',gap:2,padding:4,borderRadius:6,background:'var(--surface2)',border:'1px solid var(--border)'}}>
-                {cp.colors.slice(0, 6).map((c, j) => (
-                  <div key={j} style={{width:14,height:14,borderRadius:2,background:c}}/>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-        {wledPalettes.length === 0 && customPalettes.length === 0 && (
+        {wledPalettes.length === 0 && (
           <div style={{fontSize:11,color:'var(--text3)'}}>
-            Create palettes under the Palettes tab, or connect to WLED for built-in palette names.
+            Connect to WLED to load palette names from the controller catalog.
           </div>
         )}
         <details style={{fontSize:12,color:'var(--text2)'}}>
@@ -2713,7 +2688,11 @@ function PresetsTab({data, update}) {
             </div>
             <SegmentBar segments={sel.wled.seg}/>
             <div style={{fontSize:10,color:'var(--text3)',marginTop:4,fontFamily:'monospace'}}>
-              {sel.wled.seg.map(s => `#${s.id} ${s.start}–${s.stop}%`).join(' · ')}
+              {sel.wled.seg.map(s => {
+                const fxPart = s.fx != null ? `fx:${s.fx}` : `fx:${sel.wled.fx ?? '-'}`;
+                const palPart = s.pal != null ? `pal:${s.pal}` : `pal:${sel.wled.pal ?? '-'}`;
+                return `${formatSegLabel(s)} · ${fxPart} · ${palPart}`;
+              }).join(' · ')}
             </div>
           </div>
         )}
@@ -2785,7 +2764,7 @@ function PresetsTab({data, update}) {
           <button type="button" onClick={() => setAllCaptureOpts(true)} style={btn('', { padding: '4px 10px', fontSize: 11 })}>Select all</button>
           <button type="button" onClick={() => setAllCaptureOpts(false)} style={btn('', { padding: '4px 10px', fontSize: 11 })}>Clear all</button>
         </div>
-        {Object.entries(WLED_CAPTURE_LABELS).map(([key, { title, hint }]) => (
+        {Object.entries(wledCaptureLabels()).map(([key, { title, hint }]) => (
           <label key={key} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 10px', borderRadius: 8, background: 'var(--surface2)', cursor: 'pointer' }}>
             <input type="checkbox" checked={!!captureOpts[key]} onChange={() => toggleCaptureOpt(key)} style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}/>
             <div>
@@ -2953,13 +2932,9 @@ function ColorInput({ value, onChange, savedColors, onSaveColor }) {
 
 // ── Palettes ───────────────────────────────────────────────────────
 function PalettesTab({data, update}) {
-  const palettes = data.customPalettes || [];
-  const sets     = data.paletteSets    || [];
   const layouts  = data.customSegmentLayouts || [];
   const savedColors = data.savedColors || [];
-  const [ptab, setPtab] = useState('palettes');
-  const [editP, setEditP] = useState(null);
-  const [editS, setEditS] = useState(null);
+  const [ptab, setPtab] = useState('segments');
   const [editL, setEditL] = useState(null);
   const [editSc, setEditSc] = useState(null);
   const [isNew, setIsNew] = useState(false);
@@ -2967,44 +2942,20 @@ function PalettesTab({data, update}) {
   const [activeTag, setActiveTag] = useState(null);
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
   const [capturing, setCapturing] = useState(false);
-  const [paletteApplyStatus, setPaletteApplyStatus] = useState('idle');
-  const [paletteApplyErr, setPaletteApplyErr] = useState('');
-  const [paletteSyncStatus, setPaletteSyncStatus] = useState('idle');
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
 
-  const listItems = ptab === 'palettes' ? palettes : ptab === 'sets' ? sets : ptab === 'colors' ? savedColors : [];
+  const listItems = ptab === 'colors' ? savedColors : layouts;
   const filteredList = useMemo(
     () => listItems.filter(item => itemMatchesTagFilter(item, search, activeTag)),
-    [listItems, search, activeTag, ptab],
+    [listItems, search, activeTag],
   );
 
-  const blankPal = () => ({id:generateId(),name:'',colors:['#a78bfa','#22c55e','#f59e0b'],tags:[]});
   const blankSavedColor = () => ({ id: generateId(), name: '', hex: '#ffffff', tags: [] });
-  const blankSet = () => ({id:generateId(),name:'',paletteIds:[],tags:[]});
   const blankLayout = () => ({
     id: generateId(), name: '', createdAt: Date.now(),
-    segments: [{ id: 0, start: 0, stop: 100 }],
+    segments: [{ id: 0, start: 0, stop: STRIP_LED_COUNT }],
   });
 
-  const savePal = () => {
-    if (!editP.name.trim()) return alert('Enter a name');
-    update({customPalettes: isNew ? [...palettes,editP] : palettes.map(p=>p.id===editP.id?editP:p)});
-    setEditP(null);
-  };
-  const delPal = id => {
-    if(!confirm('Delete palette?')) return;
-    update({
-      customPalettes: palettes.filter(p=>p.id!==id),
-      paletteSets: sets.map(s=>({...s,paletteIds:s.paletteIds.filter(pid=>pid!==id)})),
-    });
-    setEditP(null);
-  };
-  const saveSet = () => {
-    if (!editS.name.trim()) return alert('Enter a name');
-    update({paletteSets: isNew ? [...sets,editS] : sets.map(s=>s.id===editS.id?editS:s)});
-    setEditS(null);
-  };
-  const delSet = id => { if(!confirm('Delete set?')) return; update({paletteSets:sets.filter(s=>s.id!==id)}); setEditS(null); };
   const saveSc = () => {
     if (!editSc.name.trim()) return alert('Enter a name');
     const hex = normalizeHex(editSc.hex);
@@ -3017,34 +2968,6 @@ function PalettesTab({data, update}) {
     if (!confirm('Delete saved color?')) return;
     update({ savedColors: savedColors.filter(c => c.id !== id) });
     setEditSc(null);
-  };
-
-  const duplicatePal = (p) => {
-    const copy = {
-      ...p,
-      id: generateId(),
-      name: duplicateTaggedName(p.name),
-      colors: [...p.colors],
-      tags: [...(p.tags || [])],
-      wledPdSlot: undefined,
-      wledPalId: undefined,
-    };
-    update({ customPalettes: [...palettes, copy] });
-    setEditP(copy);
-    setIsNew(false);
-  };
-
-  const duplicateSetItem = (s) => {
-    const copy = {
-      ...s,
-      id: generateId(),
-      name: duplicateTaggedName(s.name),
-      paletteIds: [...s.paletteIds],
-      tags: [...(s.tags || [])],
-    };
-    update({ paletteSets: [...sets, copy] });
-    setEditS(copy);
-    setIsNew(false);
   };
 
   const duplicateSc = (c) => {
@@ -3060,12 +2983,9 @@ function PalettesTab({data, update}) {
     setIsNew(false);
   };
 
-  const toggleInSet = id => setEditS(s=>({...s,paletteIds:s.paletteIds.includes(id)?s.paletteIds.filter(p=>p!==id):[...s.paletteIds,id]}));
-  const moveInSet = (from,to) => setEditS(s=>{const ids=[...s.paletteIds];const[x]=ids.splice(from,1);ids.splice(to,0,x);return{...s,paletteIds:ids};});
-
   const saveLayout = () => {
     if (!editL.name.trim()) return alert('Enter a name');
-    if (!editL.segments.length) return alert('Add at least one segment');
+    if (!(editL.segments || []).some(isActiveSegment)) return alert('Add at least one active segment');
     update({ customSegmentLayouts: isNew ? [...layouts, editL] : layouts.map(l => l.id === editL.id ? editL : l) });
     setEditL(null);
   };
@@ -3077,16 +2997,19 @@ function PalettesTab({data, update}) {
     });
     setEditL(null);
   };
-  const updateLayoutSeg = (idx, field, val) => {
-    const n = +val;
-    if (isNaN(n)) return;
-    setEditL(l => ({ ...l, segments: l.segments.map((s, i) => i === idx ? { ...s, [field]: n } : s) }));
+
+  const updateLayoutSeg = (idx, patch) => {
+    setEditL(l => ({ ...l, segments: l.segments.map((s, i) => i === idx ? { ...s, ...patch } : s) }));
   };
+
   const captureFromWled = async () => {
     localStorage.setItem('wled-ip', wledIp.trim());
     setCapturing(true);
     try {
-      const segments = await fetchWledSegmentsFromIp(wledIp);
+      const state = await fetchWledFullStateFromIp(wledIp);
+      const segments = parseWledStateSegments(state).map(seg => captureSegmentFromRaw(seg, {
+        effect: true, palette: true, parameters: true, color: true, segments: true,
+      }));
       setEditL(l => l ? { ...l, segments } : { ...blankLayout(), segments });
     } catch (e) {
       alert(e.message || 'Capture failed');
@@ -3094,6 +3017,7 @@ function PalettesTab({data, update}) {
       setCapturing(false);
     }
   };
+
   const applyLayout = async (layout) => {
     localStorage.setItem('wled-ip', wledIp.trim());
     try {
@@ -3103,115 +3027,20 @@ function PalettesTab({data, update}) {
     }
   };
 
-  const applyPaletteToWled = async (paletteId) => {
-    setPaletteApplyErr('');
-    setPaletteApplyStatus('applying');
-    const ip = wledIp.trim();
-    if (!ip) {
-      setPaletteApplyStatus('error');
-      setPaletteApplyErr('Enter a WLED IP below.');
-      return;
-    }
-    localStorage.setItem('wled-ip', ip);
-    try {
-      const synced = await applyCustomPaletteToWled(ip, paletteId, palettes);
-      update({
-        customPalettes: synced,
-        presets: migratePresetPaletteIds(data.presets, synced),
-      });
-      setPaletteApplyStatus('ok');
-      setTimeout(() => setPaletteApplyStatus('idle'), 2500);
-    } catch (e) {
-      setPaletteApplyStatus('error');
-      setPaletteApplyErr(e.message || 'Could not reach WLED');
-    }
-  };
-
-  const syncAllPalettesToWled = async () => {
-    setPaletteApplyErr('');
-    setPaletteSyncStatus('syncing');
-    const ip = wledIp.trim();
-    if (!ip) {
-      setPaletteSyncStatus('error');
-      setPaletteApplyErr('Enter a WLED IP below.');
-      return;
-    }
-    if (!palettes.length) {
-      setPaletteSyncStatus('idle');
-      setPaletteApplyErr('No palettes to sync.');
-      return;
-    }
-    localStorage.setItem('wled-ip', ip);
-    try {
-      const synced = await syncCustomPalettesToWled(ip, palettes);
-      update({
-        customPalettes: synced,
-        presets: migratePresetPaletteIds(data.presets, synced),
-      });
-      setPaletteSyncStatus('ok');
-      setTimeout(() => setPaletteSyncStatus('idle'), 2500);
-    } catch (e) {
-      setPaletteSyncStatus('error');
-      setPaletteApplyErr(e.message || 'Could not reach WLED');
-    }
-  };
-
   return <div style={{display:'flex',height:'100%'}}>
     {/* List panel */}
     <div style={{width:260,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column'}}>
       <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
-        {['palettes','colors','sets','segments'].map(t=>(<button key={t} onClick={()=>{setPtab(t);setEditP(null);setEditS(null);setEditL(null);setEditSc(null);setSearch('');setActiveTag(null);}} style={{
+        {['segments','colors'].map(t=>(<button key={t} onClick={()=>{setPtab(t);setEditL(null);setEditSc(null);setSearch('');setActiveTag(null);}} style={{
           flex:1,padding:'10px 0',background:'none',border:'none',borderBottom:ptab===t?'2px solid var(--primary)':'2px solid transparent',
           color:ptab===t?'var(--primary)':'var(--text2)',fontWeight:600,fontSize:12,cursor:'pointer',marginBottom:-1,
-        }}>{t==='palettes'?`Palettes (${palettes.length})`:t==='colors'?`Colors (${savedColors.length})`:t==='sets'?`Sets (${sets.length})`:`Segments (${layouts.length})`}</button>))}
+        }}>{t==='colors'?`Colors (${savedColors.length})`:`Segments (${layouts.length})`}</button>))}
       </div>
-      {(ptab === 'palettes' || ptab === 'sets' || ptab === 'colors') && listItems.length > 0 && (
+      {listItems.length > 0 && (
         <TagFilterBar items={listItems} search={search} onSearchChange={setSearch}
           activeTag={activeTag} onActiveTagChange={setActiveTag} />
       )}
       <div style={{overflowY:'auto',flex:1,padding:10}}>
-        {ptab==='palettes' && <>
-          <div style={{display:'flex',gap:4,marginBottom:10}}>
-            <input value={wledIp} onChange={e => { setWledIp(e.target.value); setPaletteApplyErr(''); }}
-              placeholder="4.3.2.1" title="WLED IP"
-              style={{...inputStyle,flex:1,padding:'5px 8px',fontSize:11,fontFamily:'monospace'}}/>
-            {palettes.length > 0 && (
-              <button type="button" onClick={syncAllPalettesToWled} disabled={paletteSyncStatus === 'syncing'}
-                title="Upload all custom palettes to WLED (persists on controller)"
-                style={btn(paletteSyncStatus === 'ok' ? 'success' : 'secondary', { padding: '5px 8px', fontSize: 11, flexShrink: 0 })}>
-                {paletteSyncStatus === 'syncing' ? '…' : paletteSyncStatus === 'ok' ? 'Synced ✓' : '↑ WLED'}
-              </button>
-            )}
-          </div>
-          <p style={{fontSize:10,color:'var(--text3)',marginBottom:10,lineHeight:1.45}}>
-            Custom palettes upload to WLED as <code style={{fontFamily:'monospace'}}>/palette0.json</code>…
-            Each config palette keeps its own ID; WLED slot + palette # are stored after sync.
-          </p>
-          <button onClick={()=>{setEditP(blankPal());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Palette</button>
-          {palettes.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No palettes yet</div>}
-          {palettes.length > 0 && filteredList.length === 0 && <div style={{fontSize:12,color:'var(--text3)'}}>No matches</div>}
-          {filteredList.map(p=>(<div key={p.id}
-            style={{...cardStyle,display:'flex',alignItems:'center',gap:8,marginBottom:8,
-              background:editP?.id===p.id?'var(--primary-dim)':'var(--surface)',cursor:'pointer'}}
-            onClick={()=>{setEditP({...p,colors:[...p.colors]});setIsNew(false);setPaletteApplyErr('');}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{p.name}</div>
-              <TagChipRow tags={p.tags} />
-              {p.wledPalId != null && (
-                <div style={{fontSize:10,color:'var(--text3)',fontFamily:'monospace',marginBottom:4}}>
-                  WLED slot {p.wledPdSlot} · palette #{p.wledPalId}
-                </div>
-              )}
-              <PaletteGradient colors={p.colors} height={18}/>
-            </div>
-            <button type="button" title="Duplicate" onClick={e => { e.stopPropagation(); duplicatePal(p); }}
-              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>⧉</button>
-            <button type="button" title="Apply to WLED strip" onClick={e => { e.stopPropagation(); applyPaletteToWled(p.id); }}
-              style={btn('primary',{padding:'4px 8px',fontSize:11,flexShrink:0})}>▶</button>
-          </div>))}
-          {paletteApplyErr && <div style={{fontSize:10,color:'var(--danger)',lineHeight:1.4}}>{paletteApplyErr}</div>}
-          {paletteApplyStatus === 'ok' && <div style={{fontSize:10,color:'var(--success)'}}>Palette applied on WLED</div>}
-        </>}
         {ptab==='colors' && <>
           <button onClick={()=>{setEditSc(blankSavedColor());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Saved Color</button>
           {savedColors.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No saved colors yet — save from any color picker or add one here.</div>}
@@ -3225,24 +3054,6 @@ function PalettesTab({data, update}) {
               <div style={{fontSize:11,color:'var(--text3)',fontFamily:'monospace'}}>{c.hex}</div>
             </div>
             <button type="button" title="Duplicate" onClick={e => { e.stopPropagation(); duplicateSc(c); }}
-              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>⧉</button>
-          </div>))}
-        </>}
-        {ptab==='sets' && <>
-          <button onClick={()=>{setEditS(blankSet());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Set</button>
-          {sets.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No sets yet</div>}
-          {sets.length > 0 && filteredList.length === 0 && <div style={{fontSize:12,color:'var(--text3)'}}>No matches</div>}
-          {filteredList.map(s=>(<div key={s.id} onClick={()=>{setEditS({...s,paletteIds:[...s.paletteIds]});setIsNew(false);}}
-            style={{...cardStyle,cursor:'pointer',background:editS?.id===s.id?'var(--primary-dim)':'var(--surface)',marginBottom:8,display:'flex',alignItems:'center',gap:8}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>{s.name}</div>
-              <TagChipRow tags={s.tags} />
-              <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>{s.paletteIds.length} palette{s.paletteIds.length!==1?'s':''}</div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
-                {s.paletteIds.map(id=>{const pal=palettes.find(p=>p.id===id);return pal?.colors.slice(0,4).map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:2,background:c}}/>) })}
-              </div>
-            </div>
-            <button type="button" title="Duplicate" onClick={e => { e.stopPropagation(); duplicateSetItem(s); }}
               style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>⧉</button>
           </div>))}
         </>}
@@ -3265,53 +3076,6 @@ function PalettesTab({data, update}) {
       </div>
     </div>
 
-    {/* Palette editor */}
-    {editP && ptab==='palettes' && <div style={{flex:1,overflowY:'auto',padding:20}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
-        <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Palette':'Edit Palette'}</span>
-        <div style={{display:'flex',gap:8}}>
-          {!isNew && (
-            <button type="button" onClick={() => applyPaletteToWled(editP.id)} disabled={paletteApplyStatus === 'applying'}
-              style={btn(paletteApplyStatus === 'ok' ? 'success' : 'primary', { fontSize: 12 })}>
-              {paletteApplyStatus === 'applying' ? 'Sending…' : paletteApplyStatus === 'ok' ? 'Active ✓' : 'Apply to WLED'}
-            </button>
-          )}
-          {!isNew && <button onClick={()=>duplicatePal(editP)} style={btn('',{fontSize:12})}>Duplicate</button>}
-          {!isNew && <button onClick={()=>delPal(editP.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
-        </div>
-      </div>
-      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12,flexWrap:'wrap'}}>
-        <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>
-        <input value={wledIp} onChange={e => { setWledIp(e.target.value); setPaletteApplyErr(''); }}
-          placeholder="4.3.2.1" style={{...inputStyle,width:140,fontFamily:'monospace',fontSize:12}}/>
-        <span style={{fontSize:10,color:'var(--text3)'}}>Uploads all custom palettes, then sets this one active</span>
-      </div>
-      {paletteApplyErr && (
-        <div style={{fontSize:12,color:'var(--danger)',marginBottom:12,padding:'8px 12px',background:'#ef444422',borderRadius:8}}>{paletteApplyErr}</div>
-      )}
-      <Field label="Name"><input value={editP.name} onChange={e=>setEditP({...editP,name:e.target.value})} placeholder="e.g. Sunset Glow" style={inputStyle} autoFocus/></Field>
-      <TagEditor tags={editP.tags || []} onChange={tags => setEditP({ ...editP, tags })} />
-      {editP.colors.length>=2 && <div style={{marginBottom:12}}><Field label="Preview"><PaletteGradient colors={editP.colors} height={36}/></Field></div>}
-      {editP.wledPalId != null && (
-        <div style={{fontSize:11,color:'var(--text3)',fontFamily:'monospace',marginBottom:12}}>
-          WLED slot {editP.wledPdSlot} · palette #{editP.wledPalId}
-          {' '}· re-apply after editing colors
-        </div>
-      )}
-      <SectionHead>Colors ({editP.colors.length}/16)</SectionHead>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-        {editP.colors.map((c,i)=>(<ColorCell key={i} color={c}
-            onRemove={editP.colors.length>2?()=>setEditP({...editP,colors:editP.colors.filter((_,j)=>j!==i)}):null}
-            onChange={nc=>{const cl=[...editP.colors];cl[i]=nc;setEditP({...editP,colors:cl});}}
-            savedColors={savedColors} onSaveColor={saveColor}
-          />))}
-      </div>
-      {editP.colors.length < 16 && (
-        <button onClick={()=>setEditP({...editP,colors:[...editP.colors,'#ffffff']})} style={{...btn('',{width:'100%',marginBottom:12})}}>+ Add Color</button>
-      )}
-      <button onClick={savePal} style={btn('primary')}>Save Palette</button>
-    </div>}
-
     {editSc && ptab==='colors' && <div style={{flex:1,overflowY:'auto',padding:20}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
         <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Saved Color':'Edit Saved Color'}</span>
@@ -3326,31 +3090,6 @@ function PalettesTab({data, update}) {
         onChange={hex=>setEditSc({...editSc,hex})}
         onSaveColor={saveColor}/>
       <button onClick={saveSc} style={{...btn('primary'),marginTop:12}}>Save Color</button>
-    </div>}
-
-    {/* Set editor */}
-    {editS && ptab==='sets' && <div style={{flex:1,overflowY:'auto',padding:20}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-        <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Set':'Edit Set'}</span>
-        {!isNew && <button onClick={()=>duplicateSetItem(editS)} style={btn('',{fontSize:12})}>Duplicate</button>}
-        {!isNew && <button onClick={()=>delSet(editS.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
-      </div>
-      <Field label="Name"><input value={editS.name} onChange={e=>setEditS({...editS,name:e.target.value})} placeholder="e.g. Magic Kingdom" style={inputStyle} autoFocus/></Field>
-      <TagEditor tags={editS.tags || []} onChange={tags => setEditS({ ...editS, tags })} />
-      <SectionHead>Included Palettes</SectionHead>
-      {palettes.length===0 && <div style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>Create palettes first</div>}
-      {palettes.map(p=>(<div key={p.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
-        <input type="checkbox" checked={editS.paletteIds.includes(p.id)} onChange={()=>toggleInSet(p.id)} style={{width:18,height:18}}/>
-        <div style={{flex:1}}>
-          <div style={{fontSize:13,fontWeight:600}}>{p.name}</div>
-          <PaletteGradient colors={p.colors} height={14}/>
-        </div>
-        {editS.paletteIds.includes(p.id) && (<>
-          <button onClick={()=>{const i=editS.paletteIds.indexOf(p.id);if(i>0)moveInSet(i,i-1);}} style={btn('',{padding:'4px 8px',fontSize:11})}>↑</button>
-          <button onClick={()=>{const i=editS.paletteIds.indexOf(p.id);if(i<editS.paletteIds.length-1)moveInSet(i,i+1);}} style={btn('',{padding:'4px 8px',fontSize:11})}>↓</button>
-        </>)}
-      </div>))}
-      <button onClick={saveSet} style={{...btn('primary'),marginTop:16}}>Save Set</button>
     </div>}
 
     {/* Segment layout editor */}
@@ -3371,30 +3110,79 @@ function PalettesTab({data, update}) {
         </button>
         {!isNew && <button onClick={()=>applyLayout(editL)} style={btn('primary',{fontSize:12})}>Apply to WLED</button>}
       </div>
+      <TagEditor tags={editL.tags || []} onChange={tags => setEditL({ ...editL, tags })} />
       {editL.segments.length > 0 && (
         <div style={{marginBottom:12}}><Field label="Preview"><SegmentBar segments={editL.segments}/></Field></div>
       )}
-      <SectionHead>Segments (id, start%, stop%)</SectionHead>
+      <SectionHead>Segments (id, start LED, stop LED)</SectionHead>
       {editL.segments.map((seg, idx) => (
-        <div key={idx} style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
-          <input type="number" min={0} max={31} value={seg.id} onChange={e=>updateLayoutSeg(idx,'id',e.target.value)}
-            style={{...inputStyle,width:52,textAlign:'right',fontSize:12}} title="id"/>
-          <input type="number" min={0} max={100} value={seg.start} onChange={e=>updateLayoutSeg(idx,'start',e.target.value)}
-            style={{...inputStyle,width:64,textAlign:'right',fontSize:12}} title="start %"/>
-          <input type="number" min={0} max={100} value={seg.stop} onChange={e=>updateLayoutSeg(idx,'stop',e.target.value)}
-            style={{...inputStyle,width:64,textAlign:'right',fontSize:12}} title="stop %"/>
+        <details key={idx} open style={{marginBottom:8,padding:10,borderRadius:8,background:'var(--surface2)',border:'1px solid var(--border)'}}>
+          <summary style={{cursor:'pointer',fontSize:12,fontWeight:700}}>
+            {formatSegLabel(seg)} · fx:{seg.fx ?? '-'} · pal:{seg.pal ?? '-'}
+          </summary>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,minmax(0,1fr))',gap:8,marginTop:10}}>
+            <Field label="id"><input type="number" min={0} max={31} value={seg.id ?? 0}
+              onChange={e=>updateLayoutSeg(idx,{id:parseInt(e.target.value,10)||0})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="Start LED"><input type="number" min={0} max={STRIP_LED_COUNT} value={seg.start ?? 0}
+              onChange={e=>updateLayoutSeg(idx,{start:parseInt(e.target.value,10)||0})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="Stop LED"><input type="number" min={0} max={STRIP_LED_COUNT} value={seg.stop ?? 0}
+              onChange={e=>updateLayoutSeg(idx,{stop:parseInt(e.target.value,10)||0})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="fx"><input type="number" value={seg.fx ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{fx:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="pal"><input type="number" value={seg.pal ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{pal:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="bri"><input type="number" min={0} max={255} value={seg.bri ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{bri:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="sx"><input type="number" min={0} max={255} value={seg.sx ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{sx:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="ix"><input type="number" min={0} max={255} value={seg.ix ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{ix:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="c1/c2/c3">
+              <div style={{display:'flex',gap:4}}>
+                {['c1','c2','c3'].map(k => (
+                  <input key={k} type="number" min={0} max={255} value={seg[k] ?? ''}
+                    onChange={e=>updateLayoutSeg(idx,{[k]:e.target.value===''?undefined:parseInt(e.target.value,10)})}
+                    style={{...inputStyle,fontSize:12,padding:'6px 4px'}}/>
+                ))}
+              </div>
+            </Field>
+            <Field label="of"><input type="number" value={seg.of ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{of:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="grp"><input type="number" value={seg.grp ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{grp:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="spc"><input type="number" value={seg.spc ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{spc:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="Blend mode">
+              <select value={seg.bm ?? ''} onChange={e=>updateLayoutSeg(idx,{bm:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={selectStyle}>
+                <option value="">(inherit)</option>
+                {WLED_BLEND_MODES.map(m => <option key={m.value} value={m.value}>{m.label} ({m.value})</option>)}
+              </select>
+            </Field>
+            <Field label="rev"><input type="number" value={seg.rev ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{rev:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+            <Field label="mi"><input type="number" value={seg.mi ?? ''}
+              onChange={e=>updateLayoutSeg(idx,{mi:e.target.value===''?undefined:parseInt(e.target.value,10)})} style={{...inputStyle,fontSize:12}}/></Field>
+          </div>
+          <div style={{display:'flex',gap:14,marginTop:4}}>
+            {['o1','o2','o3','on'].map(k => (
+              <label key={k} style={{display:'flex',alignItems:'center',gap:6,fontSize:12}}>
+                <input type="checkbox" checked={!!seg[k]} onChange={e=>updateLayoutSeg(idx,{[k]:e.target.checked})} />
+                {k}
+              </label>
+            ))}
+          </div>
           {editL.segments.length > 1 && (
             <button onClick={()=>setEditL({...editL,segments:editL.segments.filter((_,i)=>i!==idx)})}
-              style={btn('danger',{padding:'4px 8px',fontSize:11})}>✕</button>
+              style={{...btn('danger',{padding:'4px 8px',fontSize:11,marginTop:8})}}>Remove segment</button>
           )}
-        </div>
+        </details>
       ))}
       <button onClick={()=>setEditL({
         ...editL,
         segments: [...editL.segments, {
           id: editL.segments.length,
           start: editL.segments[editL.segments.length - 1]?.stop ?? 0,
-          stop: 100,
+          stop: STRIP_LED_COUNT,
         }],
       })} style={{...btn('',{width:'100%',marginBottom:12,fontSize:12})}}>+ Add segment</button>
       <button onClick={saveLayout} style={btn('primary')}>Save Layout</button>
@@ -3432,20 +3220,18 @@ function BrightnessTab({data, update}) {
 }
 
 function formatWledSegLabel(seg) {
-  return `Seg #${seg.id} · ${seg.start}–${seg.stop}%`;
+  return formatSegLabel(seg);
 }
 
 function formatWledSegSelectionSummary(refs) {
   if (!refs?.length) return 'None assigned';
-  return refs.map(r => `#${r.id} (${r.start}–${r.stop}%)`).join(' · ');
+  return refs.map(formatSegLabel).join(' · ');
 }
-
-const STRIP_PCT_MAX = 100;
 
 function isValidSegRef(ref) {
   return Number.isInteger(ref.id) && ref.id >= 0 && ref.id <= 31
     && Number.isInteger(ref.start) && Number.isInteger(ref.stop)
-    && ref.start >= 0 && ref.stop <= STRIP_PCT_MAX && ref.stop > ref.start;
+    && ref.start >= 0 && ref.stop <= STRIP_LED_COUNT && ref.stop > ref.start;
 }
 
 function parseSegRefFields(idStr, startStr, stopStr) {
@@ -3460,7 +3246,7 @@ function defaultNewSegRef(refs) {
   const used = new Set((refs || []).map(r => r.id));
   let id = 0;
   while (used.has(id) && id < 32) id++;
-  return { id, start: 0, stop: STRIP_PCT_MAX };
+  return { id, start: 0, stop: STRIP_LED_COUNT };
 }
 
 function refsFromSnapshotIds(snapshot, selectedIds) {
@@ -3567,16 +3353,16 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
           <span style={{ fontSize: 10, color: 'var(--text3)' }}>id</span>
           <input style={{ ...segInput, width: 36 }} value={ref.id} inputMode="numeric"
             onChange={e => patchRef(index, 'id', e.target.value)} />
-          <span style={{ fontSize: 10, color: 'var(--text3)' }}>start</span>
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>start LED</span>
           <input style={segInput} value={ref.start} inputMode="numeric"
             onChange={e => patchRef(index, 'start', e.target.value)} />
-          <span style={{ fontSize: 10, color: 'var(--text3)' }}>stop</span>
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>stop LED</span>
           <input style={segInput} value={ref.stop} inputMode="numeric"
             onChange={e => patchRef(index, 'stop', e.target.value)} />
           {!isValidSegRef(ref) ? (
             <span style={{ fontSize: 10, color: 'var(--danger)' }}>invalid</span>
           ) : (
-            <span style={{ fontSize: 10, color: 'var(--text3)' }}>%</span>
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>ok</span>
           )}
           <button type="button" onClick={() => onChange(removeRefAt(list, index))}
             style={btn('', { padding: '2px 8px', fontSize: 14, color: 'var(--danger)', background: 'none', border: 'none' })}>×</button>
@@ -3857,7 +3643,7 @@ function SettingsTab({data, update}) {
 
     {bleTab === 'segments' && <>
       <p style={{fontSize:12,color:'var(--text3)',marginBottom:8,lineHeight:1.5}}>
-        Per region: assign WLED segments manually (id + start/stop %) or Capture from the strip and tick segments to add.
+        Per region: assign WLED segments manually (id + start/stop LED) or Capture from the strip and tick segments to add.
       </p>
       <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10,flexWrap:'wrap'}}>
         <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>

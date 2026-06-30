@@ -130,7 +130,7 @@ import {
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
 } from '../utils/bleCapture';
 import {
-  CustomSegmentLayout, normalizeSegmentLayout,
+  CustomSegmentLayout, normalizeSegmentLayout, presetHasPerSegmentRecall,
 } from '../utils/segmentLayouts';
 
 export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
@@ -688,33 +688,55 @@ export function buildRecallPayload(preset: Preset, recall: RecallState | undefin
     if (linked?.segments.length) {
       payload.seg = linked.segments.map(seg => ({ ...seg }));
     } else if (w.seg !== undefined) {
-      payload.seg = w.seg;
+      payload.seg = w.seg.map(s => ({ ...s }));
     }
   }
 
-  if (should('effect', m.effect) && w.fx !== undefined) {
-    payload.seg = payload.seg ?? [{}];
-    payload.seg[0] = { ...payload.seg[0], fx: w.fx };
-  }
-  if (should('palette', m.palette) && w.pal !== undefined) {
-    payload.seg = payload.seg ?? [{}];
-    payload.seg[0] = { ...payload.seg[0], pal: w.pal };
-  }
+  const segProps: Record<string, unknown> = {};
+  if (should('effect', m.effect) && w.fx !== undefined) segProps.fx = w.fx;
+  if (should('palette', m.palette) && w.pal !== undefined) segProps.pal = w.pal;
   if (should('parameters', m.parameters)) {
-    payload.seg = payload.seg ?? [{}];
-    const s0 = payload.seg[0];
-    if (w.sx !== undefined) s0.sx = w.sx;
-    if (w.ix !== undefined) s0.ix = w.ix;
-    if (w.c1 !== undefined) s0.c1 = w.c1;
-    if (w.c2 !== undefined) s0.c2 = w.c2;
-    if (w.c3 !== undefined) s0.c3 = w.c3;
-    if (w.o1 !== undefined) s0.o1 = w.o1;
-    if (w.o2 !== undefined) s0.o2 = w.o2;
-    if (w.o3 !== undefined) s0.o3 = w.o3;
+    (['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'] as const).forEach(k => {
+      if (w[k] !== undefined) segProps[k] = w[k];
+    });
   }
   if (should('color', m.color) && w.col !== undefined) {
-    payload.seg = payload.seg ?? [{}];
-    payload.seg[0] = { ...payload.seg[0], col: w.col };
+    segProps.col = Array.isArray(w.col[0]) ? w.col.map(c => [...c]) : [...w.col];
+  }
+  if (Object.keys(segProps).length) {
+    const layouts = useAppStore.getState().customSegmentLayouts;
+    const perSeg = presetHasPerSegmentRecall(preset, layouts);
+    if (perSeg && payload.seg) {
+      const paramKeys = ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'] as const;
+      payload.seg = (payload.seg as Record<string, unknown>[]).map(s => {
+        const start = Number(s.start ?? 0);
+        const stop = Number(s.stop ?? 0);
+        if (stop <= start) return s;
+        const out = { ...s };
+        if (!should('effect', m.effect)) delete out.fx;
+        if (!should('palette', m.palette)) delete out.pal;
+        if (!should('parameters', m.parameters)) paramKeys.forEach(k => delete out[k]);
+        if (!should('color', m.color)) delete out.col;
+        return out;
+      });
+    } else {
+      const list = Array.isArray(payload.seg) && payload.seg.length ? payload.seg.map(s => ({ ...s })) : [{ id: 0 }];
+      const hasActive = list.some(s => {
+        const start = Number((s as { start?: number }).start ?? 0);
+        const stop = Number((s as { stop?: number }).stop ?? 0);
+        return stop > start;
+      });
+      if (!hasActive) {
+        const base = list[0] || { id: 0 };
+        payload.seg = [{ ...base, id: (base as { id?: number }).id ?? 0, ...segProps }];
+      } else {
+        payload.seg = list.map(s => {
+          const start = Number((s as { start?: number }).start ?? 0);
+          const stop = Number((s as { stop?: number }).stop ?? 0);
+          return stop > start ? { ...s, ...segProps } : s;
+        });
+      }
+    }
   }
 
   return payload;

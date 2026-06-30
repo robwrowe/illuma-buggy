@@ -727,7 +727,13 @@ void appendDisableWledSegment(String& body, uint8_t segId, bool& first) {
 
 void appendDisableInactiveSegments(String& body, bool& first,
                                   const uint8_t* activeIds, uint8_t activeCount, bool disableSeg0) {
-  if (disableSeg0) appendDisableWledSegment(body, 0, first);
+  if (disableSeg0) {
+    bool seg0Active = false;
+    for (uint8_t i = 0; i < activeCount; i++) {
+      if (activeIds[i] == 0) { seg0Active = true; break; }
+    }
+    if (!seg0Active) appendDisableWledSegment(body, 0, first);
+  }
   for (uint8_t id = 1; id < MB_WLED_MAX_SEG; id++) {
     bool keep = false;
     for (uint8_t i = 0; i < activeCount; i++) {
@@ -978,6 +984,8 @@ bool tryApplySwE9Payload(const uint8_t* payload, size_t plen, const char* mbFall
 bool applyMbPatternKey(const char* patKey, const uint8_t* pals, int palCount, OverrideSource src) {
   for (int i = 0; i < 5; i++) {
     if (strcmp(patKey, MB_PAT_KEYS[i]) != 0) continue;
+    // E909 per-corner solids — only hijack when this pattern slot has its own preset.
+    if (mbPatMap[i].presetId.length() == 0) return false;
     if (applyMbPresetWithColors(mbPatMap[i], pals, palCount, src)) return true;
     return false;
   }
