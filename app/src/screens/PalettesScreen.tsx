@@ -4,7 +4,7 @@
  * Sets can be pushed to WLED from the Home screen.
  */
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   TextInput, Modal, ScrollView, Alert,
@@ -13,7 +13,10 @@ import IconPlus  from '@tabler/icons-react-native/dist/esm/icons/IconPlus';
 import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
 import IconPencil from '@tabler/icons-react-native/dist/esm/icons/IconPencil';
 import IconCheck from '@tabler/icons-react-native/dist/esm/icons/IconCheck';
+import IconCopy from '@tabler/icons-react-native/dist/esm/icons/IconCopy';
 
+import { TagEditor, TagFilterBar, TagChipRow, filterTaggedItems } from '../components/TagFields';
+import { duplicateCustomPalette, duplicatePaletteSet } from '../utils/tags';
 import { useAppStore, CustomPalette, PaletteSet, CustomSegmentLayout, WledSegmentDef, summarizeLayout, buildLayoutPayload, fetchWledSegmentsFromDevice } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
@@ -45,11 +48,22 @@ export default function PalettesScreen() {
   const [editLayout, setEditLayout]   = useState<CustomSegmentLayout | null>(null);
   const [capturingLayout, setCapturingLayout] = useState(false);
   const [isNew, setIsNew]             = useState(false);
+  const [search, setSearch]           = useState('');
+  const [activeTag, setActiveTag]     = useState<string | null>(null);
+
+  const filteredPalettes = useMemo(
+    () => filterTaggedItems(customPalettes, search, activeTag),
+    [customPalettes, search, activeTag],
+  );
+  const filteredSets = useMemo(
+    () => filterTaggedItems(paletteSets, search, activeTag),
+    [paletteSets, search, activeTag],
+  );
 
   // ── Palette editing ──
 
   const newPalette = (): CustomPalette => ({
-    id: generateId(), name: '', colors: ['#a78bfa', '#22c55e', '#f59e0b'],
+    id: generateId(), name: '', colors: ['#a78bfa', '#22c55e', '#f59e0b'], tags: [],
   });
 
   const openNewPalette = () => { setEditPalette(newPalette()); setIsNew(true); };
@@ -99,7 +113,21 @@ export default function PalettesScreen() {
 
   // ── Palette set editing ──
 
-  const newSet = (): PaletteSet => ({ id: generateId(), name: '', paletteIds: [] });
+  const duplicatePalette = (p: CustomPalette) => {
+    const copy = duplicateCustomPalette(p, generateId());
+    addCustomPalette(copy);
+    saveToStorage();
+    openEditPalette(copy);
+  };
+
+  const newSet = (): PaletteSet => ({ id: generateId(), name: '', paletteIds: [], tags: [] });
+  const duplicateSet = (ps: PaletteSet) => {
+    const copy = duplicatePaletteSet(ps, generateId());
+    addPaletteSet(copy);
+    saveToStorage();
+    openEditSet(copy);
+  };
+
   const openNewSet = () => { setEditSet(newSet()); setIsNew(true); };
   const openEditSet = (ps: PaletteSet) => { setEditSet({ ...ps, paletteIds: [...ps.paletteIds] }); setIsNew(false); };
 
@@ -208,10 +236,21 @@ export default function PalettesScreen() {
         ))}
       </View>
 
+      {(tab === 'palettes' || tab === 'sets') && (customPalettes.length > 0 || paletteSets.length > 0) && (
+        <TagFilterBar
+          items={tab === 'palettes' ? customPalettes : paletteSets}
+          search={search}
+          onSearchChange={setSearch}
+          activeTag={activeTag}
+          onActiveTagChange={setActiveTag}
+          colors={colors}
+        />
+      )}
+
       {/* Palettes tab */}
       {tab === 'palettes' && (
         <FlatList
-          data={customPalettes}
+          data={filteredPalettes}
           keyExtractor={p => p.id}
           contentContainerStyle={s.list}
           ListEmptyComponent={
@@ -230,12 +269,16 @@ export default function PalettesScreen() {
             <TouchableOpacity style={s.card} onPress={() => openEditPalette(item)}>
               <View style={{ flex: 1 }}>
                 <Text style={s.cardTitle}>{item.name}</Text>
+                <TagChipRow tags={item.tags} colors={colors} />
                 <View style={s.swatchRow}>
                   {item.colors.map((c, i) => (
                     <View key={i} style={[s.swatch, { backgroundColor: c }]} />
                   ))}
                 </View>
               </View>
+              <TouchableOpacity onPress={() => duplicatePalette(item)} style={s.iconBtn}>
+                <IconCopy size={15} color={colors.textMuted} />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => openEditPalette(item)} style={s.iconBtn}>
                 <IconPencil size={15} color={colors.textMuted} />
               </TouchableOpacity>
@@ -250,7 +293,7 @@ export default function PalettesScreen() {
       {/* Sets tab */}
       {tab === 'sets' && (
         <FlatList
-          data={paletteSets}
+          data={filteredSets}
           keyExtractor={ps => ps.id}
           contentContainerStyle={s.list}
           ListEmptyComponent={
@@ -269,6 +312,7 @@ export default function PalettesScreen() {
             <TouchableOpacity style={s.card} onPress={() => openEditSet(item)}>
               <View style={{ flex: 1 }}>
                 <Text style={s.cardTitle}>{item.name}</Text>
+                <TagChipRow tags={item.tags} colors={colors} />
                 <Text style={s.hint}>{item.paletteIds.length} palette{item.paletteIds.length !== 1 ? 's' : ''}</Text>
                 <View style={s.swatchRow}>
                   {item.paletteIds.map(id => {
@@ -279,6 +323,9 @@ export default function PalettesScreen() {
                   })}
                 </View>
               </View>
+              <TouchableOpacity onPress={() => duplicateSet(item)} style={s.iconBtn}>
+                <IconCopy size={15} color={colors.textMuted} />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => {
                 Alert.alert('Delete Set', `Delete "${item.name}"?`, [
                   { text: 'Cancel', style: 'cancel' },
@@ -340,6 +387,14 @@ export default function PalettesScreen() {
               <TextInput style={s.input} value={editPalette?.name ?? ''}
                 onChangeText={v => editPalette && setEditPalette({ ...editPalette, name: v })}
                 placeholder="e.g. Haunted Mansion" placeholderTextColor={colors.textMuted} />
+
+              {editPalette && (
+                <TagEditor
+                  tags={editPalette.tags || []}
+                  onChange={tags => setEditPalette({ ...editPalette, tags })}
+                  colors={colors}
+                />
+              )}
 
               <Text style={s.fieldLabel}>Colors ({editPalette?.colors.length ?? 0}/16)</Text>
 
@@ -413,6 +468,14 @@ export default function PalettesScreen() {
               <TextInput style={s.input} value={editSet?.name ?? ''}
                 onChangeText={v => editSet && setEditSet({ ...editSet, name: v })}
                 placeholder="e.g. Magic Kingdom" placeholderTextColor={colors.textMuted} />
+
+              {editSet && (
+                <TagEditor
+                  tags={editSet.tags || []}
+                  onChange={tags => setEditSet({ ...editSet, tags })}
+                  colors={colors}
+                />
+              )}
 
               <Text style={s.fieldLabel}>Palettes (tap to toggle, up to 8)</Text>
               <Text style={s.hint}>These will be pushed to WLED slots 0-7 when you activate this set</Text>

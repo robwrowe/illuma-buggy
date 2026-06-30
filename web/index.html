@@ -50,6 +50,138 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 // ── Utilities ──────────────────────────────────────────────────────
 function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
+const TAG_SUGGESTIONS = [
+  'Magic Kingdom', 'EPCOT', 'Hollywood Studios', 'Animal Kingdom',
+  'Disneyland', 'California Adventure', 'Disney Springs',
+  'Disney', 'Marvel', 'Star Wars', 'Pixar', 'Frozen', 'Princess',
+  'Halloween', 'Christmas', 'Parade', 'Home',
+];
+
+function normalizeTags(raw) {
+  if (!raw?.length) return [];
+  const seen = new Set();
+  const out = [];
+  for (const t of raw) {
+    const s = String(t).trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function parseTagsInput(text) {
+  return normalizeTags(String(text || '').split(/[,;]+/));
+}
+
+function tagsToInput(tags) {
+  return (tags || []).join(', ');
+}
+
+function collectAllTags(items) {
+  const set = new Set();
+  (items || []).forEach(item => (item.tags || []).forEach(t => { const s = String(t).trim(); if (s) set.add(s); }));
+  return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function itemMatchesTagFilter(item, search, activeTag) {
+  if (activeTag) {
+    const want = activeTag.toLowerCase();
+    if (!(item.tags || []).some(t => t.toLowerCase() === want)) return false;
+  }
+  const q = String(search || '').trim().toLowerCase();
+  if (!q) return true;
+  if ((item.name || '').toLowerCase().includes(q)) return true;
+  return (item.tags || []).some(t => t.toLowerCase().includes(q));
+}
+
+function duplicateTaggedName(name) {
+  const base = (name || '').trim() || 'Untitled';
+  if (/\(copy(?: \d+)?\)$/i.test(base)) {
+    return base.replace(/\(copy\)$/i, '(copy 2)').replace(/\(copy (\d+)\)$/i, (_, n) => `(copy ${parseInt(n, 10) + 1})`);
+  }
+  return `${base} (copy)`;
+}
+
+function TagChipRow({ tags }) {
+  if (!tags?.length) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+      {tags.map(tag => (
+        <span key={tag} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 8, background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text3)' }}>
+          {tag}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TagFilterBar({ items, search, onSearchChange, activeTag, onActiveTagChange, placeholder }) {
+  const allTags = collectAllTags(items);
+  return (
+    <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <input value={search} onChange={e => onSearchChange(e.target.value)}
+        placeholder={placeholder || 'Search name or tags…'}
+        style={{ ...inputStyle, padding: '6px 10px', fontSize: 12 }} />
+      {allTags.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          <button type="button" onClick={() => onActiveTagChange(null)}
+            style={btn(!activeTag ? 'primary' : '', { padding: '3px 8px', fontSize: 10 })}>All</button>
+          {allTags.map(tag => {
+            const on = activeTag?.toLowerCase() === tag.toLowerCase();
+            return (
+              <button key={tag} type="button" onClick={() => onActiveTagChange(on ? null : tag)}
+                style={btn(on ? 'primary' : '', { padding: '3px 8px', fontSize: 10 })}>{tag}</button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TagEditor({ tags, onChange, label }) {
+  const [text, setText] = useState(tagsToInput(tags));
+  useEffect(() => { setText(tagsToInput(tags)); }, [tags]);
+  const commit = (raw) => {
+    const next = parseTagsInput(raw);
+    onChange(next);
+    setText(tagsToInput(next));
+  };
+  const addSuggestion = (tag) => {
+    if ((tags || []).some(t => t.toLowerCase() === tag.toLowerCase())) return;
+    onChange([...(tags || []), tag].sort((a, b) => a.localeCompare(b)));
+  };
+  const unused = TAG_SUGGESTIONS.filter(sug => !(tags || []).some(t => t.toLowerCase() === sug.toLowerCase()));
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 4 }}>{label || 'Tags'}</div>
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>Comma-separated — park, franchise, season, etc.</div>
+      <input value={text} onChange={e => setText(e.target.value)} onBlur={() => commit(text)}
+        onKeyDown={e => { if (e.key === 'Enter') commit(text); }}
+        placeholder="Magic Kingdom, Marvel, …" style={inputStyle} />
+      {(tags || []).length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          {tags.map(tag => (
+            <button key={tag} type="button" onClick={() => onChange(tags.filter(t => t !== tag))}
+              style={btn('primary', { padding: '2px 8px', fontSize: 10 })}>{tag} ×</button>
+          ))}
+        </div>
+      )}
+      {unused.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 }}>
+          {unused.slice(0, 12).map(tag => (
+            <button key={tag} type="button" onClick={() => addSuggestion(tag)}
+              style={btn('', { padding: '2px 8px', fontSize: 10 })}>+ {tag}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function hexToRgb(hex) {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -1156,7 +1288,10 @@ function loadAppData(stored) {
   merged.mbMapping = normalizeMbMapping(merged.mbMapping);
   merged.savedColors = (merged.savedColors || [])
     .filter(c => c?.id && normalizeHex(c.hex))
-    .map(c => ({ id: c.id, name: c.name || c.hex, hex: normalizeHex(c.hex) }));
+    .map(c => ({ id: c.id, name: c.name || c.hex, hex: normalizeHex(c.hex), tags: normalizeTags(c.tags) }));
+  merged.presets = (merged.presets || []).map(p => ({ ...p, tags: normalizeTags(p.tags) }));
+  merged.customPalettes = (merged.customPalettes || []).map(p => ({ ...p, tags: normalizeTags(p.tags) }));
+  merged.paletteSets = (merged.paletteSets || []).map(s => ({ ...s, tags: normalizeTags(s.tags) }));
   merged.zones = (merged.zones || []).map(normalizeZoneRecord);
   merged.indoorZones = (merged.indoorZones || []).map(normalizeZoneRecord);
   return merged;
@@ -2147,6 +2282,13 @@ function PresetsTab({data, update}) {
   const [sel, setSel]     = useState(null);
   const [isNew, setIsNew] = useState(false);
   const [ptab, setPtab]   = useState('effect');
+  const [search, setSearch] = useState('');
+  const [activeTag, setActiveTag] = useState(null);
+
+  const filteredPresets = useMemo(
+    () => (data.presets || []).filter(p => itemMatchesTagFilter(p, search, activeTag)),
+    [data.presets, search, activeTag],
+  );
 
   // WLED connection
   const [wledIp, setWledIp]       = useState(localStorage.getItem('wled-ip')||'4.3.2.1');
@@ -2170,10 +2312,26 @@ function PresetsTab({data, update}) {
   }, []);
 
   const blank = () => ({
-    id:generateId(), name:'', createdAt:Date.now(),
+    id:generateId(), name:'', createdAt:Date.now(), tags: [],
     wled:{on:true,fx:undefined,fxName:'',pal:undefined,palName:'',sx:128,ix:128,c1:128,c2:128,c3:16,o1:false,o2:false,o3:false},
     memory:{effect:true,palette:true,parameters:true,color:false,segments:false},
   });
+
+  const duplicatePreset = (p) => {
+    const copy = {
+      ...p,
+      id: generateId(),
+      name: duplicateTaggedName(p.name),
+      tags: [...(p.tags || [])],
+      createdAt: Date.now(),
+      wled: JSON.parse(JSON.stringify(p.wled)),
+      memory: { ...p.memory },
+    };
+    update({ presets: [...data.presets, copy] });
+    setSel(copy);
+    setIsNew(false);
+    setPtab('effect');
+  };
 
   const save = () => {
     if (!sel.name.trim()) return alert('Enter a name');
@@ -2334,14 +2492,20 @@ function PresetsTab({data, update}) {
         {wledStatus==='connected' && <div style={{fontSize:10,color:'var(--success)'}}>{wledEffects.length} effects · {wledPalettes.length} palettes loaded</div>}
         {wledStatus==='error' && <div style={{fontSize:10,color:'var(--danger)'}}>Connection failed — check IP and network</div>}
       </div>
+      <TagFilterBar items={data.presets} search={search} onSearchChange={setSearch}
+        activeTag={activeTag} onActiveTagChange={setActiveTag} />
       <div style={{overflowY:'auto',flex:1}}>
         {data.presets.length===0 && <div style={{padding:16,color:'var(--text3)',fontSize:13}}>No presets yet.</div>}
-        {data.presets.map(p=>(<div key={p.id}
+        {data.presets.length > 0 && filteredPresets.length === 0 && (
+          <div style={{padding:16,color:'var(--text3)',fontSize:13}}>No matches.</div>
+        )}
+        {filteredPresets.map(p=>(<div key={p.id}
           onClick={()=>{setSel({...p,wled:{...p.wled},memory:{...p.memory}});setIsNew(false);setPtab('effect');setPresetTestStatus('idle');setPresetTestErr('');}}
           style={{padding:'10px 12px',borderBottom:'1px solid var(--border)',cursor:'pointer',background:sel?.id===p.id?'var(--primary-dim)':'transparent'}}>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:600,fontSize:13}}>{p.name}</div>
+              <TagChipRow tags={p.tags} />
               <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>
                 {p.wled.fxName||'—'} · {p.wled.palName||'—'}
                 {p.segmentLayoutId && (() => {
@@ -2350,6 +2514,8 @@ function PresetsTab({data, update}) {
                 })()}
               </div>
             </div>
+            <button type="button" title="Duplicate" onClick={e=>{e.stopPropagation();duplicatePreset(p);}}
+              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>⧉</button>
             <button type="button" title="Test on strip" onClick={e=>{e.stopPropagation();testPreset(p);}}
               style={btn('primary',{padding:'4px 8px',fontSize:11,flexShrink:0})}>▶</button>
           </div>
@@ -2372,6 +2538,7 @@ function PresetsTab({data, update}) {
             {presetTestStatus === 'testing' ? 'Testing…' : presetTestStatus === 'ok' ? 'Sent ✓' : 'Test on strip'}
           </button>
           {!isNew && <button onClick={()=>del(sel.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+          {!isNew && <button onClick={()=>duplicatePreset(sel)} style={btn('',{fontSize:12})}>Duplicate</button>}
           <button onClick={()=>setSel(null)} style={btn('',{fontSize:12})}>Cancel</button>
           <button onClick={save} style={btn('primary',{fontSize:12})}>Save</button>
         </div>
@@ -2384,6 +2551,8 @@ function PresetsTab({data, update}) {
       {!presetTestErr && presetTestStatus === 'ok' && (
         <div style={{fontSize:12,color:'var(--success)'}}>Preset sent to WLED at {wledIp.trim()}.</div>
       )}
+
+      <TagEditor tags={sel.tags || []} onChange={tags => setSel({ ...sel, tags })} />
 
       {/* Sub-tabs */}
       <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
@@ -2794,6 +2963,8 @@ function PalettesTab({data, update}) {
   const [editL, setEditL] = useState(null);
   const [editSc, setEditSc] = useState(null);
   const [isNew, setIsNew] = useState(false);
+  const [search, setSearch] = useState('');
+  const [activeTag, setActiveTag] = useState(null);
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
   const [capturing, setCapturing] = useState(false);
   const [paletteApplyStatus, setPaletteApplyStatus] = useState('idle');
@@ -2801,9 +2972,15 @@ function PalettesTab({data, update}) {
   const [paletteSyncStatus, setPaletteSyncStatus] = useState('idle');
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
 
-  const blankPal = () => ({id:generateId(),name:'',colors:['#a78bfa','#22c55e','#f59e0b']});
-  const blankSavedColor = () => ({ id: generateId(), name: '', hex: '#ffffff' });
-  const blankSet = () => ({id:generateId(),name:'',paletteIds:[]});
+  const listItems = ptab === 'palettes' ? palettes : ptab === 'sets' ? sets : ptab === 'colors' ? savedColors : [];
+  const filteredList = useMemo(
+    () => listItems.filter(item => itemMatchesTagFilter(item, search, activeTag)),
+    [listItems, search, activeTag, ptab],
+  );
+
+  const blankPal = () => ({id:generateId(),name:'',colors:['#a78bfa','#22c55e','#f59e0b'],tags:[]});
+  const blankSavedColor = () => ({ id: generateId(), name: '', hex: '#ffffff', tags: [] });
+  const blankSet = () => ({id:generateId(),name:'',paletteIds:[],tags:[]});
   const blankLayout = () => ({
     id: generateId(), name: '', createdAt: Date.now(),
     segments: [{ id: 0, start: 0, stop: 100 }],
@@ -2841,6 +3018,48 @@ function PalettesTab({data, update}) {
     update({ savedColors: savedColors.filter(c => c.id !== id) });
     setEditSc(null);
   };
+
+  const duplicatePal = (p) => {
+    const copy = {
+      ...p,
+      id: generateId(),
+      name: duplicateTaggedName(p.name),
+      colors: [...p.colors],
+      tags: [...(p.tags || [])],
+      wledPdSlot: undefined,
+      wledPalId: undefined,
+    };
+    update({ customPalettes: [...palettes, copy] });
+    setEditP(copy);
+    setIsNew(false);
+  };
+
+  const duplicateSetItem = (s) => {
+    const copy = {
+      ...s,
+      id: generateId(),
+      name: duplicateTaggedName(s.name),
+      paletteIds: [...s.paletteIds],
+      tags: [...(s.tags || [])],
+    };
+    update({ paletteSets: [...sets, copy] });
+    setEditS(copy);
+    setIsNew(false);
+  };
+
+  const duplicateSc = (c) => {
+    const copy = {
+      ...c,
+      id: generateId(),
+      name: duplicateTaggedName(c.name),
+      hex: c.hex,
+      tags: [...(c.tags || [])],
+    };
+    update({ savedColors: [...savedColors, copy] });
+    setEditSc(copy);
+    setIsNew(false);
+  };
+
   const toggleInSet = id => setEditS(s=>({...s,paletteIds:s.paletteIds.includes(id)?s.paletteIds.filter(p=>p!==id):[...s.paletteIds,id]}));
   const moveInSet = (from,to) => setEditS(s=>{const ids=[...s.paletteIds];const[x]=ids.splice(from,1);ids.splice(to,0,x);return{...s,paletteIds:ids};});
 
@@ -2941,11 +3160,15 @@ function PalettesTab({data, update}) {
     {/* List panel */}
     <div style={{width:260,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column'}}>
       <div style={{display:'flex',borderBottom:'1px solid var(--border)'}}>
-        {['palettes','colors','sets','segments'].map(t=>(<button key={t} onClick={()=>{setPtab(t);setEditP(null);setEditS(null);setEditL(null);setEditSc(null);}} style={{
+        {['palettes','colors','sets','segments'].map(t=>(<button key={t} onClick={()=>{setPtab(t);setEditP(null);setEditS(null);setEditL(null);setEditSc(null);setSearch('');setActiveTag(null);}} style={{
           flex:1,padding:'10px 0',background:'none',border:'none',borderBottom:ptab===t?'2px solid var(--primary)':'2px solid transparent',
           color:ptab===t?'var(--primary)':'var(--text2)',fontWeight:600,fontSize:12,cursor:'pointer',marginBottom:-1,
         }}>{t==='palettes'?`Palettes (${palettes.length})`:t==='colors'?`Colors (${savedColors.length})`:t==='sets'?`Sets (${sets.length})`:`Segments (${layouts.length})`}</button>))}
       </div>
+      {(ptab === 'palettes' || ptab === 'sets' || ptab === 'colors') && listItems.length > 0 && (
+        <TagFilterBar items={listItems} search={search} onSearchChange={setSearch}
+          activeTag={activeTag} onActiveTagChange={setActiveTag} />
+      )}
       <div style={{overflowY:'auto',flex:1,padding:10}}>
         {ptab==='palettes' && <>
           <div style={{display:'flex',gap:4,marginBottom:10}}>
@@ -2966,12 +3189,14 @@ function PalettesTab({data, update}) {
           </p>
           <button onClick={()=>{setEditP(blankPal());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Palette</button>
           {palettes.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No palettes yet</div>}
-          {palettes.map(p=>(<div key={p.id}
+          {palettes.length > 0 && filteredList.length === 0 && <div style={{fontSize:12,color:'var(--text3)'}}>No matches</div>}
+          {filteredList.map(p=>(<div key={p.id}
             style={{...cardStyle,display:'flex',alignItems:'center',gap:8,marginBottom:8,
               background:editP?.id===p.id?'var(--primary-dim)':'var(--surface)',cursor:'pointer'}}
             onClick={()=>{setEditP({...p,colors:[...p.colors]});setIsNew(false);setPaletteApplyErr('');}}>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{p.name}</div>
+              <TagChipRow tags={p.tags} />
               {p.wledPalId != null && (
                 <div style={{fontSize:10,color:'var(--text3)',fontFamily:'monospace',marginBottom:4}}>
                   WLED slot {p.wledPdSlot} · palette #{p.wledPalId}
@@ -2979,6 +3204,8 @@ function PalettesTab({data, update}) {
               )}
               <PaletteGradient colors={p.colors} height={18}/>
             </div>
+            <button type="button" title="Duplicate" onClick={e => { e.stopPropagation(); duplicatePal(p); }}
+              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>⧉</button>
             <button type="button" title="Apply to WLED strip" onClick={e => { e.stopPropagation(); applyPaletteToWled(p.id); }}
               style={btn('primary',{padding:'4px 8px',fontSize:11,flexShrink:0})}>▶</button>
           </div>))}
@@ -2988,25 +3215,35 @@ function PalettesTab({data, update}) {
         {ptab==='colors' && <>
           <button onClick={()=>{setEditSc(blankSavedColor());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Saved Color</button>
           {savedColors.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No saved colors yet — save from any color picker or add one here.</div>}
-          {savedColors.map(c=>(<div key={c.id} onClick={()=>{setEditSc({...c});setIsNew(false);}}
+          {savedColors.length > 0 && filteredList.length === 0 && <div style={{fontSize:12,color:'var(--text3)'}}>No matches</div>}
+          {filteredList.map(c=>(<div key={c.id} onClick={()=>{setEditSc({...c});setIsNew(false);}}
             style={{...cardStyle,cursor:'pointer',background:editSc?.id===c.id?'var(--primary-dim)':'var(--surface)',marginBottom:8,display:'flex',alignItems:'center',gap:10}}>
             <div style={{width:28,height:28,borderRadius:6,background:c.hex,border:'1px solid var(--border)',flexShrink:0}}/>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontWeight:600,fontSize:13}}>{c.name}</div>
+              <TagChipRow tags={c.tags} />
               <div style={{fontSize:11,color:'var(--text3)',fontFamily:'monospace'}}>{c.hex}</div>
             </div>
+            <button type="button" title="Duplicate" onClick={e => { e.stopPropagation(); duplicateSc(c); }}
+              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>⧉</button>
           </div>))}
         </>}
         {ptab==='sets' && <>
           <button onClick={()=>{setEditS(blankSet());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Set</button>
           {sets.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No sets yet</div>}
-          {sets.map(s=>(<div key={s.id} onClick={()=>{setEditS({...s,paletteIds:[...s.paletteIds]});setIsNew(false);}}
-            style={{...cardStyle,cursor:'pointer',background:editS?.id===s.id?'var(--primary-dim)':'var(--surface)',marginBottom:8}}>
-            <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>{s.name}</div>
-            <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>{s.paletteIds.length} palette{s.paletteIds.length!==1?'s':''}</div>
-            <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
-              {s.paletteIds.map(id=>{const pal=palettes.find(p=>p.id===id);return pal?.colors.slice(0,4).map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:2,background:c}}/>) })}
+          {sets.length > 0 && filteredList.length === 0 && <div style={{fontSize:12,color:'var(--text3)'}}>No matches</div>}
+          {filteredList.map(s=>(<div key={s.id} onClick={()=>{setEditS({...s,paletteIds:[...s.paletteIds]});setIsNew(false);}}
+            style={{...cardStyle,cursor:'pointer',background:editS?.id===s.id?'var(--primary-dim)':'var(--surface)',marginBottom:8,display:'flex',alignItems:'center',gap:8}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13,marginBottom:4}}>{s.name}</div>
+              <TagChipRow tags={s.tags} />
+              <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>{s.paletteIds.length} palette{s.paletteIds.length!==1?'s':''}</div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:3}}>
+                {s.paletteIds.map(id=>{const pal=palettes.find(p=>p.id===id);return pal?.colors.slice(0,4).map((c,i)=><div key={i} style={{width:12,height:12,borderRadius:2,background:c}}/>) })}
+              </div>
             </div>
+            <button type="button" title="Duplicate" onClick={e => { e.stopPropagation(); duplicateSetItem(s); }}
+              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>⧉</button>
           </div>))}
         </>}
         {ptab==='segments' && <>
@@ -3039,6 +3276,7 @@ function PalettesTab({data, update}) {
               {paletteApplyStatus === 'applying' ? 'Sending…' : paletteApplyStatus === 'ok' ? 'Active ✓' : 'Apply to WLED'}
             </button>
           )}
+          {!isNew && <button onClick={()=>duplicatePal(editP)} style={btn('',{fontSize:12})}>Duplicate</button>}
           {!isNew && <button onClick={()=>delPal(editP.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
         </div>
       </div>
@@ -3052,6 +3290,7 @@ function PalettesTab({data, update}) {
         <div style={{fontSize:12,color:'var(--danger)',marginBottom:12,padding:'8px 12px',background:'#ef444422',borderRadius:8}}>{paletteApplyErr}</div>
       )}
       <Field label="Name"><input value={editP.name} onChange={e=>setEditP({...editP,name:e.target.value})} placeholder="e.g. Sunset Glow" style={inputStyle} autoFocus/></Field>
+      <TagEditor tags={editP.tags || []} onChange={tags => setEditP({ ...editP, tags })} />
       {editP.colors.length>=2 && <div style={{marginBottom:12}}><Field label="Preview"><PaletteGradient colors={editP.colors} height={36}/></Field></div>}
       {editP.wledPalId != null && (
         <div style={{fontSize:11,color:'var(--text3)',fontFamily:'monospace',marginBottom:12}}>
@@ -3076,11 +3315,13 @@ function PalettesTab({data, update}) {
     {editSc && ptab==='colors' && <div style={{flex:1,overflowY:'auto',padding:20}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
         <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Saved Color':'Edit Saved Color'}</span>
+        {!isNew && <button onClick={()=>duplicateSc(editSc)} style={btn('',{fontSize:12})}>Duplicate</button>}
         {!isNew && <button onClick={()=>delSc(editSc.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
       </div>
       <Field label="Name">
         <input value={editSc.name} onChange={e=>setEditSc({...editSc,name:e.target.value})} placeholder="e.g. Castle purple" style={inputStyle} autoFocus/>
       </Field>
+      <TagEditor tags={editSc.tags || []} onChange={tags => setEditSc({ ...editSc, tags })} />
       <ColorCell color={editSc.hex} savedColors={savedColors}
         onChange={hex=>setEditSc({...editSc,hex})}
         onSaveColor={saveColor}/>
@@ -3091,9 +3332,11 @@ function PalettesTab({data, update}) {
     {editS && ptab==='sets' && <div style={{flex:1,overflowY:'auto',padding:20}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
         <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Set':'Edit Set'}</span>
+        {!isNew && <button onClick={()=>duplicateSetItem(editS)} style={btn('',{fontSize:12})}>Duplicate</button>}
         {!isNew && <button onClick={()=>delSet(editS.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
       </div>
       <Field label="Name"><input value={editS.name} onChange={e=>setEditS({...editS,name:e.target.value})} placeholder="e.g. Magic Kingdom" style={inputStyle} autoFocus/></Field>
+      <TagEditor tags={editS.tags || []} onChange={tags => setEditS({ ...editS, tags })} />
       <SectionHead>Included Palettes</SectionHead>
       {palettes.length===0 && <div style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>Create palettes first</div>}
       {palettes.map(p=>(<div key={p.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:'1px solid var(--border)'}}>

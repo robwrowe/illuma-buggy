@@ -3,7 +3,7 @@
  * List, apply, view/edit, and delete presets.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   FlatList, TextInput, Alert, ActivityIndicator,
@@ -17,7 +17,10 @@ import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
 import IconPencil from '@tabler/icons-react-native/dist/esm/icons/IconPencil';
 import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
+import IconCopy from '@tabler/icons-react-native/dist/esm/icons/IconCopy';
 
+import { TagEditor, TagFilterBar, TagChipRow, filterTaggedItems } from '../components/TagFields';
+import { duplicatePreset } from '../utils/tags';
 import { useBLE } from '../hooks/useBLE';
 import { useAppStore, Preset, buildRecallPayload, summarizeLayout } from '../stores/store';
 import { bleService } from '../services/BLEService';
@@ -32,6 +35,13 @@ export default function PresetsScreen() {
   const [syncing, setSyncing]       = useState(false);
   const [editingPreset, setEditingPreset] = useState<Preset | null>(null);
   const [showEdit, setShowEdit]     = useState(false);
+  const [search, setSearch]         = useState('');
+  const [activeTag, setActiveTag]   = useState<string | null>(null);
+
+  const filteredPresets = useMemo(
+    () => filterTaggedItems(presets, search, activeTag),
+    [presets, search, activeTag],
+  );
 
   // Background board sync (App.tsx triggers on connect); manual refresh available
   const refreshFromBoard = () => {
@@ -85,12 +95,21 @@ export default function PresetsScreen() {
     setEditingPreset(null);
   };
 
+  const duplicateItem = (preset: Preset) => {
+    const copy = duplicatePreset(preset, generateId());
+    bleService.sendPresetSave(copy.id, copy.name, copy.wled);
+    addOrUpdatePreset(copy);
+    saveToStorage();
+    openEdit(copy);
+  };
+
   const renderPreset = ({ item }: { item: Preset }) => {
     const isActive = deviceStatus?.currentPreset === item.id;
     return (
       <View style={[s.presetCard, isActive && { borderColor: colors.primary }]}>
         <View style={{ flex: 1 }}>
           <Text style={s.presetName}>{item.name}</Text>
+          <TagChipRow tags={item.tags} colors={colors} />
           <View style={s.presetMeta}>
             {item.wled.fxName && <Text style={s.metaTag}>{item.wled.fxName}</Text>}
             {item.wled.palName && <Text style={s.metaTag}>{item.wled.palName}</Text>}
@@ -107,6 +126,9 @@ export default function PresetsScreen() {
             )}
           </View>
         </View>
+        <TouchableOpacity style={s.iconBtn} onPress={() => duplicateItem(item)}>
+          <IconCopy size={16} color={colors.textSecondary} />
+        </TouchableOpacity>
         <TouchableOpacity style={s.iconBtn} onPress={() => openEdit(item)}>
           <IconPencil size={16} color={colors.textSecondary} />
         </TouchableOpacity>
@@ -138,12 +160,29 @@ export default function PresetsScreen() {
           <Text style={s.hint}>Use the Library tab to browse effects and save them as presets.</Text>
         </View>
       ) : (
-        <FlatList
-          data={presets}
-          keyExtractor={item => item.id}
-          renderItem={renderPreset}
-          contentContainerStyle={s.list}
-        />
+        <>
+          <TagFilterBar
+            items={presets}
+            search={search}
+            onSearchChange={setSearch}
+            activeTag={activeTag}
+            onActiveTagChange={setActiveTag}
+            colors={colors}
+          />
+          {filteredPresets.length === 0 ? (
+            <View style={s.centered}>
+              <Text style={s.emptyText}>No matches</Text>
+              <Text style={s.hint}>Try a different search or tag filter.</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={filteredPresets}
+              keyExtractor={item => item.id}
+              renderItem={renderPreset}
+              contentContainerStyle={s.list}
+            />
+          )}
+        </>
       )}
 
       {/* Edit preset modal */}
@@ -207,6 +246,12 @@ function EditPresetPanel({ preset, effects, palettes, segmentLayouts, colors, on
         />
         <TouchableOpacity onPress={onCancel}><IconX size={20} color={colors.textMuted} /></TouchableOpacity>
       </View>
+
+      <TagEditor
+        tags={preset.tags || []}
+        onChange={tags => onChange({ ...preset, tags })}
+        colors={colors}
+      />
 
       {/* Tab bar */}
       <View style={s.tabs}>

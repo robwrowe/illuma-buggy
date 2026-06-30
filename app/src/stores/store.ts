@@ -3,7 +3,7 @@
  * Adds: CustomPalette, PaletteSet (park-specific palettes), activeZoneIds
  */
 
-import { create } from 'zustand';
+import { normalizeTags } from '../utils/tags';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─────────────────────────────────────────────
@@ -31,6 +31,7 @@ export interface CustomPalette {
   id:     string;
   name:   string;
   colors: string[]; // hex strings e.g. "#ff0000"
+  tags?:  string[];
   /** WLED /paletteN.json slot (0-based), assigned on sync */
   wledPdSlot?: number;
   /** WLED segment pal index (200 - wledPdSlot on v16+) */
@@ -42,6 +43,7 @@ export interface PaletteSet {
   id:         string;
   name:       string;            // e.g. "Magic Kingdom", "EPCOT", "Home"
   paletteIds: string[];          // ordered list of CustomPalette IDs to push to WLED
+  tags?:      string[];
 }
 
 export interface PresetWled {
@@ -76,6 +78,7 @@ export interface Preset {
   name:      string;
   wled:      PresetWled;
   memory:    PresetMemory;
+  tags?:     string[];
   /** Saved segment layout library item (used when recall includes segments). */
   segmentLayoutId?: string;
   createdAt: number;
@@ -285,9 +288,18 @@ export function normalizePreset(p: Partial<Preset> & { id: string; name: string 
     name:      p.name,
     wled:      p.wled ?? { on: true },
     memory:    p.memory ?? DEFAULT_PRESET_MEMORY,
+    tags:      normalizeTags(p.tags),
     segmentLayoutId: p.segmentLayoutId,
     createdAt: p.createdAt ?? Date.now(),
   };
+}
+
+export function normalizeCustomPalette(p: CustomPalette): CustomPalette {
+  return { ...p, tags: normalizeTags(p.tags) };
+}
+
+export function normalizePaletteSet(s: PaletteSet): PaletteSet {
+  return { ...s, tags: normalizeTags(s.tags) };
 }
 
 // ─────────────────────────────────────────────
@@ -495,8 +507,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
         mbMapping:          normalizeMbMapping(d.mbMapping),
         recallState:        d.recallState        ?? DEFAULT_RECALL,
-        customPalettes:     d.customPalettes     ?? [],
-        paletteSets:        d.paletteSets        ?? [],
+        customPalettes:     (d.customPalettes ?? []).map((p: CustomPalette) => normalizeCustomPalette(p)),
+        paletteSets:        (d.paletteSets ?? []).map((s: PaletteSet) => normalizePaletteSet(s)),
         activePaletteSetId: d.activePaletteSetId ?? null,
         customSegmentLayouts: (d.customSegmentLayouts ?? [])
           .map((l: CustomSegmentLayout) => normalizeSegmentLayout(l))
