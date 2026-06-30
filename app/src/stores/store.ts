@@ -31,6 +31,10 @@ export interface CustomPalette {
   id:     string;
   name:   string;
   colors: string[]; // hex strings e.g. "#ff0000"
+  /** WLED /paletteN.json slot (0-based), assigned on sync */
+  wledPdSlot?: number;
+  /** WLED segment pal index (200 - wledPdSlot on v16+) */
+  wledPalId?:  number;
 }
 
 /** A named collection of custom palettes for a specific context (e.g. "Magic Kingdom") */
@@ -720,4 +724,23 @@ export function buildWledCustomPalette(palette: CustomPalette): number[][] {
     const pos = Math.round((i / Math.max(palette.colors.length - 1, 1)) * 255);
     return [pos, r, g, b];
   });
+}
+
+/** Flat [pos,r,g,b,…] for WLED /paletteN.json (upload via POST /upload) */
+export function buildWledPaletteFile(palette: CustomPalette): { palette: number[] } {
+  const flat: number[] = [];
+  palette.colors.forEach((hex, i) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const pos = Math.round((i / Math.max(palette.colors.length - 1, 1)) * 255);
+    flat.push(pos, r, g, b);
+  });
+  return { palette: flat };
+}
+
+export const WLED_CUSTOM_PALETTE_ID_BASE = 200;
+
+export function wledPalIdFromPdSlot(slot: number): number {
+  return WLED_CUSTOM_PALETTE_ID_BASE - slot;
 }

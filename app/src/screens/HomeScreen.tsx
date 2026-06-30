@@ -15,7 +15,7 @@ import IconWifiOff      from '@tabler/icons-react-native/dist/esm/icons/IconWifi
 import IconMap          from '@tabler/icons-react-native/dist/esm/icons/IconMap';
 
 import { useBLE } from '../hooks/useBLE';
-import { useAppStore, buildWledCustomPalette } from '../stores/store';
+import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { useTheme } from '../utils/theme';
 import { useNavigation } from '@react-navigation/native';
@@ -107,20 +107,14 @@ export default function HomeScreen() {
     const ps = paletteSets.find(p => p.id === setId);
     if (!ps) return;
 
-    // WLED v16+ supports 100+ custom palettes via /json/cfg
-    const palettes = ps.paletteIds
-      .map(id => customPalettes.find(cp => cp.id === id))
-      .filter(Boolean);
-
-    // Build WLED custom palette payload
-    const wledPals: Record<string, any> = {};
-    palettes.forEach((pal, i) => {
-      if (!pal) return;
-      wledPals[String(i)] = buildWledCustomPalette(pal);
-    });
-
-    bleService.sendWledRaw({ pd: wledPals });
-    Alert.alert('Palette Set Activated', `Pushed ${palettes.length} palette${palettes.length !== 1 ? 's' : ''} to device.`);
+    // Custom palettes must be uploaded to WLED as /paletteN.json (web tool → Palettes → ↑ WLED).
+    // Palette set order is stored here; WLED slot + palette # live on each CustomPalette after sync.
+    const count = ps.paletteIds.length;
+    Alert.alert(
+      'Palette Set Selected',
+      `“${ps.name}” has ${count} palette${count !== 1 ? 's' : ''}. ` +
+      'Sync them to WLED from the web config tool (Palettes tab → ↑ WLED) while on StrollerNet, then presets using those palettes will apply correctly.',
+    );
   };
 
   return (
