@@ -148,9 +148,9 @@ static size_t buildMbRgb(uint8_t* out, uint8_t red, uint8_t green, uint8_t blue,
   return 12;
 }
 
-// E909 five palette slots — wire bytes 7..11 light band: center, BL, BR, TR, TL.
-static size_t buildMbFiveWire(uint8_t* out, uint8_t bandCenter, uint8_t bandBottomLeft,
-                              uint8_t bandBottomRight, uint8_t bandTopRight, uint8_t bandTopLeft,
+// E909 five palette slots — wire bytes 7..11 light band: center, TR, BR, BL, TL.
+static size_t buildMbFiveWire(uint8_t* out, uint8_t bandCenter, uint8_t bandTopRight,
+                              uint8_t bandBottomRight, uint8_t bandBottomLeft, uint8_t bandTopLeft,
                               uint8_t timing = 0x0E, uint8_t vibration = 0,
                               uint8_t patternNibble = 0x05) {
   out[0] = 0xE1;
@@ -161,9 +161,9 @@ static size_t buildMbFiveWire(uint8_t* out, uint8_t bandCenter, uint8_t bandBott
   out[5] = timing;
   out[6] = 0x0F;
   out[7] = mbColorByte(bandCenter, patternNibble);
-  out[8] = mbColorByte(bandBottomLeft, patternNibble);
+  out[8] = mbColorByte(bandTopRight, patternNibble);
   out[9] = mbColorByte(bandBottomRight, patternNibble);
-  out[10] = mbColorByte(bandTopRight, patternNibble);
+  out[10] = mbColorByte(bandBottomLeft, patternNibble);
   out[11] = mbColorByte(bandTopLeft, patternNibble);
   out[12] = mbVibByte(vibration);
   return 13;
@@ -174,7 +174,7 @@ static size_t buildMbFive(uint8_t* out, uint8_t topLeft, uint8_t bottomLeft,
                           uint8_t bottomRight, uint8_t topRight, uint8_t center,
                           uint8_t timing = 0x0E, uint8_t vibration = 0,
                           uint8_t patternNibble = 0x05) {
-  return buildMbFiveWire(out, center, bottomLeft, bottomRight, topRight, topLeft,
+  return buildMbFiveWire(out, center, topRight, bottomRight, bottomLeft, topLeft,
                          timing, vibration, patternNibble);
 }
 

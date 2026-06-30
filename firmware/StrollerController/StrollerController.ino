@@ -1002,8 +1002,8 @@ void applyMbFive(uint8_t patternNibble, uint8_t b7, uint8_t b8, uint8_t b9, uint
   const char* hex = "0123456789ABCDEF";
   patKey[0] = hex[patternNibble & 0x0F];
 
-  // E909 bytes 7..11 light band LEDs: center, BL, BR, TR, TL (not wire-label TL first).
-  static const char* keys[5] = { "center", "bottomLeft", "bottomRight", "topRight", "topLeft" };
+  // E909 bytes 7..11 light band LEDs: center, TR, BR, BL, TL.
+  static const char* keys[5] = { "center", "topRight", "bottomRight", "bottomLeft", "topLeft" };
   uint8_t pals[5] = { b7, b8, b9, b10, b11 };
 
   if (applyMbPatternKey(patKey, pals, 5, src)) return;
