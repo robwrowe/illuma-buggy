@@ -186,6 +186,9 @@ const DEFAULT_MB_MAPPING = {
     band2:       [{ id: 11, start: 40, stop: 60 }],
     band3:       [{ id: 12, start: 60, stop: 80 }],
     band4:       [{ id: 13, start: 80, stop: 100 }],
+    band5:       [{ id: 14, start: 80, stop: 87 }],
+    band6:       [{ id: 15, start: 87, stop: 94 }],
+    band7:       [{ id: 16, start: 94, stop: 100 }],
   },
 };
 
@@ -203,6 +206,9 @@ const MB_SEGMENT_META = [
   { id: 'band2', label: 'Band LED 2', hint: 'E905 mask bit 2' },
   { id: 'band3', label: 'Band LED 3', hint: 'E905 mask bit 3' },
   { id: 'band4', label: 'Band LED 4', hint: 'E905 mask bit 4' },
+  { id: 'band5', label: 'Band LED 5', hint: 'E905 mask bit 5' },
+  { id: 'band6', label: 'Band LED 6', hint: 'E905 mask bit 6' },
+  { id: 'band7', label: 'Band LED 7', hint: 'E905 mask bit 7' },
 ];
 
 const MB_ANIMATION_META = [
@@ -244,7 +250,8 @@ const MB_SEGMENT_SIM_COMMAND = {
   bottomLeft: 'test bottomLeft', bottomRight: 'test bottomRight',
   center: 'test center',
   band0: 'test band0', band1: 'test band1', band2: 'test band2',
-  band3: 'test band3', band4: 'test band4',
+  band3: 'test band3', band4: 'test band4', band5: 'test band5',
+  band6: 'test band6', band7: 'test band7',
 };
 const SIM_FIVE_CORNERS = 'test five';
 const FIVE_CORNER_IDS = ['topLeft', 'bottomLeft', 'bottomRight', 'topRight', 'center'];
@@ -3186,8 +3193,31 @@ function formatWledSegLabel(seg) {
 }
 
 function formatWledSegSelectionSummary(refs) {
-  if (!refs?.length) return 'None selected';
-  return refs.map(r => `#${r.id}`).join(' & ');
+  if (!refs?.length) return 'None assigned';
+  return refs.map(r => `#${r.id} (${r.start}–${r.stop}%)`).join(' · ');
+}
+
+const STRIP_PCT_MAX = 100;
+
+function isValidSegRef(ref) {
+  return Number.isInteger(ref.id) && ref.id >= 0 && ref.id <= 31
+    && Number.isInteger(ref.start) && Number.isInteger(ref.stop)
+    && ref.start >= 0 && ref.stop <= STRIP_PCT_MAX && ref.stop > ref.start;
+}
+
+function parseSegRefFields(idStr, startStr, stopStr) {
+  const id = parseInt(idStr, 10);
+  const start = parseInt(startStr, 10);
+  const stop = parseInt(stopStr, 10);
+  const ref = { id, start, stop };
+  return isValidSegRef(ref) ? ref : null;
+}
+
+function defaultNewSegRef(refs) {
+  const used = new Set((refs || []).map(r => r.id));
+  let id = 0;
+  while (used.has(id) && id < 32) id++;
+  return { id, start: 0, stop: STRIP_PCT_MAX };
 }
 
 function refsFromSnapshotIds(snapshot, selectedIds) {
@@ -3195,16 +3225,38 @@ function refsFromSnapshotIds(snapshot, selectedIds) {
   return snapshot.filter(s => set.has(s.id)).map(s => ({ id: s.id, start: s.start, stop: s.stop }));
 }
 
+function updateRefAt(refs, index, ref) {
+  const next = [...(refs || [])];
+  next[index] = ref;
+  return next;
+}
+
+function removeRefAt(refs, index) {
+  return (refs || []).filter((_, i) => i !== index);
+}
+
+function appendSegRef(refs, ref) {
+  const without = (refs || []).filter(r => r.id !== ref.id);
+  return [...without, ref];
+}
+
 function toggleSnapshotSelection(snapshot, currentRefs, wledSegId) {
-  const selected = new Set((currentRefs || []).map(r => r.id));
-  if (selected.has(wledSegId)) selected.delete(wledSegId);
-  else selected.add(wledSegId);
-  return refsFromSnapshotIds(snapshot, [...selected]);
+  const seg = snapshot.find(s => s.id === wledSegId);
+  if (!seg) return currentRefs || [];
+  const refs = currentRefs || [];
+  if (refs.some(r => r.id === wledSegId)) return refs.filter(r => r.id !== wledSegId);
+  return appendSegRef(refs, { id: seg.id, start: seg.start, stop: seg.stop });
 }
 
 function pruneRefsToSnapshot(snapshot, refs) {
-  const ids = (refs || []).map(r => r.id).filter(id => snapshot.some(s => s.id === id));
-  return refsFromSnapshotIds(snapshot, ids);
+  const list = refs || [];
+  const snapIds = new Set(snapshot.map(s => s.id));
+  const manual = list.filter(r => !snapIds.has(r.id));
+  const fromSnap = refsFromSnapshotIds(
+    snapshot,
+    list.map(r => r.id).filter(id => snapIds.has(id)),
+  );
+  return [...manual, ...fromSnap];
 }
 
 function buildPresetLayoutPayload(preset, customSegmentLayouts) {
@@ -3218,6 +3270,25 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
   const selectedSummary = formatWledSegSelectionSummary(refs);
   const toggle = (wledSegId) => onChange(toggleSnapshotSelection(snapshot, refs, wledSegId));
   const hasSnapshot = snapshot?.length > 0;
+  const list = refs || [];
+
+  const patchRef = (index, field, raw) => {
+    const cur = list[index];
+    if (!cur) return;
+    const idStr = field === 'id' ? raw : String(cur.id);
+    const startStr = field === 'start' ? raw : String(cur.start);
+    const stopStr = field === 'stop' ? raw : String(cur.stop);
+    const parsed = parseSegRefFields(idStr, startStr, stopStr);
+    if (parsed) onChange(updateRefAt(list, index, parsed));
+    else onChange(updateRefAt(list, index, {
+      id: field === 'id' ? parseInt(raw, 10) || 0 : cur.id,
+      start: field === 'start' ? parseInt(raw, 10) || 0 : cur.start,
+      stop: field === 'stop' ? parseInt(raw, 10) || 0 : cur.stop,
+    }));
+  };
+
+  const segInput = { width: 44, padding: '4px 6px', fontSize: 12, fontFamily: 'monospace', textAlign: 'center',
+    background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)' };
 
   return (
     <div style={{ marginBottom: 14, padding: 10, background: 'var(--surface2)', borderRadius: 8 }}>
@@ -3244,18 +3315,44 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
           )}
         </div>
       </div>
-      {!hasSnapshot ? (
-        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-          Set up the strip layout for this use-case, then Capture to pick WLED segments.
+
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>Assigned segments</div>
+      {list.length === 0 ? (
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>No segments — add manually or capture from WLED.</div>
+      ) : list.map((ref, index) => (
+        <div key={`${ref.id}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>id</span>
+          <input style={{ ...segInput, width: 36 }} value={ref.id} inputMode="numeric"
+            onChange={e => patchRef(index, 'id', e.target.value)} />
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>start</span>
+          <input style={segInput} value={ref.start} inputMode="numeric"
+            onChange={e => patchRef(index, 'start', e.target.value)} />
+          <span style={{ fontSize: 10, color: 'var(--text3)' }}>stop</span>
+          <input style={segInput} value={ref.stop} inputMode="numeric"
+            onChange={e => patchRef(index, 'stop', e.target.value)} />
+          {!isValidSegRef(ref) ? (
+            <span style={{ fontSize: 10, color: 'var(--danger)' }}>invalid</span>
+          ) : (
+            <span style={{ fontSize: 10, color: 'var(--text3)' }}>%</span>
+          )}
+          <button type="button" onClick={() => onChange(removeRefAt(list, index))}
+            style={btn('', { padding: '2px 8px', fontSize: 14, color: 'var(--danger)', background: 'none', border: 'none' })}>×</button>
         </div>
-      ) : (
+      ))}
+      <button type="button" onClick={() => onChange(appendSegRef(list, defaultNewSegRef(list)))}
+        style={btn('', { padding: '4px 0', fontSize: 12, fontWeight: 600, color: 'var(--primary)', background: 'none', border: 'none', marginBottom: hasSnapshot ? 10 : 0 })}>
+        + Add segment
+      </button>
+
+      {hasSnapshot && (
         <>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 4, marginTop: 4 }}>From capture</div>
           <div style={{ fontSize: 10, color: 'var(--text2)', fontFamily: 'monospace', marginBottom: 8, lineHeight: 1.4 }}>
-            Captured: {snapshot.map(formatWledSegLabel).join(' · ')}
+            {snapshot.map(formatWledSegLabel).join(' · ')}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {snapshot.map(seg => {
-              const checked = (refs || []).some(r => r.id === seg.id);
+              const checked = list.some(r => r.id === seg.id);
               return (
                 <label key={seg.id} style={{
                   display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
@@ -3517,7 +3614,7 @@ function SettingsTab({data, update}) {
 
     {bleTab === 'segments' && <>
       <p style={{fontSize:12,color:'var(--text3)',marginBottom:8,lineHeight:1.5}}>
-        Per region: apply the layout you want on the strip, Capture on that row, then tick which WLED segments map to it (e.g. bottom right → seg #2 &amp; #4).
+        Per region: assign WLED segments manually (id + start/stop %) or Capture from the strip and tick segments to add.
       </p>
       <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10,flexWrap:'wrap'}}>
         <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>

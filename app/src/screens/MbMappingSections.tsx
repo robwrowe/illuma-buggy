@@ -16,7 +16,8 @@ import {
 } from '../utils/mbSegmentPreview';
 import {
   formatWledSegLabel, formatWledSegSelectionSummary, toggleSnapshotSelection,
-  pruneRefsToSnapshot,
+  pruneRefsToSnapshot, defaultNewSegRef, updateRefAt, removeRefAt, appendSegRef,
+  parseSegRefFields, isValidSegRef,
 } from '../utils/mbSegmentAssign';
 import {
   buildPresetLayoutPayload, fetchWledSegmentsFromDevice, WledSegmentDef,
@@ -353,7 +354,7 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
       {tab === 'segments' && (
         <>
           <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 8, lineHeight: 18 }}>
-            Per region: apply the layout you want on the strip, Capture on that row, then tick which WLED segments map to it (e.g. bottom right → seg #2 & #4).
+            Per region: assign WLED segments manually (id + start/stop %) or Capture from the strip and tick segments to add.
           </Text>
           <TouchableOpacity
             onPress={applyDefaultLayout}
@@ -423,6 +424,26 @@ function MbSegmentAssignEditor({
 }) {
   const summary = formatWledSegSelectionSummary(refs);
   const hasSnapshot = snapshot.length > 0;
+  const inputStyle = {
+    backgroundColor: colors.background, borderRadius: 6, borderWidth: 1,
+    borderColor: colors.borderFocus, color: colors.textPrimary,
+    padding: 6, fontSize: 12, fontFamily: 'monospace' as const, textAlign: 'center' as const,
+  };
+
+  const patchRef = (index: number, field: keyof WledSegRef, raw: string) => {
+    const cur = refs[index];
+    if (!cur) return;
+    const idStr = field === 'id' ? raw : String(cur.id);
+    const startStr = field === 'start' ? raw : String(cur.start);
+    const stopStr = field === 'stop' ? raw : String(cur.stop);
+    const parsed = parseSegRefFields(idStr, startStr, stopStr);
+    if (parsed) onChange(updateRefAt(refs, index, parsed));
+    else onChange(updateRefAt(refs, index, {
+      id: field === 'id' ? parseInt(raw, 10) || 0 : cur.id,
+      start: field === 'start' ? parseInt(raw, 10) || 0 : cur.start,
+      stop: field === 'stop' ? parseInt(raw, 10) || 0 : cur.stop,
+    }));
+  };
 
   return (
     <View style={{
@@ -456,14 +477,44 @@ function MbSegmentAssignEditor({
           </TouchableOpacity>
         </View>
       </View>
-      {!hasSnapshot ? (
-        <Text style={{ color: colors.textMuted, fontSize: 11 }}>
-          Set up the strip layout for this use-case, then Capture to pick WLED segments.
-        </Text>
-      ) : (
+
+      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '600', marginBottom: 6 }}>Assigned segments</Text>
+      {refs.length === 0 ? (
+        <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 8 }}>No segments — add manually or capture from WLED.</Text>
+      ) : refs.map((ref, index) => (
+        <View key={`${ref.id}-${index}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <Text style={{ color: colors.textMuted, fontSize: 10, width: 22 }}>id</Text>
+          <TextInput style={[inputStyle, { width: 36 }]} value={String(ref.id)} keyboardType="number-pad"
+            onChangeText={v => patchRef(index, 'id', v)} />
+          <Text style={{ color: colors.textMuted, fontSize: 10 }}>start</Text>
+          <TextInput style={[inputStyle, { width: 44 }]} value={String(ref.start)} keyboardType="number-pad"
+            onChangeText={v => patchRef(index, 'start', v)} />
+          <Text style={{ color: colors.textMuted, fontSize: 10 }}>stop</Text>
+          <TextInput style={[inputStyle, { width: 44 }]} value={String(ref.stop)} keyboardType="number-pad"
+            onChangeText={v => patchRef(index, 'stop', v)} />
+          {!isValidSegRef(ref) ? (
+            <Text style={{ color: colors.danger, fontSize: 10, flex: 1 }}>invalid</Text>
+          ) : (
+            <Text style={{ color: colors.textMuted, fontSize: 10, flex: 1, fontFamily: 'monospace' }}>%</Text>
+          )}
+          <TouchableOpacity onPress={() => onChange(removeRefAt(refs, index))}
+            style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
+            <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>×</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <TouchableOpacity onPress={() => onChange(appendSegRef(refs, defaultNewSegRef(refs)))}
+        style={{ alignSelf: 'flex-start', marginBottom: hasSnapshot ? 10 : 0, paddingVertical: 4 }}>
+        <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600' }}>+ Add segment</Text>
+      </TouchableOpacity>
+
+      {hasSnapshot && (
         <>
+          <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '600', marginBottom: 4, marginTop: 4 }}>
+            From capture
+          </Text>
           <Text style={{ color: colors.textSecondary, fontSize: 10, fontFamily: 'monospace', marginBottom: 8, lineHeight: 15 }}>
-            Captured: {snapshot.map(formatWledSegLabel).join(' · ')}
+            {snapshot.map(formatWledSegLabel).join(' · ')}
           </Text>
           {snapshot.map(seg => {
             const checked = refs.some(r => r.id === seg.id);

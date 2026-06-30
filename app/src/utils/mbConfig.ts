@@ -22,7 +22,10 @@ export type MbSegmentId =
   | 'band1'
   | 'band2'
   | 'band3'
-  | 'band4';
+  | 'band4'
+  | 'band5'
+  | 'band6'
+  | 'band7';
 
 /** MB animation opcode key (E90C, E90E, …) or wand */
 export type MbAnimationKey =
@@ -141,6 +144,9 @@ export const DEFAULT_MB_MAPPING: MbMappingConfig = {
     band2:       [{ id: 11, start: 40, stop: 60 }],
     band3:       [{ id: 12, start: 60, stop: 80 }],
     band4:       [{ id: 13, start: 80, stop: 100 }],
+    band5:       [{ id: 14, start: 80, stop: 87 }],
+    band6:       [{ id: 15, start: 87, stop: 94 }],
+    band7:       [{ id: 16, start: 94, stop: 100 }],
   },
 };
 
@@ -158,6 +164,9 @@ export const MB_SEGMENT_META: { id: MbSegmentId; label: string; hint: string }[]
   { id: 'band2', label: 'Band LED 2', hint: 'E905 mask bit 2' },
   { id: 'band3', label: 'Band LED 3', hint: 'E905 mask bit 3' },
   { id: 'band4', label: 'Band LED 4', hint: 'E905 mask bit 4' },
+  { id: 'band5', label: 'Band LED 5', hint: 'E905 mask bit 5' },
+  { id: 'band6', label: 'Band LED 6', hint: 'E905 mask bit 6' },
+  { id: 'band7', label: 'Band LED 7', hint: 'E905 mask bit 7' },
 ];
 
 export const MB_ANIMATION_META: { key: MbAnimationKey; label: string }[] = [

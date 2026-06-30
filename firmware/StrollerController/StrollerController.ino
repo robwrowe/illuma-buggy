@@ -55,8 +55,9 @@ enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC, BLE_STARLIGHT };
 
 static const char* MB_SEG_KEYS[] = {
   "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
-  "band0", "band1", "band2", "band3", "band4"
+  "band0", "band1", "band2", "band3", "band4", "band5", "band6", "band7"
 };
+#define MB_SEG_KEY_COUNT 16
 static const char* MB_ANIM_KEYS[] = { "E90C", "E90E", "E90F", "E910", "E911", "E912", "E913", "wand" };
 static const char* MB_PAT_KEYS[]  = { "3", "4", "5", "8", "B" };
 static const char* SW_ANIM_KEYS[] = {
@@ -200,7 +201,7 @@ String bleDefaultPresetId = "";  // fallback — same presets as GPS zones
 bool   wledWasConnected   = false;
 
 uint8_t mbWledColors[32][3];
-MbSegMap mbSegMaps[13];  // parallel to segment key order in JSON
+MbSegMap mbSegMaps[MB_SEG_KEY_COUNT];  // parallel to segment key order in JSON
 MbEffectMap mbAnimMap[8];   // E90C,E90E,E90F,E910,E911,E912,E913,wand
 MbEffectMap swAnimMap[SW_ANIM_COUNT];
 
@@ -572,9 +573,10 @@ void loadMbMappingDefaults() {
   memcpy(mbWledColors, MB_DEFAULT_COLORS, sizeof(mbWledColors));
   const uint16_t defs[][2] = {
     {0,100},{35,65},{0,35},{0,25},{25,50},{50,75},{75,100},{48,52},
-    {0,20},{20,40},{40,60},{60,80},{80,100}
+    {0,20},{20,40},{40,60},{60,80},{80,100},
+    {80,87},{87,94},{94,100}
   };
-  for (int i = 0; i < 13; i++) {
+  for (int i = 0; i < MB_SEG_KEY_COUNT; i++) {
     mbSegMaps[i].count = 1;
     mbSegMaps[i].refs[0] = { (uint8_t)(i == 2 ? 2 : i), defs[i][0], defs[i][1] };
     if (i == 2) {
@@ -643,7 +645,7 @@ void loadMbMappingFromJson() {
   }
   if (doc.containsKey("segments")) {
     JsonObject segs = doc["segments"];
-    for (int i = 0; i < 13; i++) {
+    for (int i = 0; i < MB_SEG_KEY_COUNT; i++) {
       if (!segs.containsKey(MB_SEG_KEYS[i])) continue;
       parseSegMapArray(segs[MB_SEG_KEYS[i]].as<JsonArray>(), mbSegMaps[i]);
     }
@@ -672,8 +674,47 @@ void loadMbMappingFromJson() {
 }
 
 int mbSegKeyIndex(const char* key) {
-  for (int i = 0; i < 13; i++) if (strcmp(key, MB_SEG_KEYS[i]) == 0) return i;
+  for (int i = 0; i < MB_SEG_KEY_COUNT; i++) if (strcmp(key, MB_SEG_KEYS[i]) == 0) return i;
   return -1;
+}
+
+// Classic E905: mask in byte7[7:5] (0 = all). Extended Illuma/WandSim: byte6 = 8-bit LED bitmask.
+uint8_t decodeE905MaskByte(const uint8_t* payload) {
+  uint8_t b6 = payload[6];
+  if (b6 != 0x0E && b6 != 0x0F) return b6;
+  return (payload[7] >> 5) & 0x07;
+}
+
+uint8_t decodeE905Palette(const uint8_t* payload) {
+  return payload[7] & 0x1F;
+}
+
+void applyMbSingleMask(uint8_t mask8, uint8_t pal, OverrideSource src) {
+  if (!canTakeOverride(src)) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (mask8 == 0) {
+    applyMbSegmentSolid("all", pal, src);
+    return;
+  }
+  static const char* keys[8] = {
+    "band0", "band1", "band2", "band3", "band4", "band5", "band6", "band7"
+  };
+  const char* segKeys[8];
+  uint8_t pals[8];
+  int m = 0;
+  for (int i = 0; i < 8; i++) {
+    if (mask8 & (1 << i)) {
+      segKeys[m] = keys[i];
+      pals[m] = pal;
+      m++;
+    }
+  }
+  if (m == 0) applyMbSegmentSolid("all", pal, src);
+  else applyMbMultiSegmentSolid(segKeys, pals, m, src);
+}
+
+void applyMbSingleE905(const uint8_t* payload, OverrideSource src) {
+  applyMbSingleMask(decodeE905MaskByte(payload), decodeE905Palette(payload), src);
 }
 
 #define MB_WLED_MAX_SEG 16
@@ -944,27 +985,8 @@ bool applyMbPatternKey(const char* patKey, const uint8_t* pals, int palCount, Ov
 }
 
 void applyMbSingle(uint8_t colorByte, OverrideSource src) {
-  if (!canTakeOverride(src)) return;
-  if (WiFi.status() != WL_CONNECTED) return;
-  uint8_t mask = (colorByte >> 5) & 0x07;
-  uint8_t pal = colorByte & 0x1F;
-  if (mask == 0) {
-    applyMbSegmentSolid("all", pal, src);
-    return;
-  }
-  const char* keys[5] = { "band0", "band1", "band2", "band3", "band4" };
-  const char* segKeys[5];
-  uint8_t pals[5];
-  int m = 0;
-  for (int i = 0; i < 5; i++) {
-    if (mask & (1 << i)) {
-      segKeys[m] = keys[i];
-      pals[m] = pal;
-      m++;
-    }
-  }
-  if (m == 0) applyMbSegmentSolid("all", pal, src);
-  else applyMbMultiSegmentSolid(segKeys, pals, m, src);
+  uint8_t payload[9] = { 0xE1, 0x00, 0xE9, 0x05, 0x00, 0x09, 0x0E, colorByte, 0xB0 };
+  applyMbSingleE905(payload, src);
 }
 
 void applyMbDual(uint8_t innerByte, uint8_t outerByte, OverrideSource src) {
@@ -973,15 +995,16 @@ void applyMbDual(uint8_t innerByte, uint8_t outerByte, OverrideSource src) {
   applyMbMultiSegmentSolid(keys, pals, 2, src);
 }
 
-void applyMbFive(uint8_t patternNibble, uint8_t tl, uint8_t bl, uint8_t br, uint8_t tr, uint8_t center, OverrideSource src) {
+void applyMbFive(uint8_t patternNibble, uint8_t b7, uint8_t b8, uint8_t b9, uint8_t b10, uint8_t b11, OverrideSource src) {
   if (!canTakeOverride(src)) return;
   if (WiFi.status() != WL_CONNECTED) return;
   char patKey[2] = { 0, 0 };
   const char* hex = "0123456789ABCDEF";
   patKey[0] = hex[patternNibble & 0x0F];
 
-  const char* keys[5] = { "topLeft", "bottomLeft", "bottomRight", "topRight", "center" };
-  uint8_t pals[5] = { tl, bl, br, tr, center };
+  // E909 bytes 7..11 light band LEDs: center, BL, BR, TR, TL (not wire-label TL first).
+  static const char* keys[5] = { "center", "bottomLeft", "bottomRight", "topRight", "topLeft" };
+  uint8_t pals[5] = { b7, b8, b9, b10, b11 };
 
   if (applyMbPatternKey(patKey, pals, 5, src)) return;
 
@@ -1730,10 +1753,10 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
     case 0xE905:
       if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
       if (plen < 9) return;
-      applyMbSingle(payload[7], BLE_MAGIC);
+      applyMbSingleE905(payload, BLE_MAGIC);
       {
         uint8_t r, g, b;
-        paletteToRGB(payload[7] & 0x1F, r, g, b);
+        paletteToRGB(decodeE905Palette(payload), r, g, b);
         bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
       }
       break;

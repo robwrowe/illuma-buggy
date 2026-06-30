@@ -93,7 +93,8 @@ static uint8_t mbColorByte(uint8_t paletteIdx, uint8_t patternNibble) {
   return (uint8_t)((patternNibble << 5) | (paletteIdx & 0x1F));
 }
 
-// E905 single palette — mask 0 = all 5 LEDs on band
+// E905 single palette — mask 0 = all LEDs; bits 0–7 map to band0–band7 on stroller.
+// Classic park packets: mask in byte7[7:5] (3-bit, 0–7). Extended: byte6 = full 8-bit mask.
 static size_t buildMbSingle(uint8_t* out, uint8_t paletteIdx, uint8_t mask = 0,
                             uint8_t timing = 0x09, uint8_t vibration = 0) {
   out[0] = 0xE1;
@@ -102,8 +103,13 @@ static size_t buildMbSingle(uint8_t* out, uint8_t paletteIdx, uint8_t mask = 0,
   out[3] = 0x05;
   out[4] = 0x00;
   out[5] = timing;
-  out[6] = 0x0E;
-  out[7] = (uint8_t)(((mask & 0x07) << 5) | (paletteIdx & 0x1F));
+  if (mask > 7 || (mask & 0xF8)) {
+    out[6] = mask;
+    out[7] = paletteIdx & 0x1F;
+  } else {
+    out[6] = 0x0E;
+    out[7] = (uint8_t)(((mask & 0x07) << 5) | (paletteIdx & 0x1F));
+  }
   out[8] = mbVibByte(vibration);
   return 9;
 }
@@ -142,12 +148,11 @@ static size_t buildMbRgb(uint8_t* out, uint8_t red, uint8_t green, uint8_t blue,
   return 12;
 }
 
-// E909 five palette slots — TL, BL, BR, TR, center (Adafruit byte order)
-// patternNibble: emcot wiki — 3=spin, 4=solid A, 8=4/5 corners, B=all on B
-static size_t buildMbFive(uint8_t* out, uint8_t topLeft, uint8_t bottomLeft,
-                          uint8_t bottomRight, uint8_t topRight, uint8_t center,
-                          uint8_t timing = 0x0E, uint8_t vibration = 0,
-                          uint8_t patternNibble = 0x05) {
+// E909 five palette slots — wire bytes 7..11 light band: center, BL, BR, TR, TL.
+static size_t buildMbFiveWire(uint8_t* out, uint8_t bandCenter, uint8_t bandBottomLeft,
+                              uint8_t bandBottomRight, uint8_t bandTopRight, uint8_t bandTopLeft,
+                              uint8_t timing = 0x0E, uint8_t vibration = 0,
+                              uint8_t patternNibble = 0x05) {
   out[0] = 0xE1;
   out[1] = 0x00;
   out[2] = 0xE9;
@@ -155,13 +160,22 @@ static size_t buildMbFive(uint8_t* out, uint8_t topLeft, uint8_t bottomLeft,
   out[4] = 0x00;
   out[5] = timing;
   out[6] = 0x0F;
-  out[7] = mbColorByte(topLeft, patternNibble);
-  out[8] = mbColorByte(bottomLeft, patternNibble);
-  out[9] = mbColorByte(bottomRight, patternNibble);
-  out[10] = mbColorByte(topRight, patternNibble);
-  out[11] = mbColorByte(center, patternNibble);
+  out[7] = mbColorByte(bandCenter, patternNibble);
+  out[8] = mbColorByte(bandBottomLeft, patternNibble);
+  out[9] = mbColorByte(bandBottomRight, patternNibble);
+  out[10] = mbColorByte(bandTopRight, patternNibble);
+  out[11] = mbColorByte(bandTopLeft, patternNibble);
   out[12] = mbVibByte(vibration);
   return 13;
+}
+
+// User/stroller corner order: TL, BL, BR, TR, center → band wire order above.
+static size_t buildMbFive(uint8_t* out, uint8_t topLeft, uint8_t bottomLeft,
+                          uint8_t bottomRight, uint8_t topRight, uint8_t center,
+                          uint8_t timing = 0x0E, uint8_t vibration = 0,
+                          uint8_t patternNibble = 0x05) {
+  return buildMbFiveWire(out, center, bottomLeft, bottomRight, topRight, topLeft,
+                         timing, vibration, patternNibble);
 }
 
 static size_t buildMbFiveUniform(uint8_t* out, uint8_t paletteIdx, uint8_t patternNibble) {
@@ -459,9 +473,16 @@ void handleSegmentTest(const String& rawSeg) {
     broadcastMbSingle(PAL_WHITE, 2);
   } else if (seg == "band2") {
     broadcastMbSingle(PAL_WHITE, 4);
-  } else if (seg == "band3" || seg == "band4") {
-    Serial.println("[WandSim] E905 mask is 3-bit — use app Settings > Test for band3/band4");
-    return;
+  } else if (seg == "band3") {
+    broadcastMbSingle(PAL_WHITE, 8);
+  } else if (seg == "band4") {
+    broadcastMbSingle(PAL_WHITE, 16);
+  } else if (seg == "band5") {
+    broadcastMbSingle(PAL_WHITE, 32);
+  } else if (seg == "band6") {
+    broadcastMbSingle(PAL_WHITE, 64);
+  } else if (seg == "band7") {
+    broadcastMbSingle(PAL_WHITE, 128);
   } else {
     Serial.printf("[WandSim] Unknown segment '%s' — try: all inner outer topLeft five band0\n", rawSeg.c_str());
     return;
@@ -484,11 +505,11 @@ void printHelp() {
   Serial.println("  sw combo <color> <fx>    CF0B cast then animation");
   Serial.println("  swfxloop                 cycle all sw fx presets every 4s");
   Serial.println("  --- MagicBand+ (Adafruit E9 builders) ---");
-  Serial.println("  mb <0-31|name>           E905 single color (all 5 LEDs)");
-  Serial.println("  mb <pal> mask <0-7>      E905 with LED mask (1=TR only, etc.)");
+  Serial.println("  mb <0-31|name>           E905 single color (all LEDs)");
+  Serial.println("  mb <pal> mask <0-255>    E905 LED bitmask (bit N = band N, 0 = all)");
   Serial.println("  mb dual <in> <out>       E906 inner + outer ring colors");
   Serial.println("  mb rgb <r> <g> <b>       E908 6-bit RGB (0-63 each)");
-  Serial.println("  mb five <tl bl br tr c>  E909 five palette slots");
+  Serial.println("  mb five <tl bl br tr c>  E909 corners (TL BL BR TR center)");
   Serial.println("  mb rainbow               E909 preset rainbow corners");
   Serial.println("  ping                     CC03000000 wake ping");
   Serial.println("  mbsweep                  cycle palettes 0-31 every 3s (both bands)");
@@ -497,7 +518,7 @@ void printHelp() {
   Serial.println("  --- Segment layout test (white highlight on stroller) ---");
   Serial.println("  test all|inner|outer|topLeft|bottomLeft|bottomRight|topRight|center");
   Serial.println("  test five                all 5 corners R/G/B/W/Y");
-  Serial.println("  test band0|band1|band2     E905 mask (band3/4: use app Test)");
+  Serial.println("  test band0|band1|…|band7   E905 mask bit test (white)");
   Serial.println("  help");
   Serial.println("  Names: 0-31, or hyphenated MB palette names");
   Serial.println("         e.g. red midnight-blue yellow-orange lime-green pink-3");

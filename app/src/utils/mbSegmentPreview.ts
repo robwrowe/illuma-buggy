@@ -38,6 +38,9 @@ export const MB_SEGMENT_SIM_COMMAND: Record<MbSegmentId, string> = {
   band2: 'test band2',
   band3: 'test band3',
   band4: 'test band4',
+  band5: 'test band5',
+  band6: 'test band6',
+  band7: 'test band7',
 };
 
 export const SIM_FIVE_CORNERS = 'test five';

@@ -62,8 +62,11 @@ export function describeBlePacket(tag: string, hex: string): string {
       case 0xe905:
         if (bytes.length >= 9) {
           const pal = bytes[7] & 0x1f;
-          const mask = (bytes[7] >> 5) & 0x07;
-          return `${op} single pal=${pal} mask=${mask}`;
+          const mask = (bytes[6] !== 0x0e && bytes[6] !== 0x0f)
+            ? bytes[6]
+            : (bytes[7] >> 5) & 0x07;
+          const maskHex = mask > 7 ? `0x${mask.toString(16)}` : String(mask);
+          return `${op} single pal=${pal} mask=${maskHex}`;
         }
         return `${op} single color`;
       case 0xe906:
