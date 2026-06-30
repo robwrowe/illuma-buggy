@@ -195,6 +195,11 @@ static const uint8_t WAND_CAST_SIG[6] = {0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22};
 
 // Pre-event WLED state (restored after BLE effect clears)
 String savedWledState   = "";
+String savedRestorePresetId = "";  // fast restore — re-apply zone/manual preset (no GET)
+OverrideSource savedRestoreOverride = NONE;
+String liveWledState    = "";      // background-polled / last-known full state
+unsigned long lastLiveStatePollMs = 0;
+const unsigned long LIVE_STATE_POLL_MS = 12000;
 String baselineWledState  = "";   // snapshot at connect — full /json/state
 String mbMappingJson = "";  // unified MB→WLED mapping (colors, animations, patterns, segments)
 String bleDefaultPresetId = "";  // fallback — same presets as GPS zones
@@ -451,12 +456,14 @@ bool applyPreset(const String& id) {
     Serial.printf("[Preset] Not found: %s\n", id.c_str());
     return false;
   }
-  DynamicJsonDocument doc(2048);
-  deserializeJson(doc, preset);
+  DynamicJsonDocument doc(8192);
+  if (deserializeJson(doc, preset)) return false;
   String wledJson;
   serializeJson(doc["wled"], wledJson);
   currentPresetId = id;
-  return sendToWLED(wledJson);
+  bool ok = sendToWLED(wledJson);
+  if (ok && wledJson.length() > 0) liveWledState = wledJson;
+  return ok;
 }
 
 bool setBrightness(int bri) {
@@ -473,6 +480,7 @@ void snapshotWledBaseline() {
   }
 
   baselineWledState = state;
+  liveWledState = state;
 
   DynamicJsonDocument doc(12288);
   DeserializationError err = deserializeJson(doc, state);
@@ -1079,10 +1087,34 @@ void setOverride(OverrideSource src) {
 }
 
 void saveWledStateForOverride() {
-  if (savedWledState.length() > 0) return;
+  if (savedWledState.length() > 0 || savedRestorePresetId.length() > 0) return;
+
+  // Fast path: re-apply known preset on clear (zone/manual) — skips blocking GET.
+  if (currentPresetId.length() > 0) {
+    savedRestorePresetId = currentPresetId;
+    savedRestoreOverride = currentOverride;
+    if (savedRestoreOverride == NONE || savedRestoreOverride == BLE_MAGIC ||
+        savedRestoreOverride == BLE_STARLIGHT) {
+      savedRestoreOverride = ZONE;
+    }
+    if (liveWledState.length() > 0) {
+      savedWledState = liveWledState;
+    }
+    Serial.printf("[Override] Saved restore preset: %s (%u byte snapshot)\n",
+                  currentPresetId.c_str(), (unsigned)savedWledState.length());
+    return;
+  }
+
+  if (liveWledState.length() > 0) {
+    savedWledState = liveWledState;
+    Serial.printf("[Override] Saved cached WLED state (%u bytes)\n", (unsigned)savedWledState.length());
+    return;
+  }
+
   String state = getFromWLED("/json/state");
   if (state.length() > 0) {
     savedWledState = state;
+    liveWledState = state;
     Serial.printf("[Override] Saved WLED state (%u bytes)\n", (unsigned)state.length());
   } else if (baselineWledState.length() > 0) {
     savedWledState = baselineWledState;
@@ -1130,17 +1162,104 @@ String buildWledRestorePayload(const String& savedJson) {
   return out;
 }
 
+// Presets and partial POST bodies may omit seg[] or segment ids — normalize before restore.
+String prepareWledRestorePayload(const String& json) {
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, json) != DeserializationError::Ok) {
+    return buildWledRestorePayload(json);
+  }
+
+  doc.remove("transition");
+
+  JsonArray segs = doc["seg"].as<JsonArray>();
+  if (segs.isNull() || segs.size() == 0) {
+    DynamicJsonDocument wrapped(12288);
+    wrapped["on"] = doc["on"] | true;
+    JsonObject seg0 = wrapped.createNestedArray("seg").createNestedObject();
+    seg0["id"] = 0;
+    seg0["start"] = 0;
+    seg0["stop"] = STRIP_LED_COUNT;
+    static const char* moveKeys[] = {
+      "fx", "pal", "sx", "ix", "c1", "c2", "c3", "o1", "o2", "o3", "col",
+      "mi", "of", "grp", "spc", "bm", "rev",
+    };
+    for (const char* k : moveKeys) {
+      if (doc.containsKey(k)) seg0[k] = doc[k];
+    }
+    String normalized;
+    serializeJson(wrapped, normalized);
+    return buildWledRestorePayload(normalized);
+  }
+
+  for (size_t i = 0; i < segs.size(); i++) {
+    JsonObject seg = segs[i];
+    if (!seg.containsKey("id")) seg["id"] = (int)i;
+  }
+
+  String normalized;
+  serializeJson(doc, normalized);
+  return buildWledRestorePayload(normalized);
+}
+
+bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
+  String preset = getPreset(id);
+  if (preset.length() == 0) return false;
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, preset)) return false;
+  String wledJson;
+  serializeJson(doc["wled"], wledJson);
+  if (wledJson.length() == 0) return false;
+  currentPresetId = id;
+  bool ok = sendToWLED(injectWledTransition(prepareWledRestorePayload(wledJson), fadeMs));
+  if (ok) liveWledState = wledJson;
+  return ok;
+}
+
+void pollLiveWledState() {
+  if (currentOverride != NONE) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  unsigned long now = millis();
+  if (now - lastLiveStatePollMs < LIVE_STATE_POLL_MS) return;
+  lastLiveStatePollMs = now;
+  String state = getFromWLED("/json/state");
+  if (state.length() > 0) {
+    liveWledState = state;
+    Serial.printf("[WLED] Live state poll (%u bytes)\n", (unsigned)state.length());
+  }
+}
+
 void clearOverride() {
   OverrideSource prev = currentOverride;
+  OverrideSource restoreOverride = savedRestoreOverride;
+  String presetId = savedRestorePresetId;
+  String snapshot = savedWledState;
+
   currentOverride = NONE;
+  savedWledState = "";
+  savedRestorePresetId = "";
+  savedRestoreOverride = NONE;
+
   Serial.println("[Override] Cleared");
   unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
-  if (savedWledState.length() > 0) {
-    sendToWLED(injectWledTransition(buildWledRestorePayload(savedWledState), fadeMs));
-    savedWledState = "";
-  } else if (baselineWledState.length() > 0) {
-    sendToWLED(injectWledTransition(buildWledRestorePayload(baselineWledState), fadeMs));
-    Serial.println("[Override] Restored baseline WLED state");
+
+  bool restored = false;
+  if (snapshot.length() > 0) {
+    restored = sendToWLED(injectWledTransition(prepareWledRestorePayload(snapshot), fadeMs));
+    if (restored) Serial.printf("[Override] Restored snapshot (%u bytes)\n", (unsigned)snapshot.length());
+  }
+  if (!restored && presetId.length() > 0) {
+    restored = restorePresetWithTransition(presetId, fadeMs);
+    if (restored) Serial.printf("[Override] Restored preset: %s\n", presetId.c_str());
+  }
+  if (!restored && baselineWledState.length() > 0) {
+    restored = sendToWLED(injectWledTransition(prepareWledRestorePayload(baselineWledState), fadeMs));
+    if (restored) Serial.println("[Override] Restored baseline WLED state");
+  }
+
+  if (restored && (restoreOverride == ZONE || restoreOverride == MANUAL)) {
+    setOverride(restoreOverride);
+  } else if (restored && presetId.length() > 0) {
+    setOverride(ZONE);
   }
 }
 
@@ -2184,6 +2303,8 @@ void loop() {
   } else if (!wledWasConnected) {
     wledWasConnected = true;
     snapshotWledBaseline();
+  } else {
+    pollLiveWledState();
   }
   delay(10);
 }

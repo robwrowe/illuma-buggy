@@ -727,97 +727,11 @@ function focusMapOnPolygon(mapRef, polygon, padding = 56) {
 }
 
 function presetSelectOptions(presets) {
-  const list = presets || [];
-  const local = list.filter(p => p.wledSlot == null);
-  const wled = list.filter(p => p.wledSlot != null);
-  const toOpt = p => ({
+  return (presets || []).map(p => ({
     value: p.id,
     label: p.wledSlot != null ? `${p.name} (WLED #${p.wledSlot})` : p.name,
     searchText: `${p.name} ${p.wledSlot ?? ''} ${p.wled?.fxName || ''} ${p.wled?.palName || ''}`,
-  });
-  const options = [];
-  local.forEach(p => options.push({ ...toOpt(p), group: 'Config presets' }));
-  wled.forEach(p => options.push({ ...toOpt(p), group: 'Imported from WLED' }));
-  return options;
-}
-
-function isWledPresetEntryEmpty(entry) {
-  if (!entry || typeof entry !== 'object') return true;
-  if (entry.n) return false;
-  if (entry.seg) return false;
-  if (entry.on !== undefined) return false;
-  if (entry.bri !== undefined) return false;
-  if (entry.cmd) return false;
-  return true;
-}
-
-function parseWledPresetPayload(entry) {
-  if (!entry || typeof entry !== 'object') return null;
-  if (entry.seg || entry.fx !== undefined || entry.on !== undefined || entry.bri !== undefined) return entry;
-  if (typeof entry.cmd === 'string') {
-    const trimmed = entry.cmd.trim();
-    if (trimmed.startsWith('{')) {
-      try { return JSON.parse(trimmed); } catch { return null; }
-    }
-  }
-  return entry;
-}
-
-function wledPresetEntryToIlluma(slot, entry, effects, palettes) {
-  const payload = parseWledPresetPayload(entry);
-  if (!payload) return null;
-  const segs = Array.isArray(payload.seg) ? payload.seg : (payload.seg ? [payload.seg] : []);
-  const seg0 = segs[0] || {};
-  const slotNum = parseInt(slot, 10);
-  const id = `wled-preset-${slot}`;
-  const name = entry.n || payload.n || `WLED Preset ${slot}`;
-  return {
-    id,
-    name,
-    wledSlot: slotNum,
-    createdAt: Date.now(),
-    wled: {
-      on: payload.on !== false,
-      bri: payload.bri,
-      fx: seg0.fx,
-      fxName: effects?.find(e => e.id === seg0.fx)?.name || '',
-      pal: seg0.pal,
-      palName: palettes?.find(p => p.id === seg0.pal)?.name || '',
-      sx: seg0.sx,
-      ix: seg0.ix,
-      c1: seg0.c1,
-      c2: seg0.c2,
-      c3: seg0.c3,
-      o1: seg0.o1,
-      o2: seg0.o2,
-      o3: seg0.o3,
-      col: seg0.col,
-      seg: segs.length ? segs : undefined,
-    },
-    memory: { ...DEFAULT_PRESET_MEMORY },
-  };
-}
-
-async function fetchWledPresetsFile(ip) {
-  const host = ip.trim();
-  const res = await fetch(`http://${host}/presets.json`);
-  if (!res.ok) throw new Error('Could not read presets.json from WLED');
-  return res.json();
-}
-
-function mergeWledPresetsIntoList(existingPresets, wledPresetsRaw, effects, palettes) {
-  const byId = new Map((existingPresets || []).map(p => [p.id, p]));
-  let added = 0;
-  let updated = 0;
-  Object.entries(wledPresetsRaw || {}).forEach(([slot, entry]) => {
-    if (isWledPresetEntryEmpty(entry)) return;
-    const preset = wledPresetEntryToIlluma(slot, entry, effects, palettes);
-    if (!preset) return;
-    if (byId.has(preset.id)) updated += 1;
-    else added += 1;
-    byId.set(preset.id, preset);
-  });
-  return { presets: [...byId.values()], added, updated };
+  }));
 }
 
 function paletteSelectValue(wled) {
@@ -1170,63 +1084,108 @@ class WebBleBoard {
 
 const webBleBoard = new WebBleBoard();
 
-async function syncProfileToBoard(data, onProgress) {
+const BOARD_SYNC_LS_KEY = 'illuma-buggy-board-sync';
+const DEFAULT_BOARD_SYNC_OPTIONS = {
+  presets: true,
+  mbMapping: true,
+  swConfig: true,
+  mbConfig: true,
+  effectTransition: true,
+  overrideMode: true,
+};
+
+function loadBoardSyncOptions() {
+  try {
+    const stored = localStorage.getItem(BOARD_SYNC_LS_KEY);
+    return stored ? { ...DEFAULT_BOARD_SYNC_OPTIONS, ...JSON.parse(stored) } : { ...DEFAULT_BOARD_SYNC_OPTIONS };
+  } catch {
+    return { ...DEFAULT_BOARD_SYNC_OPTIONS };
+  }
+}
+
+function saveBoardSyncOptions(options) {
+  try { localStorage.setItem(BOARD_SYNC_LS_KEY, JSON.stringify(options)); } catch {}
+}
+
+async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOARD_SYNC_OPTIONS) {
+  const opts = { ...DEFAULT_BOARD_SYNC_OPTIONS, ...options };
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
   const presets = data.presets || [];
   const layouts = data.customSegmentLayouts || [];
   const mb = normalizeMbMapping(data.mbMapping);
+  const sent = [];
 
-  onProgress?.('Sending Starlight Wand settings…');
-  await webBleBoard.send({
-    type: 'sw_config',
-    enabled: data.starlightEnabled !== false,
-    timeout_ms: (data.starlightTimeoutSec ?? 15) * 1000,
-  });
-  await delay(BLE_SEND_DELAY_MS);
-
-  onProgress?.('Sending MagicBand settings…');
-  await webBleBoard.send({
-    type: 'mb_config',
-    enabled: data.magicBandEnabled !== false,
-    five_point: data.magicBandFivePoint !== false,
-    timeout_ms: (data.magicBandTimeoutSec ?? 15) * 1000,
-  });
-  await delay(BLE_SEND_DELAY_MS);
-
-  onProgress?.('Sending effect transitions…');
-  await webBleBoard.send({
-    type: 'ble_effect_config',
-    transition_ms: data.bleEffectTransitionMs ?? 700,
-  });
-  await delay(BLE_SEND_DELAY_MS);
-
-  onProgress?.('Sending MB mapping…');
-  await webBleBoard.send({
-    type: 'mb_mapping_config',
-    mapping: mbMappingToBlePayload(mb),
-  });
-  await delay(BLE_SEND_DELAY_MS);
-
-  onProgress?.('Sending override mode…');
-  await webBleBoard.send({
-    type: 'override_mode',
-    kill_on_zone: !!data.overrideKillOnZone,
-  });
-  await delay(BLE_SEND_DELAY_MS);
-
-  for (let i = 0; i < presets.length; i++) {
-    const p = presets[i];
-    onProgress?.(`Saving preset ${i + 1}/${presets.length}: ${p.name}`);
+  if (opts.swConfig) {
+    onProgress?.('Sending Starlight Wand settings…');
     await webBleBoard.send({
-      type: 'preset_save',
-      id: p.id,
-      name: p.name,
-      wled: presetWledForBoard(p, layouts),
+      type: 'sw_config',
+      enabled: data.starlightEnabled !== false,
+      timeout_ms: (data.starlightTimeoutSec ?? 15) * 1000,
     });
-    await delay(BLE_SEND_DELAY_MS + 30);
+    sent.push('Starlight Wand');
+    await delay(BLE_SEND_DELAY_MS);
   }
 
-  onProgress?.(`Done — ${presets.length} preset${presets.length === 1 ? '' : 's'} and board settings sent.`);
+  if (opts.mbConfig) {
+    onProgress?.('Sending MagicBand settings…');
+    await webBleBoard.send({
+      type: 'mb_config',
+      enabled: data.magicBandEnabled !== false,
+      five_point: data.magicBandFivePoint !== false,
+      timeout_ms: (data.magicBandTimeoutSec ?? 15) * 1000,
+    });
+    sent.push('MagicBand');
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
+  if (opts.effectTransition) {
+    onProgress?.('Sending effect transitions…');
+    await webBleBoard.send({
+      type: 'ble_effect_config',
+      transition_ms: data.bleEffectTransitionMs ?? 700,
+    });
+    sent.push('effect transitions');
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
+  if (opts.mbMapping) {
+    onProgress?.('Sending MB mapping…');
+    await webBleBoard.send({
+      type: 'mb_mapping_config',
+      mapping: mbMappingToBlePayload(mb),
+    });
+    sent.push('MB mapping');
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
+  if (opts.overrideMode) {
+    onProgress?.('Sending override mode…');
+    await webBleBoard.send({
+      type: 'override_mode',
+      kill_on_zone: !!data.overrideKillOnZone,
+    });
+    sent.push('override mode');
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
+  if (opts.presets) {
+    for (let i = 0; i < presets.length; i++) {
+      const p = presets[i];
+      onProgress?.(`Saving preset ${i + 1}/${presets.length}: ${p.name}`);
+      await webBleBoard.send({
+        type: 'preset_save',
+        id: p.id,
+        name: p.name,
+        wled: presetWledForBoard(p, layouts),
+      });
+      await delay(BLE_SEND_DELAY_MS + 30);
+    }
+    sent.push(`${presets.length} preset${presets.length === 1 ? '' : 's'}`);
+  }
+
+  onProgress?.(sent.length
+    ? `Done — sent ${sent.join(', ')}.`
+    : 'Nothing selected to send.');
 }
 
 function loadAppData(stored) {
@@ -1421,13 +1380,34 @@ function ColorSwatch({colors,size=14,gap=3,max=999}) {
 }
 
 // ── Board BLE sync ───────────────────────────────────────────────────
+const BOARD_SYNC_ITEMS = [
+  { key: 'presets', label: 'Presets', hint: (data) => `${(data.presets || []).length} preset${(data.presets || []).length === 1 ? '' : 's'} (ESP32 NVS, not WLED slots)` },
+  { key: 'mbMapping', label: 'MB / wand mapping', hint: () => 'Segment regions, colors, animations, patterns' },
+  { key: 'swConfig', label: 'Starlight Wand', hint: () => 'Enabled + auto-clear timeout' },
+  { key: 'mbConfig', label: 'MagicBand+', hint: () => 'Enabled, 5-point mode, timeout' },
+  { key: 'effectTransition', label: 'Effect transitions', hint: (data) => `${data.bleEffectTransitionMs ?? 700} ms fade` },
+  { key: 'overrideMode', label: 'Override mode', hint: (data) => data.overrideKillOnZone ? 'Kill override on zone entry' : 'Keep override in zones' },
+];
+
 function BoardSyncModal({ data, onClose }) {
   const [connected, setConnected] = useState(webBleBoard.connected);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [syncOptions, setSyncOptions] = useState(loadBoardSyncOptions);
   const supported = webBleBoard.supported;
   const presetCount = (data.presets || []).length;
+
+  const setOption = (key, val) => {
+    setSyncOptions(prev => {
+      const next = { ...prev, [key]: val };
+      saveBoardSyncOptions(next);
+      return next;
+    });
+  };
+
+  const anySelected = Object.values(syncOptions).some(Boolean);
+  const presetsBlocked = syncOptions.presets && presetCount === 0;
 
   useEffect(() => webBleBoard.onConnectionChange(setConnected), []);
 
@@ -1445,11 +1425,16 @@ function BoardSyncModal({ data, onClose }) {
   };
 
   const handleSync = async () => {
+    if (!anySelected) return;
+    if (presetsBlocked) {
+      setError('No presets in this profile — uncheck Presets or add presets first.');
+      return;
+    }
     setError('');
     setBusy(true);
     try {
       if (!connected) await webBleBoard.connect();
-      await syncProfileToBoard(data, setStatus);
+      await syncProfileToBoard(data, setStatus, syncOptions);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -1460,15 +1445,25 @@ function BoardSyncModal({ data, onClose }) {
   return (
     <Modal title="📡 Send to Board" onClose={onClose} width={500}>
       <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
-        Push board-stored settings to the ESP32 over Bluetooth — same protocol as the Android app.
+        Push selected settings to the ESP32 over Bluetooth — same protocol as the Android app.
         Requires <strong>Chrome or Edge</strong> (Web Bluetooth). Serve this page via{' '}
-        <code style={{ fontSize: 11 }}>./serve.sh</code> on localhost. Large profiles are sent in chunks — flash the latest firmware if sync fails partway through.
+        <code style={{ fontSize: 11 }}>./serve.sh</code> on localhost.
       </p>
-      <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, padding: '10px 12px', background: 'var(--surface2)', borderRadius: 8 }}>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>Syncs to ESP32</div>
-        Presets ({presetCount}), MB mapping, MB/Starlight config, effect transitions, override mode
-        <div style={{ fontWeight: 600, margin: '8px 0 4px' }}>Stays in browser / phone only</div>
-        GPS zones, brightness schedule, recall state, segment layouts
+      <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.5, padding: '10px 12px', background: 'var(--surface2)', borderRadius: 8 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Include in sync</div>
+        {BOARD_SYNC_ITEMS.map(({ key, label, hint }) => (
+          <label key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8, cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!syncOptions[key]} onChange={e => setOption(key, e.target.checked)}
+              style={{ marginTop: 2, accentColor: 'var(--primary)' }}/>
+            <span>
+              <span style={{ fontWeight: 600 }}>{label}</span>
+              <span style={{ display: 'block', fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>{hint(data)}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
+        GPS zones, brightness, recall state, and segment layouts stay in the browser / phone — export JSON to move those.
       </div>
       {!supported && (
         <div style={{ fontSize: 12, color: 'var(--danger)' }}>
@@ -1483,12 +1478,15 @@ function BoardSyncModal({ data, onClose }) {
               <button onClick={() => { webBleBoard.disconnect(); setStatus(''); }} disabled={busy} style={btn('')}>Disconnect</button>
             </>
         }
-        <button onClick={handleSync} disabled={!supported || busy || presetCount === 0} style={btn('primary')}>
-          {busy ? 'Sending…' : 'Send current profile'}
+        <button onClick={handleSync} disabled={!supported || busy || !anySelected || presetsBlocked} style={btn('primary')}>
+          {busy ? 'Sending…' : 'Send selected'}
         </button>
       </div>
-      {presetCount === 0 && (
-        <div style={{ fontSize: 11, color: 'var(--text3)' }}>Add at least one preset before syncing.</div>
+      {!anySelected && (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>Select at least one item to send.</div>
+      )}
+      {presetsBlocked && (
+        <div style={{ fontSize: 11, color: 'var(--warning)' }}>Presets is checked but this profile has none.</div>
       )}
       {status && <div style={{ fontSize: 12, color: 'var(--text2)' }}>{status}</div>}
       {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
@@ -1705,9 +1703,6 @@ function MapZonesTab({data, update}) {
   const [searching, setSearching] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [highlightZoneId, setHighlightZoneId] = useState(null);
-  const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
-  const [wledImportStatus, setWledImportStatus] = useState('');
-  const [wledImporting, setWledImporting] = useState(false);
   const didFitAllRef = useRef(false);
 
   const presetOptions = useMemo(() => presetSelectOptions(data.presets), [data.presets]);
@@ -1972,33 +1967,6 @@ function MapZonesTab({data, update}) {
     }
   }, [editPoints, editZone, editIndoor, mapReady]);
 
-  const importWledPresets = async () => {
-    const ip = wledIp.trim();
-    if (!ip) {
-      setWledImportStatus('Enter a WLED IP first.');
-      return;
-    }
-    localStorage.setItem('wled-ip', ip);
-    setWledImporting(true);
-    setWledImportStatus('');
-    try {
-      const [{ effects, palettes }, wledPresetsRaw] = await Promise.all([
-        fetchWledCatalog(ip),
-        fetchWledPresetsFile(ip),
-      ]);
-      const { presets, added, updated } = mergeWledPresetsIntoList(data.presets, wledPresetsRaw, effects, palettes);
-      update({ presets });
-      const total = added + updated;
-      setWledImportStatus(total
-        ? `Imported ${added} new and refreshed ${updated} WLED preset${total !== 1 ? 's' : ''}. Assign them to zones below.`
-        : 'No presets found in presets.json on WLED.');
-    } catch {
-      setWledImportStatus(`Could not import from ${ip}. Join StrollerNet or the same LAN and confirm presets.json is available.`);
-    } finally {
-      setWledImporting(false);
-    }
-  };
-
   const flyToZone = (zone, isIndoor = false) => {
     setHighlightZoneId(zone.id);
     focusMapOnPolygon(gmap, zone.polygon);
@@ -2119,26 +2087,6 @@ function MapZonesTab({data, update}) {
         </button>
       </div>
 
-      {/* WLED presets for zones */}
-      <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>WLED Presets</div>
-      <div style={{display:'flex',gap:4,marginBottom:4}}>
-        <input value={wledIp} onChange={e => { setWledIp(e.target.value); setWledImportStatus(''); }}
-          placeholder="4.3.2.1" style={{...inputStyle,flex:1,padding:'5px 8px',fontSize:11,fontFamily:'monospace'}}
-          onKeyDown={e => e.key === 'Enter' && importWledPresets()}/>
-        <button type="button" onClick={importWledPresets} disabled={wledImporting}
-          style={btn('primary',{padding:'5px 8px',fontSize:11,whiteSpace:'nowrap'})}>
-          {wledImporting ? '…' : 'Import'}
-        </button>
-      </div>
-      {wledImportStatus && (
-        <div style={{fontSize:10,color:wledImportStatus.startsWith('Imported') || wledImportStatus.startsWith('No presets') ? 'var(--success)' : 'var(--danger)',lineHeight:1.4,marginBottom:4}}>
-          {wledImportStatus}
-        </div>
-      )}
-      <div style={{fontSize:10,color:'var(--text3)',marginBottom:8,lineHeight:1.4}}>
-        Pulls presets from WLED <code style={{fontFamily:'monospace'}}>presets.json</code> into this config so you can assign them to zones.
-      </div>
-
       {/* Draw controls */}
       <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>Draw Zone</div>
       {drawMode === 'none' ? (<>
@@ -2221,7 +2169,7 @@ function MapZonesTab({data, update}) {
       <Field label="Name"><input value={formName} onChange={e=>setFormName(e.target.value)} placeholder={drawMode==='preset'?'e.g. Fantasyland':'e.g. Inside castle'} style={inputStyle} autoFocus/></Field>
       {drawMode==='preset' && (<Field label="Preset">
         {presetOptions.length === 0 ? (
-          <div style={{fontSize:12,color:'var(--text3)'}}>No presets yet — import from WLED above or create on the Presets tab.</div>
+          <div style={{fontSize:12,color:'var(--text3)'}}>No presets yet — create them on the Presets tab, then sync via 📡 Board.</div>
         ) : (
           <SearchableSelect value={formPreset} onChange={setFormPreset} placeholder="Select preset…"
             maxListHeight={280} options={presetOptions}/>
