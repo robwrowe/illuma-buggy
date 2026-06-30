@@ -1090,16 +1090,56 @@ void saveWledStateForOverride() {
   }
 }
 
+// WLED merges POST /json/state by segment id. MB/SW effects enable split segments that
+// are absent from the pre-override snapshot — disable them so restore is complete.
+String buildWledRestorePayload(const String& savedJson) {
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, savedJson) != DeserializationError::Ok) {
+    Serial.println("[Override] Restore JSON parse failed — posting raw snapshot");
+    return savedJson;
+  }
+
+  doc.remove("transition");
+
+  JsonArray segs = doc["seg"].to<JsonArray>();
+  if (segs.isNull() || segs.size() == 0) {
+    String out;
+    serializeJson(doc, out);
+    return out.length() > 0 ? out : savedJson;
+  }
+
+  bool present[MB_WLED_MAX_SEG] = {};
+  for (JsonObject seg : segs) {
+    int id = seg["id"] | -1;
+    if (id >= 0 && id < MB_WLED_MAX_SEG) present[id] = true;
+  }
+
+  for (uint8_t id = 0; id < MB_WLED_MAX_SEG; id++) {
+    if (!present[id]) {
+      JsonObject dis = segs.createNestedObject();
+      dis["id"] = id;
+      dis["stop"] = 0;
+    }
+  }
+
+  String out;
+  serializeJson(doc, out);
+  if (out.length() == 0) return savedJson;
+  Serial.printf("[Override] Restore payload (%u bytes, %u seg entries)\n",
+                (unsigned)out.length(), (unsigned)segs.size());
+  return out;
+}
+
 void clearOverride() {
   OverrideSource prev = currentOverride;
   currentOverride = NONE;
   Serial.println("[Override] Cleared");
   unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
   if (savedWledState.length() > 0) {
-    sendToWLED(injectWledTransition(savedWledState, fadeMs));
+    sendToWLED(injectWledTransition(buildWledRestorePayload(savedWledState), fadeMs));
     savedWledState = "";
   } else if (baselineWledState.length() > 0) {
-    sendToWLED(injectWledTransition(baselineWledState, fadeMs));
+    sendToWLED(injectWledTransition(buildWledRestorePayload(baselineWledState), fadeMs));
     Serial.println("[Override] Restored baseline WLED state");
   }
 }
