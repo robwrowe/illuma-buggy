@@ -88,28 +88,142 @@ export function buildLayoutPayload(layout: CustomSegmentLayout): { on: boolean; 
   return { on: true, seg: layout.segments.map(s => ({ ...s })) };
 }
 
+export function mergeSegmentsById(base: WledSegmentDef[], incoming: WledSegmentDef[]): WledSegmentDef[] {
+  const map = new Map<number, WledSegmentDef>();
+  (base || []).forEach(seg => map.set(seg.id, { ...seg }));
+  (incoming || []).forEach(seg => {
+    const id = seg.id;
+    map.set(id, { ...(map.get(id) || { id }), ...seg, id });
+  });
+  return [...map.values()].sort((a, b) => a.id - b.id);
+}
+
+export function isActiveSegment(seg: Partial<WledSegmentDef> | null | undefined): boolean {
+  return Number(seg?.stop ?? 0) > Number(seg?.start ?? 0);
+}
+
+export type RecallProp = 'effect' | 'palette' | 'parameters' | 'color' | 'segments';
+export type RecallValue = 'always' | 'never' | 'memory';
+
+export interface RecallLike {
+  effect: RecallValue;
+  palette: RecallValue;
+  parameters: RecallValue;
+  color: RecallValue;
+  segments: RecallValue;
+}
+
+export interface MemoryLike {
+  effect: boolean;
+  palette: boolean;
+  parameters: boolean;
+  color: boolean;
+  segments: boolean;
+}
+
+type WledLike = {
+  fx?: number;
+  pal?: number;
+  sx?: number;
+  ix?: number;
+  c1?: number;
+  c2?: number;
+  c3?: number;
+  o1?: boolean;
+  o2?: boolean;
+  o3?: boolean;
+  col?: number[][];
+};
+
+function pickSegOrWled(seg: Partial<WledSegmentDef> | undefined, wled: WledLike, key: keyof WledSegmentDef): unknown {
+  if (seg && seg[key] !== undefined && seg[key] !== null) return seg[key];
+  return wled[key as keyof WledLike];
+}
+
+export function buildRecalledSegment(
+  seg: Partial<WledSegmentDef> | undefined,
+  wled: WledLike,
+  should: (prop: RecallProp, memVal: boolean) => boolean,
+  m: MemoryLike,
+  index: number,
+): WledSegmentDef {
+  const out: WledSegmentDef = { id: Number(seg?.id ?? index), start: 0, stop: 0 };
+  if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
+    out.start = Number(seg.start);
+    out.stop = Number(seg.stop);
+    (['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'] as const).forEach(k => {
+      if (seg[k] !== undefined && seg[k] !== null) (out as Record<string, unknown>)[k] = seg[k];
+    });
+  } else {
+    delete (out as { start?: number }).start;
+    delete (out as { stop?: number }).stop;
+  }
+  if (should('effect', m.effect)) {
+    const fx = pickSegOrWled(seg, wled, 'fx');
+    if (fx !== undefined && fx !== null) out.fx = fx as number;
+  }
+  if (should('palette', m.palette)) {
+    const pal = pickSegOrWled(seg, wled, 'pal');
+    if (pal !== undefined && pal !== null) out.pal = pal as number;
+  }
+  if (should('parameters', m.parameters)) {
+    (['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'] as const).forEach(k => {
+      const v = pickSegOrWled(seg, wled, k);
+      if (v !== undefined && v !== null) (out as Record<string, unknown>)[k] = v;
+    });
+  }
+  if (should('color', m.color)) {
+    const col = pickSegOrWled(seg, wled, 'col');
+    if (col !== undefined && col !== null) {
+      const c = col as number[][];
+      out.col = Array.isArray(c[0]) ? c.map(row => [...row]) : c;
+    }
+  }
+  if (!isActiveSegment(out)) {
+    const { start: _s, stop: _t, ...rest } = out;
+    return rest as WledSegmentDef;
+  }
+  return out;
+}
+
+export function buildRecalledSegmentsFromPreset(
+  preset: { wled?: WledLike & { seg?: WledSegmentDef[] }; segmentLayoutId?: string; memory?: MemoryLike },
+  recall: RecallLike,
+  layouts: CustomSegmentLayout[],
+  defaultMemory: MemoryLike,
+): WledSegmentDef[] {
+  const w = preset.wled ?? {};
+  const m = preset.memory ?? defaultMemory;
+  const should = (prop: RecallProp, memVal: boolean): boolean => {
+    const r = recall[prop];
+    if (r === 'always') return true;
+    if (r === 'never') return false;
+    return memVal;
+  };
+  const active = activeSegmentsFromPreset(preset, layouts).filter(isActiveSegment);
+  if (should('segments', m.segments) && active.length > 0) {
+    return active.map((seg, i) => buildRecalledSegment(seg, w, should, m, i));
+  }
+  const base = active[0] || { id: 0 };
+  return [buildRecalledSegment(base, w, should, m, 0)];
+}
+
 export function activeSegmentsFromPreset(
   preset: { wled?: { seg?: WledSegmentDef[] }; segmentLayoutId?: string },
   layouts: CustomSegmentLayout[],
 ): WledSegmentDef[] {
-  if (preset.segmentLayoutId) {
-    const layout = layouts.find(l => l.id === preset.segmentLayoutId);
-    if (layout?.segments.length) return layout.segments;
-  }
-  return preset.wled?.seg || [];
+  const linked = preset.segmentLayoutId
+    ? layouts.find(l => l.id === preset.segmentLayoutId)
+    : undefined;
+  const fromLayout = (linked?.segments ?? [])
+    .map(s => normalizeSegmentDef(s))
+    .filter((s): s is WledSegmentDef => s !== null);
+  const fromPreset = (preset.wled?.seg ?? [])
+    .map(s => normalizeSegmentDef(s))
+    .filter((s): s is WledSegmentDef => s !== null);
+  return mergeSegmentsById(fromLayout, fromPreset).filter(isActiveSegment);
 }
 
-export function presetHasPerSegmentRecall(
-  preset: { wled?: { seg?: WledSegmentDef[] }; segmentLayoutId?: string },
-  layouts: CustomSegmentLayout[],
-): boolean {
-  const active = activeSegmentsFromPreset(preset, layouts).filter(s => s.stop > s.start);
-  if (active.length <= 1) return false;
-  return active.some(s =>
-    s.fx !== undefined || s.pal !== undefined || s.col !== undefined
-    || ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].some(k => (s as Record<string, unknown>)[k] !== undefined),
-  );
-}
 
 export function summarizeLayout(layout: CustomSegmentLayout): string {
   if (layout.segments.length === 0) return 'No segments';
@@ -122,18 +236,17 @@ export function summarizeLayout(layout: CustomSegmentLayout): string {
 export function buildPresetLayoutPayload(
   preset: { wled?: { seg?: WledSegmentDef[] }; segmentLayoutId?: string },
   layouts: CustomSegmentLayout[],
-): { on: boolean; bri: number; seg: WledSegmentDef[] } | null {
+): { on: boolean; seg: WledSegmentDef[] } | null {
   const linked = preset.segmentLayoutId
     ? layouts.find(l => l.id === preset.segmentLayoutId)
     : undefined;
   if (linked?.segments.length) {
-    return { on: true, bri: 255, seg: linked.segments.map(s => ({ ...s })) };
+    return { on: true, seg: linked.segments.map(s => ({ ...s })) };
   }
   const seg = preset.wled?.seg;
   if (Array.isArray(seg) && seg.length > 0) {
     return {
       on: true,
-      bri: 255,
       seg: seg.map(s => normalizeSegmentDef(s)).filter((s): s is WledSegmentDef => s !== null),
     };
   }

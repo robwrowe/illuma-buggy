@@ -110,6 +110,29 @@ export default function ZonesScreen() {
   }, [zones, userLocation]);
 
   // ── Map press — unified handler using refs ──
+  const addDrawPointAt = useCallback((coord: LatLng) => {
+    if (drawModeRef.current === 'none') return;
+    if (insertModeRef.current && drawPointsRef.current.length >= 2) {
+      const pts = drawPointsRef.current;
+      let bestIdx = 0, bestDist = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % pts.length];
+        const midLat = (a.latitude + b.latitude) / 2;
+        const midLng = (a.longitude + b.longitude) / 2;
+        const d = Math.pow(coord.latitude - midLat, 2) + Math.pow(coord.longitude - midLng, 2);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      setDrawPoints(prev => {
+        const updated = [...prev];
+        updated.splice(bestIdx + 1, 0, coord);
+        return updated;
+      });
+    } else {
+      setDrawPoints(prev => [...prev, coord]);
+    }
+  }, []);
+
   const onMapPress = useCallback((e: MapPressEvent) => {
     if (!e?.nativeEvent?.coordinate) return;
     const coord = e.nativeEvent.coordinate;
@@ -126,30 +149,8 @@ export default function ZonesScreen() {
       return;
     }
 
-    // Otherwise add a new point if drawing
-    if (drawModeRef.current !== 'none') {
-      if (insertModeRef.current && drawPointsRef.current.length >= 2) {
-        // Insert on nearest edge instead of appending
-        const pts = drawPointsRef.current;
-        let bestIdx = 0, bestDist = Infinity;
-        for (let i = 0; i < pts.length; i++) {
-          const a = pts[i];
-          const b = pts[(i + 1) % pts.length];
-          const midLat = (a.latitude + b.latitude) / 2;
-          const midLng = (a.longitude + b.longitude) / 2;
-          const d = Math.pow(coord.latitude - midLat, 2) + Math.pow(coord.longitude - midLng, 2);
-          if (d < bestDist) { bestDist = d; bestIdx = i; }
-        }
-        setDrawPoints(prev => {
-          const updated = [...prev];
-          updated.splice(bestIdx + 1, 0, coord);
-          return updated;
-        });
-      } else {
-        setDrawPoints(prev => [...prev, coord]);
-      }
-    }
-  }, []); // empty deps — reads everything from refs
+    addDrawPointAt(coord);
+  }, [addDrawPointAt]); // empty deps — reads everything from refs
 
   const onPinPress = (i: number) => {
     setSelectedPinIdx(prev => prev === i ? null : i);
@@ -264,7 +265,13 @@ export default function ZonesScreen() {
               strokeColor={zone.enabled ? color : '#4a4a6a'}
               strokeWidth={isActive ? 3 : 2}
               tappable
-              onPress={() => !isDrawing && openZoneEdit(zone)}
+              onPress={(e) => {
+                if (drawModeRef.current !== 'none') {
+                  if (e?.nativeEvent?.coordinate) addDrawPointAt(e.nativeEvent.coordinate);
+                  return;
+                }
+                openZoneEdit(zone);
+              }}
             />
           );
         })}
@@ -278,7 +285,13 @@ export default function ZonesScreen() {
             strokeWidth={2}
             lineDashPattern={[6, 4]}
             tappable
-            onPress={() => !isDrawing && openIndoorEdit(zone)}
+            onPress={(e) => {
+              if (drawModeRef.current !== 'none') {
+                if (e?.nativeEvent?.coordinate) addDrawPointAt(e.nativeEvent.coordinate);
+                return;
+              }
+              openIndoorEdit(zone);
+            }}
           />
         ))}
 

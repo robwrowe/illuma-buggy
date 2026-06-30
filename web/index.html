@@ -395,7 +395,7 @@ function buildSegmentHighlightPreview(segments, target) {
     if (ref.stop <= ref.start) return;
     segs.push({ id: ref.id, start: ref.start, stop: ref.stop, fx: 0, col: [[255, 255, 255]] });
   });
-  return { on: true, bri: 255, seg: segs };
+  return { on: true, seg: segs };
 }
 
 function buildFiveCornerPreview(segments) {
@@ -406,7 +406,7 @@ function buildFiveCornerPreview(segments) {
       segs.push({ id: ref.id, start: ref.start, stop: ref.stop, fx: 0, col: [FIVE_CORNER_RGB[i]] });
     });
   });
-  return { on: true, bri: 255, seg: segs };
+  return { on: true, seg: segs };
 }
 
 async function postWledState(ip, payload) {
@@ -471,7 +471,7 @@ function summarizeLayout(layout) {
 }
 
 function buildLayoutPayload(layout) {
-  return finalizeWledSegmentPayload({ on: true, bri: 255, seg: layout.segments.map(s => ({ ...s })) });
+  return finalizeWledSegmentPayload({ on: true, seg: layout.segments.map(s => ({ ...s })) });
 }
 
 async function fetchWledFullStateFromIp(ip) {
@@ -543,17 +543,6 @@ function mergeSegmentsById(base, incoming) {
   return [...map.values()].sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0));
 }
 
-function collectPresetSegProps(seg) {
-  const out = {};
-  ['fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col'].forEach(k => {
-    if (seg?.[k] !== undefined && seg?.[k] !== null) out[k] = seg[k];
-  });
-  return out;
-}
-
-function segmentHasDistinctProps(seg) {
-  return Object.keys(collectPresetSegProps(seg)).length > 0;
-}
 
 function activeSegmentsFromPreset(preset, customSegmentLayouts) {
   const w = preset?.wled || {};
@@ -590,60 +579,42 @@ function findMbSegIdConflicts(mapping) {
   return conflicts;
 }
 
-function presetHasPerSegmentRecall(preset, recall, customSegmentLayouts) {
-  const r = recall || DEFAULT_DATA.recallState;
-  const segs = activeSegmentsFromPreset(preset, customSegmentLayouts);
-  if (segs.length <= 1) return false;
-  return segs.some(seg => {
-    const props = collectPresetSegProps(seg);
-    return (r.effect !== 'never' && props.fx !== undefined)
-      || (r.palette !== 'never' && props.pal !== undefined)
-      || (r.parameters !== 'never' && ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].some(k => props[k] !== undefined))
-      || (r.color !== 'never' && props.col !== undefined);
-  });
+
+function pickSegOrWled(seg, wled, key) {
+  if (seg && seg[key] !== undefined && seg[key] !== null) return seg[key];
+  return wled[key];
 }
 
-function applyRecallFilterToSegments(segments, wled, memory, recall) {
-  const r = recall || DEFAULT_DATA.recallState;
-  const m = memory || DEFAULT_PRESET_MEMORY;
-  const should = (prop, memVal) => {
-    if (r[prop] === 'always') return true;
-    if (r[prop] === 'never') return false;
-    return !!memVal;
-  };
-  return (segments || []).map((seg, index) => {
-    const out = { id: Number(seg.id ?? index) };
-    if (should('segments', m.segments)) {
-      out.start = Number(seg.start ?? 0);
-      out.stop = Number(seg.stop ?? 0);
-      ['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'].forEach(k => {
-        if (seg[k] !== undefined && seg[k] !== null) out[k] = seg[k];
-      });
-    }
-    if (should('effect', m.effect) && (seg.fx !== undefined || wled.fx !== undefined)) out.fx = seg.fx ?? wled.fx;
-    if (should('palette', m.palette) && (seg.pal !== undefined || wled.pal !== undefined)) out.pal = seg.pal ?? wled.pal;
-    if (should('parameters', m.parameters)) {
-      ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
-        if (seg[k] !== undefined || wled[k] !== undefined) out[k] = seg[k] ?? wled[k];
-      });
-    }
-    if (should('color', m.color) && (seg.col !== undefined || wled.col !== undefined)) {
-      const col = seg.col ?? wled.col;
-      out.col = Array.isArray(col?.[0]) ? col.map(c => [...c]) : col;
-    }
-    return out;
-  });
-}
-
-function applyPresetPropsToAllSegments(segments, wled) {
-  const list = (segments || []).length ? segments : [{ id: 0 }];
-  return list.map((seg, idx) => {
-    const out = { ...seg, id: Number(seg.id ?? idx) };
-    ['fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'col'].forEach(k => {
-      if (wled[k] !== undefined && wled[k] !== null) out[k] = wled[k];
+function buildRecalledSegment(seg, wled, should, m, index) {
+  const out = { id: Number(seg?.id ?? index) };
+  if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
+    out.start = Number(seg.start);
+    out.stop = Number(seg.stop);
+    ['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'].forEach(k => {
+      if (seg[k] !== undefined && seg[k] !== null) out[k] = seg[k];
     });
-    return out;
-  });
+  }
+  if (should('effect', m.effect)) {
+    const fx = pickSegOrWled(seg, wled, 'fx');
+    if (fx !== undefined && fx !== null) out.fx = fx;
+  }
+  if (should('palette', m.palette)) {
+    const pal = pickSegOrWled(seg, wled, 'pal');
+    if (pal !== undefined && pal !== null) out.pal = pal;
+  }
+  if (should('parameters', m.parameters)) {
+    ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
+      const v = pickSegOrWled(seg, wled, k);
+      if (v !== undefined && v !== null) out[k] = v;
+    });
+  }
+  if (should('color', m.color)) {
+    const col = pickSegOrWled(seg, wled, 'col');
+    if (col !== undefined && col !== null) {
+      out.col = Array.isArray(col[0]) ? col.map(c => [...c]) : col;
+    }
+  }
+  return out;
 }
 
 function applyWledStateCapture(preset, state, catalog, opts, updateMemory = true) {
@@ -860,7 +831,7 @@ function buildRecallPayload(preset, recall, customSegmentLayouts) {
   const r = recall || DEFAULT_DATA.recallState;
   const w = preset.wled || { on: true };
   const m = preset.memory || DEFAULT_PRESET_MEMORY;
-  const payload = { on: true, bri: 255 };
+  const payload = { on: true };
 
   const should = (prop, memVal) => {
     if (r[prop] === 'always') return true;
@@ -869,38 +840,15 @@ function buildRecallPayload(preset, recall, customSegmentLayouts) {
   };
 
   const activeSegments = activeSegmentsFromPreset(preset, customSegmentLayouts);
-  const hasPerSegment = presetHasPerSegmentRecall(preset, r, customSegmentLayouts);
+  const recallLayout = should('segments', m.segments) && activeSegments.length > 0;
 
-  if (hasPerSegment && activeSegments.length > 0) {
-    payload.seg = applyRecallFilterToSegments(activeSegments, w, m, r);
-    return payload;
+  if (recallLayout) {
+    payload.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, w, should, m, i));
+  } else {
+    const base = activeSegments.find(isActiveSegment) || activeSegments[0] || { id: 0 };
+    payload.seg = [buildRecalledSegment(base, w, should, m, 0)];
   }
 
-  if (should('segments', m.segments)) payload.seg = activeSegments;
-  if (should('effect', m.effect) && w.fx !== undefined) {
-    payload.seg = payload.seg ?? [{ id: 0 }];
-    payload.seg[0] = { ...payload.seg[0], fx: w.fx };
-  }
-  if (should('palette', m.palette) && w.pal !== undefined) {
-    payload.seg = payload.seg ?? [{ id: 0 }];
-    payload.seg[0] = { ...payload.seg[0], pal: w.pal };
-  }
-  if (should('parameters', m.parameters)) {
-    payload.seg = payload.seg ?? [{ id: 0 }];
-    const s0 = payload.seg[0];
-    if (w.sx !== undefined) s0.sx = w.sx;
-    if (w.ix !== undefined) s0.ix = w.ix;
-    if (w.c1 !== undefined) s0.c1 = w.c1;
-    if (w.c2 !== undefined) s0.c2 = w.c2;
-    if (w.c3 !== undefined) s0.c3 = w.c3;
-    if (w.o1 !== undefined) s0.o1 = w.o1;
-    if (w.o2 !== undefined) s0.o2 = w.o2;
-    if (w.o3 !== undefined) s0.o3 = w.o3;
-  }
-  if (should('color', m.color) && w.col !== undefined) {
-    payload.seg = payload.seg ?? [{ id: 0 }];
-    payload.seg[0] = { ...payload.seg[0], col: w.col };
-  }
   return payload;
 }
 
@@ -919,7 +867,7 @@ function finalizeWledSegmentPayload(payload) {
   for (let id = 1; id < WLED_MAX_SEG; id++) {
     if (!activeIds.has(id)) merged.push({ id, stop: 0 });
   }
-  return { ...payload, on: true, bri: payload.bri ?? 255, seg: merged };
+  return { ...payload, on: true, seg: merged };
 }
 
 function buildTestPresetPayload(preset, customSegmentLayouts) {
@@ -1048,21 +996,13 @@ function mbMappingToBlePayload(config) {
 
 function presetWledForBoard(preset, customSegmentLayouts) {
   const wled = JSON.parse(JSON.stringify(preset.wled || { on: true }));
-  const layoutSegs = preset.segmentLayoutId
-    ? ((customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId)?.segments || [])
-    : [];
-  if (preset.segmentLayoutId) {
-    const layout = (customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId);
-    if (layout?.segments?.length) wled.seg = layout.segments.map(s => ({ ...s }));
-  }
-  if (!wled.seg?.length && layoutSegs.length) wled.seg = layoutSegs.map(s => ({ ...s }));
-  const perSegment = presetHasPerSegmentRecall(
-    { ...preset, wled: { ...wled, seg: wled.seg } },
-    TEST_PRESET_RECALL,
-    customSegmentLayouts,
-  );
-  if (wled.seg?.length > 1 && !perSegment) {
-    wled.seg = applyPresetPropsToAllSegments(wled.seg, wled);
+  const always = () => true;
+  const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
+  const activeSegments = activeSegmentsFromPreset(preset, customSegmentLayouts);
+  if (activeSegments.length > 0) {
+    wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i));
+  } else {
+    wled.seg = [buildRecalledSegment({ id: 0 }, wled, always, m, 0)];
   }
   return wled;
 }
@@ -1786,6 +1726,28 @@ function MapZonesTab({data, update}) {
   editInsertModeRef.current = editInsertMode;
   editingActiveRef.current = !!(editZone || editIndoor);
 
+  const addDrawPointRef = useRef((lat, lng) => {});
+  addDrawPointRef.current = (lat, lng) => {
+    if (drawModeRef.current === 'none') return;
+    const pts = drawPtsRef.current;
+    if (insertModeRef.current && pts.length >= 2) {
+      let bestIdx = 0, bestDist = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        const midLat = (a.lat + b.lat) / 2, midLng = (a.lng + b.lng) / 2;
+        const d = Math.pow(lat - midLat, 2) + Math.pow(lng - midLng, 2);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      setDrawPoints(prev => {
+        const u = [...prev];
+        u.splice(bestIdx + 1, 0, { lat, lng });
+        return u;
+      });
+    } else {
+      setDrawPoints(prev => [...prev, { lat, lng }]);
+    }
+  };
+
   const openZoneEdit = (zone) => {
     const paths = normalizePolygon(zone.polygon);
     setHighlightZoneId(zone.id);
@@ -1848,25 +1810,8 @@ function MapZonesTab({data, update}) {
           }
           return;
         }
-        const pts = drawPtsRef.current;
         if (drawModeRef.current === 'none') return;
-        if (insertModeRef.current && pts.length >= 2) {
-          // Find nearest edge midpoint and insert there
-          let bestIdx = 0, bestDist = Infinity;
-          for (let i = 0; i < pts.length; i++) {
-            const a = pts[i], b = pts[(i+1) % pts.length];
-            const midLat = (a.lat+b.lat)/2, midLng = (a.lng+b.lng)/2;
-            const d = Math.pow(lat-midLat,2) + Math.pow(lng-midLng,2);
-            if (d < bestDist) { bestDist = d; bestIdx = i; }
-          }
-          setDrawPoints(prev => {
-            const u = [...prev];
-            u.splice(bestIdx+1, 0, {lat,lng});
-            return u;
-          });
-        } else {
-          setDrawPoints(prev => [...prev, {lat,lng}]);
-        }
+        addDrawPointRef.current(lat, lng);
       });
     }, 200);
     return () => clearInterval(waitForMaps);
@@ -1892,7 +1837,13 @@ function MapZonesTab({data, update}) {
         map:gmap.current,
         zIndex: highlighted ? 2 : 1,
       });
-      poly.addListener('click', () => openZoneEdit({ ...z, polygon: paths }));
+      poly.addListener('click', (e) => {
+        if (drawModeRef.current !== 'none') {
+          addDrawPointRef.current(e.latLng.lat(), e.latLng.lng());
+          return;
+        }
+        openZoneEdit({ ...z, polygon: paths });
+      });
       zonePoly.current.push(poly);
     });
     data.indoorZones.forEach(z => {
@@ -1908,7 +1859,13 @@ function MapZonesTab({data, update}) {
         map:gmap.current,
         zIndex: highlighted ? 2 : 1,
       });
-      poly.addListener('click', () => openIndoorEdit({ ...z, polygon: paths }));
+      poly.addListener('click', (e) => {
+        if (drawModeRef.current !== 'none') {
+          addDrawPointRef.current(e.latLng.lat(), e.latLng.lng());
+          return;
+        }
+        openIndoorEdit({ ...z, polygon: paths });
+      });
       zonePoly.current.push(poly);
     });
   }, [data.zones, data.indoorZones, mapReady, highlightZoneId, editZone?.id, editIndoor?.id]);
@@ -3292,7 +3249,7 @@ function buildPresetLayoutPayload(preset, customSegmentLayouts) {
   if (!preset) return null;
   const wled = presetWledForBoard(preset, customSegmentLayouts);
   if (!wled.seg?.length) return null;
-  return { on: true, bri: 255, seg: wled.seg.map(s => ({ ...s })) };
+  return { on: true, seg: wled.seg.map(s => ({ ...s })) };
 }
 
 function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCapture, captureLoading, canCapture, snapshot}) {

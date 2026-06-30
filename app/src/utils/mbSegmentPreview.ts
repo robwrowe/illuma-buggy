@@ -81,7 +81,7 @@ function buildMbSolidPreview(activeRefs: WledSegRef[], rgb: [number, number, num
     if (ref.stop <= ref.start) continue;
     segs.push(solidSeg(ref, rgb));
   }
-  return { on: true, bri: 255, seg: segs };
+  return { on: true, seg: segs };
 }
 
 export function buildSegmentHighlightPreview(
@@ -111,7 +111,7 @@ export function buildFiveCornerPreview(
       segs.push(solidSeg(ref, rgb));
     }
   }
-  return { on: true, bri: 255, seg: segs };
+  return { on: true, seg: segs };
 }
 
 /** Same segment id used with different start/stop in two regions — WLED keeps one range per id. */

@@ -130,13 +130,13 @@ import {
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
 } from '../utils/bleCapture';
 import {
-  CustomSegmentLayout, normalizeSegmentLayout, presetHasPerSegmentRecall,
+  CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
 } from '../utils/segmentLayouts';
 
 export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
 export {
   buildLayoutPayload, summarizeLayout, fetchWledSegmentsFromDevice,
-  normalizeSegmentDef, parseWledStateSegments,
+  normalizeSegmentDef, parseWledStateSegments, buildRecalledSegmentsFromPreset,
 } from '../utils/segmentLayouts';
 
 export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
@@ -669,77 +669,11 @@ const DEFAULT_RECALL_FALLBACK: RecallState = {
 
 export function buildRecallPayload(preset: Preset, recall: RecallState | undefined): object {
   if (!recall) recall = DEFAULT_RECALL_FALLBACK;
-  const w = preset.wled ?? { on: true };
-  const m = preset.memory ?? DEFAULT_PRESET_MEMORY;
-  const payload: any = { on: true };
-
-  const should = (prop: keyof RecallState, memVal: boolean): boolean => {
-    const r = recall![prop];
-    if (r === 'always') return true;
-    if (r === 'never')  return false;
-    return memVal;
+  const layouts = useAppStore.getState().customSegmentLayouts;
+  return {
+    on: true,
+    seg: buildRecalledSegmentsFromPreset(preset, recall, layouts, DEFAULT_PRESET_MEMORY),
   };
-
-  if (should('segments', m.segments)) {
-    const layouts = useAppStore.getState().customSegmentLayouts;
-    const linked = preset.segmentLayoutId
-      ? layouts.find(l => l.id === preset.segmentLayoutId)
-      : undefined;
-    if (linked?.segments.length) {
-      payload.seg = linked.segments.map(seg => ({ ...seg }));
-    } else if (w.seg !== undefined) {
-      payload.seg = w.seg.map(s => ({ ...s }));
-    }
-  }
-
-  const segProps: Record<string, unknown> = {};
-  if (should('effect', m.effect) && w.fx !== undefined) segProps.fx = w.fx;
-  if (should('palette', m.palette) && w.pal !== undefined) segProps.pal = w.pal;
-  if (should('parameters', m.parameters)) {
-    (['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'] as const).forEach(k => {
-      if (w[k] !== undefined) segProps[k] = w[k];
-    });
-  }
-  if (should('color', m.color) && w.col !== undefined) {
-    segProps.col = Array.isArray(w.col[0]) ? w.col.map(c => [...c]) : [...w.col];
-  }
-  if (Object.keys(segProps).length) {
-    const layouts = useAppStore.getState().customSegmentLayouts;
-    const perSeg = presetHasPerSegmentRecall(preset, layouts);
-    if (perSeg && payload.seg) {
-      const paramKeys = ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'] as const;
-      payload.seg = (payload.seg as Record<string, unknown>[]).map(s => {
-        const start = Number(s.start ?? 0);
-        const stop = Number(s.stop ?? 0);
-        if (stop <= start) return s;
-        const out = { ...s };
-        if (!should('effect', m.effect)) delete out.fx;
-        if (!should('palette', m.palette)) delete out.pal;
-        if (!should('parameters', m.parameters)) paramKeys.forEach(k => delete out[k]);
-        if (!should('color', m.color)) delete out.col;
-        return out;
-      });
-    } else {
-      const list = Array.isArray(payload.seg) && payload.seg.length ? payload.seg.map(s => ({ ...s })) : [{ id: 0 }];
-      const hasActive = list.some(s => {
-        const start = Number((s as { start?: number }).start ?? 0);
-        const stop = Number((s as { stop?: number }).stop ?? 0);
-        return stop > start;
-      });
-      if (!hasActive) {
-        const base = list[0] || { id: 0 };
-        payload.seg = [{ ...base, id: (base as { id?: number }).id ?? 0, ...segProps }];
-      } else {
-        payload.seg = list.map(s => {
-          const start = Number((s as { start?: number }).start ?? 0);
-          const stop = Number((s as { stop?: number }).stop ?? 0);
-          return stop > start ? { ...s, ...segProps } : s;
-        });
-      }
-    }
-  }
-
-  return payload;
 }
 
 // ─────────────────────────────────────────────
