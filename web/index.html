@@ -150,6 +150,18 @@ const DEFAULT_MB_MAPPING = {
     E913: { presetId: '', colorSlots: [1, 5] },
     wand: { presetId: '', colorSlots: [] },
   },
+  swAnimations: {
+    wand:     { presetId: '', colorSlots: [] },
+    rainbow:  { presetId: '', colorSlots: [0, 2, 21, 8, 18] },
+    blink:    { presetId: '', colorSlots: [27] },
+    palette5: { presetId: '', colorSlots: [0, 2, 8, 21, 18] },
+    flash:    { presetId: '', colorSlots: [1, 27] },
+    sparkle:  { presetId: '', colorSlots: [2] },
+    pulse:    { presetId: '', colorSlots: [1] },
+    circle:   { presetId: '', colorSlots: [2, 8] },
+    fade:     { presetId: '', colorSlots: [0, 8] },
+    fade2:    { presetId: '', colorSlots: [8, 18] },
+  },
   patterns: {
     '3': { presetId: '', colorSlots: [] },
     '4': { presetId: '', colorSlots: [] },
@@ -198,7 +210,20 @@ const MB_ANIMATION_META = [
   { key: 'E911', label: 'Cross-fade' },
   { key: 'E912', label: 'Circle' },
   { key: 'E913', label: 'Pulse' },
-  { key: 'wand', label: 'Starlight Wand cast' },
+  { key: 'wand', label: 'Starlight Wand cast (legacy)' },
+];
+
+const SW_ANIMATION_META = [
+  { key: 'wand',     label: 'Color cast',   hint: 'CF0B / CF9B palette transfer' },
+  { key: 'rainbow',  label: 'rainbow',      hint: 'E90C Taste the Rainbow' },
+  { key: 'blink',    label: 'blink',        hint: 'E90C white blink' },
+  { key: 'palette5', label: 'palette5',     hint: 'E90C five-palette cycle' },
+  { key: 'flash',    label: 'flash',        hint: 'E90E purple/white flash' },
+  { key: 'sparkle',  label: 'sparkle',      hint: 'E910 blue sparkle' },
+  { key: 'pulse',    label: 'pulse',        hint: 'E913 purple pulse' },
+  { key: 'circle',   label: 'circle',       hint: 'E912 blue circle' },
+  { key: 'fade',     label: 'fade',         hint: 'E911 cyan → pink' },
+  { key: 'fade2',    label: 'fade2',        hint: 'E911 pink → green' },
 ];
 
 const MB_PATTERN_META = [
@@ -279,15 +304,85 @@ function buildLayoutPayload(layout) {
   return finalizeWledSegmentPayload({ on: true, bri: 255, seg: layout.segments.map(s => ({ ...s })) });
 }
 
-async function fetchWledSegmentsFromIp(ip) {
+async function fetchWledFullStateFromIp(ip) {
   const host = ip.trim();
   if (!host) throw new Error('Enter a WLED IP');
   const res = await fetch(`http://${host}/json/state`);
   if (!res.ok) throw new Error('Could not read WLED state');
-  const state = await res.json();
+  return res.json();
+}
+
+async function fetchWledSegmentsFromIp(ip) {
+  const state = await fetchWledFullStateFromIp(ip);
   const segments = parseWledStateSegments(state);
   if (!segments.length) throw new Error('No active segments in WLED state');
   return segments;
+}
+
+function resolvePaletteName(pal, palettes, customPalettes) {
+  if (pal == null || pal === '') return '';
+  const customs = customPalettes || [];
+  const idx = 255 - pal;
+  if (idx >= 0 && idx < customs.length) return customs[idx].name;
+  return (palettes || []).find(p => p.id === pal)?.name || `Palette ${pal}`;
+}
+
+const DEFAULT_WLED_CAPTURE_OPTS = {
+  effect: true, palette: true, parameters: true, color: true, segments: true,
+};
+
+const WLED_CAPTURE_LABELS = {
+  effect: { title: 'Effect', hint: 'fx + effect name from segment 0' },
+  palette: { title: 'Palette', hint: 'pal + palette name from segment 0' },
+  parameters: { title: 'Parameters', hint: 'Speed, intensity, custom sliders (sx, ix, c1–c3, o1–o3)' },
+  color: { title: 'Effect colors', hint: 'RGB slots (col) for solid / dual / triple effects' },
+  segments: { title: 'Segment layout', hint: 'Active segment ranges (id, start%, stop%)' },
+};
+
+function applyWledStateCapture(preset, state, catalog, opts, updateMemory = true) {
+  const segments = parseWledStateSegments(state);
+  const primary = segments[0];
+  if (!primary) throw new Error('No active segments in WLED state');
+  const wled = { ...preset.wled };
+  const memory = { ...preset.memory };
+  let segmentLayoutId = preset.segmentLayoutId;
+
+  if (opts.effect) {
+    if (primary.fx === undefined) throw new Error('Segment 0 has no effect (fx) to import');
+    wled.fx = primary.fx;
+    wled.fxName = (catalog.effects || []).find(e => e.id === primary.fx)?.name || wled.fxName || `Effect ${primary.fx}`;
+    if (updateMemory) memory.effect = true;
+  }
+  if (opts.palette) {
+    if (primary.pal === undefined) throw new Error('Segment 0 has no palette (pal) to import');
+    wled.pal = primary.pal;
+    wled.palName = resolvePaletteName(primary.pal, catalog.palettes, catalog.customPalettes);
+    if (updateMemory) memory.palette = true;
+  }
+  if (opts.parameters) {
+    ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
+      if (primary[k] !== undefined && primary[k] !== null) wled[k] = primary[k];
+    });
+    if (updateMemory) memory.parameters = true;
+  }
+  if (opts.color) {
+    if (primary.col !== undefined && primary.col !== null) {
+      wled.col = Array.isArray(primary.col[0]) ? primary.col.map(c => [...c]) : [...primary.col];
+      if (updateMemory) memory.color = true;
+    } else {
+      delete wled.col;
+      if (updateMemory) memory.color = false;
+    }
+  }
+  if (opts.segments) {
+    if (segments.length > 0) {
+      wled.seg = segments.map(s => ({ id: s.id, start: s.start, stop: s.stop }));
+      segmentLayoutId = undefined;
+      if (updateMemory) memory.segments = segments.length > 0;
+    }
+  }
+
+  return { ...preset, wled, memory, segmentLayoutId };
 }
 
 const WLED_EFFECTS_CACHE_KEY = 'wled-effects-cache';
@@ -561,12 +656,36 @@ async function testPresetOnWled(ip, preset, data) {
   if (!host) throw new Error('Enter a WLED IP');
   const customPalettes = data.customPalettes || [];
   if (customPalettes.length && presetUsesCustomPalette(preset, customPalettes)) {
-    const wledPals = {};
-    customPalettes.forEach((pal, i) => { wledPals[String(i)] = buildWledCustomPalette(pal); });
-    await postWledState(host, { on: true, bri: 255, pd: wledPals });
+    await uploadCustomPalettesToWled(host, customPalettes);
   }
   const payload = buildTestPresetPayload(preset, data.customSegmentLayouts);
   await postWledState(host, payload);
+}
+
+function buildCustomPalettesPd(customPalettes) {
+  const wledPals = {};
+  (customPalettes || []).forEach((pal, i) => {
+    wledPals[String(i)] = buildWledCustomPalette(pal);
+  });
+  return wledPals;
+}
+
+async function uploadCustomPalettesToWled(ip, customPalettes) {
+  const host = ip.trim();
+  if (!host) throw new Error('Enter a WLED IP');
+  const pd = buildCustomPalettesPd(customPalettes);
+  if (!Object.keys(pd).length) throw new Error('No custom palettes to upload');
+  await postWledState(host, { on: true, bri: 255, pd });
+}
+
+/** Upload all custom palettes to WLED pd slots and set one as the active segment palette. */
+async function applyCustomPaletteToWled(ip, paletteId, customPalettes) {
+  const host = ip.trim();
+  if (!host) throw new Error('Enter a WLED IP');
+  const idx = customPalettes.findIndex(p => p.id === paletteId);
+  if (idx < 0) throw new Error('Palette not found in config');
+  await uploadCustomPalettesToWled(host, customPalettes);
+  await postWledState(host, { on: true, bri: 255, seg: [{ id: 0, pal: 255 - idx }] });
 }
 
 function buildPaletteSelectOptions(wledPalettes, customPalettes, wled, paletteKnown) {
@@ -631,6 +750,20 @@ function normalizeMbMapping(raw) {
   };
   const animations = {};
   MB_ANIMATION_META.forEach(({ key }) => { animations[key] = normEffect(key, d.animations[key], raw.animations); });
+  const normEffectDirect = (v, fallback) => {
+    if (!v) return { ...fallback };
+    if (typeof v === 'string') return { presetId: v, colorSlots: [...fallback.colorSlots] };
+    return {
+      presetId: v.presetId ?? '',
+      colorSlots: Array.isArray(v.colorSlots) ? [...v.colorSlots] : [...fallback.colorSlots],
+    };
+  };
+  const swAnimations = {};
+  SW_ANIMATION_META.forEach(({ key }) => {
+    const fromSw = raw.swAnimations?.[key];
+    const fromLegacy = key === 'wand' ? raw.animations?.wand : undefined;
+    swAnimations[key] = normEffectDirect(fromSw ?? fromLegacy, d.swAnimations[key]);
+  });
   const patterns = {};
   MB_PATTERN_META.forEach(({ key }) => { patterns[key] = normEffect(key, d.patterns[key], raw.patterns); });
   const segments = {};
@@ -640,7 +773,258 @@ function normalizeMbMapping(raw) {
       ? src.map(s => ({ id: s.id ?? 0, start: s.start, stop: s.stop }))
       : d.segments[id].map(s => ({ ...s }));
   });
-  return { version: 1, colors, animations, patterns, segments };
+  return { version: 1, colors, animations, swAnimations, patterns, segments };
+}
+
+function mbMappingToBlePayload(config) {
+  const colors = {};
+  config.colors.forEach((hex, i) => {
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+    colors[String(i)] = [
+      parseInt(hex.slice(1, 3), 16),
+      parseInt(hex.slice(3, 5), 16),
+      parseInt(hex.slice(5, 7), 16),
+    ];
+  });
+  const mapEffect = (m) => ({ presetId: m.presetId, colorSlots: m.colorSlots });
+  const animations = {};
+  Object.entries(config.animations).forEach(([k, v]) => { animations[k] = mapEffect(v); });
+  const swAnimations = {};
+  Object.entries(config.swAnimations || {}).forEach(([k, v]) => { swAnimations[k] = mapEffect(v); });
+  const patterns = {};
+  Object.entries(config.patterns).forEach(([k, v]) => { patterns[k] = mapEffect(v); });
+  return { version: 1, colors, animations, swAnimations, patterns, segments: config.segments };
+}
+
+function presetWledForBoard(preset, customSegmentLayouts) {
+  const wled = JSON.parse(JSON.stringify(preset.wled || { on: true }));
+  if (preset.segmentLayoutId) {
+    const layout = (customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId);
+    if (layout?.segments?.length) wled.seg = layout.segments.map(s => ({ ...s }));
+  }
+  return wled;
+}
+
+const BLE_DEVICE_NAME = 'IllumaBuggy';
+const BLE_SERVICE_UUID = '12345678-1234-1234-1234-123456789abc';
+const BLE_CMD_CHAR_UUID = '12345678-1234-1234-1234-123456789abd';
+const BLE_NOTIFY_CHAR_UUID = '12345678-1234-1234-1234-123456789abe';
+const BLE_SEND_DELAY_MS = 120;
+const BLE_MAX_WRITE_BYTES = 512;
+const BLE_CHUNK_INTER_MS = 25;
+
+function splitCommandForBleChunks(jsonStr) {
+  const pieces = [];
+  let offset = 0;
+  while (offset < jsonStr.length) {
+    let lo = 1;
+    let hi = jsonStr.length - offset;
+    let best = 0;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const data = jsonStr.slice(offset, offset + mid);
+      const isLast = offset + mid >= jsonStr.length;
+      const envelope = JSON.stringify({ type: 'ble_cmd_chunk', seq: pieces.length, last: isLast, data });
+      if (new TextEncoder().encode(envelope).length <= BLE_MAX_WRITE_BYTES) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (best < 1) throw new Error('BLE command too large to chunk (single fragment exceeds 512 bytes)');
+    pieces.push(jsonStr.slice(offset, offset + best));
+    offset += best;
+  }
+  return pieces;
+}
+
+class WebBleBoard {
+  constructor() {
+    this.device = null;
+    this.cmdChar = null;
+    this.notifyChar = null;
+    this.connected = false;
+    this.notifyBuffer = '';
+    this.sendRunning = false;
+    this.sendQueue = [];
+    this.connListeners = new Set();
+    this._onNotify = this._onNotify.bind(this);
+    this._onDisconnect = this._onDisconnect.bind(this);
+  }
+
+  get supported() {
+    return typeof navigator !== 'undefined' && !!navigator.bluetooth;
+  }
+
+  onConnectionChange(fn) {
+    this.connListeners.add(fn);
+    fn(this.connected);
+    return () => this.connListeners.delete(fn);
+  }
+
+  _setConnected(v) {
+    this.connected = v;
+    this.connListeners.forEach(fn => fn(v));
+  }
+
+  async connect() {
+    if (!this.supported) {
+      throw new Error('Web Bluetooth is not available. Use Chrome or Edge on desktop/Android over http://localhost or HTTPS.');
+    }
+    if (this.connected && this.device?.gatt?.connected) return this.device;
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ name: BLE_DEVICE_NAME }],
+      optionalServices: [BLE_SERVICE_UUID],
+    });
+    device.addEventListener('gattserverdisconnected', this._onDisconnect);
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+    this.cmdChar = await service.getCharacteristic(BLE_CMD_CHAR_UUID);
+    this.notifyChar = await service.getCharacteristic(BLE_NOTIFY_CHAR_UUID);
+    this.notifyChar.addEventListener('characteristicvaluechanged', this._onNotify);
+    await this.notifyChar.startNotifications();
+    this.device = device;
+    this._setConnected(true);
+    return device;
+  }
+
+  _onDisconnect() {
+    this.device = null;
+    this.cmdChar = null;
+    this.notifyChar = null;
+    this.notifyBuffer = '';
+    this._setConnected(false);
+  }
+
+  _onNotify(event) {
+    this.notifyBuffer += new TextDecoder().decode(event.target.value);
+    try {
+      JSON.parse(this.notifyBuffer);
+      this.notifyBuffer = '';
+    } catch {
+      if (this.notifyBuffer.length > 65536) this.notifyBuffer = '';
+    }
+  }
+
+  disconnect() {
+    if (this.device?.gatt?.connected) this.device.gatt.disconnect();
+    else this._onDisconnect();
+  }
+
+  async send(msg) {
+    if (!this.cmdChar) throw new Error('Not connected to IllumaBuggy');
+    return new Promise((resolve, reject) => {
+      this.sendQueue.push({ msg, resolve, reject });
+      this._drainSendQueue();
+    });
+  }
+
+  async _writeJson(jsonStr) {
+    const fullBytes = new TextEncoder().encode(jsonStr);
+    if (fullBytes.length <= BLE_MAX_WRITE_BYTES) {
+      await this.cmdChar.writeValueWithResponse(fullBytes);
+      return 1;
+    }
+    const pieces = splitCommandForBleChunks(jsonStr);
+    for (let seq = 0; seq < pieces.length; seq++) {
+      const chunk = {
+        type: 'ble_cmd_chunk',
+        seq,
+        last: seq === pieces.length - 1,
+        data: pieces[seq],
+      };
+      const chunkBytes = new TextEncoder().encode(JSON.stringify(chunk));
+      await this.cmdChar.writeValueWithResponse(chunkBytes);
+      if (seq < pieces.length - 1) {
+        await new Promise(r => setTimeout(r, BLE_CHUNK_INTER_MS));
+      }
+    }
+    return pieces.length;
+  }
+
+  async _drainSendQueue() {
+    if (this.sendRunning) return;
+    this.sendRunning = true;
+    while (this.sendQueue.length > 0) {
+      if (!this.cmdChar) {
+        while (this.sendQueue.length > 0) this.sendQueue.shift().reject(new Error('Disconnected'));
+        break;
+      }
+      const { msg, resolve, reject } = this.sendQueue.shift();
+      try {
+        await this._writeJson(JSON.stringify(msg));
+        resolve(true);
+      } catch (e) {
+        reject(e);
+      }
+      if (this.sendQueue.length > 0) {
+        await new Promise(r => setTimeout(r, BLE_SEND_DELAY_MS));
+      }
+    }
+    this.sendRunning = false;
+  }
+}
+
+const webBleBoard = new WebBleBoard();
+
+async function syncProfileToBoard(data, onProgress) {
+  const delay = (ms) => new Promise(r => setTimeout(r, ms));
+  const presets = data.presets || [];
+  const layouts = data.customSegmentLayouts || [];
+  const mb = normalizeMbMapping(data.mbMapping);
+
+  onProgress?.('Sending Starlight Wand settings…');
+  await webBleBoard.send({
+    type: 'sw_config',
+    enabled: data.starlightEnabled !== false,
+    timeout_ms: (data.starlightTimeoutSec ?? 15) * 1000,
+  });
+  await delay(BLE_SEND_DELAY_MS);
+
+  onProgress?.('Sending MagicBand settings…');
+  await webBleBoard.send({
+    type: 'mb_config',
+    enabled: data.magicBandEnabled !== false,
+    five_point: data.magicBandFivePoint !== false,
+    timeout_ms: (data.magicBandTimeoutSec ?? 15) * 1000,
+  });
+  await delay(BLE_SEND_DELAY_MS);
+
+  onProgress?.('Sending effect transitions…');
+  await webBleBoard.send({
+    type: 'ble_effect_config',
+    transition_ms: data.bleEffectTransitionMs ?? 700,
+  });
+  await delay(BLE_SEND_DELAY_MS);
+
+  onProgress?.('Sending MB mapping…');
+  await webBleBoard.send({
+    type: 'mb_mapping_config',
+    mapping: mbMappingToBlePayload(mb),
+  });
+  await delay(BLE_SEND_DELAY_MS);
+
+  onProgress?.('Sending override mode…');
+  await webBleBoard.send({
+    type: 'override_mode',
+    kill_on_zone: !!data.overrideKillOnZone,
+  });
+  await delay(BLE_SEND_DELAY_MS);
+
+  for (let i = 0; i < presets.length; i++) {
+    const p = presets[i];
+    onProgress?.(`Saving preset ${i + 1}/${presets.length}: ${p.name}`);
+    await webBleBoard.send({
+      type: 'preset_save',
+      id: p.id,
+      name: p.name,
+      wled: presetWledForBoard(p, layouts),
+    });
+    await delay(BLE_SEND_DELAY_MS + 30);
+  }
+
+  onProgress?.(`Done — ${presets.length} preset${presets.length === 1 ? '' : 's'} and board settings sent.`);
 }
 
 function loadAppData(stored) {
@@ -683,15 +1067,47 @@ function SearchableSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
+  const [menuRect, setMenuRect] = useState(null);
   const wrapRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  const updateMenuRect = () => {
+    if (!triggerRef.current) return;
+    const r = triggerRef.current.getBoundingClientRect();
+    const menuApprox = maxListHeight + 52;
+    const spaceBelow = window.innerHeight - r.bottom;
+    const openUp = spaceBelow < menuApprox && r.top > spaceBelow;
+    setMenuRect({
+      left: r.left,
+      width: r.width,
+      top: openUp ? Math.max(8, r.top - menuApprox - 4) : r.bottom + 4,
+      maxHeight: maxListHeight,
+    });
+  };
 
   useEffect(() => {
     const onDoc = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      const inWrap = wrapRef.current?.contains(e.target);
+      const inMenu = e.target.closest?.('[data-searchable-select-menu]');
+      if (!inWrap && !inMenu) setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setMenuRect(null);
+      return;
+    }
+    updateMenuRect();
+    window.addEventListener('scroll', updateMenuRect, true);
+    window.addEventListener('resize', updateMenuRect);
+    return () => {
+      window.removeEventListener('scroll', updateMenuRect, true);
+      window.removeEventListener('resize', updateMenuRect);
+    };
+  }, [open, maxListHeight]);
 
   const selected = options.find(o => o.value === value);
   const q = filter.trim().toLowerCase();
@@ -712,9 +1128,51 @@ function SearchableSelect({
     setFilter('');
   };
 
+  const menu = open && menuRect ? (
+    <div data-searchable-select-menu style={{
+      position: 'fixed', top: menuRect.top, left: menuRect.left, width: menuRect.width,
+      zIndex: 10050, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+      overflow: 'hidden', boxShadow: '0 8px 24px #00000088',
+    }}>
+      <div style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>
+        <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search…"
+          style={{ ...inputStyle, padding: '6px 8px', fontSize: 13 }} autoFocus
+          onClick={e => e.stopPropagation()} onKeyDown={e => e.key === 'Escape' && setOpen(false)}/>
+      </div>
+      <div style={{ maxHeight: menuRect.maxHeight, overflowY: 'auto' }}>
+        {allowEmpty && (
+          <div onClick={() => pick('')} style={{
+            padding: '8px 12px', cursor: 'pointer', fontSize: 13, color: 'var(--text3)',
+            borderBottom: '1px solid var(--border)',
+          }}>{placeholder}</div>
+        )}
+        {filtered.length === 0 && (
+          <div style={{ padding: 12, fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>{emptyLabel}</div>
+        )}
+        {Object.entries(groups).map(([group, items]) => (
+          <div key={group || '_'}>
+            {group && (
+              <div style={{
+                padding: '6px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text3)',
+                textTransform: 'uppercase', background: 'var(--surface2)',
+              }}>{group}</div>
+            )}
+            {items.map(o => (
+              <div key={o.value} onClick={() => pick(o.value)} style={{
+                padding: '8px 12px', cursor: 'pointer', fontSize: 13,
+                background: value === o.value ? 'var(--primary-dim)' : 'transparent',
+                color: value === o.value ? 'var(--primary)' : 'var(--text)',
+              }}>{o.label}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
-      <div onClick={() => setOpen(v => !v)} style={{ ...selectStyle, display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+      <div ref={triggerRef} onClick={() => setOpen(v => !v)} style={{ ...selectStyle, display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
         <span style={{
           flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           color: selected ? 'var(--text)' : 'var(--text3)',
@@ -723,47 +1181,7 @@ function SearchableSelect({
         </span>
         <span style={{ color: 'var(--text3)', fontSize: 10, marginLeft: 8 }}>{open ? '▲' : '▼'}</span>
       </div>
-      {open && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 2000, marginTop: 4,
-          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
-          overflow: 'hidden', boxShadow: '0 8px 24px #00000066',
-        }}>
-          <div style={{ padding: 8, borderBottom: '1px solid var(--border)' }}>
-            <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search…"
-              style={{ ...inputStyle, padding: '6px 8px', fontSize: 13 }} autoFocus
-              onClick={e => e.stopPropagation()} onKeyDown={e => e.key === 'Escape' && setOpen(false)}/>
-          </div>
-          <div style={{ maxHeight: maxListHeight, overflowY: 'auto' }}>
-            {allowEmpty && (
-              <div onClick={() => pick('')} style={{
-                padding: '8px 12px', cursor: 'pointer', fontSize: 13, color: 'var(--text3)',
-                borderBottom: '1px solid var(--border)',
-              }}>{placeholder}</div>
-            )}
-            {filtered.length === 0 && (
-              <div style={{ padding: 12, fontSize: 13, color: 'var(--text3)', textAlign: 'center' }}>{emptyLabel}</div>
-            )}
-            {Object.entries(groups).map(([group, items]) => (
-              <div key={group || '_'}>
-                {group && (
-                  <div style={{
-                    padding: '6px 12px', fontSize: 10, fontWeight: 700, color: 'var(--text3)',
-                    textTransform: 'uppercase', background: 'var(--surface2)',
-                  }}>{group}</div>
-                )}
-                {items.map(o => (
-                  <div key={o.value} onClick={() => pick(o.value)} style={{
-                    padding: '8px 12px', cursor: 'pointer', fontSize: 13,
-                    background: value === o.value ? 'var(--primary-dim)' : 'transparent',
-                    color: value === o.value ? 'var(--primary)' : 'var(--text)',
-                  }}>{o.label}</div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {menu && ReactDOM.createPortal(menu, document.body)}
     </div>
   );
 }
@@ -774,7 +1192,7 @@ function SectionHead({children}) {
 
 function Modal({title,children,onClose,width=400}) {
   return <div style={{position:'fixed',inset:0,background:'#00000099',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
-    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:14,padding:20,width,maxWidth:'95vw',maxHeight:'85vh',overflowY:'auto',display:'flex',flexDirection:'column',gap:10}}>
+    <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:14,padding:20,width,maxWidth:'95vw',maxHeight:'85vh',overflow:'visible',display:'flex',flexDirection:'column',gap:10}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
         <span style={{fontWeight:700,fontSize:15}}>{title}</span>
         <button onClick={onClose} style={{background:'none',color:'var(--text3)',fontSize:20,lineHeight:1,cursor:'pointer',border:'none'}}>×</button>
@@ -804,6 +1222,82 @@ function PaletteGradient({colors,height=24}) {
   </div>;
 }
 
+// ── Board BLE sync ───────────────────────────────────────────────────
+function BoardSyncModal({ data, onClose }) {
+  const [connected, setConnected] = useState(webBleBoard.connected);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
+  const supported = webBleBoard.supported;
+  const presetCount = (data.presets || []).length;
+
+  useEffect(() => webBleBoard.onConnectionChange(setConnected), []);
+
+  const handleConnect = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      await webBleBoard.connect();
+      setStatus('Connected to IllumaBuggy');
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSync = async () => {
+    setError('');
+    setBusy(true);
+    try {
+      if (!connected) await webBleBoard.connect();
+      await syncProfileToBoard(data, setStatus);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="📡 Send to Board" onClose={onClose} width={500}>
+      <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.6, margin: 0 }}>
+        Push board-stored settings to the ESP32 over Bluetooth — same protocol as the Android app.
+        Requires <strong>Chrome or Edge</strong> (Web Bluetooth). Serve this page via{' '}
+        <code style={{ fontSize: 11 }}>./serve.sh</code> on localhost. Large profiles are sent in chunks — flash the latest firmware if sync fails partway through.
+      </p>
+      <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, padding: '10px 12px', background: 'var(--surface2)', borderRadius: 8 }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Syncs to ESP32</div>
+        Presets ({presetCount}), MB mapping, MB/Starlight config, effect transitions, override mode
+        <div style={{ fontWeight: 600, margin: '8px 0 4px' }}>Stays in browser / phone only</div>
+        GPS zones, brightness schedule, recall state, custom palettes (import those on the app, or test presets via WLED WiFi)
+      </div>
+      {!supported && (
+        <div style={{ fontSize: 12, color: 'var(--danger)' }}>
+          Web Bluetooth is not available in this browser.
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {!connected
+          ? <button onClick={handleConnect} disabled={!supported || busy} style={btn('primary')}>Connect</button>
+          : <>
+              <span style={{ fontSize: 12, color: 'var(--success)', alignSelf: 'center', fontWeight: 600 }}>● Connected</span>
+              <button onClick={() => { webBleBoard.disconnect(); setStatus(''); }} disabled={busy} style={btn('')}>Disconnect</button>
+            </>
+        }
+        <button onClick={handleSync} disabled={!supported || busy || presetCount === 0} style={btn('primary')}>
+          {busy ? 'Sending…' : 'Send current profile'}
+        </button>
+      </div>
+      {presetCount === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>Add at least one preset before syncing.</div>
+      )}
+      {status && <div style={{ fontSize: 12, color: 'var(--text2)' }}>{status}</div>}
+      {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
+    </Modal>
+  );
+}
+
 // ── App ───────────────────────────────────────────────────────────
 function App() {
   const [tab, setTab]   = useState('map');
@@ -816,6 +1310,7 @@ function App() {
     try { return JSON.parse(localStorage.getItem(LS_PROFILES)||'{}'); } catch { return {}; }
   });
   const [showProfiles, setShowProfiles] = useState(false);
+  const [showBoardSync, setShowBoardSync] = useState(false);
   // Maps API key — stored in localStorage, prompted if missing
   const [mapsKey, setMapsKey] = useState(() => localStorage.getItem('maps-api-key') || '');
   const [showKeyModal, setShowKeyModal] = useState(() => !localStorage.getItem('maps-api-key'));
@@ -913,6 +1408,7 @@ function App() {
           border: tab===t.id ? '1px solid var(--primary)' : '1px solid transparent',
         }}>{t.label}</button>)}
       </div>
+      <button onClick={() => setShowBoardSync(true)} style={btn('',{fontSize:12})} title="Send config to ESP32 over Bluetooth">📡 Board</button>
       <button onClick={() => setShowProfiles(true)} style={btn('',{fontSize:12})}>
         🗂 Profiles {Object.keys(profiles).length > 0 && `(${Object.keys(profiles).length})`}
       </button>
@@ -946,6 +1442,8 @@ function App() {
         </div>
       </div>
     </div>)}
+
+    {showBoardSync && <BoardSyncModal data={data} onClose={() => setShowBoardSync(false)}/>}
 
     {/* Profiles modal */}
     {showProfiles && <Modal title="🗂 Profiles" onClose={() => setShowProfiles(false)} width={460}>
@@ -1344,7 +1842,55 @@ function MapZonesTab({data, update}) {
 
   return (<div style={{display:'flex',height:'100%'}}>
     {/* Sidebar */}
-    <div style={{width:240,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',padding:12,gap:8,overflowY:'auto'}}>
+    <div style={{width:editZone||editIndoor?280:240,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',padding:12,gap:8,overflowY:'auto',flexShrink:0,transition:'width 0.15s ease'}}>
+
+      {/* Zone edit — sidebar panel (no modal overlay; map stays interactive) */}
+      {(editZone||editIndoor) && (<div style={{background:'var(--primary-dim)',border:'1px solid var(--primary)',borderRadius:10,padding:10,display:'flex',flexDirection:'column',gap:8,marginBottom:4}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontWeight:700,fontSize:13,color:'var(--primary)'}}>{editZone?'Edit Preset Zone':'Edit Indoor Zone'}</span>
+          <button type="button" onClick={closeZoneEdit} title="Close" style={{background:'none',color:'var(--text3)',fontSize:18,lineHeight:1,cursor:'pointer',border:'none',padding:0}}>×</button>
+        </div>
+        <div style={{fontSize:11,color:'var(--text2)',lineHeight:1.45}}>
+          Drag numbered pins on the map. Click map to add; right-click pin to remove (min 3).
+        </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {editPoints.length >= 3 && (
+            <button type="button" onClick={() => setEditInsertMode(v => !v)}
+              style={btn(editInsertMode ? 'warning' : '', { fontSize: 11, padding: '4px 8px', borderColor: editInsertMode ? 'var(--warning)' : 'var(--border)', color: editInsertMode ? 'var(--warning)' : 'var(--text2)' })}>
+              {editInsertMode ? '⊕ Insert on edge' : '⊕ Insert between'}
+            </button>
+          )}
+          {editPoints.length > 0 && (
+            <button type="button" onClick={() => setEditPoints(p => p.slice(0, -1))} style={btn('', { fontSize: 11, padding: '4px 8px' })}>↩ Undo</button>
+          )}
+          <button type="button" onClick={() => focusMapOnPolygon(gmap, editPoints)} style={btn('', { fontSize: 11, padding: '4px 8px' })}>Fit map</button>
+          <span style={{fontSize:11,color:'var(--text3)',alignSelf:'center'}}>{editPoints.length} pin{editPoints.length !== 1 ? 's' : ''}</span>
+        </div>
+        {editZone && (<>
+          <Field label="Name"><input value={editZone.name} onChange={e=>setEditZone({...editZone,name:e.target.value})} style={inputStyle}/></Field>
+          <Field label="Preset">
+            <SearchableSelect value={editZone.presetId} onChange={v => setEditZone({ ...editZone, presetId: v })}
+              placeholder="Select preset…" allowEmpty={false} maxListHeight={200}
+              options={presetOptions}/>
+          </Field>
+          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:12,cursor:'pointer'}}>
+            <input type="checkbox" checked={editZone.enabled} onChange={e=>setEditZone({...editZone,enabled:e.target.checked})} style={{width:16,height:16}}/>
+            Enabled
+          </label>
+        </>)}
+        {editIndoor && (<>
+          <Field label="Name"><input value={editIndoor.name} onChange={e=>setEditIndoor({...editIndoor,name:e.target.value})} style={inputStyle}/></Field>
+          <label style={{display:'flex',alignItems:'center',gap:8,fontSize:12,cursor:'pointer'}}>
+            <input type="checkbox" checked={editIndoor.enabled} onChange={e=>setEditIndoor({...editIndoor,enabled:e.target.checked})} style={{width:16,height:16}}/>
+            Enabled
+          </label>
+        </>)}
+        <div style={{display:'flex'}}>
+          <button type="button" onClick={deleteZoneEdit} style={btn('danger',{flex:1,fontSize:11,padding:'6px 4px'})}>Delete</button>
+          <button type="button" onClick={closeZoneEdit} style={btn('',{flex:1,fontSize:11,padding:'6px 4px',marginLeft:6})}>Cancel</button>
+          <button type="button" onClick={saveZoneEdit} style={btn('primary',{flex:1,fontSize:11,padding:'6px 4px',marginLeft:6})}>Save</button>
+        </div>
+      </div>)}
 
       {/* Location search */}
       <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1}}>Search Location</div>
@@ -1468,44 +2014,6 @@ function MapZonesTab({data, update}) {
       </Field>)}
       <ModalBtns onCancel={()=>setShowForm(false)} onSave={commitZone}/>
     </Modal>)}
-
-    {/* Edit zone */}
-    {(editZone||editIndoor) && (<Modal title={editZone?'Edit Preset Zone':'Edit Indoor Zone'} onClose={closeZoneEdit} width={440}>
-      <div style={{fontSize:12,color:'var(--text3)',lineHeight:1.5,marginBottom:10}}>
-        Drag numbered pins on the map to reshape the zone. Click the map to add a pin, or right-click a pin to remove it (minimum 3).
-      </div>
-      <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
-        {editPoints.length >= 3 && (
-          <button type="button" onClick={() => setEditInsertMode(v => !v)}
-            style={btn(editInsertMode ? 'warning' : '', { fontSize: 11, padding: '5px 10px', borderColor: editInsertMode ? 'var(--warning)' : 'var(--border)', color: editInsertMode ? 'var(--warning)' : 'var(--text2)' })}>
-            {editInsertMode ? '⊕ Insert on edge' : '⊕ Insert between pins'}
-          </button>
-        )}
-        {editPoints.length > 0 && (
-          <button type="button" onClick={() => setEditPoints(p => p.slice(0, -1))} style={btn('', { fontSize: 11, padding: '5px 10px' })}>↩ Undo last pin</button>
-        )}
-        <button type="button" onClick={() => focusMapOnPolygon(gmap, editPoints)} style={btn('', { fontSize: 11, padding: '5px 10px' })}>Show on map</button>
-        <span style={{fontSize:11,color:'var(--text3)',alignSelf:'center'}}>{editPoints.length} pin{editPoints.length !== 1 ? 's' : ''}</span>
-      </div>
-      {editZone && (<>
-        <Field label="Name"><input value={editZone.name} onChange={e=>setEditZone({...editZone,name:e.target.value})} style={inputStyle}/></Field>
-        <Field label="Preset">
-          <SearchableSelect value={editZone.presetId} onChange={v => setEditZone({ ...editZone, presetId: v })}
-            placeholder="Select preset…" allowEmpty={false} maxListHeight={280}
-            options={presetOptions}/>
-        </Field>
-        <Field label="Enabled"><input type="checkbox" checked={editZone.enabled} onChange={e=>setEditZone({...editZone,enabled:e.target.checked})} style={{width:18,height:18}}/></Field>
-      </>)}
-      {editIndoor && (<>
-        <Field label="Name"><input value={editIndoor.name} onChange={e=>setEditIndoor({...editIndoor,name:e.target.value})} style={inputStyle}/></Field>
-        <Field label="Enabled"><input type="checkbox" checked={editIndoor.enabled} onChange={e=>setEditIndoor({...editIndoor,enabled:e.target.checked})} style={{width:18,height:18}}/></Field>
-      </>)}
-      <div style={{display:'flex',gap:8,marginTop:4}}>
-        <button onClick={deleteZoneEdit} style={btn('danger',{flex:1})}>Delete</button>
-        <button onClick={closeZoneEdit} style={btn('',{flex:1})}>Cancel</button>
-        <button onClick={saveZoneEdit} style={btn('primary',{flex:1})}>Save</button>
-      </div>
-    </Modal>)}
   </div>);
 }
 
@@ -1524,6 +2032,11 @@ function PresetsTab({data, update}) {
   const [effectFilter, setEffectFilter] = useState('');
   const [presetTestStatus, setPresetTestStatus] = useState('idle'); // idle | testing | ok | error
   const [presetTestErr, setPresetTestErr] = useState('');
+  const [showCapture, setShowCapture] = useState(false);
+  const [captureOpts, setCaptureOpts] = useState(() => ({ ...DEFAULT_WLED_CAPTURE_OPTS }));
+  const [captureUpdateMemory, setCaptureUpdateMemory] = useState(true);
+  const [capturing, setCapturing] = useState(false);
+  const [captureErr, setCaptureErr] = useState('');
 
   useEffect(() => {
     const cached = loadCachedWledCatalog();
@@ -1632,6 +2145,45 @@ function PresetsTab({data, update}) {
     }));
   };
 
+  const toggleCaptureOpt = (k) => setCaptureOpts(o => ({ ...o, [k]: !o[k] }));
+  const setAllCaptureOpts = (v) => setCaptureOpts(Object.fromEntries(Object.keys(DEFAULT_WLED_CAPTURE_OPTS).map(k => [k, v])));
+
+  const runCaptureFromWled = async () => {
+    if (!Object.values(captureOpts).some(Boolean)) {
+      setCaptureErr('Select at least one property to import.');
+      return;
+    }
+    setCapturing(true);
+    setCaptureErr('');
+    try {
+      const ip = wledIp.trim();
+      if (!ip) throw new Error('Enter a WLED IP in WLED Connect (left panel).');
+      localStorage.setItem('wled-ip', ip);
+      let effects = wledEffects;
+      let palettes = wledPalettes;
+      const state = await fetchWledFullStateFromIp(ip);
+      if (!effects.length || !palettes.length) {
+        try {
+          const cat = await fetchWledCatalog(ip);
+          effects = cat.effects;
+          palettes = cat.palettes;
+          setWledEffects(effects);
+          setWledPalettes(palettes);
+          setWledStatus('connected');
+        } catch { /* names may fall back to IDs */ }
+      }
+      setSel(s => applyWledStateCapture(s, state, {
+        effects, palettes, customPalettes: data.customPalettes || [],
+      }, captureOpts, captureUpdateMemory));
+      setShowCapture(false);
+      setCaptureErr('');
+    } catch (e) {
+      setCaptureErr(e.message || 'Capture failed');
+    } finally {
+      setCapturing(false);
+    }
+  };
+
   return (<div style={{display:'flex',height:'100%'}}>
     {/* List */}
     <div style={{width:240,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',overflow:'hidden'}}>
@@ -1681,6 +2233,10 @@ function PresetsTab({data, update}) {
         <input value={sel.name} onChange={e=>setSel({...sel,name:e.target.value})} placeholder="Preset name"
           style={{...inputStyle,fontSize:16,fontWeight:600,flex:1,marginRight:12}}/>
         <div style={{display:'flex',gap:8}}>
+          <button type="button" onClick={() => { setCaptureOpts({ ...DEFAULT_WLED_CAPTURE_OPTS }); setCaptureErr(''); setShowCapture(true); }}
+            style={btn('', { fontSize: 12 })} title="Import live strip state from WLED">
+            Import from WLED
+          </button>
           <button type="button" onClick={() => testPreset(sel)} disabled={presetTestStatus === 'testing'}
             style={btn(presetTestStatus === 'ok' ? 'success' : 'primary', { fontSize: 12 })}>
             {presetTestStatus === 'testing' ? 'Testing…' : presetTestStatus === 'ok' ? 'Sent ✓' : 'Test on strip'}
@@ -1847,13 +2403,26 @@ function PresetsTab({data, update}) {
       {/* Segments tab — link saved layout library item */}
       {ptab==='segments' && (<div style={{display:'flex',flexDirection:'column',gap:10,maxWidth:520}}>
         <div style={{fontSize:12,color:'var(--text3)'}}>
-          Linked layout applies when recall includes segments (Settings → Recall State). Create layouts in Palettes → Segments.
+          Linked layout applies when recall includes segments (Settings → Recall State). Import from WLED to capture inline layout, or pick a saved layout from Palettes → Segments.
         </div>
-        <div onClick={()=>setSel(s=>({...s,segmentLayoutId:undefined}))}
+        {sel.wled.seg?.length > 0 && !sel.segmentLayoutId && (
+          <div style={{padding:'10px 12px',borderRadius:8,border:'1px solid var(--primary)',background:'var(--primary-dim)'}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+              <span style={{fontSize:13,fontWeight:600,flex:1}}>Inline layout (imported)</span>
+              <button type="button" onClick={() => setSel(s => ({ ...s, wled: { ...s.wled, seg: undefined }, memory: { ...s.memory, segments: false } }))}
+                style={btn('danger',{fontSize:10,padding:'3px 8px'})}>Clear</button>
+            </div>
+            <SegmentBar segments={sel.wled.seg}/>
+            <div style={{fontSize:10,color:'var(--text3)',marginTop:4,fontFamily:'monospace'}}>
+              {sel.wled.seg.map(s => `#${s.id} ${s.start}–${s.stop}%`).join(' · ')}
+            </div>
+          </div>
+        )}
+        <div onClick={()=>setSel(s=>({...s,segmentLayoutId:undefined,wled:{...s.wled,seg:undefined},memory:{...s.memory,segments:false}}))}
           style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',borderRadius:8,cursor:'pointer',
-            background:!sel.segmentLayoutId?'var(--primary-dim)':'var(--surface2)',border:'1px solid var(--border)'}}>
+            background:!sel.segmentLayoutId&&!sel.wled.seg?.length?'var(--primary-dim)':'var(--surface2)',border:'1px solid var(--border)'}}>
           <span style={{fontSize:13,flex:1}}>None (single segment only)</span>
-          {!sel.segmentLayoutId && <span style={{color:'var(--primary)'}}>✓</span>}
+          {!sel.segmentLayoutId&&!sel.wled.seg?.length && <span style={{color:'var(--primary)'}}>✓</span>}
         </div>
         {(data.customSegmentLayouts||[]).length===0 && (
           <div style={{fontSize:12,color:'var(--text3)'}}>No segment layouts yet — add them on the Palettes tab.</div>
@@ -1861,6 +2430,7 @@ function PresetsTab({data, update}) {
         {(data.customSegmentLayouts||[]).map(layout=>(
           <div key={layout.id} onClick={()=>setSel(s=>({
             ...s, segmentLayoutId: layout.id, memory: { ...s.memory, segments: true },
+            wled: { ...s.wled, seg: undefined },
           }))}
             style={{padding:'10px 12px',borderRadius:8,cursor:'pointer',border:'1px solid var(--border)',
               background:sel.segmentLayoutId===layout.id?'var(--primary-dim)':'var(--surface2)'}}>
@@ -1872,7 +2442,7 @@ function PresetsTab({data, update}) {
             <div style={{fontSize:10,color:'var(--text3)',marginTop:4,fontFamily:'monospace'}}>{summarizeLayout(layout)}</div>
           </div>
         ))}
-        {sel.segmentLayoutId && (
+        {(sel.segmentLayoutId || sel.wled.seg?.length > 0) && (
           <Field label="Remember segments at recall">
             <input type="checkbox" checked={sel.memory.segments} onChange={e=>m('segments',e.target.checked)} style={{width:18,height:18}}/>
           </Field>
@@ -1891,7 +2461,10 @@ function PresetsTab({data, update}) {
 
       {/* Memory tab */}
       {ptab==='memory' && (<div style={{display:'flex',flexDirection:'column',gap:8}}>
-        <div style={{fontSize:12,color:'var(--text3)',marginBottom:4}}>Which properties to recall when "Memory" mode is set globally.</div>
+        <div style={{fontSize:12,color:'var(--text3)',marginBottom:4,lineHeight:1.5}}>
+          When global recall is &quot;memory&quot;, only checked properties are applied from this preset.
+          Use <strong>Import from WLED</strong> to snapshot the live strip and optionally sync these flags.
+        </div>
         {Object.keys(sel.memory).map(k=>(<div key={k} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
           <span style={{fontSize:13,textTransform:'capitalize'}}>{k}</span>
           <input type="checkbox" checked={sel.memory[k]} onChange={e=>m(k,e.target.checked)} style={{width:18,height:18}}/>
@@ -1902,6 +2475,39 @@ function PresetsTab({data, update}) {
     </div>) : (<div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text3)',fontSize:14}}>
       Select a preset or click + New
     </div>)}
+
+    {showCapture && sel && (
+      <Modal title="Import from WLED" onClose={() => { setShowCapture(false); setCaptureErr(''); }} width={440}>
+        <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.55, margin: 0 }}>
+          Reads the current strip at <code style={{ fontFamily: 'monospace' }}>{wledIp.trim() || '…'}</code> via{' '}
+          <code style={{ fontFamily: 'monospace' }}>/json/state</code>. Only checked fields overwrite this preset; others stay as-is.
+        </p>
+        <div style={{ display: 'flex', gap: 8, fontSize: 11 }}>
+          <button type="button" onClick={() => setAllCaptureOpts(true)} style={btn('', { padding: '4px 10px', fontSize: 11 })}>Select all</button>
+          <button type="button" onClick={() => setAllCaptureOpts(false)} style={btn('', { padding: '4px 10px', fontSize: 11 })}>Clear all</button>
+        </div>
+        {Object.entries(WLED_CAPTURE_LABELS).map(([key, { title, hint }]) => (
+          <label key={key} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 10px', borderRadius: 8, background: 'var(--surface2)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!captureOpts[key]} onChange={() => toggleCaptureOpt(key)} style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}/>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{hint}</div>
+            </div>
+          </label>
+        ))}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', marginTop: 4 }}>
+          <input type="checkbox" checked={captureUpdateMemory} onChange={e => setCaptureUpdateMemory(e.target.checked)} style={{ width: 16, height: 16 }}/>
+          Update Memory tab flags for imported fields
+        </label>
+        {captureErr && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{captureErr}</div>}
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          <button type="button" onClick={() => { setShowCapture(false); setCaptureErr(''); }} style={btn('', { flex: 1 })} disabled={capturing}>Cancel</button>
+          <button type="button" onClick={runCaptureFromWled} style={btn('primary', { flex: 1 })} disabled={capturing}>
+            {capturing ? 'Reading…' : 'Import'}
+          </button>
+        </div>
+      </Modal>
+    )}
   </div>);
 }
 
@@ -2060,6 +2666,8 @@ function PalettesTab({data, update}) {
   const [isNew, setIsNew] = useState(false);
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
   const [capturing, setCapturing] = useState(false);
+  const [paletteApplyStatus, setPaletteApplyStatus] = useState('idle');
+  const [paletteApplyErr, setPaletteApplyErr] = useState('');
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
 
   const blankPal = () => ({id:generateId(),name:'',colors:['#a78bfa','#22c55e','#f59e0b']});
@@ -2145,6 +2753,26 @@ function PalettesTab({data, update}) {
     }
   };
 
+  const applyPaletteToWled = async (paletteId) => {
+    setPaletteApplyErr('');
+    setPaletteApplyStatus('applying');
+    const ip = wledIp.trim();
+    if (!ip) {
+      setPaletteApplyStatus('error');
+      setPaletteApplyErr('Enter a WLED IP below.');
+      return;
+    }
+    localStorage.setItem('wled-ip', ip);
+    try {
+      await applyCustomPaletteToWled(ip, paletteId, palettes);
+      setPaletteApplyStatus('ok');
+      setTimeout(() => setPaletteApplyStatus('idle'), 2500);
+    } catch (e) {
+      setPaletteApplyStatus('error');
+      setPaletteApplyErr(e.message || 'Could not reach WLED');
+    }
+  };
+
   return <div style={{display:'flex',height:'100%'}}>
     {/* List panel */}
     <div style={{width:260,background:'var(--surface)',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column'}}>
@@ -2156,13 +2784,26 @@ function PalettesTab({data, update}) {
       </div>
       <div style={{overflowY:'auto',flex:1,padding:10}}>
         {ptab==='palettes' && <>
+          <div style={{display:'flex',gap:4,marginBottom:10}}>
+            <input value={wledIp} onChange={e => { setWledIp(e.target.value); setPaletteApplyErr(''); }}
+              placeholder="4.3.2.1" title="WLED IP"
+              style={{...inputStyle,flex:1,padding:'5px 8px',fontSize:11,fontFamily:'monospace'}}/>
+          </div>
           <button onClick={()=>{setEditP(blankPal());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Palette</button>
           {palettes.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>No palettes yet</div>}
-          {palettes.map(p=>(<div key={p.id} onClick={()=>{setEditP({...p,colors:[...p.colors]});setIsNew(false);}}
-            style={{...cardStyle,cursor:'pointer',background:editP?.id===p.id?'var(--primary-dim)':'var(--surface)',marginBottom:8}}>
-            <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>{p.name}</div>
-            <PaletteGradient colors={p.colors} height={18}/>
+          {palettes.map(p=>(<div key={p.id}
+            style={{...cardStyle,display:'flex',alignItems:'center',gap:8,marginBottom:8,
+              background:editP?.id===p.id?'var(--primary-dim)':'var(--surface)',cursor:'pointer'}}
+            onClick={()=>{setEditP({...p,colors:[...p.colors]});setIsNew(false);setPaletteApplyErr('');}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:13,marginBottom:6}}>{p.name}</div>
+              <PaletteGradient colors={p.colors} height={18}/>
+            </div>
+            <button type="button" title="Apply to WLED strip" onClick={e => { e.stopPropagation(); applyPaletteToWled(p.id); }}
+              style={btn('primary',{padding:'4px 8px',fontSize:11,flexShrink:0})}>▶</button>
           </div>))}
+          {paletteApplyErr && <div style={{fontSize:10,color:'var(--danger)',lineHeight:1.4}}>{paletteApplyErr}</div>}
+          {paletteApplyStatus === 'ok' && <div style={{fontSize:10,color:'var(--success)'}}>Palette applied on WLED</div>}
         </>}
         {ptab==='colors' && <>
           <button onClick={()=>{setEditSc(blankSavedColor());setIsNew(true);}} style={{...btn('primary'),width:'100%',marginBottom:10,fontSize:12}}>+ New Saved Color</button>
@@ -2209,10 +2850,27 @@ function PalettesTab({data, update}) {
 
     {/* Palette editor */}
     {editP && ptab==='palettes' && <div style={{flex:1,overflowY:'auto',padding:20}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,flexWrap:'wrap',gap:8}}>
         <span style={{fontWeight:700,fontSize:16}}>{isNew?'New Palette':'Edit Palette'}</span>
-        {!isNew && <button onClick={()=>delPal(editP.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+        <div style={{display:'flex',gap:8}}>
+          {!isNew && (
+            <button type="button" onClick={() => applyPaletteToWled(editP.id)} disabled={paletteApplyStatus === 'applying'}
+              style={btn(paletteApplyStatus === 'ok' ? 'success' : 'primary', { fontSize: 12 })}>
+              {paletteApplyStatus === 'applying' ? 'Sending…' : paletteApplyStatus === 'ok' ? 'Active ✓' : 'Apply to WLED'}
+            </button>
+          )}
+          {!isNew && <button onClick={()=>delPal(editP.id)} style={btn('danger',{fontSize:12})}>Delete</button>}
+        </div>
       </div>
+      <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12,flexWrap:'wrap'}}>
+        <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>
+        <input value={wledIp} onChange={e => { setWledIp(e.target.value); setPaletteApplyErr(''); }}
+          placeholder="4.3.2.1" style={{...inputStyle,width:140,fontFamily:'monospace',fontSize:12}}/>
+        <span style={{fontSize:10,color:'var(--text3)'}}>Uploads all custom palettes, then sets this one active</span>
+      </div>
+      {paletteApplyErr && (
+        <div style={{fontSize:12,color:'var(--danger)',marginBottom:12,padding:'8px 12px',background:'#ef444422',borderRadius:8}}>{paletteApplyErr}</div>
+      )}
       <Field label="Name"><input value={editP.name} onChange={e=>setEditP({...editP,name:e.target.value})} placeholder="e.g. Sunset Glow" style={inputStyle} autoFocus/></Field>
       {editP.colors.length>=2 && <div style={{marginBottom:12}}><Field label="Preview"><PaletteGradient colors={editP.colors} height={36}/></Field></div>}
       <SectionHead>Colors ({editP.colors.length}/16)</SectionHead>
@@ -2412,6 +3070,7 @@ function SettingsTab({data, update}) {
     setMb({ colors });
   };
   const setAnim = (key, patch) => setMb({ animations: { ...mb.animations, [key]: { ...mb.animations[key], ...patch } } });
+  const setSwAnim = (key, patch) => setMb({ swAnimations: { ...mb.swAnimations, [key]: { ...mb.swAnimations[key], ...patch } } });
   const setPat = (key, patch) => setMb({ patterns: { ...mb.patterns, [key]: { ...mb.patterns[key], ...patch } } });
   const setSeg = (id, refs) => setMb({ segments: { ...mb.segments, [id]: refs } });
 
@@ -2433,7 +3092,7 @@ function SettingsTab({data, update}) {
   return <div style={{padding:24,maxWidth:640,overflowY:'auto',height:'100%'}}>
     <div style={{fontWeight:700,fontSize:18,marginBottom:8}}>Settings</div>
     <p style={{fontSize:12,color:'var(--text3)',marginBottom:20,lineHeight:1.6}}>
-      MagicBand+ mapping exports with your config. The Android app pushes it to the board over BLE on connect.
+      MagicBand+ mapping exports with your config. Use <strong>📡 Board</strong> in the header to push settings to the ESP32, or the Android app syncs on connect.
     </p>
 
     <SectionHead>MB → WLED Colors (32)</SectionHead>
@@ -2449,6 +3108,17 @@ function SettingsTab({data, update}) {
         </div>
       ))}
     </div>
+
+    <SectionHead>Starlight Wand → Preset (priority over MB+)</SectionHead>
+    <p style={{fontSize:12,color:'var(--text3)',marginBottom:12,lineHeight:1.5}}>
+      Named wand effects from WandSimulator (<code style={{fontFamily:'monospace'}}>sw fx rainbow</code>, etc.).
+      Requires Starlight Wand enabled on the board. Unmatched E9 packets fall through to MB mapping below.
+    </p>
+    {SW_ANIMATION_META.map(({key, label, hint})=>(
+      <MbEffectField key={key} label={label} hint={hint}
+        mapping={mb.swAnimations?.[key] || DEFAULT_MB_MAPPING.swAnimations[key]} presets={presets}
+        onChange={m=>setSwAnim(key,m)}/>
+    ))}
 
     <SectionHead>MB Animations → Preset</SectionHead>
     {MB_ANIMATION_META.map(({key,label})=>(

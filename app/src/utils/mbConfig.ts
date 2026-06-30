@@ -38,6 +38,19 @@ export type MbAnimationKey =
 /** E909 pattern nibble (top 3 bits), hex digit */
 export type MbPatternKey = '3' | '4' | '5' | '8' | 'B';
 
+/** Named Starlight Wand / WandSimulator `sw fx` presets (higher priority than MB+) */
+export type SwAnimationKey =
+  | 'rainbow'
+  | 'blink'
+  | 'palette5'
+  | 'flash'
+  | 'sparkle'
+  | 'pulse'
+  | 'circle'
+  | 'fade'
+  | 'fade2'
+  | 'wand';
+
 export interface MbEffectMapping {
   /** Saved Illuma preset id, or empty for built-in segment colors */
   presetId: string;
@@ -54,6 +67,8 @@ export interface MbMappingConfig {
   /** WLED hex per MB palette index 0–31 */
   colors: string[];
   animations: Record<MbAnimationKey, MbEffectMapping>;
+  /** Starlight Wand named effects — checked before MB+ when Starlight is enabled */
+  swAnimations: Record<SwAnimationKey, MbEffectMapping>;
   patterns: Record<MbPatternKey, MbEffectMapping>;
   segments: Record<MbSegmentId, WledSegRef[]>;
 }
@@ -89,6 +104,18 @@ export const DEFAULT_MB_MAPPING: MbMappingConfig = {
     E912: { presetId: '', colorSlots: [2, 8] },
     E913: { presetId: '', colorSlots: [1, 5] },
     wand: { presetId: '', colorSlots: [] },
+  },
+  swAnimations: {
+    wand:     { presetId: '', colorSlots: [] },
+    rainbow:  { presetId: '', colorSlots: [0, 2, 21, 8, 18] },
+    blink:    { presetId: '', colorSlots: [27] },
+    palette5: { presetId: '', colorSlots: [0, 2, 8, 21, 18] },
+    flash:    { presetId: '', colorSlots: [1, 27] },
+    sparkle:  { presetId: '', colorSlots: [2] },
+    pulse:    { presetId: '', colorSlots: [1] },
+    circle:   { presetId: '', colorSlots: [2, 8] },
+    fade:     { presetId: '', colorSlots: [0, 8] },
+    fade2:    { presetId: '', colorSlots: [8, 18] },
   },
   patterns: {
     '3': { presetId: '', colorSlots: [] },  // spin → segment solids unless preset set
@@ -138,7 +165,20 @@ export const MB_ANIMATION_META: { key: MbAnimationKey; label: string }[] = [
   { key: 'E911', label: 'Cross-fade' },
   { key: 'E912', label: 'Circle' },
   { key: 'E913', label: 'Pulse' },
-  { key: 'wand', label: 'Starlight Wand cast' },
+  { key: 'wand', label: 'Starlight Wand cast (legacy — use SW Animations)' },
+];
+
+export const SW_ANIMATION_META: { key: SwAnimationKey; label: string; hint: string }[] = [
+  { key: 'wand',     label: 'Color cast',              hint: 'CF0B / CF9B palette transfer' },
+  { key: 'rainbow',  label: 'rainbow',                 hint: 'E90C Taste the Rainbow' },
+  { key: 'blink',    label: 'blink',                   hint: 'E90C white blink' },
+  { key: 'palette5', label: 'palette5',              hint: 'E90C five-palette cycle' },
+  { key: 'flash',    label: 'flash',                   hint: 'E90E purple/white flash' },
+  { key: 'sparkle',  label: 'sparkle',                 hint: 'E910 blue sparkle' },
+  { key: 'pulse',    label: 'pulse',                   hint: 'E913 purple pulse' },
+  { key: 'circle',   label: 'circle',                  hint: 'E912 blue circle' },
+  { key: 'fade',     label: 'fade',                    hint: 'E911 cyan → pink' },
+  { key: 'fade2',    label: 'fade2',                   hint: 'E911 pink → green' },
 ];
 
 export const MB_PATTERN_META: { key: MbPatternKey; label: string }[] = [
@@ -168,9 +208,23 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
       colorSlots: Array.isArray(v.colorSlots) ? [...v.colorSlots] : [...fallback.colorSlots],
     };
   };
+  const normEffectDirect = (v: MbEffectMapping | undefined, fallback: MbEffectMapping): MbEffectMapping => {
+    if (!v) return { ...fallback };
+    if (typeof v === 'string') return { presetId: v, colorSlots: [...fallback.colorSlots] };
+    return {
+      presetId: v.presetId ?? '',
+      colorSlots: Array.isArray(v.colorSlots) ? [...v.colorSlots] : [...fallback.colorSlots],
+    };
+  };
   const animations = {} as Record<MbAnimationKey, MbEffectMapping>;
   for (const { key } of MB_ANIMATION_META) {
     animations[key] = normEffect(key, d.animations[key]);
+  }
+  const swAnimations = {} as Record<SwAnimationKey, MbEffectMapping>;
+  for (const { key } of SW_ANIMATION_META) {
+    const fromSw = (raw as MbMappingConfig).swAnimations?.[key];
+    const fromLegacy = key === 'wand' ? raw.animations?.wand : undefined;
+    swAnimations[key] = normEffectDirect(fromSw ?? fromLegacy, d.swAnimations[key]);
   }
   const patterns = {} as Record<MbPatternKey, MbEffectMapping>;
   for (const { key } of MB_PATTERN_META) {
@@ -183,7 +237,7 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
       ? src.map(s => ({ id: s.id ?? 0, start: s.start, stop: s.stop }))
       : d.segments[id].map(s => ({ ...s }));
   }
-  return { version: 1, colors, animations, patterns, segments };
+  return { version: 1, colors, animations, swAnimations, patterns, segments };
 }
 
 /** Firmware BLE payload */
@@ -205,6 +259,10 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
   for (const [k, v] of Object.entries(config.animations)) {
     animations[k] = mapEffect(v);
   }
+  const swAnimations: Record<string, object> = {};
+  for (const [k, v] of Object.entries(config.swAnimations)) {
+    swAnimations[k] = mapEffect(v);
+  }
   const patterns: Record<string, object> = {};
   for (const [k, v] of Object.entries(config.patterns)) {
     patterns[k] = mapEffect(v);
@@ -213,6 +271,7 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
     version: 1,
     colors,
     animations,
+    swAnimations,
     patterns,
     segments: config.segments,
   };

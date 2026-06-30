@@ -65,7 +65,8 @@ export default function HomeScreen() {
         const label = `Wand [${msg.reason}] ${msg.hex} (${msg.len}b)`;
         setEvents(prev => [label, ...prev].slice(0, 12));
       } else if (msg.type === 'sw_event') {
-        setEvents(prev => [`Wand: ${String(msg.event)}`, ...prev].slice(0, 12));
+        const name = msg.name ? ` (${msg.name})` : '';
+        setEvents(prev => [`Wand: ${String(msg.event)}${name}`, ...prev].slice(0, 12));
       } else if (msg.type === 'ble_event' || msg.type === 'ble_color') {
         const label = msg.type === 'ble_color'
           ? `MB+ color → R${msg.r} G${msg.g} B${msg.b}`

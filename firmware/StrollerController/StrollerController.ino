@@ -51,12 +51,18 @@ struct MbEffectMap {
   uint8_t colorSlotCount;
 };
 
+enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC, BLE_STARLIGHT };
+
 static const char* MB_SEG_KEYS[] = {
   "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
   "band0", "band1", "band2", "band3", "band4"
 };
 static const char* MB_ANIM_KEYS[] = { "E90C", "E90E", "E90F", "E910", "E911", "E912", "E913", "wand" };
 static const char* MB_PAT_KEYS[]  = { "3", "4", "5", "8", "B" };
+static const char* SW_ANIM_KEYS[] = {
+  "rainbow", "blink", "palette5", "flash", "sparkle", "pulse", "circle", "fade", "fade2", "wand"
+};
+#define SW_ANIM_COUNT 10
 
 static const uint8_t MB_DEFAULT_COLORS[32][3] = {
   {0,255,255},{153,0,255},{0,0,255},{0,0,128},{0,102,255},{204,68,255},{204,153,255},{119,0,204},
@@ -79,7 +85,18 @@ NimBLEServer*         bleServer    = nullptr;
 NimBLECharacteristic* notifyChar   = nullptr;
 bool                  bleConnected = false;
 
-enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC, BLE_STARLIGHT };
+// Reassemble large CMD writes from Web Bluetooth (512-byte GATT limit)
+String cmdChunkBuffer;
+int    cmdChunkNextSeq = 0;
+
+void resetCmdChunkBuffer() {
+  cmdChunkBuffer = "";
+  cmdChunkNextSeq = 0;
+}
+
+void processBleCmdChunk(int seq, bool last, const String& data);
+void handleBLECommand(const String& msg);
+
 OverrideSource currentOverride    = NONE;
 bool           overrideKillOnZone = false;
 unsigned long  overrideTimestamp  = 0;
@@ -164,6 +181,55 @@ bool   wledWasConnected   = false;
 uint8_t mbWledColors[32][3];
 MbSegMap mbSegMaps[13];  // parallel to segment key order in JSON
 MbEffectMap mbAnimMap[8];   // E90C,E90E,E90F,E910,E911,E912,E913,wand
+MbEffectMap swAnimMap[SW_ANIM_COUNT];
+
+// WandSimulator / Adafruit named SW fx payloads (full E1/E2-wrapped E9 packets)
+static const uint8_t SW_PRESET_RAINBOW[] = {
+  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0x5D,0x46,0x5B,0xF0,0x05,0x32,0x37,0x48,0xB0
+};
+static const uint8_t SW_PRESET_BLINK[] = {
+  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0x5D,0x46,0x5B,0xF0,0x05,0x32,0x37,0x48,0x95
+};
+static const uint8_t SW_PRESET_PALETTE5[] = {
+  0xE1,0x00,0xE9,0x0C,0x00,0x0F,0x0F,0xB1,0xB9,0xB5,0xB1,0xA2,0x30,0x7B,0x7D,0xB0
+};
+static const uint8_t SW_PRESET_FLASH[] = {
+  0xE1,0x00,0xE9,0x0E,0x00,0x01,0x0F,0xBD,0xA0,0xA0,0xBD,0xA0,0x59,0x07,0x00,0x48,0xAE,0xB5
+};
+static const uint8_t SW_PRESET_SPARKLE[] = {
+  0xE1,0x00,0xE9,0x10,0x00,0x13,0x48,0x97,0xD0,0x0E,0xA0,0xD1,0x46,0x06,0x0F,0x30,0xD0,0x4E,0x07,0xB0
+};
+static const uint8_t SW_PRESET_PULSE[] = {
+  0xE1,0x00,0xE9,0x13,0x00,0x02,0xD0,0x37,0xF0,0xD2,0x3D,0x05,0x05,0x00,0x0E,0xFA,0x89,0x83,0x51,0x0E,0xE7,0xA0,0xB0
+};
+static const uint8_t SW_PRESET_CIRCLE[] = {
+  0xE2,0x00,0xE9,0x12,0x00,0x03,0x0F,0xA2,0xA2,0xA4,0xA4,0xA2,0x30,0xD0,0x37,0xF4,0xD2,0x46,0x00,0x64,0xFC,0xB8
+};
+static const uint8_t SW_PRESET_FADE[] = {
+  0xE1,0x00,0xE9,0x11,0x00,0x6F,0x0F,0x56,0x48,0x58,0xF4,0x48,0x82,0xD1,0x46,0x02,0x08,0xD0,0x65,0x00,0xB0
+};
+static const uint8_t SW_PRESET_FADE2[] = {
+  0xE1,0x00,0xE9,0x11,0x00,0x0F,0x0F,0x48,0x59,0x58,0xF4,0x48,0x82,0xD1,0x46,0x02,0x0D,0xD0,0x65,0x05,0xB0
+};
+
+struct SwFxSignature {
+  const char* key;
+  const uint8_t* data;
+  size_t len;
+};
+
+static const SwFxSignature SW_FX_SIGNATURES[] = {
+  { "rainbow",  SW_PRESET_RAINBOW,  sizeof(SW_PRESET_RAINBOW) },
+  { "blink",    SW_PRESET_BLINK,    sizeof(SW_PRESET_BLINK) },
+  { "palette5", SW_PRESET_PALETTE5, sizeof(SW_PRESET_PALETTE5) },
+  { "flash",    SW_PRESET_FLASH,    sizeof(SW_PRESET_FLASH) },
+  { "sparkle",  SW_PRESET_SPARKLE,  sizeof(SW_PRESET_SPARKLE) },
+  { "pulse",    SW_PRESET_PULSE,    sizeof(SW_PRESET_PULSE) },
+  { "circle",   SW_PRESET_CIRCLE,   sizeof(SW_PRESET_CIRCLE) },
+  { "fade",     SW_PRESET_FADE,     sizeof(SW_PRESET_FADE) },
+  { "fade2",    SW_PRESET_FADE2,    sizeof(SW_PRESET_FADE2) },
+};
+static const size_t SW_FX_SIGNATURE_COUNT = sizeof(SW_FX_SIGNATURES) / sizeof(SW_FX_SIGNATURES[0]);
 MbEffectMap mbPatMap[5];    // 3,4,5,8,B
 
 // WiFi reconnect
@@ -497,6 +563,7 @@ void loadMbMappingDefaults() {
     }
   }
   for (int i = 0; i < 8; i++) { mbAnimMap[i].presetId = ""; mbAnimMap[i].colorSlotCount = 0; }
+  for (int i = 0; i < SW_ANIM_COUNT; i++) { swAnimMap[i].presetId = ""; swAnimMap[i].colorSlotCount = 0; }
   for (int i = 0; i < 5; i++) { mbPatMap[i].presetId = ""; mbPatMap[i].colorSlotCount = 0; }
 }
 
@@ -557,6 +624,15 @@ void loadMbMappingFromJson() {
     for (int i = 0; i < 8; i++) {
       if (anims.containsKey(MB_ANIM_KEYS[i])) parseEffectMap(anims[MB_ANIM_KEYS[i]], mbAnimMap[i]);
     }
+  }
+  if (doc.containsKey("swAnimations")) {
+    JsonObject swAnims = doc["swAnimations"];
+    for (int i = 0; i < SW_ANIM_COUNT; i++) {
+      if (swAnims.containsKey(SW_ANIM_KEYS[i])) parseEffectMap(swAnims[SW_ANIM_KEYS[i]], swAnimMap[i]);
+    }
+  } else if (doc.containsKey("animations")) {
+    JsonObject anims = doc["animations"];
+    if (anims.containsKey("wand")) parseEffectMap(anims["wand"], swAnimMap[9]);
   }
   if (doc.containsKey("patterns")) {
     JsonObject pats = doc["patterns"];
@@ -727,6 +803,90 @@ bool applyMbAnimationKey(const char* key, const uint8_t* pals, int palCount, Ove
   return false;
 }
 
+bool applySwAnimationKey(const char* key, const uint8_t* pals, int palCount, OverrideSource src) {
+  for (int i = 0; i < SW_ANIM_COUNT; i++) {
+    if (strcmp(key, SW_ANIM_KEYS[i]) != 0) continue;
+    if (applyMbPresetWithColors(swAnimMap[i], pals, palCount, src)) return true;
+    return false;
+  }
+  return false;
+}
+
+bool swPayloadMatchesRef(const uint8_t* payload, size_t plen, const uint8_t* ref, size_t refLen) {
+  if (plen == refLen && memcmp(payload, ref, refLen) == 0) return true;
+  if (plen >= 2 && payload[0] == 0xE9 && refLen >= 4 && ref[2] == 0xE9) {
+    size_t innerLen = refLen - 2;
+    if (plen == innerLen && memcmp(payload, ref + 2, innerLen) == 0) return true;
+  }
+  return false;
+}
+
+const char* identifySwFxPreset(const uint8_t* payload, size_t plen) {
+  for (size_t i = 0; i < SW_FX_SIGNATURE_COUNT; i++) {
+    if (swPayloadMatchesRef(payload, plen, SW_FX_SIGNATURES[i].data, SW_FX_SIGNATURES[i].len)) {
+      return SW_FX_SIGNATURES[i].key;
+    }
+  }
+  uint16_t func = 0;
+  if (plen >= 4 && (payload[0] == 0xE1 || payload[0] == 0xE2) && payload[2] == 0xE9) {
+    func = ((uint16_t)payload[2] << 8) | payload[3];
+  } else if (plen >= 2 && payload[0] == 0xE9) {
+    func = ((uint16_t)payload[0] << 8) | payload[1];
+  }
+  switch (func) {
+    case 0xE90E: return "flash";
+    case 0xE910: return "sparkle";
+    case 0xE912: return "circle";
+    case 0xE913: return "pulse";
+    case 0xE911: return "fade";
+    default: return nullptr;
+  }
+}
+
+void applySwAnimFallbackSolid(OverrideSource src) {
+  saveWledStateForOverride();
+  uint8_t id0 = 0;
+  String body = "{\"on\":true,\"seg\":[";
+  bool first = true;
+  appendDisableInactiveSegments(body, first, &id0, 1, false);
+  body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) + ",\"fx\":0}";
+  body += "]}";
+  sendToWLEDForBleEffect(body);
+  setOverride(src);
+  touchOverrideIdleTimer(src);
+}
+
+void applySwAnimOpcode(const char* swKey, const char* label) {
+  if (!starlightEnabled || !swKey) return;
+  if (!canTakeOverride(BLE_STARLIGHT)) {
+    bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
+    return;
+  }
+  if (applySwAnimationKey(swKey, nullptr, 0, BLE_STARLIGHT)) {
+    bleNotify("{\"type\":\"sw_event\",\"event\":\"fx\",\"name\":\"" + String(swKey) + "\"}");
+    return;
+  }
+  applySwAnimFallbackSolid(BLE_STARLIGHT);
+  bleNotify("{\"type\":\"sw_event\",\"event\":\"" + String(label) + "\",\"name\":\"" + String(swKey) + "\"}");
+}
+
+bool tryApplySwE9Payload(const uint8_t* payload, size_t plen, const char* mbFallbackKey, const char* label) {
+  if (!starlightEnabled) return false;
+  const char* swKey = identifySwFxPreset(payload, plen);
+  if (!swKey) return false;
+  if (!canTakeOverride(BLE_STARLIGHT)) {
+    bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
+    return true;
+  }
+  if (applySwAnimationKey(swKey, nullptr, 0, BLE_STARLIGHT)) {
+    bleNotify("{\"type\":\"sw_event\",\"event\":\"fx\",\"name\":\"" + String(swKey) + "\"}");
+    return true;
+  }
+  applySwAnimFallbackSolid(BLE_STARLIGHT);
+  bleNotify("{\"type\":\"sw_event\",\"event\":\"" + String(label) + "\",\"name\":\"" + String(swKey) + "\"}");
+  return true;
+}
+
 bool applyMbPatternKey(const char* patKey, const uint8_t* pals, int palCount, OverrideSource src) {
   for (int i = 0; i < 5; i++) {
     if (strcmp(patKey, MB_PAT_KEYS[i]) != 0) continue;
@@ -879,6 +1039,28 @@ bool zoneWantsPreset(const String& presetId) {
 // BLE COMMAND HANDLER
 // ─────────────────────────────────────────────
 
+void processBleCmdChunk(int seq, bool last, const String& data) {
+  if (seq == 0) resetCmdChunkBuffer();
+  if (seq != cmdChunkNextSeq) {
+    Serial.printf("[BLE] Chunk seq mismatch (got %d, expected %d)\n", seq, cmdChunkNextSeq);
+    resetCmdChunkBuffer();
+    return;
+  }
+  if (cmdChunkBuffer.length() + data.length() > 8192) {
+    Serial.println("[BLE] Chunk buffer overflow, aborting");
+    resetCmdChunkBuffer();
+    return;
+  }
+  cmdChunkBuffer += data;
+  cmdChunkNextSeq++;
+  if (last) {
+    String complete = cmdChunkBuffer;
+    resetCmdChunkBuffer();
+    Serial.printf("[BLE] Chunk assembly complete (%u bytes)\n", (unsigned)complete.length());
+    handleBLECommand(complete);
+  }
+}
+
 void handleBLECommand(const String& msg) {
   DynamicJsonDocument doc(4096);
   DeserializationError err = deserializeJson(doc, msg);
@@ -888,6 +1070,11 @@ void handleBLECommand(const String& msg) {
   }
 
   String type = doc["type"].as<String>();
+
+  if (type == "ble_cmd_chunk") {
+    processBleCmdChunk(doc["seq"].as<int>(), doc["last"].as<bool>(), doc["data"].as<String>());
+    return;
+  }
 
   // ── Preset management ──
   if (type == "preset_save") {
@@ -1101,6 +1288,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   }
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
     bleConnected = false;
+    resetCmdChunkBuffer();
     Serial.println("[BLE] App disconnected — restarting advertising");
     NimBLEDevice::startAdvertising();
   }
@@ -1377,6 +1565,13 @@ void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
     return;
   }
   uint8_t pals[1] = { paletteIdx };
+  if (applySwAnimationKey("wand", pals, 1, src)) {
+    if (src == BLE_STARLIGHT) {
+      bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
+                ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
+    }
+    return;
+  }
   if (applyMbAnimationKey("wand", pals, 1, src)) {
     if (src == BLE_STARLIGHT) {
       bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
@@ -1462,15 +1657,14 @@ void applyMbAnimOpcode(const char* animKey, const char* label) {
 
 // E1/E2-wrapped MagicBand+ commands (payload after 0x8301)
 void handleE1E2Payload(const uint8_t* payload, size_t plen) {
-  if (!magicBandEnabled) return;
   if (plen < 5 || payload[2] != 0xE9) return;
-  if (!canTakeOverride(BLE_MAGIC)) return;
 
   uint16_t func = ((uint16_t)payload[2] << 8) | payload[3];
   Serial.printf("[MB+] func=0x%04X len=%u\n", func, (unsigned)plen);
 
   switch (func) {
     case 0xE905:
+      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
       if (plen < 9) return;
       applyMbSingle(payload[7], BLE_MAGIC);
       {
@@ -1480,6 +1674,7 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       }
       break;
     case 0xE906:
+      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
       if (plen < 10) return;
       applyMbDual(payload[7], payload[8], BLE_MAGIC);
       {
@@ -1489,6 +1684,7 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       }
       break;
     case 0xE908: {
+      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
       if (plen < 12) return;
       uint8_t r = ((payload[8] >> 1) & 0x3F) * 4;
       uint8_t g = ((payload[9] >> 1) & 0x3F) * 4;
@@ -1498,6 +1694,7 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       break;
     }
     case 0xE909:
+      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
       if (plen < 13) return;
       {
         uint8_t pat = (payload[7] >> 5) & 0x07;
@@ -1508,38 +1705,48 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       }
       break;
     case 0xE90C:
-      applyMbAnimOpcode("E90C", "show_fx");
+      if (!tryApplySwE9Payload(payload, plen, "E90C", "show_fx"))
+        applyMbAnimOpcode("E90C", "show_fx");
       break;
     case 0xE90E:
-      applyMbAnimOpcode("E90E", "flash");
+      if (!tryApplySwE9Payload(payload, plen, "E90E", "flash"))
+        applyMbAnimOpcode("E90E", "flash");
       break;
     case 0xE90F:
-      applyMbAnimOpcode("E90F", "animation");
+      if (magicBandEnabled && canTakeOverride(BLE_MAGIC))
+        applyMbAnimOpcode("E90F", "animation");
       break;
     case 0xE910:
-      applyMbAnimOpcode("E910", "animation");
+      if (!tryApplySwE9Payload(payload, plen, "E910", "animation"))
+        applyMbAnimOpcode("E910", "animation");
       break;
     case 0xE911:
-      applyMbAnimOpcode("E911", "animation");
+      if (!tryApplySwE9Payload(payload, plen, "E911", "animation"))
+        applyMbAnimOpcode("E911", "animation");
       break;
     case 0xE912:
-      applyMbAnimOpcode("E912", "animation");
+      if (!tryApplySwE9Payload(payload, plen, "E912", "animation"))
+        applyMbAnimOpcode("E912", "animation");
       break;
     case 0xE913:
-      applyMbAnimOpcode("E913", "animation");
+      if (!tryApplySwE9Payload(payload, plen, "E913", "animation"))
+        applyMbAnimOpcode("E913", "animation");
       break;
     default:
       Serial.printf("[MB+] unhandled func 0x%04X\n", func);
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"animation\"}");
+      if (magicBandEnabled && canTakeOverride(BLE_MAGIC))
+        bleNotify("{\"type\":\"ble_event\",\"event\":\"animation\"}");
       break;
   }
 }
 
 // Park show commands (direct E9, no E1/E2 wrapper)
 void handleShowPayload(const uint8_t* payload, size_t plen) {
-  if (!magicBandEnabled || plen < 2 || payload[0] != 0xE9) return;
-  if (!canTakeOverride(BLE_MAGIC)) return;
+  if (plen < 2 || payload[0] != 0xE9) return;
   Serial.printf("[MB+] show E9 %02X len=%u\n", payload[1], (unsigned)plen);
+  if (tryApplySwE9Payload(payload, plen, "E90C", "show")) return;
+  if (!magicBandEnabled) return;
+  if (!canTakeOverride(BLE_MAGIC)) return;
   applyMbAnimOpcode("E90C", "show");
 }
 

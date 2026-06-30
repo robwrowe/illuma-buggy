@@ -193,7 +193,7 @@ export default function SettingsScreen() {
       {/* Starlight Wand */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Starlight Wand Effects</Text>
-        <Text style={s.sectionHint}>Highest priority. Detects 0xCF9B wand broadcasts at home or in-park.</Text>
+        <Text style={s.sectionHint}>Highest priority. Detects wand casts and named E9 fx (rainbow, sparkle, …). Map presets under MagicBand Mapping → Starlight Wand.</Text>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>Enable wand effects</Text>

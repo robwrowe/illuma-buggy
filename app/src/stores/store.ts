@@ -135,6 +135,7 @@ export {
 export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
 export {
   DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
+  SW_ANIMATION_META,
   normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
 

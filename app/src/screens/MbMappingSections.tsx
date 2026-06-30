@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
 import {
-  MbMappingConfig, MbEffectMapping, MbSegmentId, WledSegRef,
+  MbMappingConfig, MbEffectMapping, MbSegmentId, WledSegRef, SwAnimationKey,
   MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
-  DEFAULT_MB_MAPPING,
+  SW_ANIMATION_META, DEFAULT_MB_MAPPING,
 } from '../utils/mbConfig';
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
@@ -17,7 +17,7 @@ type Colors = ReturnType<typeof import('../utils/theme').useTheme>['colors'];
 
 export function MbMappingSections({ colors, isConnected }: { colors: Colors; isConnected: boolean }) {
   const { mbMapping, setMbMapping, presets, saveToStorage } = useAppStore();
-  const [expanded, setExpanded] = useState<'colors' | 'anim' | 'pat' | 'seg' | null>('colors');
+  const [expanded, setExpanded] = useState<'colors' | 'sw' | 'anim' | 'pat' | 'seg' | null>('colors');
 
   const push = (next: MbMappingConfig) => {
     setMbMapping(next);
@@ -44,12 +44,16 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
   };
 
   const setEffect = (
-    kind: 'animations' | 'patterns',
+    kind: 'animations' | 'patterns' | 'swAnimations',
     key: string,
     patch: Partial<MbEffectMapping>,
   ) => {
     const block = { ...mbMapping[kind], [key]: { ...mbMapping[kind][key as keyof typeof mbMapping.animations], ...patch } };
     push({ ...mbMapping, [kind]: block as MbMappingConfig[typeof kind] });
+  };
+
+  const setSwEffect = (key: SwAnimationKey, patch: Partial<MbEffectMapping>) => {
+    setEffect('swAnimations', key, patch);
   };
 
   const setSegRefs = (segId: MbSegmentId, refs: WledSegRef[]) => {
@@ -88,6 +92,35 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
             onChangeText={v => setColor(idx, v)} autoCapitalize="none" />
         </View>
       ))}
+
+      <SectionToggle title="Starlight Wand → Preset (priority over MB+)" open={expanded === 'sw'}
+        onPress={() => setExpanded(expanded === 'sw' ? null : 'sw')} colors={colors} />
+      {expanded === 'sw' && (
+        <>
+          <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 8 }}>
+            Named wand effects from WandSimulator / in-park E9 broadcasts. Requires Starlight Wand enabled in Settings.
+          </Text>
+          {SW_ANIMATION_META.map(({ key, label, hint }) => {
+            const m = mbMapping.swAnimations[key];
+            const presetName = m.presetId ? (presets.find(p => p.id === m.presetId)?.name ?? m.presetId) : 'Built-in';
+            return (
+              <View key={key} style={s.effectRow}>
+                <Text style={s.label}>{label}</Text>
+                <Text style={{ color: colors.textMuted, fontSize: 11 }}>{hint}</Text>
+                <TouchableOpacity onPress={() => pickPreset(label, m.presetId, id => setSwEffect(key, { presetId: id }))}>
+                  <Text style={s.link}>{presetName}</Text>
+                </TouchableOpacity>
+                <TextInput style={s.slotsInput} placeholder="color slots 0-31"
+                  value={m.colorSlots.join(',')}
+                  onChangeText={v => {
+                    const colorSlots = v.split(',').map(x => parseInt(x.trim(), 10)).filter(n => !isNaN(n) && n >= 0 && n <= 31);
+                    setSwEffect(key, { colorSlots });
+                  }} />
+              </View>
+            );
+          })}
+        </>
+      )}
 
       <SectionToggle title="MB Animations → Preset" open={expanded === 'anim'}
         onPress={() => setExpanded(expanded === 'anim' ? null : 'anim')} colors={colors} />
