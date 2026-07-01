@@ -3707,8 +3707,11 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
       <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 6 }}>Assigned segments</div>
       {list.length === 0 ? (
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>No segments — add manually or capture from WLED.</div>
-      ) : list.map((ref, index) => (
-        <div key={`${ref.id}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+      ) : list.map((ref, index) => {
+        const seg = withSegRefDefaults(ref);
+        return (
+        <div key={`${ref.id}-${index}`} style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 10, color: 'var(--text3)' }}>id</span>
           <input style={{ ...segInput, width: 36 }} value={ref.id} inputMode="numeric"
             onChange={e => patchRef(index, 'id', e.target.value)} />
@@ -3729,48 +3732,50 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
             style={btn('', { padding: '2px 8px', fontSize: 11, background: 'var(--bg)', border: '1px solid var(--border)' })}>
             {advancedOpen === index ? '▴' : '▾'} Advanced
           </button>
+          </div>
           {advancedOpen === index && (
-            <div style={{ width: '100%', marginTop: 6, padding: 8, background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
+            <div style={{ marginTop: 6, padding: 8, background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
                 {['grp', 'spc', 'of'].map(f => (
                   <label key={f} style={{ fontSize: 10, color: 'var(--text2)' }}>{f}
-                    <input style={{ ...segInput, width: '100%', marginTop: 2 }} value={cur[f] ?? (f === 'grp' ? 1 : 0)}
+                    <input style={{ ...segInput, width: '100%', marginTop: 2 }} value={seg[f] ?? (f === 'grp' ? 1 : 0)}
                       inputMode="numeric" onChange={e => patchRef(index, f, e.target.value)} />
                   </label>
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 12 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <input type="checkbox" checked={!!cur.rev} onChange={e => patchRef(index, 'rev', e.target.checked)} /> rev
+                  <input type="checkbox" checked={!!seg.rev} onChange={e => patchRef(index, 'rev', e.target.checked)} /> rev
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <input type="checkbox" checked={!!cur.mi} onChange={e => patchRef(index, 'mi', e.target.checked)} /> mi
+                  <input type="checkbox" checked={!!seg.mi} onChange={e => patchRef(index, 'mi', e.target.checked)} /> mi
                 </label>
               </div>
               <div style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 4 }}>Effect</div>
-                <SearchableSelect value={String(cur.fx ?? -1)} allowEmpty={false}
+                <SearchableSelect value={String(seg.fx ?? -1)} allowEmpty={false}
                   onChange={v => patchRef(index, 'fx', v)} placeholder="Solid" options={fxOpts} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                 <label style={{ fontSize: 10, color: 'var(--text2)' }}>sx
-                  <input type="range" min={0} max={255} value={cur.sx ?? 128} style={{ width: '100%' }}
+                  <input type="range" min={0} max={255} value={seg.sx ?? 128} style={{ width: '100%' }}
                     onChange={e => patchRef(index, 'sx', e.target.value)} />
                 </label>
                 <label style={{ fontSize: 10, color: 'var(--text2)' }}>ix
-                  <input type="range" min={0} max={255} value={cur.ix ?? 128} style={{ width: '100%' }}
+                  <input type="range" min={0} max={255} value={seg.ix ?? 128} style={{ width: '100%' }}
                     onChange={e => patchRef(index, 'ix', e.target.value)} />
                 </label>
               </div>
               <div>
                 <div style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 4 }}>Palette override</div>
-                <SearchableSelect value={String(cur.pal ?? -1)} allowEmpty={false}
+                <SearchableSelect value={String(seg.pal ?? -1)} allowEmpty={false}
                   onChange={v => patchRef(index, 'pal', v)} placeholder="None" options={palOpts} />
               </div>
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
       <button type="button" onClick={() => onChange(appendSegRef(list, defaultNewSegRef(list)))}
         style={btn('', { padding: '4px 0', fontSize: 12, fontWeight: 600, color: 'var(--primary)', background: 'none', border: 'none', marginBottom: hasSnapshot ? 10 : 0 })}>
         + Add segment
