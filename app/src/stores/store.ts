@@ -209,9 +209,11 @@ interface AppState {
   updateIndoorZone:  (id: string, zone: Partial<IndoorZone>) => void;
   removeIndoorZone:  (id: string) => void;
 
-  // Active zones (set by useZoneManager)
+  // Active zones + GPS (set by useZoneManager)
   activeZoneIds:    string[];
   setActiveZoneIds: (ids: string[]) => void;
+  userLocation:     LatLng | null;
+  setUserLocation:  (loc: LatLng | null) => void;
 
   // Brightness
   brightnessConfig:    BrightnessConfig;
@@ -351,6 +353,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   zones:               [],
   indoorZones:         [],
   activeZoneIds:       [],
+  userLocation:        null,
   deviceStatus:        null,
   overrideDetail:      null,
   overrideKillOnZone:  false,
@@ -448,6 +451,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateIndoorZone: (id, zone)  => set(s => ({ indoorZones: s.indoorZones.map(z => z.id === id ? { ...z, ...zone } : z) })),
   removeIndoorZone: (id)        => set(s => ({ indoorZones: s.indoorZones.filter(z => z.id !== id) })),
   setActiveZoneIds: (activeZoneIds) => set({ activeZoneIds }),
+  setUserLocation:  (userLocation)  => set({ userLocation }),
 
   // Brightness
   setBrightnessConfig: (config) => set(s => ({ brightnessConfig: { ...s.brightnessConfig, ...config } })),

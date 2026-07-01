@@ -1,16 +1,32 @@
 import { useEffect, useRef } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import * as Location from 'expo-location';
-import { useAppStore, Zone } from '../stores/store';
+import { useAppStore, Zone, LatLng } from '../stores/store';
 import { findContainingZone, findContainingIndoorZone, pointInPolygon, sunBasedBrightness } from '../utils/utils';
 import { resolveActivePark } from '../utils/resolveActivePark';
 import { bleService } from '../services/BLEService';
 
-const GPS_INTERVAL_MS    = 3000;
+/** Foreground + zone triggers enabled */
+const GPS_ACTIVE_MS = 8000;
+const GPS_ACTIVE_M  = 12;
+/** Foreground + zone triggers paused — still need indoor/brightness */
+const GPS_IDLE_MS   = 30000;
+const GPS_IDLE_M    = 25;
+
 const BRIGHTNESS_RAMP_MS = 2000;
 
+function watchOptions(zonesEnabled: boolean): Location.LocationOptions {
+  return {
+    accuracy: Location.Accuracy.Balanced,
+    timeInterval: zonesEnabled ? GPS_ACTIVE_MS : GPS_IDLE_MS,
+    distanceInterval: zonesEnabled ? GPS_ACTIVE_M : GPS_IDLE_M,
+  };
+}
+
 export function useZoneManager() {
-  const currentZoneRef    = useRef<Zone | null>(null);
-  const isIndoorRef       = useRef(false);
+  const currentZoneRef     = useRef<Zone | null>(null);
+  const isIndoorRef        = useRef(false);
+  const lastBrightnessRef  = useRef<number | null>(null);
   const brightnessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const zonesRef              = useRef(useAppStore.getState().zones);
@@ -20,6 +36,7 @@ export function useZoneManager() {
   const brightnessConfigRef   = useRef(useAppStore.getState().brightnessConfig);
   const zonesEnabledRef       = useRef(useAppStore.getState().zonesEnabled);
   const setActiveZoneIdsRef   = useRef(useAppStore.getState().setActiveZoneIds);
+  const setUserLocationRef    = useRef(useAppStore.getState().setUserLocation);
 
   useEffect(() => {
     return useAppStore.subscribe((state) => {
@@ -30,65 +47,110 @@ export function useZoneManager() {
       brightnessConfigRef.current = state.brightnessConfig;
       zonesEnabledRef.current     = state.zonesEnabled;
       setActiveZoneIdsRef.current = state.setActiveZoneIds;
+      setUserLocationRef.current  = state.setUserLocation;
     });
   }, []);
 
   useEffect(() => {
     let watchSub: Location.LocationSubscription | null = null;
+    let appState: AppStateStatus = AppState.currentState;
+    let permissionGranted = false;
 
-    const start = async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') { console.warn('[Zone] Location permission denied'); return; }
+    const sendBrightnessIfChanged = (value: number) => {
+      if (lastBrightnessRef.current === value) return;
+      lastBrightnessRef.current = value;
+      bleService.sendBrightness(value);
+    };
 
-      watchSub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, timeInterval: GPS_INTERVAL_MS, distanceInterval: 5 },
-        (loc) => {
-          const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-          const zones           = zonesRef.current;
-          const indoorZones     = indoorZonesRef.current;
-          const parks           = parksRef.current;
-          const setActivePark   = setActiveParkRef.current;
-          const bc              = brightnessConfigRef.current;
-          const zonesEnabled    = zonesEnabledRef.current;
-          const setActive       = setActiveZoneIdsRef.current;
+    const handleLocation = (pt: LatLng) => {
+      const zones           = zonesRef.current;
+      const indoorZones     = indoorZonesRef.current;
+      const parks           = parksRef.current;
+      const setActivePark   = setActiveParkRef.current;
+      const bc              = brightnessConfigRef.current;
+      const zonesEnabled    = zonesEnabledRef.current;
+      const setActive       = setActiveZoneIdsRef.current;
 
-          setActivePark(resolveActivePark(pt, parks, zones, indoorZones));
+      setUserLocationRef.current(pt);
+      setActivePark(resolveActivePark(pt, parks, zones, indoorZones));
 
-          // Update active zone IDs in store (for HomeScreen display)
-          const activeIds = zones.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
-          setActive(activeIds);
+      const activeIds = zones.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
+      setActive(activeIds);
 
-          // Indoor brightness
-          const nowIndoor = findContainingIndoorZone(pt, indoorZones) !== null;
-          if (nowIndoor !== isIndoorRef.current) {
-            isIndoorRef.current = nowIndoor;
-            if (brightnessTimerRef.current) clearTimeout(brightnessTimerRef.current);
-            brightnessTimerRef.current = setTimeout(() => {
-              bleService.sendBrightness(nowIndoor ? bc.indoor : sunBasedBrightness(pt.latitude, pt.longitude, bc));
-            }, nowIndoor ? 0 : BRIGHTNESS_RAMP_MS);
-          } else if (!nowIndoor) {
-            bleService.sendBrightness(sunBasedBrightness(pt.latitude, pt.longitude, bc));
-          }
+      const nowIndoor = findContainingIndoorZone(pt, indoorZones) !== null;
+      const outdoorBrightness = sunBasedBrightness(pt.latitude, pt.longitude, bc);
 
-          // Preset zone trigger
-          if (!zonesEnabled) return;
-          const matchedZone = findContainingZone(pt, zones);
-          const prevZone    = currentZoneRef.current;
-          if (matchedZone?.id === prevZone?.id) return;
-          currentZoneRef.current = matchedZone ?? null;
-          if (matchedZone) {
-            console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
-            bleService.sendZoneTrigger(matchedZone.presetId);
-          } else {
-            console.log('[Zone] Left all zones');
-          }
+      if (nowIndoor !== isIndoorRef.current) {
+        isIndoorRef.current = nowIndoor;
+        if (brightnessTimerRef.current) clearTimeout(brightnessTimerRef.current);
+        const target = nowIndoor ? bc.indoor : outdoorBrightness;
+        brightnessTimerRef.current = setTimeout(() => {
+          sendBrightnessIfChanged(target);
+        }, nowIndoor ? 0 : BRIGHTNESS_RAMP_MS);
+      } else if (!nowIndoor) {
+        sendBrightnessIfChanged(outdoorBrightness);
+      }
+
+      if (!zonesEnabled) return;
+      const matchedZone = findContainingZone(pt, zones);
+      const prevZone    = currentZoneRef.current;
+      if (matchedZone?.id === prevZone?.id) return;
+      currentZoneRef.current = matchedZone ?? null;
+      if (matchedZone) {
+        console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
+        bleService.sendZoneTrigger(matchedZone.presetId);
+      } else {
+        console.log('[Zone] Left all zones');
+      }
+    };
+
+    const stopWatch = () => {
+      watchSub?.remove();
+      watchSub = null;
+    };
+
+    const startWatch = async () => {
+      if (appState !== 'active' || watchSub) return;
+      if (!permissionGranted) {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          console.warn('[Zone] Location permission denied');
+          return;
         }
+        permissionGranted = true;
+      }
+      watchSub = await Location.watchPositionAsync(
+        watchOptions(zonesEnabledRef.current),
+        (loc) => handleLocation({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        }),
       );
     };
 
-    start();
+    const restartWatch = async () => {
+      stopWatch();
+      await startWatch();
+    };
+
+    startWatch();
+
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      appState = next;
+      if (next === 'active') startWatch();
+      else stopWatch();
+    });
+
+    const storeSub = useAppStore.subscribe((state, prev) => {
+      if (state.zonesEnabled !== prev.zonesEnabled && appState === 'active') {
+        restartWatch();
+      }
+    });
+
     return () => {
-      watchSub?.remove();
+      stopWatch();
+      appStateSub.remove();
+      storeSub();
       if (brightnessTimerRef.current) clearTimeout(brightnessTimerRef.current);
     };
   }, []);

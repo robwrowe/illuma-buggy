@@ -13,7 +13,7 @@ import {
 import * as Location from 'expo-location';
 import MapView, { Polygon, Marker, MapPressEvent } from 'react-native-maps';
 import { useAppStore, Zone, IndoorZone, LatLng } from '../stores/store';
-import { polygonsOverlap, pointInPolygon, generateId } from '../utils/utils';
+import { polygonsOverlap, generateId } from '../utils/utils';
 import { useTheme } from '../utils/theme';
 
 type DrawMode = 'none' | 'preset' | 'indoor';
@@ -25,17 +25,13 @@ export default function ZonesScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const {
-    zones, indoorZones, presets, parks,
+    zones, indoorZones, presets, parks, activeZoneIds,
     addZone, updateZone, removeZone,
     addIndoorZone, updateIndoorZone, removeIndoorZone,
     saveToStorage,
   } = useAppStore();
 
   const mapRef = useRef<MapView>(null);
-
-  // Location
-  const [userLocation, setUserLocation] = useState<LatLng | null>(null);
-  const [activeZoneIds, setActiveZoneIds] = useState<string[]>([]);
 
   // Drawing state
   const [drawMode, setDrawMode]       = useState<DrawMode>('none');
@@ -70,44 +66,16 @@ export default function ZonesScreen() {
   const [showList, setShowList] = useState(false);
   const [listMode, setListMode] = useState<'preset' | 'indoor'>('preset');
 
-  // ── Location & active zones ──
+  // ── Center map on user once (GPS watch lives in useZoneManager) ──
   useEffect(() => {
-    let sub: Location.LocationSubscription | null = null;
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
-
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const coord = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-      setUserLocation(coord);
       mapRef.current?.animateToRegion({ ...coord, latitudeDelta: 0.005, longitudeDelta: 0.005 }, 800);
-
-      // Compute active zones for current position immediately
-      const activeNow = zonesRef.current.filter(z => z.enabled && pointInPolygon(coord, z.polygon)).map(z => z.id);
-      setActiveZoneIds(activeNow);
-
-      sub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.Balanced, timeInterval: 3000, distanceInterval: 5 },
-        (loc) => {
-          const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-          setUserLocation(pt);
-          // Use zonesRef so newly-added zones are always visible here
-          const active = zonesRef.current.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
-          setActiveZoneIds(active);
-        }
-      );
     })();
-    return () => { sub?.remove(); };
-  }, []); // intentionally empty — uses refs for live data
-
-  // Recompute active zones immediately when zones list changes
-  useEffect(() => {
-    zonesRef.current = zones;
-    if (userLocation) {
-      const active = zones.filter(z => z.enabled && pointInPolygon(userLocation, z.polygon)).map(z => z.id);
-      setActiveZoneIds(active);
-    }
-  }, [zones, userLocation]);
+  }, []);
 
   // ── Map press — unified handler using refs ──
   const addDrawPointAt = useCallback((coord: LatLng) => {
