@@ -154,6 +154,18 @@ export default function App() {
           len: msg.len as number,
         });
       }
+      if (msg.type === 'unknown_anim') {
+        appendBleCapturePacket({
+          boardTs: msg.ts as number,
+          tag: 'UNKNOWN',
+          rssi: 0,
+          hex: String(msg.hex ?? ''),
+          len: msg.len as number,
+          quality: String(msg.quality ?? ''),
+          func: String(msg.func ?? ''),
+          label: String(msg.label ?? ''),
+        });
+      }
       if (msg.type === 'ble_capture') {
         const event = String(msg.event ?? '');
         if (event === 'stopped') {

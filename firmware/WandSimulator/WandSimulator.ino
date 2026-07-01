@@ -13,6 +13,9 @@
  */
 
 #include <NimBLEDevice.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoJson.h>
 
 static const uint8_t WAND_CAST_SIG[6] = { 0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22 };
 static const uint8_t IDLE_PAYLOAD[19] = {
@@ -21,6 +24,8 @@ static const uint8_t IDLE_PAYLOAD[19] = {
 };
 
 NimBLEAdvertising* adv = nullptr;
+
+void handleLine(String line);
 
 enum LoopMode { LOOP_NONE,
                 LOOP_WAND_CAST,
@@ -519,6 +524,8 @@ void printHelp() {
   Serial.println("  test all|inner|outer|topLeft|bottomLeft|bottomRight|topRight|center");
   Serial.println("  test five                all 5 corners R/G/B/W/Y");
   Serial.println("  test band0|band1|…|band7   E905 mask bit test (white)");
+  Serial.println("  wifi <ssid> <pass>     — connect HTTP server (POST /send, GET /status)");
+  Serial.println("  wifi off               — disconnect WiFi");
   Serial.println("  help");
   Serial.println("  Names: 0-31, or hyphenated MB palette names");
   Serial.println("         e.g. red midnight-blue yellow-orange lime-green pink-3");
@@ -534,6 +541,29 @@ void handleLine(String line) {
 
   if (lower == "help") {
     printHelp();
+    return;
+  }
+  if (lower.startsWith("wifi ")) {
+    stopLoops();
+    String rest = line.substring(5);
+    rest.trim();
+    if (rest.equalsIgnoreCase("off")) {
+      WiFi.disconnect(true);
+      simWifiConnected = false;
+      wifiSsid = "";
+      wifiPass = "";
+      Serial.println("[WandSim] WiFi off");
+      return;
+    }
+    int sp = rest.indexOf(' ');
+    if (sp > 0) {
+      wifiSsid = rest.substring(0, sp);
+      wifiPass = rest.substring(sp + 1);
+      wifiPass.trim();
+      connectSimWifi();
+    } else {
+      Serial.println("[WandSim] Usage: wifi <ssid> <password>");
+    }
     return;
   }
   if (lower == "stop") {
@@ -672,6 +702,105 @@ void handleLine(String line) {
   printHelp();
 }
 
+// ── WiFi HTTP API (byte-stepper for web Wand Lab) ─────────────────────────
+
+WebServer simServer(80);
+bool simWifiConnected = false;
+String wifiSsid;
+String wifiPass;
+unsigned long wifiLastRetryMs = 0;
+
+size_t parseHexBytes(const String& hexStr, uint8_t* out, size_t maxLen) {
+  size_t n = 0;
+  int i = 0;
+  while (i < (int)hexStr.length() && n < maxLen) {
+    while (i < (int)hexStr.length() && hexStr[i] == ' ') i++;
+    if (i + 1 >= (int)hexStr.length()) break;
+    out[n++] = (uint8_t)strtol(hexStr.substring(i, i + 2).c_str(), nullptr, 16);
+    i += 2;
+  }
+  return n;
+}
+
+void addSimCors() {
+  simServer.sendHeader("Access-Control-Allow-Origin", "*");
+  simServer.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  simServer.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+void handleSimOptions() {
+  addSimCors();
+  simServer.send(204);
+}
+
+void handleSimStatus() {
+  addSimCors();
+  String ip = simWifiConnected ? WiFi.localIP().toString() : "";
+  simServer.send(200, "application/json",
+    String("{\"ok\":true,\"device\":\"WandSim\",\"wifi\":") + (simWifiConnected ? "true" : "false") +
+    ",\"ip\":\"" + ip + "\"}");
+}
+
+void handleSimSend() {
+  addSimCors();
+  if (!simServer.hasArg("plain")) {
+    simServer.send(400, "application/json", "{\"ok\":false}");
+    return;
+  }
+  DynamicJsonDocument doc(768);
+  if (deserializeJson(doc, simServer.arg("plain"))) {
+    simServer.send(400, "application/json", "{\"ok\":false}");
+    return;
+  }
+  if (doc.containsKey("line")) {
+    handleLine(doc["line"].as<String>());
+    simServer.send(200, "application/json", "{\"ok\":true}");
+    return;
+  }
+  if (doc.containsKey("hex")) {
+    uint8_t payload[64];
+    size_t n = parseHexBytes(doc["hex"].as<String>(), payload, sizeof(payload));
+    if (n == 0) {
+      simServer.send(400, "application/json", "{\"ok\":false}");
+      return;
+    }
+    stopLoops();
+    broadcastPayload(payload, n, 4000);
+    simServer.send(200, "application/json", "{\"ok\":true,\"bytes\":" + String(n) + "}");
+    return;
+  }
+  simServer.send(400, "application/json", "{\"ok\":false}");
+}
+
+void connectSimWifi() {
+  if (wifiSsid.length() == 0) return;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(500);
+    attempts++;
+  }
+  simWifiConnected = (WiFi.status() == WL_CONNECTED);
+  if (simWifiConnected) {
+    Serial.printf("[WandSim] WiFi IP: %s\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("[WandSim] WiFi connect failed");
+  }
+}
+
+void serviceSimWifi() {
+  if (simWifiConnected && WiFi.status() != WL_CONNECTED) {
+    simWifiConnected = false;
+    Serial.println("[WandSim] WiFi dropped");
+  }
+  if (!simWifiConnected && wifiSsid.length() > 0 && millis() - wifiLastRetryMs > 5000) {
+    wifiLastRetryMs = millis();
+    connectSimWifi();
+  }
+  simServer.handleClient();
+}
+
 void serviceLoops() {
   if (loopMode == LOOP_NONE) return;
   unsigned long now = millis();
@@ -720,6 +849,10 @@ void setup() {
   adv = NimBLEDevice::getAdvertising();
   adv->setMinInterval(0x20);  // 20ms — match Adafruit ~25ms interval
   adv->setMaxInterval(0x30);
+  simServer.on("/status", HTTP_GET, handleSimStatus);
+  simServer.on("/send", HTTP_POST, handleSimSend);
+  simServer.on("/send", HTTP_OPTIONS, handleSimOptions);
+  simServer.begin();
   printHelp();
 }
 
@@ -727,6 +860,7 @@ void loop() {
   if (Serial.available()) {
     handleLine(Serial.readStringUntil('\n'));
   }
+  serviceSimWifi();
   serviceLoops();
   delay(10);
 }

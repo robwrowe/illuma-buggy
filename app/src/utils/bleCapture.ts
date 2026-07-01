@@ -9,6 +9,11 @@ export interface BleCapturePacket {
   rssi: number;
   hex: string;
   len: number;
+  /** unknown_anim quality from firmware */
+  quality?: string;
+  func?: string;
+  label?: string;
+  note?: string;
 }
 
 export interface BleCaptureSession {
@@ -117,11 +122,11 @@ export function formatCaptureExport(session: BleCaptureSession): string {
     `# Ended:   ${new Date(session.endedAt).toISOString()}`,
     `# Packets: ${session.packets.length}`,
     `#`,
-    `# ts_ms\trssi\ttag\thint\thex`,
+    `# ts_ms\trssi\ttag\thint\tquality\tfunc\thex\tnote`,
   ];
   for (const p of session.packets) {
     lines.push(
-      `${p.boardTs}\t${p.rssi}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.hex}`,
+      `${p.boardTs}\t${p.rssi}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
     );
   }
   return lines.join('\n');

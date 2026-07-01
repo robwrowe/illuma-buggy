@@ -290,6 +290,7 @@ interface AppState {
   startBleCapture:          () => void;
   stopBleCapture:           (reason?: string) => void;
   appendBleCapturePacket:   (pkt: Omit<BleCapturePacket, 'receivedAt'>) => void;
+  updateBleCapturePacketNote: (boardTs: number, hex: string, note: string) => void;
   deleteBleCaptureSession:  (id: string) => void;
   renameBleCaptureSession:  (id: string, name: string) => void;
 }
@@ -532,6 +533,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     const entry: BleCapturePacket = { ...pkt, receivedAt: Date.now() };
     const buf = [...s.bleCaptureBuffer, entry];
     set({ bleCaptureBuffer: buf, bleCaptureLiveCount: buf.length });
+  },
+
+  updateBleCapturePacketNote: (boardTs, hex, note) => {
+    set(s => ({
+      bleCaptureSessions: s.bleCaptureSessions.map(session => ({
+        ...session,
+        packets: session.packets.map(p =>
+          p.boardTs === boardTs && p.hex === hex ? { ...p, note } : p,
+        ),
+      })),
+    }));
+    get().saveToStorage();
   },
 
   deleteBleCaptureSession: (id) => {

@@ -37,6 +37,8 @@ async function shareSession(session: BleCaptureSession) {
   }
 }
 
+const SESSION_LABEL_SUGGESTIONS = ['Parade', 'Fireworks', 'Show'];
+
 export default function BleCaptureScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
@@ -50,6 +52,7 @@ export default function BleCaptureScreen() {
     setBleCaptureDurationSec, setBleCaptureDraftName,
     startBleCapture, stopBleCapture,
     deleteBleCaptureSession,
+    updateBleCapturePacketNote,
   } = useAppStore();
 
   useEffect(() => {
@@ -80,6 +83,7 @@ export default function BleCaptureScreen() {
     const ok = await bleService.sendBleCaptureConfig(
       true,
       bleCaptureDurationSec > 0 ? bleCaptureDurationSec * 1000 : 0,
+      bleCaptureDraftName.trim(),
     );
     if (!ok) {
       stopBleCapture('error');
@@ -122,6 +126,18 @@ export default function BleCaptureScreen() {
           placeholder="Parade capture"
           placeholderTextColor={colors.textMuted}
         />
+        <View style={s.chipRow}>
+          {SESSION_LABEL_SUGGESTIONS.map(label => (
+            <TouchableOpacity
+              key={label}
+              style={s.chip}
+              onPress={() => !bleCaptureActive && setBleCaptureDraftName(label)}
+              disabled={bleCaptureActive}
+            >
+              <Text style={s.chipText}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
         <Text style={s.label}>Duration</Text>
         <View style={s.chipRow}>
@@ -176,9 +192,9 @@ export default function BleCaptureScreen() {
           <Text style={s.cardTitle}>Live (last {Math.min(15, bleCaptureBuffer.length)})</Text>
           {bleCaptureBuffer.slice(-15).reverse().map((p, i) => (
             <View key={`${p.boardTs}-${i}`} style={s.packetRow}>
-              <Text style={s.packetTag}>{p.tag}</Text>
+              <Text style={s.packetTag}>{p.quality ? `UNK/${p.quality}` : p.tag}</Text>
               <Text style={s.packetHint} numberOfLines={1}>
-                {describeBlePacket(p.tag, p.hex)}
+                {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
               </Text>
               <Text style={s.packetHex} numberOfLines={1}>{p.hex}</Text>
             </View>
@@ -230,10 +246,21 @@ export default function BleCaptureScreen() {
                 </View>
                 {open && session.packets.map((p, i) => (
                   <View key={`${p.boardTs}-${i}`} style={s.packetRow}>
-                    <Text style={s.packetTag}>{p.tag}</Text>
-                    <Text style={s.packetHint}>{describeBlePacket(p.tag, p.hex)}</Text>
+                    <Text style={s.packetTag}>{p.quality ? `UNK/${p.quality}` : p.tag}</Text>
+                    <Text style={s.packetHint}>
+                      {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
+                    </Text>
                     <Text style={s.packetMeta}>rssi {p.rssi} · +{(p.receivedAt - session.startedAt) / 1000}s</Text>
                     <Text style={s.packetHex}>{p.hex}</Text>
+                    {(p.quality || p.note !== undefined) && (
+                      <TextInput
+                        style={[s.input, { marginTop: 4 }]}
+                        placeholder="Note…"
+                        placeholderTextColor={colors.textMuted}
+                        value={p.note ?? ''}
+                        onChangeText={v => updateBleCapturePacketNote(p.boardTs, p.hex, v)}
+                      />
+                    )}
                   </View>
                 ))}
               </View>

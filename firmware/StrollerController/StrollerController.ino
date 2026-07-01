@@ -206,6 +206,7 @@ bool          bleCaptureToApp     = false;
 unsigned long bleCaptureUntilMs   = 0;
 unsigned long bleCaptureLastNotifyMs = 0;
 uint16_t      bleCaptureNotifyCount  = 0;
+char          captureLabel[24]    = "";
 
 // Wand TX beacon — advertise as another Starlight wand (for pairing/cast tests)
 bool          wandTxBeacon    = false;
@@ -1017,10 +1018,13 @@ bool swPayloadMatchesRef(const uint8_t* payload, size_t plen, const uint8_t* ref
   return false;
 }
 
-const char* identifySwFxPreset(const uint8_t* payload, size_t plen) {
+enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
+
+SwMatchQuality identifySwFxPresetQuality(const uint8_t* payload, size_t plen, const char** outKey) {
   for (size_t i = 0; i < SW_FX_SIGNATURE_COUNT; i++) {
     if (swPayloadMatchesRef(payload, plen, SW_FX_SIGNATURES[i].data, SW_FX_SIGNATURES[i].len)) {
-      return SW_FX_SIGNATURES[i].key;
+      if (outKey) *outKey = SW_FX_SIGNATURES[i].key;
+      return SW_MATCH_EXACT;
     }
   }
   uint16_t func = 0;
@@ -1029,14 +1033,46 @@ const char* identifySwFxPreset(const uint8_t* payload, size_t plen) {
   } else if (plen >= 2 && payload[0] == 0xE9) {
     func = ((uint16_t)payload[0] << 8) | payload[1];
   }
+  const char* fuzzyKey = nullptr;
   switch (func) {
-    case 0xE90E: return "flash";
-    case 0xE910: return "sparkle";
-    case 0xE912: return "circle";
-    case 0xE913: return "pulse";
-    case 0xE911: return "fade";
-    default: return nullptr;
+    case 0xE90E: fuzzyKey = "flash"; break;
+    case 0xE910: fuzzyKey = "sparkle"; break;
+    case 0xE912: fuzzyKey = "circle"; break;
+    case 0xE913: fuzzyKey = "pulse"; break;
+    case 0xE911: fuzzyKey = "fade"; break;
+    default: fuzzyKey = nullptr;
   }
+  if (outKey) *outKey = fuzzyKey;
+  if (fuzzyKey) return SW_MATCH_FUZZY;
+  return SW_MATCH_NONE;
+}
+
+const char* identifySwFxPreset(const uint8_t* payload, size_t plen) {
+  const char* key = nullptr;
+  SwMatchQuality q = identifySwFxPresetQuality(payload, plen, &key);
+  if (q == SW_MATCH_EXACT || q == SW_MATCH_FUZZY) return key;
+  return nullptr;
+}
+
+uint16_t swPayloadFuncCode(const uint8_t* payload, size_t plen) {
+  if (plen >= 4 && (payload[0] == 0xE1 || payload[0] == 0xE2) && payload[2] == 0xE9) {
+    return ((uint16_t)payload[2] << 8) | payload[3];
+  }
+  if (plen >= 2 && payload[0] == 0xE9) {
+    return ((uint16_t)payload[0] << 8) | payload[1];
+  }
+  return 0;
+}
+
+void notifyUnknownAnimation(const uint8_t* payload, size_t plen, SwMatchQuality quality, uint16_t func) {
+  if (!bleCaptureToApp || !bleConnected) return;
+  String q = quality == SW_MATCH_FUZZY ? "fuzzy" : "none";
+  bleNotify("{\"type\":\"unknown_anim\",\"quality\":\"" + q +
+            "\",\"func\":\"0x" + String(func, HEX) +
+            "\",\"hex\":\"" + mfrToHexFull(payload, plen) +
+            "\",\"len\":" + String(plen) +
+            ",\"label\":\"" + String(captureLabel) +
+            "\",\"ts\":" + String(millis()) + "}");
 }
 
 void applySwAnimFallbackSolid(OverrideSource src) {
@@ -1068,7 +1104,12 @@ void applySwAnimOpcode(const char* swKey, const char* label) {
 
 bool tryApplySwE9Payload(const uint8_t* payload, size_t plen, const char* mbFallbackKey, const char* label) {
   if (!starlightEnabled) return false;
-  const char* swKey = identifySwFxPreset(payload, plen);
+  const char* swKey = nullptr;
+  SwMatchQuality mq = identifySwFxPresetQuality(payload, plen, &swKey);
+  uint16_t func = swPayloadFuncCode(payload, plen);
+  if (mq != SW_MATCH_EXACT && func >= 0xE90C && func <= 0xE913) {
+    notifyUnknownAnimation(payload, plen, mq, func);
+  }
   if (!swKey) return false;
   if (!canTakeOverride(BLE_STARLIGHT)) {
     bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
@@ -1628,6 +1669,10 @@ void handleBLECommand(const String& msg) {
   // ── App packet capture (parade / show recording) ──
   else if (type == "ble_capture_config") {
     if (doc.containsKey("active")) bleCaptureToApp = doc["active"].as<bool>();
+    if (doc.containsKey("label")) {
+      strncpy(captureLabel, doc["label"] | "", sizeof(captureLabel) - 1);
+      captureLabel[sizeof(captureLabel) - 1] = '\0';
+    }
     bleCaptureUntilMs = 0;
     if (bleCaptureToApp && doc.containsKey("duration_ms")) {
       unsigned long dur = (unsigned long)doc["duration_ms"].as<long>();
@@ -2243,8 +2288,10 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
         applyMbAnimOpcode("E90E", "flash");
       break;
     case 0xE90F:
-      if (magicBandEnabled && canTakeOverride(BLE_MAGIC))
+      if (magicBandEnabled && canTakeOverride(BLE_MAGIC)) {
+        notifyUnknownAnimation(payload, plen, SW_MATCH_NONE, 0xE90F);
         applyMbAnimOpcode("E90F", "animation");
+      }
       break;
     case 0xE910:
       if (!tryApplySwE9Payload(payload, plen, "E910", "animation"))

@@ -169,9 +169,10 @@ class BLEService {
   sendShowModeExit() {
     return this.send({ type: 'show_mode_exit' });
   }
-  sendBleCaptureConfig(active: boolean, durationMs = 0) {
+  sendBleCaptureConfig(active: boolean, durationMs = 0, label = '') {
     const msg: BLEMessage = { type: 'ble_capture_config', active };
     if (active && durationMs > 0) msg.duration_ms = durationMs;
+    if (active && label) msg.label = label;
     return this.send(msg);
   }
 
