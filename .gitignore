@@ -2,6 +2,9 @@ app/node_modules/
 app/.expo/
 app/android/
 app/dist/
+app/.bundle-out/
+app/.bundle-out*/
+
 
 firmware/**/*.bin      # compiled artifacts
 
