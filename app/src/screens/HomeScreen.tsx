@@ -24,6 +24,7 @@ import { bleService } from '../services/BLEService';
 import { useTheme } from '../utils/theme';
 import { useNavigation } from '@react-navigation/native';
 import { PresetPickerModal } from './MbMappingSections';
+import { useParkShows, formatShowStatus } from '../hooks/useParkShows';
 
 const OVERRIDE_LABELS = ['—', 'Zone', 'Manual', 'Show Mode', 'MagicBand+', 'Starlight Wand'];
 const OVERRIDE_COLORS = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) =>
@@ -43,11 +44,14 @@ export default function HomeScreen() {
     overrideDetail, setOverrideDetail,
     bleCaptureActive, bleCaptureLiveCount,
     ftbPresetId, setFtbPresetId, bleEffectTransitionMs,
+    activePark,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
   const [events, setEvents]         = useState<string[]>([]);
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
+
+  const { shows: parkShows, fetchError: parkShowsError } = useParkShows(activePark, isConnected);
 
   // Request status immediately on connect, then every 5s
   useEffect(() => {
@@ -207,6 +211,60 @@ export default function HomeScreen() {
         onClose={() => setFtbPickerOpen(false)}
         colors={colors}
       />
+
+      {/* Park shows */}
+      {activePark?.themeParksApiEntityId && (
+        <View style={s.card}>
+          <View style={s.row}>
+            <IconMap size={15} color={colors.textSecondary} />
+            <Text style={s.label}>{activePark.name} — Shows</Text>
+          </View>
+          {parkShowsError ? (
+            <Text style={s.subText}>{parkShowsError}</Text>
+          ) : parkShows.length === 0 ? (
+            <Text style={s.subText}>No shows within the next hour</Text>
+          ) : (
+            parkShows.map(show => (
+              <View key={show.id} style={s.showRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.zoneName}>{show.name}</Text>
+                  <Text style={s.subText}>{formatShowStatus(show)}</Text>
+                </View>
+                {show.isFireworks && isConnected && (
+                  <View style={s.showBtnRow}>
+                    <TouchableOpacity
+                      style={s.showMiniBtn}
+                      onPress={() => bleService.sendShowModeEnter('fireworks', 'pre')}
+                    >
+                      <Text style={s.showMiniBtnText}>Pre</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={s.showMiniBtn}
+                      onPress={() => bleService.sendShowModeEnter('fireworks', 'black')}
+                    >
+                      <Text style={s.showMiniBtnText}>Black</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={s.showMiniBtn}
+                      onPress={() => bleService.sendShowModeExit()}
+                    >
+                      <Text style={[s.showMiniBtnText, { color: colors.danger }]}>End</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {!show.isFireworks && isConnected && (
+                  <TouchableOpacity
+                    style={s.showMiniBtn}
+                    onPress={() => bleService.sendShowModeEnter('parade', 'live')}
+                  >
+                    <Text style={s.showMiniBtnText}>Show</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))
+          )}
+        </View>
+      )}
 
       {/* Connection */}
       <View style={s.card}>
@@ -438,4 +496,8 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   quickBtnTextDisabled: { color: c.textMuted },
   quickBtnHint: { color: c.textMuted, fontSize: 10, textAlign: 'center' },
   quickGear:    { position: 'absolute', top: 4, right: 4, padding: 4 },
+  showRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderTopWidth: 1, borderTopColor: c.border },
+  showBtnRow:   { flexDirection: 'row', gap: 4 },
+  showMiniBtn:  { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt },
+  showMiniBtnText: { fontSize: 10, fontWeight: '600', color: c.textPrimary },
 });
