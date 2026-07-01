@@ -113,13 +113,21 @@ class BLEService {
     this.sendRunning = false;
   }
 
-  private async sendImmediate(msg: BLEMessage): Promise<boolean> {
+  private async sendImmediate(msg: BLEMessage, attempt = 0): Promise<boolean> {
     if (!this.device || this.connState !== 'connected') return false;
     try {
       const b64 = strToBase64(JSON.stringify(msg));
-      await this.device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+      // CMD char supports WRITE_NR; without-response avoids GATT write-queue contention on Android.
+      await this.device.writeCharacteristicWithoutResponseForService(
+        SERVICE_UUID, CMD_CHAR_UUID, b64,
+      );
       return true;
     } catch (e) {
+      const errMsg = String((e as Error)?.message ?? e);
+      if (attempt < 2 && /rejected|busy|133|gatt/i.test(errMsg)) {
+        await new Promise(r => setTimeout(r, 150 * (attempt + 1)));
+        return this.sendImmediate(msg, attempt + 1);
+      }
       console.error('[BLE] Send error:', e);
       return false;
     }
@@ -225,9 +233,11 @@ class BLEService {
       catch (e) { console.warn('[BLE] MTU skipped:', (e as any)?.message); }
 
       const discovered = await connected.discoverAllServicesAndCharacteristics();
-      this.device = discovered;
-      this.setConnState('connected');
-      console.log('[BLE] Connected');
+
+      discovered.onDisconnected(() => {
+        console.log('[BLE] Disconnected');
+        this.handleDisconnect();
+      });
 
       discovered.monitorCharacteristicForService(SERVICE_UUID, NOTIFY_CHAR_UUID, (err, char) => {
         if (err) {
@@ -239,10 +249,12 @@ class BLEService {
         if (char?.value) this.handleNotification(char.value);
       });
 
-      discovered.onDisconnected(() => {
-        console.log('[BLE] Disconnected');
-        this.handleDisconnect();
-      });
+      // Android rejects writes while CCCD enable is still in flight — wait before marking ready.
+      await new Promise(r => setTimeout(r, 400));
+
+      this.device = discovered;
+      this.setConnState('connected');
+      console.log('[BLE] Connected');
     } catch (e) {
       console.error('[BLE] Connection failed:', e);
       this.setConnState('error');

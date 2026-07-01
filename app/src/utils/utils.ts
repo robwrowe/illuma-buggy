@@ -64,6 +64,31 @@ export function sunBasedBrightness(
 }
 
 // ─────────────────────────────────────────────
+// Polygon coordinate normalization
+// Web tool exports { lat, lng }; react-native-maps expects { latitude, longitude }.
+// ─────────────────────────────────────────────
+
+export function normalizeLatLng(p: unknown): LatLng | null {
+  if (!p || typeof p !== 'object') return null;
+  const o = p as Record<string, unknown>;
+  const lat = typeof o.latitude === 'number' ? o.latitude
+    : typeof o.lat === 'number' ? o.lat : null;
+  const lng = typeof o.longitude === 'number' ? o.longitude
+    : typeof o.lng === 'number' ? o.lng : null;
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { latitude: lat, longitude: lng };
+}
+
+export function normalizePolygon(polygon: unknown): LatLng[] {
+  if (!Array.isArray(polygon)) return [];
+  return polygon.map(normalizeLatLng).filter((p): p is LatLng => p !== null);
+}
+
+export function normalizeZonePolygon<T extends { polygon?: unknown }>(zone: T): T & { polygon: LatLng[] } {
+  return { ...zone, polygon: normalizePolygon(zone.polygon) };
+}
+
+// ─────────────────────────────────────────────
 // Point-in-polygon — ray casting algorithm
 // ─────────────────────────────────────────────
 
