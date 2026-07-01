@@ -25,7 +25,7 @@ export default function ZonesScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const {
-    zones, indoorZones, presets,
+    zones, indoorZones, presets, parks,
     addZone, updateZone, removeZone,
     addIndoorZone, updateIndoorZone, removeIndoorZone,
     saveToStorage,
@@ -456,6 +456,25 @@ export default function ZonesScreen() {
                     onValueChange={v => setEditingZone({ ...editingZone, enabled: v })}
                     trackColor={{ false: colors.borderFocus, true: colors.primary }} />
                 </View>
+                {parks.length > 0 && (
+                  <>
+                    <Text style={s.fieldLabel}>Park</Text>
+                    <ScrollView style={{ maxHeight: 120 }}>
+                      <TouchableOpacity
+                        style={[s.option, !editingZone.parkId && s.optionActive]}
+                        onPress={() => setEditingZone({ ...editingZone, parkId: undefined })}>
+                        <Text style={[s.optionText, !editingZone.parkId && { color: colors.primary }]}>Ungrouped</Text>
+                      </TouchableOpacity>
+                      {parks.map(p => (
+                        <TouchableOpacity key={p.id}
+                          style={[s.option, editingZone.parkId === p.id && s.optionActive]}
+                          onPress={() => setEditingZone({ ...editingZone, parkId: p.id })}>
+                          <Text style={[s.optionText, editingZone.parkId === p.id && { color: colors.primary }]}>{p.name}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </>
+                )}
               </>
             )}
             {editingIndoor && (
@@ -470,6 +489,25 @@ export default function ZonesScreen() {
                     onValueChange={v => setEditingIndoor({ ...editingIndoor, enabled: v })}
                     trackColor={{ false: colors.borderFocus, true: colors.primary }} />
                 </View>
+                {parks.length > 0 && (
+                  <>
+                    <Text style={s.fieldLabel}>Park</Text>
+                    <ScrollView style={{ maxHeight: 120 }}>
+                      <TouchableOpacity
+                        style={[s.option, !editingIndoor.parkId && s.optionActive]}
+                        onPress={() => setEditingIndoor({ ...editingIndoor, parkId: undefined })}>
+                        <Text style={[s.optionText, !editingIndoor.parkId && { color: colors.primary }]}>Ungrouped</Text>
+                      </TouchableOpacity>
+                      {parks.map(p => (
+                        <TouchableOpacity key={p.id}
+                          style={[s.option, editingIndoor.parkId === p.id && s.optionActive]}
+                          onPress={() => setEditingIndoor({ ...editingIndoor, parkId: p.id })}>
+                          <Text style={[s.optionText, editingIndoor.parkId === p.id && { color: colors.primary }]}>{p.name}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </>
+                )}
               </>
             )}
             <View style={s.modalRow}>

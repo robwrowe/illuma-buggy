@@ -92,6 +92,7 @@ export interface Zone {
   polygon:  LatLng[];
   presetId: string;
   enabled:  boolean;
+  parkId?:  string;
 }
 
 export interface IndoorZone {
@@ -99,6 +100,7 @@ export interface IndoorZone {
   name:    string;
   polygon: LatLng[];
   enabled: boolean;
+  parkId?: string;
 }
 
 export interface BrightnessConfig {
@@ -143,6 +145,7 @@ export {
   normalizeSegmentDef, parseWledStateSegments, buildRecalledSegmentsFromPreset,
 } from '../utils/segmentLayouts';
 
+export type { ParkConfig, ShowModeConfig, MbSegmentLayout } from '../utils/configMigration';
 export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
 export {
   DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
@@ -251,8 +254,16 @@ interface AppState {
   exportData: () => object;
   importData: (data: object) => void;
 
+  // Parks (v3.0 grouping)
+  parks:             ParkConfig[];
+  activePark:        ParkConfig | null;
+  setParks:          (parks: ParkConfig[]) => void;
+  addPark:           (park: ParkConfig) => void;
+  updatePark:        (id: string, patch: Partial<ParkConfig>) => void;
+  removePark:        (id: string) => void;
+  setActivePark:     (park: ParkConfig | null) => void;
+
   // v3.0 config (migration defaults; full UI in later sections)
-  parks: ParkConfig[];
   showModeConfig: ShowModeConfig;
   wandLab: WandLabConfig;
   mbSegmentLayouts: MbSegmentLayout[];
@@ -358,6 +369,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureSessions:     [],
   bleCaptureDraftName:    'Parade capture',
   parks:                  [],
+  activePark:             null,
   showModeConfig:         DEFAULT_SHOW_MODE,
   wandLab:                DEFAULT_WAND_LAB,
   mbSegmentLayouts:       [],
@@ -371,6 +383,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { presets: [...s.presets, preset] };
   }),
   removePreset: (id) => set(s => ({ presets: s.presets.filter(p => p.id !== id) })),
+
+  // Parks
+  setParks: (parks) => set({ parks }),
+  addPark: (park) => set(s => ({ parks: [...s.parks, park] })),
+  updatePark: (id, patch) => set(s => ({
+    parks: s.parks.map(p => p.id === id ? { ...p, ...patch } : p),
+  })),
+  removePark: (id) => set(s => ({
+    parks: s.parks.filter(p => p.id !== id),
+    zones: s.zones.map(z => z.parkId === id ? { ...z, parkId: undefined } : z),
+    indoorZones: s.indoorZones.map(z => z.parkId === id ? { ...z, parkId: undefined } : z),
+  })),
+  setActivePark: (activePark) => set({ activePark }),
 
   // WLED cache
   setWledEffects:  (wledEffects)  => set({ wledEffects }),
@@ -544,6 +569,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         bleCaptureDurationSec: d.bleCaptureDurationSec ?? 900,
         bleCaptureDraftName:   d.bleCaptureDraftName   ?? 'Parade capture',
         parks:              d.parks              ?? [],
+        activePark:         null,
         showModeConfig:     d.showModeConfig     ?? DEFAULT_SHOW_MODE,
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
         mbSegmentLayouts:   d.mbSegmentLayouts   ?? [],
@@ -692,6 +718,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         .map((l: CustomSegmentLayout) => normalizeSegmentLayout(l))
         .filter(Boolean) as CustomSegmentLayout[],
       parks:              (m.parks as ParkConfig[]) ?? [],
+      activePark:         null,
       showModeConfig:     (m.showModeConfig as ShowModeConfig) ?? DEFAULT_SHOW_MODE,
       wandLab:            (m.wandLab as WandLabConfig) ?? DEFAULT_WAND_LAB,
       mbSegmentLayouts:   (m.mbSegmentLayouts as MbSegmentLayout[]) ?? [],

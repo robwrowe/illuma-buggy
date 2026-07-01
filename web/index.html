@@ -1874,6 +1874,176 @@ function App() {
   </div>;
 }
 
+// ── Theme Parks API (themeparks.wiki) ───────────────────────────────
+const THEME_PARKS_API = 'https://api.themeparks.wiki/v1';
+let themeParkDestCache = null;
+
+async function fetchThemeParkDestinations() {
+  if (themeParkDestCache) return themeParkDestCache;
+  const res = await fetch(`${THEME_PARKS_API}/destinations`);
+  if (!res.ok) throw new Error('Could not load destinations');
+  const data = await res.json();
+  themeParkDestCache = data.destinations || [];
+  return themeParkDestCache;
+}
+
+function parkSelectOptions(parks) {
+  return [
+    { value: '', label: 'Ungrouped', searchText: 'ungrouped none' },
+    ...(parks || []).map(p => ({ value: p.id, label: p.name, searchText: p.name })),
+  ];
+}
+
+function groupZonesByPark(zones, parks) {
+  const groups = (parks || []).map(p => ({
+    key: p.id, label: p.name, zones: (zones || []).filter(z => z.parkId === p.id),
+  }));
+  const ungrouped = (zones || []).filter(z => !z.parkId);
+  if (ungrouped.length) groups.push({ key: '_ungrouped', label: 'Ungrouped', zones: ungrouped });
+  return groups;
+}
+
+function ParksPanel({ parks, data, update, gmap }) {
+  const [expanded, setExpanded] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [addName, setAddName] = useState('');
+  const [destQuery, setDestQuery] = useState('');
+  const [destResults, setDestResults] = useState([]);
+  const [selectedDest, setSelectedDest] = useState(null);
+  const [apiParkId, setApiParkId] = useState('');
+  const [centerLat, setCenterLat] = useState('');
+  const [centerLng, setCenterLng] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!showAdd || destQuery.length < 2) { setDestResults([]); return; }
+    let cancelled = false;
+    setLoading(true);
+    fetchThemeParkDestinations()
+      .then(dests => {
+        if (cancelled) return;
+        const q = destQuery.toLowerCase();
+        setDestResults(dests.filter(d => d.name.toLowerCase().includes(q)).slice(0, 12));
+      })
+      .catch(e => { if (!cancelled) setErr(String(e.message || e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [destQuery, showAdd]);
+
+  const resetAdd = () => {
+    setShowAdd(false);
+    setAddName('');
+    setDestQuery('');
+    setDestResults([]);
+    setSelectedDest(null);
+    setApiParkId('');
+    setCenterLat('');
+    setCenterLng('');
+    setErr('');
+  };
+
+  const savePark = () => {
+    const name = addName.trim() || selectedDest?.parks?.find(p => p.id === apiParkId)?.name;
+    if (!name) { setErr('Enter a park name or pick from the API list.'); return; }
+    const park = {
+      id: generateId(),
+      name,
+      themeParksApiEntityId: apiParkId || '',
+      centerLat: centerLat ? parseFloat(centerLat) : undefined,
+      centerLng: centerLng ? parseFloat(centerLng) : undefined,
+      createdAt: Date.now(),
+    };
+    update({ parks: [...(parks || []), park] });
+    resetAdd();
+  };
+
+  const removeParkById = (id) => {
+    if (!confirm('Remove this park? Zones will become ungrouped.')) return;
+    update({
+      parks: parks.filter(p => p.id !== id),
+      zones: (data.zones || []).map(z => z.parkId === id ? { ...z, parkId: undefined } : z),
+      indoorZones: (data.indoorZones || []).map(z => z.parkId === id ? { ...z, parkId: undefined } : z),
+    });
+  };
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <button type="button" onClick={() => setExpanded(v => !v)}
+          style={{ ...btn('', { padding: 0, background: 'none', border: 'none', fontSize: 11, fontWeight: 700, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: 1 }) }}>
+          {expanded ? '▾' : '▸'} Parks ({parks?.length || 0})
+        </button>
+        <button type="button" onClick={() => setShowAdd(v => !v)} style={btn('primary', { padding: '4px 8px', fontSize: 11 })}>+ Add</button>
+      </div>
+      {expanded && !showAdd && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {(parks || []).length === 0 && <div style={{ fontSize: 12, color: 'var(--text3)' }}>No parks yet</div>}
+          {(parks || []).map(p => (
+            <div key={p.id} style={{ background: 'var(--surface2)', borderRadius: 8, padding: 8, fontSize: 12 }}>
+              <div style={{ fontWeight: 600 }}>{p.name}</div>
+              {p.themeParksApiEntityId && (
+                <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'monospace', marginTop: 2 }}>
+                  API: {p.themeParksApiEntityId.slice(0, 8)}…
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                {p.centerLat != null && p.centerLng != null && (
+                  <button type="button" onClick={() => gmap?.current?.setCenter({ lat: p.centerLat, lng: p.centerLng })}
+                    style={btn('', { fontSize: 10, padding: '3px 8px' })}>Center map</button>
+                )}
+                <button type="button" onClick={() => removeParkById(p.id)}
+                  style={btn('danger', { fontSize: 10, padding: '3px 8px' })}>Remove</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {showAdd && (
+        <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Field label="Park name">
+            <input value={addName} onChange={e => setAddName(e.target.value)} placeholder="e.g. EPCOT" style={inputStyle} />
+          </Field>
+          <Field label="Search destination (themeparks.wiki)">
+            <input value={destQuery} onChange={e => { setDestQuery(e.target.value); setSelectedDest(null); setApiParkId(''); }}
+              placeholder="Walt Disney World" style={inputStyle} />
+          </Field>
+          {loading && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Searching…</div>}
+          {destResults.map(d => (
+            <button key={d.id} type="button" onClick={() => { setSelectedDest(d); setDestQuery(d.name); setDestResults([]); }}
+              style={btn(selectedDest?.id === d.id ? 'primary' : '', { width: '100%', fontSize: 12, textAlign: 'left', marginBottom: 2 })}>
+              {d.name}
+            </button>
+          ))}
+          {selectedDest?.parks?.length > 0 && (
+            <Field label="Park entity">
+              <SearchableSelect value={apiParkId} onChange={v => {
+                setApiParkId(v);
+                const pick = selectedDest.parks.find(p => p.id === v);
+                if (pick && !addName.trim()) setAddName(pick.name);
+              }} placeholder="Select park…" allowEmpty={true}
+                options={selectedDest.parks.map(p => ({ value: p.id, label: p.name, searchText: p.name }))} />
+            </Field>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <Field label="Center lat (optional)">
+              <input value={centerLat} onChange={e => setCenterLat(e.target.value)} placeholder="28.3747" style={inputStyle} />
+            </Field>
+            <Field label="Center lng (optional)">
+              <input value={centerLng} onChange={e => setCenterLng(e.target.value)} placeholder="-81.5494" style={inputStyle} />
+            </Field>
+          </div>
+          {err && <div style={{ fontSize: 11, color: 'var(--danger)' }}>{err}</div>}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" onClick={resetAdd} style={btn('', { flex: 1, fontSize: 12 })}>Cancel</button>
+            <button type="button" onClick={savePark} style={btn('primary', { flex: 1, fontSize: 12 })}>Save park</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Map & Zones ────────────────────────────────────────────────────────
 function MapZonesTab({data, update}) {
   const gmap     = useRef(null);
@@ -1892,6 +2062,8 @@ function MapZonesTab({data, update}) {
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState('');
   const [formPreset, setFormPreset] = useState('');
+  const [formParkId, setFormParkId] = useState('');
+  const [collapsedParkSections, setCollapsedParkSections] = useState({});
   const [editZone, setEditZone] = useState(null);
   const [editIndoor, setEditIndoor] = useState(null);
   const [mapType, setMapType] = useState('satellite');
@@ -1902,6 +2074,37 @@ function MapZonesTab({data, update}) {
   const didFitAllRef = useRef(false);
 
   const presetOptions = useMemo(() => presetSelectOptions(data.presets), [data.presets]);
+  const parkOptions = useMemo(() => parkSelectOptions(data.parks), [data.parks]);
+  const presetZoneGroups = useMemo(() => groupZonesByPark(data.zones, data.parks), [data.zones, data.parks]);
+  const indoorZoneGroups = useMemo(() => groupZonesByPark(data.indoorZones, data.parks), [data.indoorZones, data.parks]);
+
+  const toggleParkSection = (key) => {
+    setCollapsedParkSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const renderZoneRow = (z, colorIndex, isIndoor = false) => {
+    const COLORS = ['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316'];
+    const c = isIndoor ? '#60a5fa' : COLORS[colorIndex % COLORS.length];
+    const preset = !isIndoor ? data.presets.find(p => p.id === z.presetId) : null;
+    const park = z.parkId ? (data.parks || []).find(p => p.id === z.parkId) : null;
+    const highlighted = highlightZoneId === z.id;
+    return (
+      <div key={z.id}
+        onClick={() => flyToZone(z, isIndoor)}
+        style={{ background: highlighted ? 'var(--primary-dim)' : 'var(--surface2)', borderRadius: 8, padding: 8, borderLeft: `3px solid ${c}`, cursor: 'pointer', border: highlighted ? '1px solid var(--primary)' : '1px solid transparent', marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{z.name}</div>
+            {!isIndoor && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{preset?.name || 'No preset'}</div>}
+            {park && <div style={{ fontSize: 10, color: 'var(--primary)' }}>{park.name}</div>}
+            <div style={{ fontSize: 10, color: z.enabled ? 'var(--success)' : 'var(--text3)' }}>{z.enabled ? 'Enabled' : 'Disabled'}</div>
+          </div>
+          <button type="button" title="Edit zone" onClick={e => { e.stopPropagation(); isIndoor ? openIndoorEdit(z) : openZoneEdit(z); }}
+            style={btn('', { padding: '4px 8px', fontSize: 11, flexShrink: 0 })}>✎</button>
+        </div>
+      </div>
+    );
+  };
 
   // Keep refs current to use inside Google Maps callbacks
   const drawModeRef  = useRef('none');
@@ -2175,11 +2378,15 @@ function MapZonesTab({data, update}) {
     if (drawMode === 'preset' && !formPreset) return alert('Select a preset');
     if (drawPoints.length < 3) return alert('Draw at least 3 points');
     if (drawMode === 'preset') {
-      update({zones:[...data.zones,{id:generateId(),name:formName,polygon:normalizePolygon(drawPoints),presetId:formPreset,enabled:true}]});
+      const zone = { id: generateId(), name: formName, polygon: normalizePolygon(drawPoints), presetId: formPreset, enabled: true };
+      if (formParkId) zone.parkId = formParkId;
+      update({ zones: [...data.zones, zone] });
     } else {
-      update({indoorZones:[...data.indoorZones,{id:generateId(),name:formName,polygon:normalizePolygon(drawPoints),enabled:true}]});
+      const zone = { id: generateId(), name: formName, polygon: normalizePolygon(drawPoints), enabled: true };
+      if (formParkId) zone.parkId = formParkId;
+      update({ indoorZones: [...data.indoorZones, zone] });
     }
-    setShowForm(false); setDrawPoints([]); setDrawMode('none'); setFormName(''); setFormPreset('');
+    setShowForm(false); setDrawPoints([]); setDrawMode('none'); setFormName(''); setFormPreset(''); setFormParkId('');
   };
 
   const saveZoneEdit = () => {
@@ -2252,6 +2459,10 @@ function MapZonesTab({data, update}) {
               placeholder="Select preset…" allowEmpty={false} maxListHeight={200}
               options={presetOptions}/>
           </Field>
+          <Field label="Park">
+            <SearchableSelect value={editZone.parkId || ''} onChange={v => setEditZone({ ...editZone, parkId: v || undefined })}
+              placeholder="Ungrouped" allowEmpty={true} options={parkOptions}/>
+          </Field>
           <label style={{display:'flex',alignItems:'center',gap:8,fontSize:12,cursor:'pointer'}}>
             <input type="checkbox" checked={editZone.enabled} onChange={e=>setEditZone({...editZone,enabled:e.target.checked})} style={{width:16,height:16}}/>
             Enabled
@@ -2259,6 +2470,10 @@ function MapZonesTab({data, update}) {
         </>)}
         {editIndoor && (<>
           <Field label="Name"><input value={editIndoor.name} onChange={e=>setEditIndoor({...editIndoor,name:e.target.value})} style={inputStyle}/></Field>
+          <Field label="Park">
+            <SearchableSelect value={editIndoor.parkId || ''} onChange={v => setEditIndoor({ ...editIndoor, parkId: v || undefined })}
+              placeholder="Ungrouped" allowEmpty={true} options={parkOptions}/>
+          </Field>
           <label style={{display:'flex',alignItems:'center',gap:8,fontSize:12,cursor:'pointer'}}>
             <input type="checkbox" checked={editIndoor.enabled} onChange={e=>setEditIndoor({...editIndoor,enabled:e.target.checked})} style={{width:16,height:16}}/>
             Enabled
@@ -2311,44 +2526,38 @@ function MapZonesTab({data, update}) {
         <button onClick={()=>{setDrawMode('none');setDrawPoints([]);}} style={btn('danger',{width:'100%',fontSize:12})}>✕ Cancel</button>
       </>)}
 
-      {/* Zone list */}
+      <ParksPanel parks={data.parks} data={data} update={update} gmap={gmap} />
+
+      {/* Zone list — grouped by park */}
       <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:8}}>Preset Zones ({data.zones.length})</div>
       {data.zones.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>None yet</div>}
-      {data.zones.map((z,i) => {
-        const COLORS=['#a78bfa','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316'];
-        const c=COLORS[i%COLORS.length];
-        const preset = data.presets.find(p => p.id === z.presetId);
-        const highlighted = highlightZoneId === z.id;
-        return (<div key={z.id}
-          onClick={() => flyToZone(z)}
-          style={{background: highlighted ? 'var(--primary-dim)' : 'var(--surface2)',borderRadius:8,padding:8,borderLeft:`3px solid ${c}`,cursor:'pointer',border: highlighted ? '1px solid var(--primary)' : '1px solid transparent'}}>
-          <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
-              <div style={{fontSize:11,color:'var(--text3)'}}>{preset?.name || 'No preset'}</div>
-              <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
-            </div>
-            <button type="button" title="Edit zone" onClick={e => { e.stopPropagation(); openZoneEdit(z); }}
-              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>✎</button>
+      {presetZoneGroups.map(group => {
+        if (!group.zones.length) return null;
+        const collapsed = collapsedParkSections[`preset-${group.key}`];
+        return (
+          <div key={`preset-${group.key}`} style={{ marginBottom: 6 }}>
+            <button type="button" onClick={() => toggleParkSection(`preset-${group.key}`)}
+              style={{ ...btn('', { width: '100%', textAlign: 'left', fontSize: 11, fontWeight: 700, padding: '4px 6px', marginBottom: 4, color: 'var(--text2)' }) }}>
+              {collapsed ? '▸' : '▾'} {group.label} ({group.zones.length})
+            </button>
+            {!collapsed && group.zones.map((z, i) => renderZoneRow(z, i, false))}
           </div>
-        </div>);
+        );
       })}
       <div style={{fontSize:11,fontWeight:700,color:'var(--text2)',textTransform:'uppercase',letterSpacing:1,marginTop:4}}>Indoor Zones ({data.indoorZones.length})</div>
       {data.indoorZones.length===0 && <div style={{fontSize:12,color:'var(--text3)'}}>None yet</div>}
-      {data.indoorZones.map(z => {
-        const highlighted = highlightZoneId === z.id;
-        return (<div key={z.id}
-          onClick={() => flyToZone(z, true)}
-          style={{background: highlighted ? 'var(--primary-dim)' : 'var(--surface2)',borderRadius:8,padding:8,borderLeft:'3px solid #60a5fa',cursor:'pointer',border: highlighted ? '1px solid var(--primary)' : '1px solid transparent'}}>
-          <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600}}>{z.name}</div>
-              <div style={{fontSize:10,color:z.enabled?'var(--success)':'var(--text3)'}}>{z.enabled?'Enabled':'Disabled'}</div>
-            </div>
-            <button type="button" title="Edit zone" onClick={e => { e.stopPropagation(); openIndoorEdit(z); }}
-              style={btn('',{padding:'4px 8px',fontSize:11,flexShrink:0})}>✎</button>
+      {indoorZoneGroups.map(group => {
+        if (!group.zones.length) return null;
+        const collapsed = collapsedParkSections[`indoor-${group.key}`];
+        return (
+          <div key={`indoor-${group.key}`} style={{ marginBottom: 6 }}>
+            <button type="button" onClick={() => toggleParkSection(`indoor-${group.key}`)}
+              style={{ ...btn('', { width: '100%', textAlign: 'left', fontSize: 11, fontWeight: 700, padding: '4px 6px', marginBottom: 4, color: 'var(--text2)' }) }}>
+              {collapsed ? '▸' : '▾'} {group.label} ({group.zones.length})
+            </button>
+            {!collapsed && group.zones.map((z, i) => renderZoneRow(z, i, true))}
           </div>
-        </div>);
+        );
       })}
     </div>
 
@@ -2371,6 +2580,9 @@ function MapZonesTab({data, update}) {
             maxListHeight={280} options={presetOptions}/>
         )}
       </Field>)}
+      <Field label="Park (optional)">
+        <SearchableSelect value={formParkId} onChange={setFormParkId} placeholder="Ungrouped" allowEmpty={true} options={parkOptions}/>
+      </Field>
       <ModalBtns onCancel={()=>setShowForm(false)} onSave={commitZone}/>
     </Modal>)}
   </div>);

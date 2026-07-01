@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as Location from 'expo-location';
 import { useAppStore, Zone } from '../stores/store';
 import { findContainingZone, findContainingIndoorZone, pointInPolygon, sunBasedBrightness } from '../utils/utils';
+import { resolveActivePark } from '../utils/resolveActivePark';
 import { bleService } from '../services/BLEService';
 
 const GPS_INTERVAL_MS    = 3000;
@@ -14,6 +15,8 @@ export function useZoneManager() {
 
   const zonesRef              = useRef(useAppStore.getState().zones);
   const indoorZonesRef        = useRef(useAppStore.getState().indoorZones);
+  const parksRef              = useRef(useAppStore.getState().parks);
+  const setActiveParkRef      = useRef(useAppStore.getState().setActivePark);
   const brightnessConfigRef   = useRef(useAppStore.getState().brightnessConfig);
   const zonesEnabledRef       = useRef(useAppStore.getState().zonesEnabled);
   const setActiveZoneIdsRef   = useRef(useAppStore.getState().setActiveZoneIds);
@@ -22,6 +25,8 @@ export function useZoneManager() {
     return useAppStore.subscribe((state) => {
       zonesRef.current            = state.zones;
       indoorZonesRef.current      = state.indoorZones;
+      parksRef.current            = state.parks;
+      setActiveParkRef.current    = state.setActivePark;
       brightnessConfigRef.current = state.brightnessConfig;
       zonesEnabledRef.current     = state.zonesEnabled;
       setActiveZoneIdsRef.current = state.setActiveZoneIds;
@@ -41,9 +46,13 @@ export function useZoneManager() {
           const pt = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
           const zones           = zonesRef.current;
           const indoorZones     = indoorZonesRef.current;
+          const parks           = parksRef.current;
+          const setActivePark   = setActiveParkRef.current;
           const bc              = brightnessConfigRef.current;
           const zonesEnabled    = zonesEnabledRef.current;
           const setActive       = setActiveZoneIdsRef.current;
+
+          setActivePark(resolveActivePark(pt, parks, zones, indoorZones));
 
           // Update active zone IDs in store (for HomeScreen display)
           const activeIds = zones.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
