@@ -524,21 +524,57 @@ void printHelp() {
   Serial.println("  test all|inner|outer|topLeft|bottomLeft|bottomRight|topRight|center");
   Serial.println("  test five                all 5 corners R/G/B/W/Y");
   Serial.println("  test band0|band1|…|band7   E905 mask bit test (white)");
-  Serial.println("  wifi <ssid> <pass>     — connect HTTP server (POST /send, GET /status)");
-  Serial.println("  wifi off               — disconnect WiFi");
+  Serial.println("  wifi <ssid> <password>   — HTTP /send for Wand Lab (SSID may contain spaces)");
+  Serial.println("  wifi \"KyLan Ren\" mypass  — quoted SSID/password also work");
+  Serial.println("  wifi off                — disconnect WiFi / HTTP");
   Serial.println("  help");
   Serial.println("  Names: 0-31, or hyphenated MB palette names");
   Serial.println("         e.g. red midnight-blue yellow-orange lime-green pink-3");
   Serial.println("         Short: cyan purple blue pink yellow lime orange red green white");
 }
 
-// WiFi HTTP API globals (must precede handleLine — Arduino hoists prototypes)
-WebServer simServer(80);
+// WiFi HTTP API — lazy-init after `wifi` command (keeps BLE-only boot stable)
+WebServer* simServer = nullptr;
 bool simWifiConnected = false;
+bool simWifiConnecting = false;
+unsigned long wifiConnectStartMs = 0;
+unsigned long wifiLastRetryMs = 0;
 String wifiSsid;
 String wifiPass;
-unsigned long wifiLastRetryMs = 0;
-void connectSimWifi();
+
+void startSimWifiConnect();
+void stopSimWifi();
+bool parseWifiCredentials(const String& rest, String& ssidOut, String& passOut);
+
+bool parseWifiCredentials(const String& rest, String& ssidOut, String& passOut) {
+  String s = rest;
+  s.trim();
+  if (s.length() == 0) return false;
+
+  if (s.charAt(0) == '"') {
+    int end = s.indexOf('"', 1);
+    if (end < 0) return false;
+    ssidOut = s.substring(1, end);
+    String remainder = s.substring(end + 1);
+    remainder.trim();
+    if (remainder.length() > 0 && remainder.charAt(0) == '"') {
+      int end2 = remainder.indexOf('"', 1);
+      if (end2 < 0) return false;
+      passOut = remainder.substring(1, end2);
+    } else {
+      passOut = remainder;
+      passOut.trim();
+    }
+  } else {
+    int lastSp = s.lastIndexOf(' ');
+    if (lastSp <= 0) return false;
+    ssidOut = s.substring(0, lastSp);
+    passOut = s.substring(lastSp + 1);
+    ssidOut.trim();
+    passOut.trim();
+  }
+  return ssidOut.length() > 0 && passOut.length() > 0;
+}
 
 void handleLine(String line) {
   line.trim();
@@ -556,21 +592,18 @@ void handleLine(String line) {
     String rest = line.substring(5);
     rest.trim();
     if (rest.equalsIgnoreCase("off")) {
-      WiFi.disconnect(true);
-      simWifiConnected = false;
-      wifiSsid = "";
-      wifiPass = "";
+      stopSimWifi();
       Serial.println("[WandSim] WiFi off");
       return;
     }
-    int sp = rest.indexOf(' ');
-    if (sp > 0) {
-      wifiSsid = rest.substring(0, sp);
-      wifiPass = rest.substring(sp + 1);
-      wifiPass.trim();
-      connectSimWifi();
+    String ssid, pass;
+    if (parseWifiCredentials(rest, ssid, pass)) {
+      wifiSsid = ssid;
+      wifiPass = pass;
+      startSimWifiConnect();
+      Serial.printf("[WandSim] Connecting to \"%s\"…\n", wifiSsid.c_str());
     } else {
-      Serial.println("[WandSim] Usage: wifi <ssid> <password>");
+      Serial.println("[WandSim] Usage: wifi <ssid> <password>  (password = last token; quotes optional)");
     }
     return;
   }
@@ -725,82 +758,124 @@ size_t parseHexBytes(const String& hexStr, uint8_t* out, size_t maxLen) {
 }
 
 void addSimCors() {
-  simServer.sendHeader("Access-Control-Allow-Origin", "*");
-  simServer.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  simServer.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (!simServer) return;
+  simServer->sendHeader("Access-Control-Allow-Origin", "*");
+  simServer->sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  simServer->sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
 void handleSimOptions() {
   addSimCors();
-  simServer.send(204);
+  if (simServer) simServer->send(204);
 }
 
 void handleSimStatus() {
   addSimCors();
+  if (!simServer) return;
   String ip = simWifiConnected ? WiFi.localIP().toString() : "";
-  simServer.send(200, "application/json",
+  simServer->send(200, "application/json",
     String("{\"ok\":true,\"device\":\"WandSim\",\"wifi\":") + (simWifiConnected ? "true" : "false") +
     ",\"ip\":\"" + ip + "\"}");
 }
 
 void handleSimSend() {
+  if (!simServer) return;
   addSimCors();
-  if (!simServer.hasArg("plain")) {
-    simServer.send(400, "application/json", "{\"ok\":false}");
+  if (!simServer->hasArg("plain")) {
+    simServer->send(400, "application/json", "{\"ok\":false}");
     return;
   }
   DynamicJsonDocument doc(768);
-  if (deserializeJson(doc, simServer.arg("plain"))) {
-    simServer.send(400, "application/json", "{\"ok\":false}");
+  if (deserializeJson(doc, simServer->arg("plain"))) {
+    simServer->send(400, "application/json", "{\"ok\":false}");
     return;
   }
   if (doc.containsKey("line")) {
     handleLine(doc["line"].as<String>());
-    simServer.send(200, "application/json", "{\"ok\":true}");
+    simServer->send(200, "application/json", "{\"ok\":true}");
     return;
   }
   if (doc.containsKey("hex")) {
     uint8_t payload[64];
     size_t n = parseHexBytes(doc["hex"].as<String>(), payload, sizeof(payload));
     if (n == 0) {
-      simServer.send(400, "application/json", "{\"ok\":false}");
+      simServer->send(400, "application/json", "{\"ok\":false}");
       return;
     }
     stopLoops();
     broadcastPayload(payload, n, 4000);
-    simServer.send(200, "application/json", "{\"ok\":true,\"bytes\":" + String(n) + "}");
+    simServer->send(200, "application/json", "{\"ok\":true,\"bytes\":" + String(n) + "}");
     return;
   }
-  simServer.send(400, "application/json", "{\"ok\":false}");
+  simServer->send(400, "application/json", "{\"ok\":false}");
 }
 
-void connectSimWifi() {
-  if (wifiSsid.length() == 0) return;
+void stopSimHttpServer() {
+  if (simServer) {
+    simServer->stop();
+    delete simServer;
+    simServer = nullptr;
+  }
+}
+
+void startSimHttpServer() {
+  stopSimHttpServer();
+  simServer = new WebServer(80);
+  simServer->on("/status", HTTP_GET, handleSimStatus);
+  simServer->on("/send", HTTP_POST, handleSimSend);
+  simServer->on("/send", HTTP_OPTIONS, handleSimOptions);
+  simServer->begin();
+  Serial.println("[WandSim] HTTP server on :80 (/status, /send)");
+}
+
+void stopSimWifi() {
+  stopSimHttpServer();
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  simWifiConnected = false;
+  simWifiConnecting = false;
+  wifiSsid = "";
+  wifiPass = "";
+}
+
+void startSimWifiConnect() {
+  stopSimHttpServer();
+  simWifiConnected = false;
+  simWifiConnecting = true;
+  wifiConnectStartMs = millis();
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    attempts++;
-  }
-  simWifiConnected = (WiFi.status() == WL_CONNECTED);
-  if (simWifiConnected) {
-    Serial.printf("[WandSim] WiFi IP: %s\n", WiFi.localIP().toString().c_str());
-  } else {
-    Serial.println("[WandSim] WiFi connect failed");
-  }
 }
 
 void serviceSimWifi() {
+  if (simWifiConnecting) {
+    if (WiFi.status() == WL_CONNECTED) {
+      simWifiConnecting = false;
+      simWifiConnected = true;
+      Serial.printf("[WandSim] WiFi connected: %s\n", WiFi.localIP().toString().c_str());
+      startSimHttpServer();
+    } else if (millis() - wifiConnectStartMs > 20000) {
+      simWifiConnecting = false;
+      Serial.println("[WandSim] WiFi connect timeout");
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+    }
+    return;
+  }
+
   if (simWifiConnected && WiFi.status() != WL_CONNECTED) {
     simWifiConnected = false;
+    stopSimHttpServer();
     Serial.println("[WandSim] WiFi dropped");
   }
-  if (!simWifiConnected && wifiSsid.length() > 0 && millis() - wifiLastRetryMs > 5000) {
+
+  if (!simWifiConnected && !simWifiConnecting && wifiSsid.length() > 0
+      && millis() - wifiLastRetryMs > 10000) {
     wifiLastRetryMs = millis();
-    connectSimWifi();
+    startSimWifiConnect();
   }
-  simServer.handleClient();
+
+  if (simServer) simServer->handleClient();
 }
 
 void serviceLoops() {
@@ -846,15 +921,12 @@ void setup() {
   Serial.println();
   Serial.println("[WandSim] Starlight wand + MagicBand+ BLE broadcaster");
   Serial.println("[WandSim] Adafruit magicband_protocol.py packet builders");
+  WiFi.mode(WIFI_OFF);
   NimBLEDevice::init("WandSim");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
   adv = NimBLEDevice::getAdvertising();
   adv->setMinInterval(0x20);  // 20ms — match Adafruit ~25ms interval
   adv->setMaxInterval(0x30);
-  simServer.on("/status", HTTP_GET, handleSimStatus);
-  simServer.on("/send", HTTP_POST, handleSimSend);
-  simServer.on("/send", HTTP_OPTIONS, handleSimOptions);
-  simServer.begin();
   printHelp();
 }
 
