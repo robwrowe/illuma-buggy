@@ -8,6 +8,9 @@
     "ios": "expo run:ios",
     "build": "bash build.sh",
     "build:clean": "bash build.sh --clean",
+    "build:apk": "bash build-apk.sh",
+    "build:apk:dev": "bash build-apk.sh dev",
+    "build:apk:prod": "bash build-apk.sh prod",
     "serve": "npx serve ../web/index.html"
   },
   "dependencies": {
