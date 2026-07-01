@@ -20,9 +20,9 @@ import { bleService } from '../services/BLEService';
 import { useTheme } from '../utils/theme';
 import { useNavigation } from '@react-navigation/native';
 
-const OVERRIDE_LABELS = ['—', 'Zone', 'Manual', 'MagicBand+', 'Starlight Wand'];
+const OVERRIDE_LABELS = ['—', 'Zone', 'Manual', 'Show Mode', 'MagicBand+', 'Starlight Wand'];
 const OVERRIDE_COLORS = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) =>
-  [c.textMuted, c.success, c.warning, c.primary, '#c084fc'];
+  [c.textMuted, c.success, c.warning, '#f472b6', c.primary, '#c084fc'];
 
 export default function HomeScreen() {
   const { colors } = useTheme();
@@ -88,8 +88,11 @@ export default function HomeScreen() {
     if (currentPreset) return currentPreset.name;
     if (overrideIndex === 1) return 'Zone preset';
     if (overrideIndex === 2) return 'Manual preset';
-    if (overrideIndex === 3) return 'MagicBand+ effect';
-    if (overrideIndex === 4) return 'Starlight Wand effect';
+    if (overrideIndex === 3) return deviceStatus?.showType
+      ? `Show: ${deviceStatus.showType}${deviceStatus.showPhase ? ` (${deviceStatus.showPhase})` : ''}`
+      : 'Show mode';
+    if (overrideIndex === 4) return 'MagicBand+ effect';
+    if (overrideIndex === 5) return 'Starlight Wand effect';
     return 'Active override';
   })();
 
@@ -185,6 +188,41 @@ export default function HomeScreen() {
           <Text style={s.subText}>{isConnected ? 'Waiting for status…' : 'Not connected'}</Text>
         )}
       </View>
+
+      {/* Parade show controls */}
+      {isConnected && (
+        <View style={s.card}>
+          <Text style={s.label}>Parade Control</Text>
+          {deviceStatus?.showType === 'parade' && deviceStatus.showPhase && (
+            <Text style={[s.subText, { color: colors.primary, marginBottom: 4 }]}>
+              Active: {deviceStatus.showPhase}
+            </Text>
+          )}
+          <View style={s.paradeRow}>
+            <TouchableOpacity
+              style={[s.paradeBtn, deviceStatus?.showType === 'parade' && deviceStatus?.showPhase === 'black' && s.paradeBtnActive]}
+              disabled={!isConnected || (deviceStatus?.showType === 'parade' && deviceStatus?.showPhase === 'black')}
+              onPress={() => bleService.sendShowModeEnter('parade', 'black')}
+            >
+              <Text style={s.paradeBtnText}>Black Cue</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.paradeBtn, deviceStatus?.showType === 'parade' && deviceStatus?.showPhase === 'live' && s.paradeBtnActive]}
+              disabled={!isConnected}
+              onPress={() => bleService.sendShowModeEnter('parade', 'live')}
+            >
+              <Text style={s.paradeBtnText}>Show Look</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.paradeBtn, s.paradeBtnEnd]}
+              disabled={!isConnected || deviceStatus?.showType !== 'parade'}
+              onPress={() => bleService.sendShowModeEnter('parade', 'post')}
+            >
+              <Text style={[s.paradeBtnText, { color: colors.danger }]}>End Parade</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Active Zones */}
       {(activeZones.length > 0 || zonesEnabled) && (
@@ -314,4 +352,9 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   setChip:      { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt },
   setChipActive: { borderColor: c.primary, backgroundColor: c.primaryDim },
   setChipText:  { color: c.textMuted, fontSize: 13, fontWeight: '500' },
+  paradeRow:    { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  paradeBtn:    { flex: 1, minWidth: 90, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt, alignItems: 'center' },
+  paradeBtnActive: { borderColor: c.primary, backgroundColor: c.primaryDim },
+  paradeBtnEnd: { borderColor: c.danger + '66' },
+  paradeBtnText:{ color: c.textPrimary, fontSize: 12, fontWeight: '600', textAlign: 'center' },
 });

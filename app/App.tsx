@@ -175,6 +175,8 @@ export default function App() {
           magicBandEnabled:   msg.mb_enabled as boolean,
           mbFivePoint:        msg.mb_five_point as boolean,
           mbTimeoutMs:        msg.mb_timeout_ms as number,
+          showType:           msg.show_type as string | undefined,
+          showPhase:          msg.show_phase as string | undefined,
         });
         if (override === 0) setOverrideDetail(null);
       }
@@ -187,6 +189,7 @@ export default function App() {
       await bleService.sendMbConfig(s.magicBandEnabled, s.magicBandFivePoint, s.magicBandTimeoutSec * 1000);
       await bleService.sendBleEffectConfig(s.bleEffectTransitionMs);
       await bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
+      await bleService.sendShowModeConfig(s.showModeConfig);
       await new Promise(r => setTimeout(r, 400));
       await bleService.sendPresetList();
       if (s.wledEffects.length === 0) {

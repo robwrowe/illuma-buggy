@@ -64,7 +64,10 @@ struct MbEffectMap {
   uint8_t colorSlotCount;
 };
 
-enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC, BLE_STARLIGHT };
+enum OverrideSource { NONE, ZONE, MANUAL, SHOW_MODE, BLE_MAGIC, BLE_STARLIGHT };
+
+enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS };
+enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
 
 static const char* MB_SEG_KEYS[] = {
   "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
@@ -114,6 +117,16 @@ void handleBLECommand(const String& msg);
 OverrideSource currentOverride    = NONE;
 bool           overrideKillOnZone = false;
 unsigned long  overrideTimestamp  = 0;
+
+ShowType  showModeType  = SHOW_NONE;
+ShowPhase showModePhase = PHASE_NONE;
+OverrideSource overrideBeforeInterrupt = NONE;
+
+String showLookParadePre     = "";
+String showLookParadeLive    = "";
+String showLookFireworksPre  = "";
+String showLookFireworksLive = "__BLACK__";
+String showLookFireworksPost = "";
 
 int    currentBrightness = 128;
 String currentPresetId   = "";
@@ -1146,8 +1159,9 @@ int overridePriority(OverrideSource src) {
   switch (src) {
     case ZONE:          return 1;
     case MANUAL:        return 2;
-    case BLE_MAGIC:     return 3;
-    case BLE_STARLIGHT: return 4;
+    case SHOW_MODE:     return 3;
+    case BLE_MAGIC:     return 4;
+    case BLE_STARLIGHT: return 5;
     default:            return 0;
   }
 }
@@ -1159,6 +1173,9 @@ bool canTakeOverride(OverrideSource incoming) {
 }
 
 void setOverride(OverrideSource src) {
+  if (currentOverride == SHOW_MODE && (src == BLE_MAGIC || src == BLE_STARLIGHT)) {
+    overrideBeforeInterrupt = SHOW_MODE;
+  }
   currentOverride = src;
   overrideTimestamp = millis();
   if (src == BLE_MAGIC && pendingMbEffectPayload && pendingMbEffectPayloadLen > 0) {
@@ -1296,6 +1313,52 @@ bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
   return ok;
 }
 
+void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
+  if (phase == PHASE_BLACK) {
+    sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+    return;
+  }
+  String presetId;
+  if (type == SHOW_PARADE) {
+    presetId = (phase == PHASE_PRE) ? showLookParadePre : showLookParadeLive;
+  } else if (type == SHOW_FIREWORKS) {
+    if (phase == PHASE_PRE) presetId = showLookFireworksPre;
+    else if (phase == PHASE_LIVE) presetId = showLookFireworksLive;
+    else presetId = showLookFireworksPost;
+  }
+  if (presetId == "__BLACK__") {
+    sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+    return;
+  }
+  if (presetId.length() == 0) return;
+
+  String preset = getPreset(presetId);
+  if (preset.length() == 0) return;
+  DynamicJsonDocument doc(2048);
+  if (deserializeJson(doc, preset)) return;
+  String wledJson;
+  serializeJson(doc["wled"], wledJson);
+  currentPresetId = presetId;
+  sendToWLED(injectWledTransition(prepareWledRestorePayload(wledJson), fadeMs));
+  if (wledJson.length() > 0) liveWledState = wledJson;
+}
+
+const char* showTypeStatusStr() {
+  if (showModeType == SHOW_PARADE) return "parade";
+  if (showModeType == SHOW_FIREWORKS) return "fireworks";
+  return "";
+}
+
+const char* showPhaseStatusStr() {
+  switch (showModePhase) {
+    case PHASE_PRE:   return "pre";
+    case PHASE_BLACK: return "black";
+    case PHASE_LIVE:  return "live";
+    case PHASE_POST:  return "post";
+    default:          return "";
+  }
+}
+
 void pollLiveWledState() {
   if (currentOverride != NONE) return;
   if (WiFi.status() != WL_CONNECTED) return;
@@ -1311,6 +1374,16 @@ void pollLiveWledState() {
 
 void clearOverride() {
   OverrideSource prev = currentOverride;
+  unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
+
+  if (overrideBeforeInterrupt == SHOW_MODE && (prev == BLE_MAGIC || prev == BLE_STARLIGHT)) {
+    overrideBeforeInterrupt = NONE;
+    currentOverride = SHOW_MODE;
+    overrideTimestamp = millis();
+    applyShowPhaseLook(showModeType, showModePhase, fadeMs);
+    return;
+  }
+
   OverrideSource restoreOverride = savedRestoreOverride;
   String presetId = savedRestorePresetId;
   String snapshot = savedWledState;
@@ -1321,7 +1394,6 @@ void clearOverride() {
   savedRestoreOverride = NONE;
 
   Serial.println("[Override] Cleared");
-  unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
 
   bool restored = false;
   if (snapshot.length() > 0) {
@@ -1451,7 +1523,64 @@ void handleBLECommand(const String& msg) {
   }
   else if (type == "override_mode") {
     overrideKillOnZone = doc["kill_on_zone"].as<bool>();
+    prefs.begin("config", false);
+    prefs.putBool("killOnZone", overrideKillOnZone);
+    prefs.end();
     bleNotify("{\"type\":\"ack\",\"action\":\"override_mode\",\"kill_on_zone\":" + String(overrideKillOnZone ? "true" : "false") + "}");
+  }
+
+  else if (type == "show_mode_config") {
+    if (doc.containsKey("parade")) {
+      JsonObject p = doc["parade"];
+      showLookParadePre  = p["pre"]  | "";
+      showLookParadeLive = p["live"] | "";
+    }
+    if (doc.containsKey("fireworks")) {
+      JsonObject f = doc["fireworks"];
+      showLookFireworksPre  = f["pre"]  | "";
+      showLookFireworksLive = f["live"] | "__BLACK__";
+      showLookFireworksPost = f["post"] | "";
+    }
+    prefs.begin("config", false);
+    prefs.putString("showParaPre", showLookParadePre);
+    prefs.putString("showParaLive", showLookParadeLive);
+    prefs.putString("showFwPre", showLookFireworksPre);
+    prefs.putString("showFwLive", showLookFireworksLive);
+    prefs.putString("showFwPost", showLookFireworksPost);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_config\"}");
+  }
+
+  else if (type == "show_mode_enter") {
+    String showStr = doc["show"] | "";
+    String phaseStr = doc["phase"] | "";
+    ShowType st = (showStr == "parade") ? SHOW_PARADE : (showStr == "fireworks") ? SHOW_FIREWORKS : SHOW_NONE;
+    ShowPhase sp = (phaseStr == "pre") ? PHASE_PRE : (phaseStr == "black") ? PHASE_BLACK
+                 : (phaseStr == "live") ? PHASE_LIVE : (phaseStr == "post") ? PHASE_POST : PHASE_NONE;
+    if (st == SHOW_NONE || sp == PHASE_NONE) {
+      bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_enter\",\"ok\":false}");
+    } else if (st == SHOW_PARADE && sp == PHASE_POST) {
+      showModeType = SHOW_NONE;
+      showModePhase = PHASE_NONE;
+      overrideBeforeInterrupt = NONE;
+      clearOverride();
+      bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_enter\",\"show\":\"parade\",\"phase\":\"post\",\"exited\":true}");
+    } else {
+      if (currentOverride != SHOW_MODE) saveWledStateForOverride();
+      showModeType = st;
+      showModePhase = sp;
+      setOverride(SHOW_MODE);
+      applyShowPhaseLook(st, sp, bleEffectTransitionMs);
+      bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_enter\",\"show\":\"" + showStr + "\",\"phase\":\"" + phaseStr + "\"}");
+    }
+  }
+
+  else if (type == "show_mode_exit") {
+    showModeType = SHOW_NONE;
+    showModePhase = PHASE_NONE;
+    overrideBeforeInterrupt = NONE;
+    clearOverride();
+    bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_exit\"}");
   }
 
   // ── Brightness ──
@@ -1635,6 +1764,8 @@ void handleBLECommand(const String& msg) {
       "\"mb_layout_active\":" + String((int)mbActiveLayoutIdx) + ","
       "\"mb_layout_name\":\"" + String(mbLayoutCount > 0 ? mbLayouts[mbActiveLayoutIdx].name : "Default") + "\","
       "\"mb_layout_count\":" + String((int)mbLayoutCount) + ","
+      "\"show_type\":\"" + String(showTypeStatusStr()) + "\","
+      "\"show_phase\":\"" + String(showPhaseStatusStr()) + "\","
       "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") + ","
       "\"capture_active\":" + String(bleCaptureToApp ? "true" : "false") +
       "}"
@@ -2332,6 +2463,11 @@ void setup() {
   mbMappingJson       = prefs.getString("mbMapping", "");
   mbLayoutsJson       = prefs.getString("mbLayouts", "");
   mbActiveLayoutIdx   = prefs.getUChar("mbActiveLayout", 0);
+  showLookParadePre     = prefs.getString("showParaPre", "");
+  showLookParadeLive    = prefs.getString("showParaLive", "");
+  showLookFireworksPre  = prefs.getString("showFwPre", "");
+  showLookFireworksLive = prefs.getString("showFwLive", "__BLACK__");
+  showLookFireworksPost = prefs.getString("showFwPost", "");
   prefs.end();
   loadMbMappingDefaults();
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();

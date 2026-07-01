@@ -818,6 +818,12 @@ function presetSelectOptions(presets) {
   }));
 }
 
+function showModePresetOptions(presets, includeBlack = false) {
+  const base = [{ value: '', label: '(none)', searchText: 'none empty' }];
+  if (includeBlack) base.push({ value: '__BLACK__', label: 'Black (lights off)', searchText: 'black off' });
+  return [...base, ...presetSelectOptions(presets)];
+}
+
 function paletteSelectValue(wled) {
   if (wled.pal === undefined || wled.pal === null || wled.pal === '') return '';
   return `wled:${wled.pal}`;
@@ -1176,6 +1182,7 @@ const DEFAULT_BOARD_SYNC_OPTIONS = {
   mbConfig: true,
   effectTransition: true,
   overrideMode: true,
+  showMode: true,
 };
 
 function loadBoardSyncOptions() {
@@ -1255,6 +1262,17 @@ async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOARD_SYNC
       kill_on_zone: !!data.overrideKillOnZone,
     });
     sent.push('override mode');
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
+  if (opts.showMode) {
+    onProgress?.('Sending show mode config…');
+    await webBleBoard.send({
+      type: 'show_mode_config',
+      parade: data.showModeConfig?.parade ?? DEFAULT_DATA.showModeConfig.parade,
+      fireworks: data.showModeConfig?.fireworks ?? DEFAULT_DATA.showModeConfig.fireworks,
+    });
+    sent.push('show mode');
     await delay(BLE_SEND_DELAY_MS);
   }
 
@@ -1577,6 +1595,7 @@ const BOARD_SYNC_ITEMS = [
   { key: 'mbConfig', label: 'MagicBand+', hint: () => 'Enabled, 5-point mode, timeout' },
   { key: 'effectTransition', label: 'Effect transitions', hint: (data) => `${data.bleEffectTransitionMs ?? 700} ms fade` },
   { key: 'overrideMode', label: 'Override mode', hint: (data) => data.overrideKillOnZone ? 'Kill override on zone entry' : 'Keep override in zones' },
+  { key: 'showMode', label: 'Show mode', hint: () => 'Parade + fireworks preset looks' },
 ];
 
 function BoardSyncModal({ data, onClose }) {
@@ -3819,6 +3838,7 @@ function BleMappingTabBar({ active, onChange }) {
     { id: 'device', label: 'Device' },
     { id: 'sw', label: 'Starlight' },
     { id: 'mb', label: 'MagicBand' },
+    { id: 'show', label: 'Show Mode' },
     { id: 'colors', label: 'MB Colors' },
     { id: 'segments', label: 'Segments' },
     { id: 'general', label: 'General' },
@@ -4064,6 +4084,46 @@ function SettingsTab({data, update}) {
         ))}
       </div>
     </>}
+
+    {bleTab === 'show' && (() => {
+      const sm = data.showModeConfig || DEFAULT_DATA.showModeConfig;
+      const smOpts = showModePresetOptions(presets);
+      const fwLiveOpts = showModePresetOptions(presets, true);
+      const setShow = (patch) => update({ showModeConfig: { ...sm, ...patch } });
+      const setParade = (patch) => setShow({ parade: { ...sm.parade, ...patch } });
+      const setFireworks = (patch) => setShow({ fireworks: { ...sm.fireworks, ...patch } });
+      return (<>
+        <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12, lineHeight: 1.5 }}>
+          Parade and fireworks looks are pushed via <strong>📡 Board</strong>. Android parade buttons send phase changes live over BLE.
+        </p>
+        <div style={{ ...cardStyle, borderColor: 'var(--primary)' }}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, color: 'var(--primary)' }}>Parade</div>
+          <Field label="Pre-show look">
+            <SearchableSelect value={sm.parade?.pre || ''} onChange={v => setParade({ pre: v })}
+              placeholder="(none)" options={smOpts} allowEmpty={true}/>
+          </Field>
+          <Field label="Show look (live)">
+            <SearchableSelect value={sm.parade?.live || ''} onChange={v => setParade({ live: v })}
+              placeholder="(none)" options={smOpts} allowEmpty={true}/>
+          </Field>
+        </div>
+        <div style={cardStyle}>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Fireworks</div>
+          <Field label="Pre-show look">
+            <SearchableSelect value={sm.fireworks?.pre || ''} onChange={v => setFireworks({ pre: v })}
+              placeholder="(none)" options={smOpts} allowEmpty={true}/>
+          </Field>
+          <Field label="During show (live)">
+            <SearchableSelect value={sm.fireworks?.live ?? '__BLACK__'} onChange={v => setFireworks({ live: v || '__BLACK__' })}
+              placeholder="Black" options={fwLiveOpts} allowEmpty={false}/>
+          </Field>
+          <Field label="Post-show look">
+            <SearchableSelect value={sm.fireworks?.post || ''} onChange={v => setFireworks({ post: v })}
+              placeholder="(none)" options={smOpts} allowEmpty={true}/>
+          </Field>
+        </div>
+      </>);
+    })()}
 
     {bleTab === 'colors' && <>
       <p style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>RGB used when no preset is mapped (solid MB colors).</p>

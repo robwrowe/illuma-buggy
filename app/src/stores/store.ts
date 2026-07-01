@@ -122,6 +122,8 @@ export interface DeviceStatus {
   magicBandEnabled:     boolean;
   mbFivePoint:          boolean;
   mbTimeoutMs:          number;
+  showType?:            string;
+  showPhase?:           string;
 }
 
 import {
@@ -265,6 +267,7 @@ interface AppState {
 
   // v3.0 config (migration defaults; full UI in later sections)
   showModeConfig: ShowModeConfig;
+  setShowModeConfig: (config: Partial<ShowModeConfig>) => void;
   wandLab: WandLabConfig;
   mbSegmentLayouts: MbSegmentLayout[];
   mbActiveSegmentLayoutId: string | null;
@@ -396,6 +399,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     indoorZones: s.indoorZones.map(z => z.parkId === id ? { ...z, parkId: undefined } : z),
   })),
   setActivePark: (activePark) => set({ activePark }),
+
+  setShowModeConfig: (patch) => set(s => ({
+    showModeConfig: {
+      ...s.showModeConfig,
+      ...patch,
+      parade: { ...s.showModeConfig.parade, ...(patch.parade ?? {}) },
+      fireworks: { ...s.showModeConfig.fireworks, ...(patch.fireworks ?? {}) },
+    },
+  })),
 
   // WLED cache
   setWledEffects:  (wledEffects)  => set({ wledEffects }),

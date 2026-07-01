@@ -155,6 +155,15 @@ class BLEService {
   sendMbMappingConfig(payload: object) {
     return this.send({ type: 'mb_mapping_config', mapping: payload });
   }
+  sendShowModeConfig(config: { parade: { pre: string; live: string }; fireworks: { pre: string; live: string; post: string } }) {
+    return this.send({ type: 'show_mode_config', ...config });
+  }
+  sendShowModeEnter(show: 'parade' | 'fireworks', phase: 'pre' | 'black' | 'live' | 'post') {
+    return this.send({ type: 'show_mode_enter', show, phase });
+  }
+  sendShowModeExit() {
+    return this.send({ type: 'show_mode_exit' });
+  }
   sendBleCaptureConfig(active: boolean, durationMs = 0) {
     const msg: BLEMessage = { type: 'ble_capture_config', active };
     if (active && durationMs > 0) msg.duration_ms = durationMs;
