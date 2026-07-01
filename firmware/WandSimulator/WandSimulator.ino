@@ -94,7 +94,11 @@ static uint8_t mbVibByte(uint8_t vibration = 0) {
   return (uint8_t)(0xB0 | (vibration & 0x0F));
 }
 
-static uint8_t mbColorByte(uint8_t paletteIdx, uint8_t patternNibble) {
+static uint8_t mbFiveSlotByte(uint8_t paletteIdx) {
+  return (uint8_t)(0xA0 | (paletteIdx & 0x1F));
+}
+
+static uint8_t mbPatternColorByte(uint8_t paletteIdx, uint8_t patternNibble) {
   return (uint8_t)((patternNibble << 5) | (paletteIdx & 0x1F));
 }
 
@@ -153,11 +157,10 @@ static size_t buildMbRgb(uint8_t* out, uint8_t red, uint8_t green, uint8_t blue,
   return 12;
 }
 
-// E909 five palette slots — wire bytes 7..11 light band: center, TR, BR, BL, TL.
-static size_t buildMbFiveWire(uint8_t* out, uint8_t bandCenter, uint8_t bandTopRight,
-                              uint8_t bandBottomRight, uint8_t bandBottomLeft, uint8_t bandTopLeft,
-                              uint8_t timing = 0x0E, uint8_t vibration = 0,
-                              uint8_t patternNibble = 0x04) {
+// E909 five palette slots — Adafruit wire order bytes 7..11: TL, BL, BR, TR, center.
+static size_t buildMbFiveWire(uint8_t* out, uint8_t bandTopLeft, uint8_t bandBottomLeft,
+                              uint8_t bandBottomRight, uint8_t bandTopRight, uint8_t bandCenter,
+                              uint8_t timing = 0x0E, uint8_t vibration = 0) {
   out[0] = 0xE1;
   out[1] = 0x00;
   out[2] = 0xE9;
@@ -165,28 +168,37 @@ static size_t buildMbFiveWire(uint8_t* out, uint8_t bandCenter, uint8_t bandTopR
   out[4] = 0x00;
   out[5] = timing;
   out[6] = 0x0F;
-  out[7] = mbColorByte(bandCenter, patternNibble);
-  out[8] = mbColorByte(bandTopRight, patternNibble);
-  out[9] = mbColorByte(bandBottomRight, patternNibble);
-  out[10] = mbColorByte(bandBottomLeft, patternNibble);
-  out[11] = mbColorByte(bandTopLeft, patternNibble);
+  out[7] = mbFiveSlotByte(bandTopLeft);
+  out[8] = mbFiveSlotByte(bandBottomLeft);
+  out[9] = mbFiveSlotByte(bandBottomRight);
+  out[10] = mbFiveSlotByte(bandTopRight);
+  out[11] = mbFiveSlotByte(bandCenter);
   out[12] = mbVibByte(vibration);
   return 13;
 }
 
-// User/stroller corner order: TL, BL, BR, TR, center → band wire order above.
+// User/stroller corner order: TL, BL, BR, TR, center (matches Adafruit build_five_color).
 static size_t buildMbFive(uint8_t* out, uint8_t topLeft, uint8_t bottomLeft,
                           uint8_t bottomRight, uint8_t topRight, uint8_t center,
-                          uint8_t timing = 0x0E, uint8_t vibration = 0,
-                          uint8_t patternNibble = 0x04) {
-  return buildMbFiveWire(out, center, topRight, bottomRight, bottomLeft, topLeft,
-                         timing, vibration, patternNibble);
+                          uint8_t timing = 0x0E, uint8_t vibration = 0) {
+  return buildMbFiveWire(out, topLeft, bottomLeft, bottomRight, topRight, center,
+                         timing, vibration);
 }
 
 static size_t buildMbFiveUniform(uint8_t* out, uint8_t paletteIdx, uint8_t patternNibble) {
   paletteIdx &= 0x1F;
-  return buildMbFive(out, paletteIdx, paletteIdx, paletteIdx, paletteIdx, paletteIdx,
-                     0x0E, 0, patternNibble);
+  out[0] = 0xE1;
+  out[1] = 0x00;
+  out[2] = 0xE9;
+  out[3] = 0x09;
+  out[4] = 0x00;
+  out[5] = 0x0E;
+  out[6] = 0x0F;
+  for (int i = 7; i <= 11; i++) {
+    out[i] = mbPatternColorByte(paletteIdx, patternNibble);
+  }
+  out[12] = mbVibByte(0);
+  return 13;
 }
 
 // CC03000000 — park "ping" (bands may respond / wake)

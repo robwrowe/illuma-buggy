@@ -99,8 +99,9 @@ export function useZoneManager() {
       if (matchedZone) {
         console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
         bleService.sendZoneTrigger(matchedZone.presetId);
-      } else {
+      } else if (prevZone) {
         console.log('[Zone] Left all zones');
+        bleService.sendOverrideClear();
       }
     };
 

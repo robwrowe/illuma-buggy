@@ -381,6 +381,87 @@
 
     const WAND_LAB_TAGS = ['no_effect', 'color_change', 'animation_change', 'ignored', 'unknown'];
 
+    const MB_PATTERN_MODES = [
+      { id: 'solid', label: 'solid', nibble: 0x04 },
+      { id: 'spin', label: 'spin', nibble: 0x03 },
+      { id: 'all', label: 'all', nibble: 0x0B },
+      { id: 'corners', label: 'corners', nibble: 0x08 },
+      { id: 'middle', label: 'middle', nibble: 0x02 },
+    ];
+
+    const WAND_LAB_MB_CMDS = [
+      { id: 'single', label: 'E905 — single color' },
+      { id: 'dual', label: 'E906 — dual ring' },
+      { id: 'rgb', label: 'E908 — raw RGB (6-bit)' },
+      { id: 'five', label: 'E909 — five corners' },
+      { id: 'pattern', label: 'E909 — color + pattern' },
+      { id: 'ping', label: 'CC03 — ping' },
+    ];
+
+    function mbVibByte(vibration = 0) {
+      return (0xB0 | (vibration & 0x0F)) & 0xFF;
+    }
+
+    function mbFiveSlotByte(paletteIdx) {
+      return (0xA0 | (paletteIdx & 0x1F)) & 0xFF;
+    }
+
+    function mbColorByte(paletteIdx, patternNibble) {
+      return ((patternNibble << 5) | (paletteIdx & 0x1F)) & 0xFF;
+    }
+
+    function buildMbSingle(paletteIdx, mask = 0, timing = 0x09, vibration = 0) {
+      const out = new Array(9);
+      out[0] = 0xE1; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x05; out[4] = 0x00; out[5] = timing;
+      if (mask > 7 || (mask & 0xF8)) {
+        out[6] = mask;
+        out[7] = paletteIdx & 0x1F;
+      } else {
+        out[6] = 0x0E;
+        out[7] = (((mask & 0x07) << 5) | (paletteIdx & 0x1F)) & 0xFF;
+      }
+      out[8] = mbVibByte(vibration);
+      return out;
+    }
+
+    function buildMbDual(innerIdx, outerIdx, timing = 0x22, vibration = 0) {
+      return [
+        0xE2, 0x00, 0xE9, 0x06, 0x00, timing, 0x0F,
+        (0x40 | (innerIdx & 0x1F)) & 0xFF,
+        (0x40 | (outerIdx & 0x1F)) & 0xFF,
+        mbVibByte(vibration),
+      ];
+    }
+
+    function buildMbRgb(red, green, blue, timing = 0x0E, vibration = 0) {
+      return [
+        0xE1, 0x00, 0xE9, 0x08, 0x00, timing, 0xD2, 0x55,
+        ((red & 0x3F) << 1) & 0xFF,
+        ((green & 0x3F) << 1) & 0xFF,
+        ((blue & 0x3F) << 1) & 0xFF,
+        mbVibByte(vibration),
+      ];
+    }
+
+    function buildMbFive(tl, bl, br, tr, center, timing = 0x0E, vibration = 0, patternNibble = null) {
+      const slot = (pal) => (patternNibble == null
+        ? mbFiveSlotByte(pal)
+        : mbColorByte(pal, patternNibble));
+      return [
+        0xE1, 0x00, 0xE9, 0x09, 0x00, timing, 0x0F,
+        slot(tl),
+        slot(bl),
+        slot(br),
+        slot(tr),
+        slot(center),
+        mbVibByte(vibration),
+      ];
+    }
+
+    function buildMbPing() {
+      return [0xCC, 0x03, 0x00, 0x00, 0x00];
+    }
+
     const MB_COLOR_NAMES = [
       'cyan', 'purple', 'blue', 'midnight blue', 'blue 2', 'bright purple', 'lavender', 'purple',
       'pink', 'pink 2', 'pink 3', 'pink 4', 'pink 5', 'pink 6', 'pink 7', 'yellow orange',
@@ -388,6 +469,14 @@
       'cyan 2', 'cyan 3', 'cyan 4', 'green', 'lime green', 'white', 'white 2',
       'off', 'unique', 'random',
     ];
+
+    function mbPaletteOptions() {
+      return MB_COLOR_NAMES.map((name, i) => ({
+        value: String(i),
+        label: `${i} — ${name}`,
+        searchText: `${i} ${name}`,
+      }));
+    }
 
     const DEFAULT_MB_WLED_COLORS = [
       '#00ffff', '#9900ff', '#0000ff', '#000080', '#0066ff', '#cc44ff', '#cc99ff', '#7700cc',
@@ -451,15 +540,15 @@
     };
 
     const MB_SEGMENT_META = [
-      { id: 'all', label: 'All', hint: 'E905 mask 000, full strip' },
-      { id: 'inner', label: 'Inner ring', hint: 'E906 inner' },
-      { id: 'outer', label: 'Outer ring', hint: 'E906 outer' },
-      { id: 'topLeft', label: 'Top left', hint: 'E909 TL' },
-      { id: 'topRight', label: 'Top right', hint: 'E909 TR' },
-      { id: 'bottomLeft', label: 'Bottom left', hint: 'E909 BL' },
-      { id: 'bottomRight', label: 'Bottom right', hint: 'E909 BR' },
-      { id: 'center', label: 'Center', hint: 'E909 center' },
-      { id: 'band0', label: 'Band LED 0', hint: 'E905 mask bit 0' },
+      { id: 'all', label: 'All', hint: 'E905 mask 000 — full strip (WLED seg 0)' },
+      { id: 'inner', label: 'Inner ring', hint: 'E906 inner — start/stop only; id assigned at runtime' },
+      { id: 'outer', label: 'Outer ring', hint: 'E906 outer — start/stop only; id assigned at runtime' },
+      { id: 'topLeft', label: 'Top left', hint: 'E909 TL — start/stop only' },
+      { id: 'topRight', label: 'Top right', hint: 'E909 TR — start/stop only' },
+      { id: 'bottomLeft', label: 'Bottom left', hint: 'E909 BL — start/stop only' },
+      { id: 'bottomRight', label: 'Bottom right', hint: 'E909 BR — start/stop only' },
+      { id: 'center', label: 'Center', hint: 'E909 center — start/stop only' },
+      { id: 'band0', label: 'Band LED 0', hint: 'E905 mask bit 0 — start/stop only' },
       { id: 'band1', label: 'Band LED 1', hint: 'E905 mask bit 1' },
       { id: 'band2', label: 'Band LED 2', hint: 'E905 mask bit 2' },
       { id: 'band3', label: 'Band LED 3', hint: 'E905 mask bit 3' },
@@ -3977,9 +4066,45 @@
       const [sending, setSending] = useState(false);
       const [status, setStatus] = useState('');
       const [logFilter, setLogFilter] = useState('');
+      const [mbCmd, setMbCmd] = useState('single');
+      const [mbPal, setMbPal] = useState('21');
+      const [mbMask, setMbMask] = useState('0');
+      const [mbInner, setMbInner] = useState('21');
+      const [mbOuter, setMbOuter] = useState('0');
+      const [mbRgb, setMbRgb] = useState({ r: 63, g: 0, b: 0 });
+      const [mbFive, setMbFive] = useState({ tl: '0', bl: '2', br: '21', tr: '8', c: '19' });
+      const [mbPattern, setMbPattern] = useState('solid');
+      const [hexPaste, setHexPaste] = useState('');
+      const [editingLogId, setEditingLogId] = useState(null);
+
+      const palOpts = mbPaletteOptions();
+
+      const parseHexString = (raw) => {
+        const clean = (raw || '').replace(/[^0-9a-fA-F]/g, '');
+        if (clean.length < 2) return [];
+        const arr = [];
+        for (let i = 0; i + 1 < clean.length; i += 2) {
+          arr.push(parseInt(clean.slice(i, i + 2), 16));
+        }
+        return arr;
+      };
+
+      const applyHexPaste = () => {
+        const arr = parseHexString(hexPaste);
+        if (arr.length === 0) { setStatus('Paste valid hex bytes first'); return; }
+        setByteArray(arr, 'paste');
+        setHexPaste('');
+        setStatus(`Loaded ${arr.length} bytes from paste`);
+      };
 
       const loadPreset = (key) => {
         const b = SW_FX_PRESET_BYTES[key] || [];
+        setPresetKey(key);
+        setBytes([...b]);
+        setOrigBytes([...b]);
+      };
+
+      const setByteArray = (b, key) => {
         setPresetKey(key);
         setBytes([...b]);
         setOrigBytes([...b]);
@@ -3991,13 +4116,56 @@
         setBytes(prev => prev.map((b, i) => (i === idx ? n : b)));
       };
 
-      const sendToSim = async () => {
+      const addByte = () => {
+        setBytes(prev => [...prev, 0]);
+        setOrigBytes(prev => [...prev, 0]);
+      };
+
+      const removeByte = (idx) => {
+        setBytes(prev => prev.filter((_, i) => i !== idx));
+        setOrigBytes(prev => prev.filter((_, i) => i !== idx));
+      };
+
+      const resetBytes = () => setBytes([...origBytes]);
+
+      const bytesToHex = (arr) => arr.map(b => b.toString(16).padStart(2, '0')).join('');
+
+      const buildMbCommandBytes = () => {
+        const p = (v) => parseInt(v, 10) & 0x1F;
+        switch (mbCmd) {
+          case 'single':
+            return buildMbSingle(p(mbPal), parseInt(mbMask, 10) || 0);
+          case 'dual':
+            return buildMbDual(p(mbInner), p(mbOuter));
+          case 'rgb':
+            return buildMbRgb(mbRgb.r, mbRgb.g, mbRgb.b);
+          case 'five':
+            return buildMbFive(p(mbFive.tl), p(mbFive.bl), p(mbFive.br), p(mbFive.tr), p(mbFive.c));
+          case 'pattern': {
+            const mode = MB_PATTERN_MODES.find(m => m.id === mbPattern) || MB_PATTERN_MODES[0];
+            const pal = p(mbPal);
+            return buildMbFive(pal, pal, pal, pal, pal, 0x0E, 0, mode.nibble);
+          }
+          case 'ping':
+            return buildMbPing();
+          default:
+            return [];
+        }
+      };
+
+      const loadMbCommand = () => {
+        const b = buildMbCommandBytes();
+        setByteArray(b, `mb:${mbCmd}`);
+      };
+
+      const sendBytes = async (payload) => {
         const ip = (lab.simIp || '').trim();
-        if (!ip) { setStatus('Set simulator IP first'); return; }
+        if (!ip) { setStatus('Set simulator IP first'); return false; }
+        if (!payload.length) { setStatus('No bytes to send'); return false; }
         setSending(true);
         setStatus('');
         try {
-          const hex = bytes.map(b => b.toString(16).padStart(2, '0')).join('');
+          const hex = bytesToHex(payload);
           const res = await fetch(`http://${ip}/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4005,26 +4173,63 @@
           });
           const j = await res.json();
           if (!j.ok) throw new Error('Simulator rejected payload');
-          setStatus(`Sent ${bytes.length} bytes`);
+          setStatus(`Sent ${payload.length} bytes`);
+          return true;
         } catch (e) {
           setStatus(e.message || 'Send failed — is WandSim on WiFi?');
+          return false;
         } finally {
           setSending(false);
         }
       };
 
+      const sendToSim = () => sendBytes(bytes);
+
+      const sendMbCommand = async () => {
+        const b = buildMbCommandBytes();
+        setByteArray(b, `mb:${mbCmd}`);
+        await sendBytes(b);
+      };
+
       const logEntry = () => {
         const entry = {
-          id: generateId(),
-          ts: Date.now(),
+          id: editingLogId || generateId(),
+          ts: editingLogId
+            ? (lab.log || []).find(e => e.id === editingLogId)?.ts || Date.now()
+            : Date.now(),
           presetKey,
           bytes: bytes.map(b => b.toString(16).padStart(2, '0')).join(''),
           origBytes: origBytes.map(b => b.toString(16).padStart(2, '0')).join(''),
           tag,
           note: note.trim(),
         };
-        update({ wandLab: { ...lab, log: [entry, ...(lab.log || [])] } });
+        const prev = lab.log || [];
+        const log = editingLogId
+          ? prev.map(e => (e.id === editingLogId ? entry : e))
+          : [entry, ...prev];
+        update({ wandLab: { ...lab, log } });
         setNote('');
+        setEditingLogId(null);
+      };
+
+      const loadLogEntry = (e) => {
+        const arr = parseHexString(e.bytes);
+        if (arr.length) setByteArray(arr, e.presetKey || 'log');
+        setTag(e.tag || 'unknown');
+        setNote(e.note || '');
+        setEditingLogId(e.id);
+      };
+
+      const deleteLogEntry = (id) => {
+        update({ wandLab: { ...lab, log: (lab.log || []).filter(e => e.id !== id) } });
+        if (editingLogId === id) setEditingLogId(null);
+      };
+
+      const purgeLog = () => {
+        if (!(lab.log || []).length) return;
+        if (!window.confirm(`Delete all ${(lab.log || []).length} log entries?`)) return;
+        update({ wandLab: { ...lab, log: [] } });
+        setEditingLogId(null);
       };
 
       const exportLog = () => {
@@ -4048,29 +4253,125 @@
             <input style={inputStyle} value={lab.simIp || ''} placeholder="192.168.1.x"
               onChange={e => update({ wandLab: { ...lab, simIp: e.target.value.trim() } })} />
           </Field>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>Bytes</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+
+          <SectionHead>MagicBand+ commands</SectionHead>
+          <p style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.4 }}>
+            Build standard MB packets (same builders as WandSimulator). Load into the byte editor or send directly.
+          </p>
+          <Field label="Command">
+            <SearchableSelect value={mbCmd} allowEmpty={false} onChange={setMbCmd}
+              options={WAND_LAB_MB_CMDS.map(c => ({ value: c.id, label: c.label, searchText: c.label }))} />
+          </Field>
+          {mbCmd === 'single' && (
+            <>
+              <Field label="Palette">
+                <SearchableSelect value={mbPal} allowEmpty={false} onChange={setMbPal} options={palOpts} />
+              </Field>
+              <Field label="LED mask (0 = all; bit N = band N)">
+                <input style={inputStyle} type="number" min={0} max={255} value={mbMask}
+                  onChange={e => setMbMask(e.target.value)} />
+              </Field>
+            </>
+          )}
+          {mbCmd === 'dual' && (
+            <>
+              <Field label="Inner ring">
+                <SearchableSelect value={mbInner} allowEmpty={false} onChange={setMbInner} options={palOpts} />
+              </Field>
+              <Field label="Outer ring">
+                <SearchableSelect value={mbOuter} allowEmpty={false} onChange={setMbOuter} options={palOpts} />
+              </Field>
+            </>
+          )}
+          {mbCmd === 'rgb' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+              {['r', 'g', 'b'].map(ch => (
+                <Field key={ch} label={ch.toUpperCase() + ' (0–63)'}>
+                  <input style={inputStyle} type="number" min={0} max={63} value={mbRgb[ch]}
+                    onChange={e => setMbRgb(prev => ({ ...prev, [ch]: Math.max(0, Math.min(63, parseInt(e.target.value, 10) || 0)) }))} />
+                </Field>
+              ))}
+            </div>
+          )}
+          {mbCmd === 'five' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              {[
+                ['tl', 'Top-left'], ['bl', 'Bottom-left'], ['br', 'Bottom-right'],
+                ['tr', 'Top-right'], ['c', 'Center'],
+              ].map(([key, label]) => (
+                <Field key={key} label={label}>
+                  <SearchableSelect value={mbFive[key]} allowEmpty={false}
+                    onChange={v => setMbFive(prev => ({ ...prev, [key]: v }))} options={palOpts} />
+                </Field>
+              ))}
+            </div>
+          )}
+          {mbCmd === 'pattern' && (
+            <>
+              <Field label="Pattern">
+                <SearchableSelect value={mbPattern} allowEmpty={false} onChange={setMbPattern}
+                  options={MB_PATTERN_MODES.map(m => ({ value: m.id, label: m.label, searchText: m.label }))} />
+              </Field>
+              <Field label="Color">
+                <SearchableSelect value={mbPal} allowEmpty={false} onChange={setMbPal} options={palOpts} />
+              </Field>
+            </>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            <button type="button" onClick={loadMbCommand} style={btn('', { flex: 1, minWidth: 120 })}>
+              Load into bytes
+            </button>
+            <button type="button" onClick={sendMbCommand} disabled={sending} style={btn('primary', { flex: 1, minWidth: 120 })}>
+              {sending ? 'Sending…' : 'Send MB command'}
+            </button>
+          </div>
+
+          <SectionHead>Raw bytes</SectionHead>
+          <Field label="Paste hex (spaces optional)">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input style={{ ...inputStyle, flex: 1, fontFamily: 'monospace', fontSize: 11 }}
+                placeholder="E100E90500090E15B0 or E1 00 E9 05…"
+                value={hexPaste}
+                onChange={e => setHexPaste(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') applyHexPaste(); }} />
+              <button type="button" onClick={applyHexPaste} style={btn('', { whiteSpace: 'nowrap' })}>Load</button>
+            </div>
+          </Field>
+          <div style={{ fontFamily: 'monospace', fontSize: 10, color: 'var(--text3)', marginBottom: 8, wordBreak: 'break-all' }}>
+            {bytes.length ? bytesToHex(bytes).toUpperCase() : '(empty)'}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, alignItems: 'center' }}>
             {bytes.map((b, i) => (
               <label key={i} style={{
-                fontSize: 10, fontFamily: 'monospace',
+                fontSize: 10, fontFamily: 'monospace', position: 'relative',
                 background: b !== origBytes[i] ? 'var(--primary-dim)' : 'var(--surface2)',
                 border: `1px solid ${b !== origBytes[i] ? 'var(--primary)' : 'var(--border)'}`,
-                borderRadius: 4, padding: 4,
+                borderRadius: 4, padding: '4px 18px 4px 4px',
               }}>
                 <span style={{ color: 'var(--text3)', marginRight: 4 }}>{i}</span>
                 <input style={{ width: 22, border: 'none', background: 'transparent', color: 'var(--text1)', fontFamily: 'monospace', fontSize: 11 }}
                   value={b.toString(16).padStart(2, '0').toUpperCase()}
                   onChange={e => patchByte(i, e.target.value)} />
+                <button type="button" title="Remove byte" onClick={() => removeByte(i)}
+                  style={{
+                    position: 'absolute', top: 2, right: 2, border: 'none', background: 'transparent',
+                    color: 'var(--text3)', cursor: 'pointer', fontSize: 10, lineHeight: 1, padding: 0,
+                  }}>×</button>
               </label>
             ))}
+            <button type="button" onClick={addByte} style={btn('', { fontSize: 11, padding: '4px 10px' })}>+ byte</button>
+            {bytes.some((b, i) => b !== origBytes[i]) && (
+              <button type="button" onClick={resetBytes} style={btn('', { fontSize: 11, padding: '4px 10px' })}>Reset</button>
+            )}
           </div>
-          <Field label="Preset">
-            <SearchableSelect value={presetKey} allowEmpty={false} onChange={loadPreset}
+          <Field label="Starlight / show preset">
+            <SearchableSelect value={SW_FX_PRESET_BYTES[presetKey] ? presetKey : ''} allowEmpty={true} onChange={loadPreset}
+              placeholder={presetKey.startsWith('mb:') ? presetKey : 'Load show preset…'}
               options={Object.keys(SW_FX_PRESET_BYTES).map(k => ({ value: k, label: k, searchText: k }))} />
           </Field>
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-            <button type="button" onClick={sendToSim} disabled={sending} style={btn('primary', { flex: 1 })}>
-              {sending ? 'Sending…' : 'Send to simulator'}
+            <button type="button" onClick={sendToSim} disabled={sending || bytes.length === 0} style={btn('primary', { flex: 1 })}>
+              {sending ? 'Sending…' : 'Send raw bytes'}
             </button>
             {status && <span style={{ fontSize: 11, color: 'var(--text2)', alignSelf: 'center' }}>{status}</span>}
           </div>
@@ -4085,20 +4386,48 @@
           </div>
           <textarea style={{ ...inputStyle, minHeight: 56, marginBottom: 8 }} placeholder="What happened on the strip?"
             value={note} onChange={e => setNote(e.target.value)} />
-          <button type="button" onClick={logEntry} style={btn('', { marginBottom: 16 })}>Add log entry</button>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            <button type="button" onClick={logEntry} style={btn('', { flex: 1 })}>
+              {editingLogId ? 'Save log entry' : 'Add log entry'}
+            </button>
+            {editingLogId && (
+              <button type="button" onClick={() => { setEditingLogId(null); setNote(''); }} style={btn('', { flex: 1 })}>
+                Cancel edit
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, fontWeight: 600 }}>Log ({(lab.log || []).length})</span>
             <SearchableSelect value={logFilter} allowEmpty={true} onChange={setLogFilter} placeholder="Filter…"
-              options={[...Object.keys(SW_FX_PRESET_BYTES), ...WAND_LAB_TAGS].map(v => ({ value: v, label: v, searchText: v }))} />
-            <button type="button" onClick={exportLog} style={btn('', { fontSize: 11, marginLeft: 'auto' })}>Export JSON</button>
+              options={[
+                ...Object.keys(SW_FX_PRESET_BYTES),
+                ...WAND_LAB_MB_CMDS.map(c => `mb:${c.id}`),
+                ...WAND_LAB_TAGS,
+                'paste',
+              ].map(v => ({ value: v, label: v, searchText: v }))} />
+            <button type="button" onClick={exportLog} style={btn('', { fontSize: 11 })}>Export JSON</button>
+            {(lab.log || []).length > 0 && (
+              <button type="button" onClick={purgeLog} style={btn('danger', { fontSize: 11 })}>Purge all</button>
+            )}
           </div>
           {(filteredLog.length === 0) ? (
             <p style={{ fontSize: 12, color: 'var(--text3)' }}>No log entries yet.</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {filteredLog.map(e => (
-                <div key={e.id} style={{ padding: 8, background: 'var(--surface2)', borderRadius: 8, fontSize: 11 }}>
-                  <div style={{ fontWeight: 600 }}>{e.presetKey} · {e.tag} · {new Date(e.ts).toLocaleString()}</div>
+                <div key={e.id} style={{
+                  padding: 8, background: 'var(--surface2)', borderRadius: 8, fontSize: 11,
+                  border: editingLogId === e.id ? '1px solid var(--primary)' : '1px solid transparent',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {e.presetKey} · {e.tag} · {new Date(e.ts).toLocaleString()}
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <button type="button" onClick={() => loadLogEntry(e)} style={btn('', { fontSize: 10, padding: '2px 6px' })}>Load</button>
+                      <button type="button" onClick={() => deleteLogEntry(e.id)} style={btn('danger', { fontSize: 10, padding: '2px 6px' })}>Delete</button>
+                    </div>
+                  </div>
                   {e.note && <div style={{ color: 'var(--text2)', marginTop: 4 }}>{e.note}</div>}
                   <div style={{ fontFamily: 'monospace', color: 'var(--text3)', marginTop: 4, wordBreak: 'break-all' }}>{e.bytes}</div>
                 </div>

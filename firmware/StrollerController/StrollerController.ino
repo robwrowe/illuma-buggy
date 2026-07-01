@@ -96,6 +96,8 @@ void loadMbMappingDefaults();
 void loadMbMappingFromJson();
 String mfrToHex(const uint8_t* data, size_t len);
 String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen);
+void handleDisneyPayload(const uint8_t* payload, size_t plen);
+void processDisneyPayloadQueue();
 
 // ─────────────────────────────────────────────
 // GLOBALS
@@ -235,6 +237,42 @@ String baselineWledState  = "";   // snapshot at connect — full /json/state
 String mbMappingJson = "";  // unified MB→WLED mapping (colors, animations, patterns, segments)
 String bleDefaultPresetId = "";  // fallback — same presets as GPS zones
 bool   wledWasConnected   = false;
+
+// Defer Disney BLE packet handling to loop() — HTTP must not run on NimBLE scan stack
+#define DISNEY_PAYLOAD_MAX 64
+struct DisneyPayloadJob {
+  uint8_t data[DISNEY_PAYLOAD_MAX];
+  uint8_t len;
+  volatile bool pending;
+};
+DisneyPayloadJob disneyJob = {};
+portMUX_TYPE disneyJobMux = portMUX_INITIALIZER_UNLOCKED;
+
+void queueDisneyPayload(const uint8_t* payload, size_t plen) {
+  if (plen == 0) return;
+  if (plen > DISNEY_PAYLOAD_MAX) plen = DISNEY_PAYLOAD_MAX;
+  portENTER_CRITICAL(&disneyJobMux);
+  memcpy(disneyJob.data, payload, plen);
+  disneyJob.len = (uint8_t)plen;
+  disneyJob.pending = true;
+  portEXIT_CRITICAL(&disneyJobMux);
+}
+
+void processDisneyPayloadQueue() {
+  if (!disneyJob.pending) return;
+  uint8_t buf[DISNEY_PAYLOAD_MAX];
+  uint8_t len = 0;
+  portENTER_CRITICAL(&disneyJobMux);
+  if (!disneyJob.pending) {
+    portEXIT_CRITICAL(&disneyJobMux);
+    return;
+  }
+  len = disneyJob.len;
+  memcpy(buf, disneyJob.data, len);
+  disneyJob.pending = false;
+  portEXIT_CRITICAL(&disneyJobMux);
+  handleDisneyPayload(buf, len);
+}
 
 uint8_t mbWledColors[32][3];
 #define MB_MAX_LAYOUTS 6
@@ -443,7 +481,7 @@ void deletePreset(const String& id) {
 // WLED API
 // ─────────────────────────────────────────────
 
-bool sendToWLED(const String& jsonBody) {
+bool sendToWLED(const String& jsonBody, int timeoutMs = 2000, int retries = 0) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[WLED] WiFi not connected");
     return false;
@@ -451,12 +489,19 @@ bool sendToWLED(const String& jsonBody) {
   HTTPClient http;
   http.begin("http://" + String(WLED_IP) + ":" + String(WLED_PORT) + "/json/state");
   http.addHeader("Content-Type", "application/json");
-  http.setTimeout(2000);
-  int code = http.POST(jsonBody);
-  bool ok = (code == 200);
-  if (!ok) Serial.printf("[WLED] POST failed: %d\n", code);
+  http.setTimeout(timeoutMs);
+  int code = -1;
+  for (int attempt = 0; attempt <= retries; attempt++) {
+    code = http.POST(jsonBody);
+    if (code == 200) {
+      http.end();
+      return true;
+    }
+    if (attempt < retries) delay(80);
+  }
+  Serial.printf("[WLED] POST failed: %d (%u bytes)\n", code, (unsigned)jsonBody.length());
   http.end();
-  return ok;
+  return false;
 }
 
 // WLED JSON API: "transition" = duration in 100ms units for this state change
@@ -489,6 +534,51 @@ String getFromWLED(const String& path) {
   return body;
 }
 
+#define WLED_RESTORE_JSON_CAP 24576
+
+// Keep only POST-safe fields so restore payloads stay small and reliable.
+String compactWledStateForSave(const String& full) {
+  DynamicJsonDocument in(WLED_RESTORE_JSON_CAP);
+  if (deserializeJson(in, full) != DeserializationError::Ok) return full;
+
+  DynamicJsonDocument out(WLED_RESTORE_JSON_CAP);
+  out["on"] = in["on"] | true;
+  if (in.containsKey("bri")) out["bri"] = in["bri"];
+  if (in.containsKey("nl")) out["nl"] = in["nl"];
+  if (in.containsKey("fp")) out["fp"] = in["fp"];
+
+  JsonArray inSegs = in["seg"].as<JsonArray>();
+  if (!inSegs.isNull() && inSegs.size() > 0) {
+    JsonArray outSegs = out.createNestedArray("seg");
+    static const char* segKeys[] = {
+      "id", "start", "stop", "len", "grp", "spc", "of", "on", "bri",
+      "fx", "pal", "sx", "ix", "c1", "c2", "c3", "o1", "o2", "o3",
+      "col", "mi", "rev", "sel",
+    };
+    for (JsonObject segIn : inSegs) {
+      int stop = segIn["stop"] | 0;
+      if (stop <= 0) continue;
+      JsonObject segOut = outSegs.createNestedObject();
+      for (const char* k : segKeys) {
+        if (segIn.containsKey(k)) segOut[k] = segIn[k];
+      }
+      if (!segOut.containsKey("id")) segOut["id"] = outSegs.size() - 1;
+    }
+  } else {
+    static const char* rootKeys[] = {
+      "fx", "pal", "sx", "ix", "c1", "c2", "c3", "o1", "o2", "o3", "col",
+      "mi", "of", "grp", "spc", "bm", "rev",
+    };
+    for (const char* k : rootKeys) {
+      if (in.containsKey(k)) out[k] = in[k];
+    }
+  }
+
+  String compact;
+  serializeJson(out, compact);
+  return compact.length() > 0 ? compact : full;
+}
+
 bool applyPreset(const String& id) {
   String preset = getPreset(id);
   if (preset.length() == 0) {
@@ -501,7 +591,11 @@ bool applyPreset(const String& id) {
   serializeJson(doc["wled"], wledJson);
   currentPresetId = id;
   bool ok = sendToWLED(wledJson);
-  if (ok && wledJson.length() > 0) liveWledState = wledJson;
+  if (ok) {
+    // Preset JSON is partial — don't overwrite full polled state used for MB restore.
+    liveWledState = "";
+    lastLiveStatePollMs = 0;
+  }
   return ok;
 }
 
@@ -518,8 +612,8 @@ void snapshotWledBaseline() {
     return;
   }
 
-  baselineWledState = state;
-  liveWledState = state;
+  baselineWledState = compactWledStateForSave(state);
+  liveWledState = baselineWledState;
 
   DynamicJsonDocument doc(12288);
   DeserializationError err = deserializeJson(doc, state);
@@ -605,6 +699,7 @@ void applyMagicBandChase(const uint8_t paletteIdxs[5], OverrideSource src) {
   Serial.printf("[MB] Chase spd=%u thick=%u pals=%u,%u,%u,%u,%u\n",
                 mbChaseSpeed, mbChaseThickness,
                 paletteIdxs[0], paletteIdxs[1], paletteIdxs[2], paletteIdxs[3], paletteIdxs[4]);
+  disableMbSplitSegments();
   sendToWLEDForBleEffect(buildMagicBandChaseJson(paletteIdxs));
   setOverride(src);
   touchOverrideIdleTimer(src);
@@ -815,6 +910,20 @@ void appendDisableWledSegment(String& body, uint8_t segId, bool& first) {
   body += "{\"id\":" + String(segId) + ",\"stop\":0}";
 }
 
+void addActiveSegId(uint8_t id, uint8_t* out, uint8_t& count) {
+  for (uint8_t i = 0; i < count; i++) {
+    if (out[i] == id) return;
+  }
+  if (count < MB_MAX_SEG_REFS * 5) out[count++] = id;
+}
+
+void collectActiveSegIds(const MbSegMap& map, uint8_t* out, uint8_t& count) {
+  for (uint8_t i = 0; i < map.count; i++) {
+    addActiveSegId(map.refs[i].id, out, count);
+  }
+}
+
+// Disable WLED segments not used by this effect so stale splits do not stay lit.
 void appendDisableInactiveSegments(String& body, bool& first,
                                   const uint8_t* activeIds, uint8_t activeCount, bool disableSeg0) {
   if (disableSeg0) {
@@ -833,19 +942,18 @@ void appendDisableInactiveSegments(String& body, bool& first,
   }
 }
 
-void collectActiveSegIds(const MbSegMap& map, uint8_t* out, uint8_t& count) {
-  count = 0;
-  for (uint8_t i = 0; i < map.count; i++) {
-    uint8_t id = map.refs[i].id;
-    bool dup = false;
-    for (uint8_t j = 0; j < count; j++) {
-      if (out[j] == id) { dup = true; break; }
-    }
-    if (!dup && count < MB_MAX_SEG_REFS * 5) out[count++] = id;
+void disableAllSplitSegments() {
+  String body = "{\"seg\":[";
+  bool first = true;
+  for (uint8_t id = 1; id < MB_WLED_MAX_SEG; id++) {
+    appendDisableWledSegment(body, id, first);
   }
+  body += "]}";
+  sendToWLED(body, 3000, 1);
 }
 
-void appendWledSolidSeg(String& body, const WledSegRef& ref, uint8_t r, uint8_t g, uint8_t b, bool& first) {
+void appendWledSolidSeg(String& body, const WledSegRef& ref,
+                        uint8_t r, uint8_t g, uint8_t b, bool& first) {
   if (ref.stop <= ref.start) return;
   if (!first) body += ",";
   first = false;
@@ -876,14 +984,16 @@ void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src)
   MbSegMap& map = activeMbSegMap(si);
   if (map.count == 0) return;
   saveWledStateForOverride();
-  uint8_t activeIds[MB_MAX_SEG_REFS];
+  uint8_t activeIds[MB_MAX_SEG_REFS * 5];
   uint8_t activeCount = 0;
   collectActiveSegIds(map, activeIds, activeCount);
   bool disableSeg0 = (strcmp(segKey, "all") != 0);
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
   appendDisableInactiveSegments(body, first, activeIds, activeCount, disableSeg0);
-  for (uint8_t i = 0; i < map.count; i++) appendWledSolidSeg(body, map.refs[i], r, g, b, first);
+  for (uint8_t i = 0; i < map.count; i++) {
+    appendWledSolidSeg(body, map.refs[i], r, g, b, first);
+  }
   body += "]}";
   sendToWLEDForBleEffect(body);
   setOverride(src);
@@ -897,19 +1007,11 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
   for (int i = 0; i < n; i++) {
     int si = mbSegKeyIndex(segKeys[i]);
     if (si < 0) continue;
-    MbSegMap& siMap = activeMbSegMap(si);
-    for (uint8_t j = 0; j < siMap.count; j++) {
-      uint8_t id = siMap.refs[j].id;
-      bool dup = false;
-      for (uint8_t k = 0; k < activeCount; k++) {
-        if (activeIds[k] == id) { dup = true; break; }
-      }
-      if (!dup && activeCount < sizeof(activeIds)) activeIds[activeCount++] = id;
-    }
+    collectActiveSegIds(activeMbSegMap(si), activeIds, activeCount);
   }
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
-  // Zone presets use segment 0 full-strip — must disable before split layout
+  // Zone presets use segment 0 full-strip — disable before split layout.
   appendDisableInactiveSegments(body, first, activeIds, activeCount, true);
   for (int i = 0; i < n; i++) {
     int si = mbSegKeyIndex(segKeys[i]);
@@ -1079,10 +1181,11 @@ void notifyUnknownAnimation(const uint8_t* payload, size_t plen, SwMatchQuality 
 
 void applySwAnimFallbackSolid(OverrideSource src) {
   saveWledStateForOverride();
-  uint8_t id0 = 0;
+  uint8_t activeIds[1] = { 0 };
+  uint8_t activeCount = 1;
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
-  appendDisableInactiveSegments(body, first, &id0, 1, false);
+  appendDisableInactiveSegments(body, first, activeIds, activeCount, false);
   body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) + ",\"fx\":0}";
   body += "]}";
   sendToWLEDForBleEffect(body);
@@ -1148,20 +1251,22 @@ void applyMbDual(uint8_t innerByte, uint8_t outerByte, OverrideSource src) {
   applyMbMultiSegmentSolid(keys, pals, 2, src);
 }
 
-void applyMbFive(uint8_t patternNibble, uint8_t b7, uint8_t b8, uint8_t b9, uint8_t b10, uint8_t b11, OverrideSource src) {
+void applyMbFive(uint8_t topLeft, uint8_t bottomLeft, uint8_t bottomRight,
+                 uint8_t topRight, uint8_t center, OverrideSource src) {
   if (!canTakeOverride(src)) return;
   if (WiFi.status() != WL_CONNECTED) return;
-  char patKey[2] = { 0, 0 };
-  const char* hex = "0123456789ABCDEF";
-  patKey[0] = hex[patternNibble & 0x0F];
 
-  // E909 bytes 7..11 light band LEDs: center, TR, BR, BL, TL.
-  static const char* keys[5] = { "center", "topRight", "bottomRight", "bottomLeft", "topLeft" };
-  uint8_t pals[5] = { b7, b8, b9, b10, b11 };
-
-  if (applyMbPatternKey(patKey, pals, 5, src)) return;
+  static const char* keys[5] = { "topLeft", "bottomLeft", "bottomRight", "topRight", "center" };
+  uint8_t pals[5] = { topLeft, bottomLeft, bottomRight, topRight, center };
 
   applyMbMultiSegmentSolid(keys, pals, 5, src);
+}
+
+bool e909UsesPatternSlots(const uint8_t* payload) {
+  for (int i = 7; i <= 11; i++) {
+    if ((payload[i] & 0xE0) != 0xA0) return true;
+  }
+  return false;
 }
 
 void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
@@ -1171,10 +1276,11 @@ void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
     return;
   }
   saveWledStateForOverride();
-  uint8_t id0 = 0;
+  uint8_t activeIds[1] = { 0 };
+  uint8_t activeCount = 1;
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
-  appendDisableInactiveSegments(body, first, &id0, 1, false);
+  appendDisableInactiveSegments(body, first, activeIds, activeCount, false);
   body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT)
        + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
   body += "]}";
@@ -1184,13 +1290,7 @@ void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
 }
 
 void disableMbSplitSegments() {
-  String body = "{\"seg\":[";
-  bool first = true;
-  for (uint8_t id = 1; id < MB_WLED_MAX_SEG; id++) {
-    appendDisableWledSegment(body, id, first);
-  }
-  body += "]}";
-  sendToWLED(body);
+  disableAllSplitSegments();
 }
 
 // ─────────────────────────────────────────────
@@ -1228,45 +1328,40 @@ void setOverride(OverrideSource src) {
 }
 
 void saveWledStateForOverride() {
-  if (savedWledState.length() > 0 || savedRestorePresetId.length() > 0) return;
+  if (savedWledState.length() > 0) return;
 
-  // Fast path: re-apply known preset on clear (zone/manual) — skips blocking GET.
-  if (currentPresetId.length() > 0) {
-    savedRestorePresetId = currentPresetId;
+  if (savedRestoreOverride == NONE && savedRestorePresetId.length() == 0) {
     savedRestoreOverride = currentOverride;
-    if (savedRestoreOverride == NONE || savedRestoreOverride == BLE_MAGIC ||
-        savedRestoreOverride == BLE_STARLIGHT) {
-      savedRestoreOverride = ZONE;
+    if (savedRestoreOverride == BLE_MAGIC || savedRestoreOverride == BLE_STARLIGHT ||
+        savedRestoreOverride == SHOW_MODE) {
+      savedRestoreOverride = NONE;
     }
-    if (liveWledState.length() > 0) {
-      savedWledState = liveWledState;
+    if (currentOverride == ZONE && currentPresetId.length() > 0) {
+      savedRestorePresetId = currentPresetId;
     }
-    Serial.printf("[Override] Saved restore preset: %s (%u byte snapshot)\n",
-                  currentPresetId.c_str(), (unsigned)savedWledState.length());
-    return;
   }
 
+  // Cache only — never block MB/SW effects with a sync GET here (poll runs in loop()).
   if (liveWledState.length() > 0) {
     savedWledState = liveWledState;
-    Serial.printf("[Override] Saved cached WLED state (%u bytes)\n", (unsigned)savedWledState.length());
+    Serial.printf("[Override] Saved snapshot (%u bytes, preset_fallback=%s)\n",
+                  (unsigned)savedWledState.length(),
+                  savedRestorePresetId.length() > 0 ? savedRestorePresetId.c_str() : "none");
     return;
   }
 
-  String state = getFromWLED("/json/state");
-  if (state.length() > 0) {
-    savedWledState = state;
-    liveWledState = state;
-    Serial.printf("[Override] Saved WLED state (%u bytes)\n", (unsigned)state.length());
-  } else if (baselineWledState.length() > 0) {
+  if (baselineWledState.length() > 0) {
     savedWledState = baselineWledState;
-    Serial.println("[Override] Saved baseline WLED state (GET failed)");
+    Serial.println("[Override] Saved baseline snapshot (no live poll yet)");
+  } else {
+    Serial.println("[Override] WARNING: no WLED snapshot available to restore");
   }
 }
 
-// WLED merges POST /json/state by segment id. MB/SW effects enable split segments that
-// are absent from the pre-override snapshot — disable them so restore is complete.
+// WLED merges POST /json/state by segment id. Split segments are torn down in a separate
+// small POST before restore so the snapshot payload stays small and reliable.
 String buildWledRestorePayload(const String& savedJson) {
-  DynamicJsonDocument doc(12288);
+  DynamicJsonDocument doc(WLED_RESTORE_JSON_CAP);
   if (deserializeJson(doc, savedJson) != DeserializationError::Ok) {
     Serial.println("[Override] Restore JSON parse failed — posting raw snapshot");
     return savedJson;
@@ -1274,24 +1369,11 @@ String buildWledRestorePayload(const String& savedJson) {
 
   doc.remove("transition");
 
-  JsonArray segs = doc["seg"].to<JsonArray>();
-  if (segs.isNull() || segs.size() == 0) {
-    String out;
-    serializeJson(doc, out);
-    return out.length() > 0 ? out : savedJson;
-  }
-
-  bool present[MB_WLED_MAX_SEG] = {};
-  for (JsonObject seg : segs) {
-    int id = seg["id"] | -1;
-    if (id >= 0 && id < MB_WLED_MAX_SEG) present[id] = true;
-  }
-
-  for (uint8_t id = 0; id < MB_WLED_MAX_SEG; id++) {
-    if (!present[id]) {
-      JsonObject dis = segs.createNestedObject();
-      dis["id"] = id;
-      dis["stop"] = 0;
+  JsonArray segs = doc["seg"].as<JsonArray>();
+  if (!segs.isNull()) {
+    for (size_t i = 0; i < segs.size(); i++) {
+      JsonObject seg = segs[i];
+      if (!seg.containsKey("id")) seg["id"] = (int)i;
     }
   }
 
@@ -1299,13 +1381,13 @@ String buildWledRestorePayload(const String& savedJson) {
   serializeJson(doc, out);
   if (out.length() == 0) return savedJson;
   Serial.printf("[Override] Restore payload (%u bytes, %u seg entries)\n",
-                (unsigned)out.length(), (unsigned)segs.size());
+                (unsigned)out.length(), segs.isNull() ? 0U : (unsigned)segs.size());
   return out;
 }
 
 // Presets and partial POST bodies may omit seg[] or segment ids — normalize before restore.
 String prepareWledRestorePayload(const String& json) {
-  DynamicJsonDocument doc(12288);
+  DynamicJsonDocument doc(WLED_RESTORE_JSON_CAP);
   if (deserializeJson(doc, json) != DeserializationError::Ok) {
     return buildWledRestorePayload(json);
   }
@@ -1314,8 +1396,9 @@ String prepareWledRestorePayload(const String& json) {
 
   JsonArray segs = doc["seg"].as<JsonArray>();
   if (segs.isNull() || segs.size() == 0) {
-    DynamicJsonDocument wrapped(12288);
+    DynamicJsonDocument wrapped(WLED_RESTORE_JSON_CAP);
     wrapped["on"] = doc["on"] | true;
+    if (doc.containsKey("bri")) wrapped["bri"] = doc["bri"];
     JsonObject seg0 = wrapped.createNestedArray("seg").createNestedObject();
     seg0["id"] = 0;
     seg0["start"] = 0;
@@ -1342,6 +1425,13 @@ String prepareWledRestorePayload(const String& json) {
   return buildWledRestorePayload(normalized);
 }
 
+bool restoreWledSnapshot(const String& json, unsigned long fadeMs) {
+  if (json.length() == 0) return false;
+  disableAllSplitSegments();
+  String payload = injectWledTransition(buildWledRestorePayload(json), fadeMs);
+  return sendToWLED(payload, 8000, 2);
+}
+
 bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
   String preset = getPreset(id);
   if (preset.length() == 0) return false;
@@ -1351,9 +1441,7 @@ bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
   serializeJson(doc["wled"], wledJson);
   if (wledJson.length() == 0) return false;
   currentPresetId = id;
-  bool ok = sendToWLED(injectWledTransition(prepareWledRestorePayload(wledJson), fadeMs));
-  if (ok) liveWledState = wledJson;
-  return ok;
+  return restoreWledSnapshot(prepareWledRestorePayload(wledJson), fadeMs);
 }
 
 void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
@@ -1410,8 +1498,8 @@ void pollLiveWledState() {
   lastLiveStatePollMs = now;
   String state = getFromWLED("/json/state");
   if (state.length() > 0) {
-    liveWledState = state;
-    Serial.printf("[WLED] Live state poll (%u bytes)\n", (unsigned)state.length());
+    liveWledState = compactWledStateForSave(state);
+    Serial.printf("[WLED] Live state poll (%u bytes)\n", (unsigned)liveWledState.length());
   }
 }
 
@@ -1440,16 +1528,41 @@ void clearOverride() {
 
   bool restored = false;
   if (snapshot.length() > 0) {
-    restored = sendToWLED(injectWledTransition(prepareWledRestorePayload(snapshot), fadeMs));
-    if (restored) Serial.printf("[Override] Restored snapshot (%u bytes)\n", (unsigned)snapshot.length());
+    restored = restoreWledSnapshot(prepareWledRestorePayload(snapshot), fadeMs);
+    if (restored) {
+      Serial.printf("[Override] Restored snapshot (%u bytes)\n", (unsigned)snapshot.length());
+    } else {
+      Serial.printf("[Override] Snapshot restore POST failed (%u bytes)\n", (unsigned)snapshot.length());
+    }
   }
   if (!restored && presetId.length() > 0) {
     restored = restorePresetWithTransition(presetId, fadeMs);
-    if (restored) Serial.printf("[Override] Restored preset: %s\n", presetId.c_str());
+    if (restored) {
+      Serial.printf("[Override] Restored preset: %s\n", presetId.c_str());
+    } else {
+      Serial.printf("[Override] Preset restore failed: %s\n", presetId.c_str());
+    }
   }
   if (!restored && baselineWledState.length() > 0) {
-    restored = sendToWLED(injectWledTransition(prepareWledRestorePayload(baselineWledState), fadeMs));
-    if (restored) Serial.println("[Override] Restored baseline WLED state");
+    restored = restoreWledSnapshot(prepareWledRestorePayload(baselineWledState), fadeMs);
+    if (restored) {
+      Serial.println("[Override] Restored baseline WLED state");
+    } else {
+      Serial.println("[Override] Baseline restore POST failed");
+    }
+  }
+  if (!restored) {
+    Serial.println("[Override] Restore failed — strip may stay on last MB effect");
+  } else {
+    if (snapshot.length() > 0) {
+      liveWledState = snapshot;
+    } else if (baselineWledState.length() > 0) {
+      liveWledState = baselineWledState;
+    } else {
+      liveWledState = "";
+      lastLiveStatePollMs = 0;
+    }
+    if (liveWledState.length() > 0) lastLiveStatePollMs = millis();
   }
 
   if (restored && (restoreOverride == ZONE || restoreOverride == MANUAL)) {
@@ -2206,10 +2319,11 @@ void applyMbAnimOpcode(const char* animKey, const char* label) {
     return;
   }
   saveWledStateForOverride();
-  uint8_t id0 = 0;
+  uint8_t activeIds[1] = { 0 };
+  uint8_t activeCount = 1;
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
-  appendDisableInactiveSegments(body, first, &id0, 1, false);
+  appendDisableInactiveSegments(body, first, activeIds, activeCount, false);
   body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) + ",\"fx\":0}";
   body += "]}";
   sendToWLEDForBleEffect(body);
@@ -2274,10 +2388,21 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
       if (plen < 13) return;
       {
-        uint8_t pat = (payload[7] >> 5) & 0x07;
-        applyMbFive(pat,
-          payload[7] & 0x1F, payload[8] & 0x1F, payload[9] & 0x1F,
-          payload[10] & 0x1F, payload[11] & 0x1F, BLE_MAGIC);
+        // Adafruit / park wire order: TL, BL, BR, TR, center (each 0xA0 | palette).
+        uint8_t tl = payload[7] & 0x1F;
+        uint8_t bl = payload[8] & 0x1F;
+        uint8_t br = payload[9] & 0x1F;
+        uint8_t tr = payload[10] & 0x1F;
+        uint8_t c  = payload[11] & 0x1F;
+        if (e909UsesPatternSlots(payload)) {
+          char patKey[2] = { 0, 0 };
+          const char* hex = "0123456789ABCDEF";
+          uint8_t pat = (payload[7] >> 5) & 0x07;
+          patKey[0] = hex[pat & 0x0F];
+          uint8_t pals[5] = { tl, bl, br, tr, c };
+          if (applyMbPatternKey(patKey, pals, 5, BLE_MAGIC)) break;
+        }
+        applyMbFive(tl, bl, br, tr, c, BLE_MAGIC);
         bleNotify("{\"type\":\"ble_event\",\"event\":\"five_color\"}");
       }
       break;
@@ -2391,7 +2516,7 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     const uint8_t* payload;
     size_t plen;
     disneyPayload(data, len, payload, plen);
-    handleDisneyPayload(payload, plen);
+    if (plen > 0) queueDisneyPayload(payload, plen);
   }
 };
 
@@ -2600,6 +2725,7 @@ void processPendingCommands() {
 }
 
 void loop() {
+  processDisneyPayloadQueue();
   processSerialCommands();
   processPendingCommands();
   serviceWandTx();
