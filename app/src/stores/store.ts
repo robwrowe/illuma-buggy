@@ -124,7 +124,7 @@ export interface DeviceStatus {
 
 import {
   migrateConfig, CURRENT_CONFIG_VERSION,
-  type ParkConfig, type ShowModeConfig, type WandLabConfig,
+  type ParkConfig, type ShowModeConfig, type WandLabConfig, type MbSegmentLayout,
 } from '../utils/configMigration';
 import {
   MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
@@ -255,6 +255,8 @@ interface AppState {
   parks: ParkConfig[];
   showModeConfig: ShowModeConfig;
   wandLab: WandLabConfig;
+  mbSegmentLayouts: MbSegmentLayout[];
+  mbActiveSegmentLayoutId: string | null;
 
   // BLE packet capture (parade / show recording)
   bleCaptureActive:       boolean;
@@ -358,6 +360,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   parks:                  [],
   showModeConfig:         DEFAULT_SHOW_MODE,
   wandLab:                DEFAULT_WAND_LAB,
+  mbSegmentLayouts:       [],
+  mbActiveSegmentLayoutId: null,
 
   // Presets
   setPresets: (presets) => set({ presets }),
@@ -508,6 +512,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','wandLab',
+                    'mbSegmentLayouts','mbActiveSegmentLayoutId',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
@@ -541,6 +546,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         parks:              d.parks              ?? [],
         showModeConfig:     d.showModeConfig     ?? DEFAULT_SHOW_MODE,
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
+        mbSegmentLayouts:   d.mbSegmentLayouts   ?? [],
+        mbActiveSegmentLayoutId: d.mbActiveSegmentLayoutId ?? null,
       });
     } catch (e) { console.error('[Store] Load error:', e); }
   },
@@ -575,6 +582,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['parks',              JSON.stringify(s.parks)],
         ['showModeConfig',     JSON.stringify(s.showModeConfig)],
         ['wandLab',            JSON.stringify(s.wandLab)],
+        ['mbSegmentLayouts',   JSON.stringify(s.mbSegmentLayouts)],
+        ['mbActiveSegmentLayoutId', JSON.stringify(s.mbActiveSegmentLayoutId)],
       ]);
     } catch (e) { console.error('[Store] Save error:', e); }
   },
@@ -654,6 +663,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       customPalettes: s.customPalettes, paletteSets: s.paletteSets,
       customSegmentLayouts: s.customSegmentLayouts,
       parks: s.parks, showModeConfig: s.showModeConfig, wandLab: s.wandLab,
+      mbSegmentLayouts: s.mbSegmentLayouts, mbActiveSegmentLayoutId: s.mbActiveSegmentLayoutId,
     };
   },
 
@@ -684,6 +694,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       parks:              (m.parks as ParkConfig[]) ?? [],
       showModeConfig:     (m.showModeConfig as ShowModeConfig) ?? DEFAULT_SHOW_MODE,
       wandLab:            (m.wandLab as WandLabConfig) ?? DEFAULT_WAND_LAB,
+      mbSegmentLayouts:   (m.mbSegmentLayouts as MbSegmentLayout[]) ?? [],
+      mbActiveSegmentLayoutId: (m.mbActiveSegmentLayoutId as string) ?? null,
     });
     get().saveToStorage();
   },

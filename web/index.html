@@ -297,6 +297,7 @@ const DEFAULT_DATA = {
   starlightEnabled:true, starlightTimeoutSec:15,
   magicBandEnabled:true, magicBandTimeoutSec:15,
   customPalettes:[], paletteSets:[], customSegmentLayouts:[], savedColors:[],
+  mbSegmentLayouts:[], mbActiveSegmentLayoutId:null,
   showModeConfig:{
     parade:{pre:'',live:'',post:''},
     fireworks:{pre:'',live:'__BLACK__',post:''},
@@ -439,11 +440,24 @@ const SIM_FIVE_CORNERS = 'test five';
 const FIVE_CORNER_IDS = ['topLeft', 'bottomLeft', 'bottomRight', 'topRight', 'center'];
 const FIVE_CORNER_RGB = [[255,0,0], [0,255,0], [0,0,255], [255,255,255], [255,255,0]];
 
+function segRefToPreview(ref, col) {
+  const fx = (ref.fx ?? -1) >= 0 ? ref.fx : 0;
+  const seg = {
+    id: ref.id, start: ref.start, stop: ref.stop,
+    grp: ref.grp ?? 1, spc: ref.spc ?? 0, of: ref.of ?? 0,
+    rev: !!ref.rev, mi: !!ref.mi,
+    fx, sx: ref.sx ?? 128, ix: ref.ix ?? 128,
+    col: [col],
+  };
+  if ((ref.pal ?? -1) >= 0) seg.pal = ref.pal;
+  return seg;
+}
+
 function buildSegmentHighlightPreview(segments, target) {
   const segs = [{ id: 0, start: 0, stop: STRIP_LED_COUNT, fx: 0, col: [[0, 0, 0]] }];
   (segments[target] || []).forEach(ref => {
     if (ref.stop <= ref.start) return;
-    segs.push({ id: ref.id, start: ref.start, stop: ref.stop, fx: 0, col: [[255, 255, 255]] });
+    segs.push(segRefToPreview(ref, [255, 255, 255]));
   });
   return { on: true, seg: segs };
 }
@@ -453,10 +467,30 @@ function buildFiveCornerPreview(segments) {
   FIVE_CORNER_IDS.forEach((id, i) => {
     (segments[id] || []).forEach(ref => {
       if (ref.stop <= ref.start) return;
-      segs.push({ id: ref.id, start: ref.start, stop: ref.stop, fx: 0, col: [FIVE_CORNER_RGB[i]] });
+      segs.push(segRefToPreview(ref, FIVE_CORNER_RGB[i]));
     });
   });
   return { on: true, seg: segs };
+}
+
+function buildMbKeyedSegmentsFromMapping(mbMapping) {
+  const segments = {};
+  const mb = mbMapping || DEFAULT_MB_MAPPING;
+  MB_SEGMENT_META.forEach(({ id }) => {
+    segments[id] = (mb.segments?.[id] || DEFAULT_MB_MAPPING.segments[id] || []).map(withSegRefDefaults);
+  });
+  return segments;
+}
+
+function mbLayoutSetBlePayload(data) {
+  const layouts = data.mbSegmentLayouts || [];
+  const activeId = data.mbActiveSegmentLayoutId || layouts[0]?.id;
+  const activeIdx = Math.max(0, layouts.findIndex(l => l.id === activeId));
+  return {
+    type: 'mb_layout_set',
+    layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
+    active: activeIdx,
+  };
 }
 
 async function postWledState(ip, payload) {
@@ -1206,6 +1240,12 @@ async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOARD_SYNC
     });
     sent.push('MB mapping');
     await delay(BLE_SEND_DELAY_MS);
+    if ((data.mbSegmentLayouts || []).length > 0) {
+      onProgress?.('Sending MB segment layouts…');
+      await webBleBoard.send(mbLayoutSetBlePayload(data));
+      sent.push(`${data.mbSegmentLayouts.length} MB layout${data.mbSegmentLayouts.length === 1 ? '' : 's'}`);
+      await delay(BLE_SEND_DELAY_MS);
+    }
   }
 
   if (opts.overrideMode) {
@@ -1252,6 +1292,14 @@ function loadAppData(stored) {
   merged.parks = merged.parks || [];
   merged.showModeConfig = merged.showModeConfig || DEFAULT_DATA.showModeConfig;
   merged.wandLab = merged.wandLab || DEFAULT_DATA.wandLab;
+  if (!merged.mbSegmentLayouts?.length) {
+    const id = generateId();
+    merged.mbSegmentLayouts = [{
+      id, name: 'Default', createdAt: Date.now(),
+      segments: buildMbKeyedSegmentsFromMapping(merged.mbMapping),
+    }];
+    merged.mbActiveSegmentLayoutId = merged.mbActiveSegmentLayoutId || id;
+  }
   return merged;
 }
 
@@ -1318,6 +1366,17 @@ function migrateWandLabDefaults(data) {
   return { ...data, wandLab: { simIp: '', log: [] } };
 }
 
+function migrateMbSegmentLayouts(data) {
+  if (Array.isArray(data.mbSegmentLayouts) && data.mbSegmentLayouts.length) return data;
+  const id = generateId();
+  const segments = buildMbKeyedSegmentsFromMapping(data.mbMapping);
+  return {
+    ...data,
+    mbSegmentLayouts: [{ id, name: 'Default', createdAt: Date.now(), segments }],
+    mbActiveSegmentLayoutId: data.mbActiveSegmentLayoutId || id,
+  };
+}
+
 function migrateConfig(raw) {
   if (!raw) return loadAppData(null);
   let data = { ...raw };
@@ -1329,6 +1388,7 @@ function migrateConfig(raw) {
     data = migrateWandLabDefaults(data);
     data.version = CURRENT_VERSION;
   }
+  data = migrateMbSegmentLayouts(data);
   return loadAppData(data);
 }
 
@@ -3299,7 +3359,7 @@ function defaultNewSegRef(refs) {
   const used = new Set((refs || []).map(r => r.id));
   let id = 0;
   while (used.has(id) && id < 32) id++;
-  return { id, start: 0, stop: STRIP_LED_COUNT };
+  return withSegRefDefaults({ id, start: 0, stop: STRIP_LED_COUNT });
 }
 
 function refsFromSnapshotIds(snapshot, selectedIds) {
@@ -3348,7 +3408,8 @@ function buildPresetLayoutPayload(preset, customSegmentLayouts) {
   return { on: true, seg: wled.seg.map(s => ({ ...s })) };
 }
 
-function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCapture, captureLoading, canCapture, snapshot}) {
+function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCapture, captureLoading, canCapture, snapshot, effectOptions, paletteOptions}) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const selectedSummary = formatWledSegSelectionSummary(refs);
   const toggle = (wledSegId) => onChange(toggleSnapshotSelection(snapshot, refs, wledSegId));
   const hasSnapshot = snapshot?.length > 0;
@@ -3357,12 +3418,22 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
   const patchRef = (index, field, raw) => {
     const cur = list[index];
     if (!cur) return;
+    if (field === 'rev' || field === 'mi') {
+      onChange(updateRefAt(list, index, { ...withSegRefDefaults(cur), [field]: !!raw }));
+      return;
+    }
+    if (['grp', 'spc', 'of', 'fx', 'sx', 'ix', 'pal'].includes(field)) {
+      const n = raw === '' ? (field === 'fx' || field === 'pal' ? -1 : 0) : parseInt(raw, 10);
+      onChange(updateRefAt(list, index, { ...withSegRefDefaults(cur), [field]: Number.isFinite(n) ? n : cur[field] }));
+      return;
+    }
     const idStr = field === 'id' ? raw : String(cur.id);
     const startStr = field === 'start' ? raw : String(cur.start);
     const stopStr = field === 'stop' ? raw : String(cur.stop);
     const parsed = parseSegRefFields(idStr, startStr, stopStr);
-    if (parsed) onChange(updateRefAt(list, index, parsed));
+    if (parsed) onChange(updateRefAt(list, index, { ...withSegRefDefaults(cur), ...parsed }));
     else onChange(updateRefAt(list, index, {
+      ...withSegRefDefaults(cur),
       id: field === 'id' ? parseInt(raw, 10) || 0 : cur.id,
       start: field === 'start' ? parseInt(raw, 10) || 0 : cur.start,
       stop: field === 'stop' ? parseInt(raw, 10) || 0 : cur.stop,
@@ -3371,6 +3442,10 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
 
   const segInput = { width: 44, padding: '4px 6px', fontSize: 12, fontFamily: 'monospace', textAlign: 'center',
     background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)' };
+  const fxOpts = [{ value: '-1', label: 'Solid color (default)', searchText: 'solid' },
+    ...(effectOptions || []).map(e => ({ value: String(e.id), label: e.name, searchText: `${e.id} ${e.name}` }))];
+  const palOpts = [{ value: '-1', label: 'Use resolved color', searchText: 'none' },
+    ...(paletteOptions || []).map(p => ({ value: String(p.id), label: p.name, searchText: `${p.id} ${p.name}` }))];
 
   return (
     <div style={{ marginBottom: 14, padding: 10, background: 'var(--surface2)', borderRadius: 8 }}>
@@ -3419,6 +3494,50 @@ function WledSegEditor({label, hint, simCommand, refs, onChange, onTest, onCaptu
           )}
           <button type="button" onClick={() => onChange(removeRefAt(list, index))}
             style={btn('', { padding: '2px 8px', fontSize: 14, color: 'var(--danger)', background: 'none', border: 'none' })}>×</button>
+          <button type="button" onClick={() => setAdvancedOpen(o => o === index ? false : index)}
+            style={btn('', { padding: '2px 8px', fontSize: 11, background: 'var(--bg)', border: '1px solid var(--border)' })}>
+            {advancedOpen === index ? '▴' : '▾'} Advanced
+          </button>
+          {advancedOpen === index && (
+            <div style={{ width: '100%', marginTop: 6, padding: 8, background: 'var(--bg)', borderRadius: 6, border: '1px solid var(--border)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
+                {['grp', 'spc', 'of'].map(f => (
+                  <label key={f} style={{ fontSize: 10, color: 'var(--text2)' }}>{f}
+                    <input style={{ ...segInput, width: '100%', marginTop: 2 }} value={cur[f] ?? (f === 'grp' ? 1 : 0)}
+                      inputMode="numeric" onChange={e => patchRef(index, f, e.target.value)} />
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type="checkbox" checked={!!cur.rev} onChange={e => patchRef(index, 'rev', e.target.checked)} /> rev
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input type="checkbox" checked={!!cur.mi} onChange={e => patchRef(index, 'mi', e.target.checked)} /> mi
+                </label>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 4 }}>Effect</div>
+                <SearchableSelect value={String(cur.fx ?? -1)} allowEmpty={false}
+                  onChange={v => patchRef(index, 'fx', v)} placeholder="Solid" options={fxOpts} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                <label style={{ fontSize: 10, color: 'var(--text2)' }}>sx
+                  <input type="range" min={0} max={255} value={cur.sx ?? 128} style={{ width: '100%' }}
+                    onChange={e => patchRef(index, 'sx', e.target.value)} />
+                </label>
+                <label style={{ fontSize: 10, color: 'var(--text2)' }}>ix
+                  <input type="range" min={0} max={255} value={cur.ix ?? 128} style={{ width: '100%' }}
+                    onChange={e => patchRef(index, 'ix', e.target.value)} />
+                </label>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text2)', marginBottom: 4 }}>Palette override</div>
+                <SearchableSelect value={String(cur.pal ?? -1)} allowEmpty={false}
+                  onChange={v => patchRef(index, 'pal', v)} placeholder="None" options={palOpts} />
+              </div>
+            </div>
+          )}
         </div>
       ))}
       <button type="button" onClick={() => onChange(appendSegRef(list, defaultNewSegRef(list)))}
@@ -3526,11 +3645,17 @@ function SettingsTab({data, update}) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const presets = data.presets || [];
   const savedColors = data.savedColors || [];
+  const mbLayouts = data.mbSegmentLayouts || [];
+  const activeLayoutId = data.mbActiveSegmentLayoutId || mbLayouts[0]?.id;
+  const activeLayout = mbLayouts.find(l => l.id === activeLayoutId) || mbLayouts[0];
+  const mbSegments = activeLayout?.segments || mb.segments;
   const [bleTab, setBleTab] = useState('sw');
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
   const [wledPreviewErr, setWledPreviewErr] = useState('');
   const [segSnapshots, setSegSnapshots] = useState({});
   const [segCaptureId, setSegCaptureId] = useState(null);
+  const [segFxOptions, setSegFxOptions] = useState(() => loadCachedWledCatalog().effects);
+  const [segPalOptions, setSegPalOptions] = useState(() => loadCachedWledCatalog().palettes);
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
   const setMb = (patch) => update({ mbMapping: normalizeMbMapping({ ...mb, ...patch }) });
   const setMbColor = (idx, hex) => {
@@ -3543,7 +3668,56 @@ function SettingsTab({data, update}) {
   const setAnim = (key, patch) => setMb({ animations: { ...mb.animations, [key]: { ...mb.animations[key], ...patch } } });
   const setSwAnim = (key, patch) => setMb({ swAnimations: { ...mb.swAnimations, [key]: { ...mb.swAnimations[key], ...patch } } });
   const setPat = (key, patch) => setMb({ patterns: { ...mb.patterns, [key]: { ...mb.patterns[key], ...patch } } });
-  const setSeg = (id, refs) => setMb({ segments: { ...mb.segments, [id]: refs } });
+
+  const updateActiveLayoutSegments = (segKey, refs) => {
+    if (!activeLayout) {
+      setMb({ segments: { ...mb.segments, [segKey]: refs.map(withSegRefDefaults) } });
+      return;
+    }
+    const nextSegs = { ...activeLayout.segments, [segKey]: refs.map(withSegRefDefaults) };
+    const nextLayouts = mbLayouts.map(l => l.id === activeLayout.id ? { ...l, segments: nextSegs } : l);
+    update({
+      mbSegmentLayouts: nextLayouts,
+      mbMapping: normalizeMbMapping({ ...mb, segments: nextSegs }),
+    });
+  };
+
+  const switchMbLayout = async (layoutId) => {
+    const layout = mbLayouts.find(l => l.id === layoutId);
+    if (!layout) return;
+    update({
+      mbActiveSegmentLayoutId: layoutId,
+      mbMapping: normalizeMbMapping({ ...mb, segments: layout.segments }),
+    });
+    const idx = mbLayouts.findIndex(l => l.id === layoutId);
+    if (webBleBoard.connected && idx >= 0) {
+      try { await webBleBoard.send({ type: 'mb_layout_switch', index: idx }); } catch {}
+    }
+  };
+
+  const addMbLayout = () => {
+    const name = prompt('Layout name:', 'New layout');
+    if (!name?.trim()) return;
+    const id = generateId();
+    const segments = JSON.parse(JSON.stringify(activeLayout?.segments || mb.segments));
+    update({
+      mbSegmentLayouts: [...mbLayouts, { id, name: name.trim(), createdAt: Date.now(), segments }],
+      mbActiveSegmentLayoutId: id,
+      mbMapping: normalizeMbMapping({ ...mb, segments }),
+    });
+  };
+
+  useEffect(() => {
+    if (bleTab !== 'segments') return;
+    const ip = wledIp.trim();
+    if (!ip) return;
+    fetchWledCatalog(ip).then(({ effects, palettes }) => {
+      setSegFxOptions(effects);
+      setSegPalOptions(palettes);
+    }).catch(() => {});
+  }, [bleTab, wledIp]);
+
+  const setSeg = (id, refs) => updateActiveLayoutSegments(id, refs);
 
   const sendStripPreview = async (payload) => {
     setWledPreviewErr('');
@@ -3557,8 +3731,8 @@ function SettingsTab({data, update}) {
     }
   };
 
-  const previewSegment = (segId) => sendStripPreview(buildSegmentHighlightPreview(mb.segments, segId));
-  const previewFiveCorners = () => sendStripPreview(buildFiveCornerPreview(mb.segments));
+  const previewSegment = (segId) => sendStripPreview(buildSegmentHighlightPreview(mbSegments, segId));
+  const previewFiveCorners = () => sendStripPreview(buildFiveCornerPreview(mbSegments));
 
   const applyDefaultLayout = async () => {
     setWledPreviewErr('');
@@ -3698,6 +3872,19 @@ function SettingsTab({data, update}) {
       <p style={{fontSize:12,color:'var(--text3)',marginBottom:8,lineHeight:1.5}}>
         Per region: assign WLED segments manually (id + start/stop LED) or Capture from the strip and tick segments to add.
       </p>
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:12,alignItems:'center'}}>
+        {mbLayouts.map(l => (
+          <button key={l.id} type="button" onClick={() => switchMbLayout(l.id)}
+            style={{
+              padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              background: l.id === activeLayoutId ? 'var(--primary-dim)' : 'var(--surface2)',
+              color: l.id === activeLayoutId ? 'var(--primary)' : 'var(--text2)',
+              border: l.id === activeLayoutId ? '1px solid var(--primary)' : '1px solid var(--border)',
+            }}>{l.name}</button>
+        ))}
+        <button type="button" onClick={addMbLayout}
+          style={btn('', { padding: '6px 10px', fontSize: 12, background: 'var(--surface2)' })}>+ New Layout</button>
+      </div>
       <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:10,flexWrap:'wrap'}}>
         <span style={{fontSize:11,color:'var(--text2)',fontWeight:600}}>WLED IP</span>
         <input value={wledIp} onChange={e=>{setWledIp(e.target.value); setWledPreviewErr('');}}
@@ -3715,8 +3902,10 @@ function SettingsTab({data, update}) {
           captureLoading={segCaptureId === id}
           canCapture={!!wledIp.trim()}
           onCapture={() => captureSegSnapshot(id)}
-          refs={mb.segments[id]} onChange={refs=>setSeg(id,refs)}
-          onTest={()=>previewSegment(id)}/>
+          refs={mbSegments[id]} onChange={refs=>setSeg(id,refs)}
+          onTest={()=>previewSegment(id)}
+          effectOptions={segFxOptions}
+          paletteOptions={segPalOptions}/>
       ))}
       <div style={{marginTop:4,marginBottom:12,paddingTop:12,borderTop:'1px solid var(--border)'}}>
         <button onClick={previewFiveCorners} style={btn('primary',{padding:'6px 12px',fontSize:12})}>

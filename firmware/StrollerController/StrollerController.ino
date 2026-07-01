@@ -219,7 +219,15 @@ String bleDefaultPresetId = "";  // fallback — same presets as GPS zones
 bool   wledWasConnected   = false;
 
 uint8_t mbWledColors[32][3];
-MbSegMap mbSegMaps[MB_SEG_KEY_COUNT];  // parallel to segment key order in JSON
+#define MB_MAX_LAYOUTS 6
+struct MbSegmentLayout {
+  char name[24];
+  MbSegMap segMaps[MB_SEG_KEY_COUNT];
+};
+MbSegmentLayout mbLayouts[MB_MAX_LAYOUTS];
+uint8_t mbLayoutCount = 0;
+uint8_t mbActiveLayoutIdx = 0;
+String  mbLayoutsJson = "";
 MbEffectMap mbAnimMap[8];   // E90C,E90E,E90F,E910,E911,E912,E913,wand
 MbEffectMap swAnimMap[SW_ANIM_COUNT];
 
@@ -592,18 +600,22 @@ void applyMagicBandChaseFromAnchor(uint8_t anchorPalette, OverrideSource src) {
 
 void loadMbMappingDefaults() {
   memcpy(mbWledColors, MB_DEFAULT_COLORS, sizeof(mbWledColors));
+  mbLayoutCount = 1;
+  mbActiveLayoutIdx = 0;
+  strncpy(mbLayouts[0].name, "Default", sizeof(mbLayouts[0].name) - 1);
+  mbLayouts[0].name[sizeof(mbLayouts[0].name) - 1] = '\0';
   const uint16_t defs[][2] = {
     {0,100},{35,65},{0,35},{0,25},{25,50},{50,75},{75,100},{48,52},
     {0,20},{20,40},{40,60},{60,80},{80,100},
     {80,87},{87,94},{94,100}
   };
   for (int i = 0; i < MB_SEG_KEY_COUNT; i++) {
-    mbSegMaps[i].count = 1;
-    mbSegMaps[i].refs[0] = { (uint8_t)(i == 2 ? 2 : i), defs[i][0], defs[i][1] };
+    mbLayouts[0].segMaps[i].count = 1;
+    mbLayouts[0].segMaps[i].refs[0] = { (uint8_t)(i == 2 ? 2 : i), defs[i][0], defs[i][1] };
     if (i == 2) {
-      mbSegMaps[i].count = 2;
-      mbSegMaps[i].refs[0] = { 2, 0, 35 };
-      mbSegMaps[i].refs[1] = { 3, 65, 100 };
+      mbLayouts[0].segMaps[i].count = 2;
+      mbLayouts[0].segMaps[i].refs[0] = { 2, 0, 35 };
+      mbLayouts[0].segMaps[i].refs[1] = { 3, 65, 100 };
     }
   }
   for (int i = 0; i < 8; i++) { mbAnimMap[i].presetId = ""; mbAnimMap[i].colorSlotCount = 0; }
@@ -647,13 +659,37 @@ void parseSegMapArray(JsonArray arr, MbSegMap& out) {
   }
 }
 
+void loadMbLayoutsFromJson() {
+  if (mbLayoutsJson.length() == 0) return;
+  DynamicJsonDocument doc(16384);
+  if (deserializeJson(doc, mbLayoutsJson)) return;
+  JsonArray layoutsArr = doc.as<JsonArray>();
+  if (layoutsArr.isNull()) return;
+  mbLayoutCount = 0;
+  for (JsonObject lo : layoutsArr) {
+    if (mbLayoutCount >= MB_MAX_LAYOUTS) break;
+    MbSegmentLayout& layout = mbLayouts[mbLayoutCount];
+    strncpy(layout.name, lo["name"] | "Layout", sizeof(layout.name) - 1);
+    layout.name[sizeof(layout.name) - 1] = '\0';
+    JsonObject segs = lo["segments"];
+    for (int i = 0; i < MB_SEG_KEY_COUNT; i++) {
+      layout.segMaps[i].count = 0;
+      if (segs.containsKey(MB_SEG_KEYS[i])) {
+        parseSegMapArray(segs[MB_SEG_KEYS[i]].as<JsonArray>(), layout.segMaps[i]);
+      }
+    }
+    mbLayoutCount++;
+  }
+  if (mbLayoutCount == 0) return;
+  if (mbActiveLayoutIdx >= mbLayoutCount) mbActiveLayoutIdx = 0;
+}
+
 String resolveEffectPresetId(const MbEffectMap& map) {
   if (map.presetId.length() > 0) return map.presetId;
   return bleDefaultPresetId;
 }
 
 void loadMbMappingFromJson() {
-  loadMbMappingDefaults();
   bleDefaultPresetId = "";
   if (mbMappingJson.length() == 0) return;
 
@@ -676,9 +712,14 @@ void loadMbMappingFromJson() {
   }
   if (doc.containsKey("segments")) {
     JsonObject segs = doc["segments"];
+    if (mbLayoutCount == 0) {
+      mbLayoutCount = 1;
+      strncpy(mbLayouts[0].name, "Default", sizeof(mbLayouts[0].name) - 1);
+      mbLayouts[0].name[sizeof(mbLayouts[0].name) - 1] = '\0';
+    }
     for (int i = 0; i < MB_SEG_KEY_COUNT; i++) {
       if (!segs.containsKey(MB_SEG_KEYS[i])) continue;
-      parseSegMapArray(segs[MB_SEG_KEYS[i]].as<JsonArray>(), mbSegMaps[i]);
+      parseSegMapArray(segs[MB_SEG_KEYS[i]].as<JsonArray>(), mbLayouts[0].segMaps[i]);
     }
   }
   if (doc.containsKey("animations")) {
@@ -790,8 +831,23 @@ void appendWledSolidSeg(String& body, const WledSegRef& ref, uint8_t r, uint8_t 
   if (ref.stop <= ref.start) return;
   if (!first) body += ",";
   first = false;
+  int fx = ref.fx >= 0 ? ref.fx : 0;
   body += "{\"id\":" + String(ref.id) + ",\"start\":" + String(ref.start) + ",\"stop\":" + String(ref.stop)
-       + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
+       + ",\"grp\":" + String(ref.grp) + ",\"spc\":" + String(ref.spc)
+       + ",\"of\":" + String(ref.of) + ",\"rev\":" + String(ref.rev ? "true" : "false")
+       + ",\"mi\":" + String(ref.mi ? "true" : "false")
+       + ",\"fx\":" + String(fx) + ",\"sx\":" + String(ref.sx) + ",\"ix\":" + String(ref.ix);
+  if (ref.pal >= 0) body += ",\"pal\":" + String(ref.pal);
+  body += ",\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
+}
+
+MbSegMap& activeMbSegMap(int keyIdx) {
+  if (mbLayoutCount == 0) {
+    mbLayoutCount = 1;
+    strncpy(mbLayouts[0].name, "Default", sizeof(mbLayouts[0].name) - 1);
+  }
+  uint8_t idx = mbActiveLayoutIdx < mbLayoutCount ? mbActiveLayoutIdx : 0;
+  return mbLayouts[idx].segMaps[keyIdx];
 }
 
 void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src) {
@@ -799,7 +855,7 @@ void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src)
   if (si < 0) return;
   uint8_t r, g, b;
   paletteToRGB(palIdx, r, g, b);
-  MbSegMap& map = mbSegMaps[si];
+  MbSegMap& map = activeMbSegMap(si);
   if (map.count == 0) return;
   saveWledStateForOverride();
   uint8_t activeIds[MB_MAX_SEG_REFS];
@@ -823,8 +879,9 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
   for (int i = 0; i < n; i++) {
     int si = mbSegKeyIndex(segKeys[i]);
     if (si < 0) continue;
-    for (uint8_t j = 0; j < mbSegMaps[si].count; j++) {
-      uint8_t id = mbSegMaps[si].refs[j].id;
+    MbSegMap& siMap = activeMbSegMap(si);
+    for (uint8_t j = 0; j < siMap.count; j++) {
+      uint8_t id = siMap.refs[j].id;
       bool dup = false;
       for (uint8_t k = 0; k < activeCount; k++) {
         if (activeIds[k] == id) { dup = true; break; }
@@ -841,8 +898,9 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
     if (si < 0) continue;
     uint8_t r, g, b;
     paletteToRGB(pals[i], r, g, b);
-    for (uint8_t j = 0; j < mbSegMaps[si].count; j++) {
-      appendWledSolidSeg(body, mbSegMaps[si].refs[j], r, g, b, first);
+    MbSegMap& siMap = activeMbSegMap(si);
+    for (uint8_t j = 0; j < siMap.count; j++) {
+      appendWledSolidSeg(body, siMap.refs[j], r, g, b, first);
     }
   }
   body += "]}";
@@ -1496,6 +1554,50 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"mb_mapping_config\",\"ok\":true}");
   }
 
+  else if (type == "mb_layout_set") {
+    JsonArray layoutsArr = doc["layouts"];
+    mbLayoutCount = 0;
+    for (JsonObject lo : layoutsArr) {
+      if (mbLayoutCount >= MB_MAX_LAYOUTS) break;
+      MbSegmentLayout& layout = mbLayouts[mbLayoutCount];
+      strncpy(layout.name, lo["name"] | "Layout", sizeof(layout.name) - 1);
+      layout.name[sizeof(layout.name) - 1] = '\0';
+      JsonObject segs = lo["segments"];
+      for (int i = 0; i < MB_SEG_KEY_COUNT; i++) {
+        layout.segMaps[i].count = 0;
+        if (segs.containsKey(MB_SEG_KEYS[i])) {
+          parseSegMapArray(segs[MB_SEG_KEYS[i]].as<JsonArray>(), layout.segMaps[i]);
+        }
+      }
+      mbLayoutCount++;
+    }
+    if (mbLayoutCount == 0) {
+      loadMbMappingDefaults();
+    } else {
+      mbActiveLayoutIdx = constrain((int)(doc["active"] | 0), 0, max(0, (int)mbLayoutCount - 1));
+    }
+    serializeJson(doc["layouts"], mbLayoutsJson);
+    prefs.begin("config", false);
+    prefs.putString("mbLayouts", mbLayoutsJson);
+    prefs.putUChar("mbActiveLayout", mbActiveLayoutIdx);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"mb_layout_set\",\"active\":" + String(mbActiveLayoutIdx) + "}");
+  }
+
+  else if (type == "mb_layout_switch") {
+    int idx = doc["index"] | 0;
+    if (idx >= 0 && idx < (int)mbLayoutCount) {
+      mbActiveLayoutIdx = (uint8_t)idx;
+      prefs.begin("config", false);
+      prefs.putUChar("mbActiveLayout", mbActiveLayoutIdx);
+      prefs.end();
+      bleNotify("{\"type\":\"ack\",\"action\":\"mb_layout_switch\",\"active\":" + String(mbActiveLayoutIdx) +
+                ",\"name\":\"" + String(mbLayouts[idx].name) + "\"}");
+    } else {
+      bleNotify("{\"type\":\"ack\",\"action\":\"mb_layout_switch\",\"ok\":false}");
+    }
+  }
+
   // ── MagicBand config ──
   else if (type == "mb_config") {
     if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
@@ -1530,6 +1632,9 @@ void handleBLECommand(const String& msg) {
       "\"ble_transition_ms\":" + String(bleEffectTransitionMs) + ","
       "\"mb_chase_speed\":" + String(mbChaseSpeed) + ","
       "\"mb_chase_thickness\":" + String(mbChaseThickness) + ","
+      "\"mb_layout_active\":" + String((int)mbActiveLayoutIdx) + ","
+      "\"mb_layout_name\":\"" + String(mbLayoutCount > 0 ? mbLayouts[mbActiveLayoutIdx].name : "Default") + "\","
+      "\"mb_layout_count\":" + String((int)mbLayoutCount) + ","
       "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") + ","
       "\"capture_active\":" + String(bleCaptureToApp ? "true" : "false") +
       "}"
@@ -2225,7 +2330,11 @@ void setup() {
   if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
   mbMappingJson       = prefs.getString("mbMapping", "");
+  mbLayoutsJson       = prefs.getString("mbLayouts", "");
+  mbActiveLayoutIdx   = prefs.getUChar("mbActiveLayout", 0);
   prefs.end();
+  loadMbMappingDefaults();
+  if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
   loadMbMappingFromJson();
   loadWledBaselineFromNvs();
   Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums\n",
