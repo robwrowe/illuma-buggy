@@ -303,6 +303,7 @@ const DEFAULT_DATA = {
     fireworks:{pre:'',live:'__BLACK__',post:''},
   },
   wandLab:{simIp:'',log:[]},
+  ftbPresetId:'',
   mbMapping: null, // filled by normalizeMbMapping on load
 };
 
@@ -4192,6 +4193,13 @@ function SettingsTab({data, update}) {
     </>}
 
     {bleTab === 'general' && <>
+      <SectionHead>Quick Actions</SectionHead>
+      <Field label="Fade to Black preset">
+        <SearchableSelect value={data.ftbPresetId || ''} allowEmpty={true}
+          onChange={v => update({ ftbPresetId: v })}
+          placeholder="Pure black (no preset)"
+          options={presets.map(p => ({ value: p.id, label: p.name, searchText: p.name }))}/>
+      </Field>
       <SectionHead>Recall State</SectionHead>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:24}}>
         {Object.keys(data.recallState||DEFAULT_DATA.recallState).map(k=>(<Field key={k} label={k.charAt(0).toUpperCase()+k.slice(1)}>

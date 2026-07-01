@@ -131,6 +131,11 @@ class BLEService {
   sendPresetList()                                        { return this.send({ type: 'preset_list' }); }
   sendZoneTrigger(presetId: string)                       { return this.send({ type: 'zone_trigger', preset_id: presetId }); }
   sendOverrideClear()                                     { return this.send({ type: 'override_clear' }); }
+  sendFadeToBlack(presetId?: string, fadeMs = 800) {
+    const msg: BLEMessage = { type: 'fade_to_black', fade_ms: fadeMs };
+    if (presetId) msg.preset_id = presetId;
+    return this.send(msg);
+  }
   sendOverrideMode(killOnZone: boolean)                   { return this.send({ type: 'override_mode', kill_on_zone: killOnZone }); }
   sendBrightness(value: number)                           { return this.send({ type: 'brightness', value }); }
   sendWledRaw(wled: object)                               { return this.send({ type: 'wled_raw', wled }); }

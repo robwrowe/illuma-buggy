@@ -14,11 +14,16 @@ import IconWifi         from '@tabler/icons-react-native/dist/esm/icons/IconWifi
 import IconWifiOff      from '@tabler/icons-react-native/dist/esm/icons/IconWifiOff';
 import IconMap          from '@tabler/icons-react-native/dist/esm/icons/IconMap';
 
+import IconSettings from '@tabler/icons-react-native/dist/esm/icons/IconSettings';
+import IconMoon       from '@tabler/icons-react-native/dist/esm/icons/IconMoon';
+import IconRefresh    from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
+
 import { useBLE } from '../hooks/useBLE';
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { useTheme } from '../utils/theme';
 import { useNavigation } from '@react-navigation/native';
+import { PresetPickerModal } from './MbMappingSections';
 
 const OVERRIDE_LABELS = ['—', 'Zone', 'Manual', 'Show Mode', 'MagicBand+', 'Starlight Wand'];
 const OVERRIDE_COLORS = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) =>
@@ -37,10 +42,12 @@ export default function HomeScreen() {
     setActivePaletteSet, saveToStorage,
     overrideDetail, setOverrideDetail,
     bleCaptureActive, bleCaptureLiveCount,
+    ftbPresetId, setFtbPresetId, bleEffectTransitionMs,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
   const [events, setEvents]         = useState<string[]>([]);
+  const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
 
   // Request status immediately on connect, then every 5s
   useEffect(() => {
@@ -81,6 +88,9 @@ export default function HomeScreen() {
   const currentPreset  = presets.find(p => p.id === deviceStatus?.currentPreset);
   const activeZones    = zones.filter(z => activeZoneIds.includes(z.id));
   const overrideActive = overrideIndex > 0;
+  const fireZone       = activeZones.find(z => z.presetId) ?? null;
+  const firePreset     = fireZone ? presets.find(p => p.id === fireZone.presetId) : null;
+  const ftbPreset      = ftbPresetId ? presets.find(p => p.id === ftbPresetId) : null;
 
   const effectDescription = (() => {
     if (!deviceStatus || overrideIndex === 0) return 'Normal — zone or idle';
@@ -134,6 +144,69 @@ export default function HomeScreen() {
           </Text>
         </TouchableOpacity>
       )}
+
+      {/* Quick actions */}
+      {isConnected && (
+        <View style={s.card}>
+          <Text style={s.label}>Quick Actions</Text>
+          <View style={s.quickRow}>
+            <View style={s.quickBtnWrap}>
+              <TouchableOpacity
+                style={s.quickBtn}
+                onPress={() => {
+                  bleService.sendFadeToBlack(
+                    ftbPresetId || undefined,
+                    bleEffectTransitionMs || 800,
+                  );
+                }}
+              >
+                <IconMoon size={20} color={colors.textPrimary} />
+                <Text style={s.quickBtnText}>Fade to Black</Text>
+                {ftbPreset && (
+                  <Text style={s.quickBtnHint} numberOfLines={1}>{ftbPreset.name}</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity style={s.quickGear} onPress={() => setFtbPickerOpen(true)}>
+                <IconSettings size={14} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={[s.quickBtn, overrideIndex === 0 && s.quickBtnDisabled]}
+              disabled={overrideIndex === 0}
+              onPress={clearEffect}
+            >
+              <IconRefresh size={20} color={overrideIndex === 0 ? colors.textMuted : colors.textPrimary} />
+              <Text style={[s.quickBtnText, overrideIndex === 0 && s.quickBtnTextDisabled]}>Previous State</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.quickBtn, !fireZone && s.quickBtnDisabled]}
+              disabled={!fireZone}
+              onPress={() => fireZone && bleService.sendZoneTrigger(fireZone.presetId)}
+            >
+              <IconBolt size={20} color={!fireZone ? colors.textMuted : colors.primary} />
+              <Text style={[s.quickBtnText, !fireZone && s.quickBtnTextDisabled]} numberOfLines={2}>
+                {fireZone
+                  ? `Fire: ${fireZone.name}`
+                  : 'Fire Zone'}
+              </Text>
+              {firePreset && (
+                <Text style={s.quickBtnHint} numberOfLines={1}>{firePreset.name}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <PresetPickerModal
+        visible={ftbPickerOpen}
+        title="Fade to Black preset"
+        presets={presets}
+        selectedId={ftbPresetId}
+        emptyLabel="Pure black (no preset)"
+        onSelect={(id) => { setFtbPresetId(id); saveToStorage(); }}
+        onClose={() => setFtbPickerOpen(false)}
+        colors={colors}
+      />
 
       {/* Connection */}
       <View style={s.card}>
@@ -357,4 +430,12 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   paradeBtnActive: { borderColor: c.primary, backgroundColor: c.primaryDim },
   paradeBtnEnd: { borderColor: c.danger + '66' },
   paradeBtnText:{ color: c.textPrimary, fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  quickRow:     { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  quickBtnWrap: { flex: 1, minWidth: 100, position: 'relative' },
+  quickBtn:     { flex: 1, minWidth: 100, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt, alignItems: 'center', gap: 4 },
+  quickBtnDisabled: { opacity: 0.45 },
+  quickBtnText: { color: c.textPrimary, fontSize: 11, fontWeight: '600', textAlign: 'center' },
+  quickBtnTextDisabled: { color: c.textMuted },
+  quickBtnHint: { color: c.textMuted, fontSize: 10, textAlign: 'center' },
+  quickGear:    { position: 'absolute', top: 4, right: 4, padding: 4 },
 });

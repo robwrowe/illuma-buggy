@@ -15,7 +15,7 @@ import IconDownload from '@tabler/icons-react-native/dist/esm/icons/IconDownload
 import IconUpload from '@tabler/icons-react-native/dist/esm/icons/IconUpload';
 
 import { useAppStore, RecallState, RecallValue } from '../stores/store';
-import { MbMappingSections } from './MbMappingSections';
+import { MbMappingSections, PresetPickerModal } from './MbMappingSections';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
 import { useTheme, ThemeMode } from '../utils/theme';
@@ -35,10 +35,13 @@ export default function SettingsScreen() {
     magicBandFivePoint, setMagicBandFivePoint,
     magicBandTimeoutSec, setMagicBandTimeoutSec,
     bleEffectTransitionMs, setBleEffectTransitionMs,
+    ftbPresetId, setFtbPresetId, presets,
     brightnessConfig, setBrightnessConfig,
     recallState, setRecallState,
     saveToStorage, exportData, importData,
   } = useAppStore();
+
+  const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
 
   const updateOverrideMode = (val: boolean) => {
     setOverrideKillOnZone(val);
@@ -252,6 +255,31 @@ export default function SettingsScreen() {
           />
         </View>
       </View>
+
+      {/* Quick actions config */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Quick Actions</Text>
+        <Text style={s.sectionHint}>
+          Fade to Black uses this preset when tapped on Home (or pure black if none selected).
+        </Text>
+        <TouchableOpacity style={s.dataBtn} onPress={() => setFtbPickerOpen(true)}>
+          <IconMoon size={16} color={colors.primary} />
+          <Text style={s.dataBtnText}>
+            FTB preset: {ftbPresetId ? (presets.find(p => p.id === ftbPresetId)?.name ?? ftbPresetId) : 'Pure black'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <PresetPickerModal
+        visible={ftbPickerOpen}
+        title="Fade to Black preset"
+        presets={presets}
+        selectedId={ftbPresetId}
+        emptyLabel="Pure black (no preset)"
+        onSelect={(id) => { setFtbPresetId(id); saveToStorage(); }}
+        onClose={() => setFtbPickerOpen(false)}
+        colors={colors}
+      />
 
       {/* MB / Wand transition */}
       <View style={s.section}>

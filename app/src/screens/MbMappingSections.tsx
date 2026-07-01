@@ -34,8 +34,8 @@ const BLE_TABS: { id: BleTab; label: string }[] = [
   { id: 'segments', label: 'Segments' },
 ];
 
-function PresetPickerModal({
-  visible, title, presets, selectedId, onSelect, onClose, colors,
+export function PresetPickerModal({
+  visible, title, presets, selectedId, onSelect, onClose, colors, emptyLabel = 'Use default preset',
 }: {
   visible: boolean;
   title: string;
@@ -44,6 +44,7 @@ function PresetPickerModal({
   onSelect: (id: string) => void;
   onClose: () => void;
   colors: Colors;
+  emptyLabel?: string;
 }) {
   const [q, setQ] = useState('');
   const filtered = presets.filter(p =>
@@ -76,7 +77,7 @@ function PresetPickerModal({
               style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
               onPress={() => { onSelect(''); onClose(); }}>
               <Text style={{ color: !selectedId ? colors.primary : colors.textSecondary, fontWeight: !selectedId ? '600' : '400' }}>
-                Use default preset
+                {emptyLabel}
               </Text>
             </TouchableOpacity>
             {filtered.map(p => (

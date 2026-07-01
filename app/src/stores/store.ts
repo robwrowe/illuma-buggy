@@ -270,6 +270,8 @@ interface AppState {
   // v3.0 config (migration defaults; full UI in later sections)
   showModeConfig: ShowModeConfig;
   setShowModeConfig: (config: Partial<ShowModeConfig>) => void;
+  ftbPresetId: string;
+  setFtbPresetId: (id: string) => void;
   wandLab: WandLabConfig;
   mbSegmentLayouts: MbSegmentLayout[];
   mbActiveSegmentLayoutId: string | null;
@@ -377,6 +379,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   parks:                  [],
   activePark:             null,
   showModeConfig:         DEFAULT_SHOW_MODE,
+  ftbPresetId:            '',
   wandLab:                DEFAULT_WAND_LAB,
   mbSegmentLayouts:       [],
   mbActiveSegmentLayoutId: null,
@@ -411,6 +414,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       fireworks: { ...s.showModeConfig.fireworks, ...(patch.fireworks ?? {}) },
     },
   })),
+  setFtbPresetId: (ftbPresetId) => set({ ftbPresetId }),
 
   // WLED cache
   setWledEffects:  (wledEffects)  => set({ wledEffects }),
@@ -552,7 +556,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','paletteSets','activePaletteSetId',
-                    'customSegmentLayouts','parks','showModeConfig','wandLab',
+                    'customSegmentLayouts','parks','showModeConfig','ftbPresetId','wandLab',
                     'mbSegmentLayouts','mbActiveSegmentLayoutId',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
@@ -587,6 +591,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         parks:              d.parks              ?? [],
         activePark:         null,
         showModeConfig:     d.showModeConfig     ?? DEFAULT_SHOW_MODE,
+        ftbPresetId:        d.ftbPresetId        ?? '',
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
         mbSegmentLayouts:   d.mbSegmentLayouts   ?? [],
         mbActiveSegmentLayoutId: d.mbActiveSegmentLayoutId ?? null,
@@ -623,6 +628,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['bleCaptureDraftName',   JSON.stringify(s.bleCaptureDraftName)],
         ['parks',              JSON.stringify(s.parks)],
         ['showModeConfig',     JSON.stringify(s.showModeConfig)],
+        ['ftbPresetId',        s.ftbPresetId],
         ['wandLab',            JSON.stringify(s.wandLab)],
         ['mbSegmentLayouts',   JSON.stringify(s.mbSegmentLayouts)],
         ['mbActiveSegmentLayoutId', JSON.stringify(s.mbActiveSegmentLayoutId)],
@@ -704,7 +710,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureSessions: s.bleCaptureSessions,
       customPalettes: s.customPalettes, paletteSets: s.paletteSets,
       customSegmentLayouts: s.customSegmentLayouts,
-      parks: s.parks, showModeConfig: s.showModeConfig, wandLab: s.wandLab,
+      parks: s.parks, showModeConfig: s.showModeConfig, ftbPresetId: s.ftbPresetId, wandLab: s.wandLab,
       mbSegmentLayouts: s.mbSegmentLayouts, mbActiveSegmentLayoutId: s.mbActiveSegmentLayoutId,
     };
   },
@@ -736,6 +742,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       parks:              (m.parks as ParkConfig[]) ?? [],
       activePark:         null,
       showModeConfig:     (m.showModeConfig as ShowModeConfig) ?? DEFAULT_SHOW_MODE,
+      ftbPresetId:        (m.ftbPresetId as string) ?? '',
       wandLab:            (m.wandLab as WandLabConfig) ?? DEFAULT_WAND_LAB,
       mbSegmentLayouts:   (m.mbSegmentLayouts as MbSegmentLayout[]) ?? [],
       mbActiveSegmentLayoutId: (m.mbActiveSegmentLayoutId as string) ?? null,

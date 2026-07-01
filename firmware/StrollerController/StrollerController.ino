@@ -1521,6 +1521,23 @@ void handleBLECommand(const String& msg) {
     clearOverride();
     bleNotify("{\"type\":\"ack\",\"action\":\"override_clear\"}");
   }
+  else if (type == "fade_to_black") {
+    if (!canTakeOverride(MANUAL)) {
+      bleNotify("{\"type\":\"ack\",\"action\":\"fade_to_black\",\"ok\":false,\"reason\":\"blocked\"}");
+      return;
+    }
+    saveWledStateForOverride();
+    setOverride(MANUAL);
+    unsigned long fadeMs = doc["fade_ms"] | 800;
+    String targetPresetId = doc["preset_id"] | "";
+    bool ok;
+    if (targetPresetId.length() > 0) {
+      ok = restorePresetWithTransition(targetPresetId, fadeMs);
+    } else {
+      ok = sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"fade_to_black\",\"ok\":" + String(ok ? "true" : "false") + "}");
+  }
   else if (type == "override_mode") {
     overrideKillOnZone = doc["kill_on_zone"].as<bool>();
     prefs.begin("config", false);
