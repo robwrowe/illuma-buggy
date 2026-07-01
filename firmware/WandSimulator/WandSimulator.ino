@@ -532,6 +532,14 @@ void printHelp() {
   Serial.println("         Short: cyan purple blue pink yellow lime orange red green white");
 }
 
+// WiFi HTTP API globals (must precede handleLine — Arduino hoists prototypes)
+WebServer simServer(80);
+bool simWifiConnected = false;
+String wifiSsid;
+String wifiPass;
+unsigned long wifiLastRetryMs = 0;
+void connectSimWifi();
+
 void handleLine(String line) {
   line.trim();
   if (line.length() == 0) return;
@@ -703,12 +711,6 @@ void handleLine(String line) {
 }
 
 // ── WiFi HTTP API (byte-stepper for web Wand Lab) ─────────────────────────
-
-WebServer simServer(80);
-bool simWifiConnected = false;
-String wifiSsid;
-String wifiPass;
-unsigned long wifiLastRetryMs = 0;
 
 size_t parseHexBytes(const String& hexStr, uint8_t* out, size_t maxLen) {
   size_t n = 0;

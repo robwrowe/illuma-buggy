@@ -208,6 +208,11 @@ unsigned long bleCaptureLastNotifyMs = 0;
 uint16_t      bleCaptureNotifyCount  = 0;
 char          captureLabel[24]    = "";
 
+enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
+
+String mfrToHex(const uint8_t* data, size_t len);
+String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen);
+
 // Wand TX beacon — advertise as another Starlight wand (for pairing/cast tests)
 bool          wandTxBeacon    = false;
 unsigned long wandTxCastUntil = 0;
@@ -1017,8 +1022,6 @@ bool swPayloadMatchesRef(const uint8_t* payload, size_t plen, const uint8_t* ref
   }
   return false;
 }
-
-enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
 
 SwMatchQuality identifySwFxPresetQuality(const uint8_t* payload, size_t plen, const char** outKey) {
   for (size_t i = 0; i < SW_FX_SIGNATURE_COUNT; i++) {
