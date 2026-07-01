@@ -66,6 +66,8 @@ struct MbEffectMap {
 
 enum OverrideSource { NONE, ZONE, MANUAL, SHOW_MODE, BLE_MAGIC, BLE_STARLIGHT };
 
+enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
+
 enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS };
 enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
 
@@ -92,6 +94,8 @@ static const uint8_t MB_DEFAULT_COLORS[32][3] = {
 void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b);
 void loadMbMappingDefaults();
 void loadMbMappingFromJson();
+String mfrToHex(const uint8_t* data, size_t len);
+String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen);
 
 // ─────────────────────────────────────────────
 // GLOBALS
@@ -207,11 +211,6 @@ unsigned long bleCaptureUntilMs   = 0;
 unsigned long bleCaptureLastNotifyMs = 0;
 uint16_t      bleCaptureNotifyCount  = 0;
 char          captureLabel[24]    = "";
-
-enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
-
-String mfrToHex(const uint8_t* data, size_t len);
-String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen);
 
 // Wand TX beacon — advertise as another Starlight wand (for pairing/cast tests)
 bool          wandTxBeacon    = false;
@@ -1072,7 +1071,7 @@ void notifyUnknownAnimation(const uint8_t* payload, size_t plen, SwMatchQuality 
   String q = quality == SW_MATCH_FUZZY ? "fuzzy" : "none";
   bleNotify("{\"type\":\"unknown_anim\",\"quality\":\"" + q +
             "\",\"func\":\"0x" + String(func, HEX) +
-            "\",\"hex\":\"" + mfrToHexFull(payload, plen) +
+            "\",\"hex\":\"" + mfrToHexFull(payload, plen, 64) +
             "\",\"len\":" + String(plen) +
             ",\"label\":\"" + String(captureLabel) +
             "\",\"ts\":" + String(millis()) + "}");
