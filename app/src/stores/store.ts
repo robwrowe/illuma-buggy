@@ -123,6 +123,10 @@ export interface DeviceStatus {
 }
 
 import {
+  migrateConfig, CURRENT_CONFIG_VERSION,
+  type ParkConfig, type ShowModeConfig, type WandLabConfig,
+} from '../utils/configMigration';
+import {
   MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
 import {
@@ -247,6 +251,11 @@ interface AppState {
   exportData: () => object;
   importData: (data: object) => void;
 
+  // v3.0 config (migration defaults; full UI in later sections)
+  parks: ParkConfig[];
+  showModeConfig: ShowModeConfig;
+  wandLab: WandLabConfig;
+
   // BLE packet capture (parade / show recording)
   bleCaptureActive:       boolean;
   bleCaptureDurationSec:  BleCaptureDuration;
@@ -276,6 +285,13 @@ const DEFAULT_BRIGHTNESS: BrightnessConfig = {
 const DEFAULT_RECALL: RecallState = {
   effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never',
 };
+
+const DEFAULT_SHOW_MODE: ShowModeConfig = {
+  parade: { pre: '', live: '', post: '' },
+  fireworks: { pre: '', live: '__BLACK__', post: '' },
+};
+
+const DEFAULT_WAND_LAB: WandLabConfig = { simIp: '', log: [] };
 
 const DEFAULT_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: false, segments: false,
@@ -339,6 +355,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureBuffer:       [],
   bleCaptureSessions:     [],
   bleCaptureDraftName:    'Parade capture',
+  parks:                  [],
+  showModeConfig:         DEFAULT_SHOW_MODE,
+  wandLab:                DEFAULT_WAND_LAB,
 
   // Presets
   setPresets: (presets) => set({ presets }),
@@ -488,7 +507,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','paletteSets','activePaletteSetId',
-                    'customSegmentLayouts',
+                    'customSegmentLayouts','parks','showModeConfig','wandLab',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
@@ -519,6 +538,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         bleCaptureSessions: d.bleCaptureSessions ?? [],
         bleCaptureDurationSec: d.bleCaptureDurationSec ?? 900,
         bleCaptureDraftName:   d.bleCaptureDraftName   ?? 'Parade capture',
+        parks:              d.parks              ?? [],
+        showModeConfig:     d.showModeConfig     ?? DEFAULT_SHOW_MODE,
+        wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
       });
     } catch (e) { console.error('[Store] Load error:', e); }
   },
@@ -550,6 +572,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['bleCaptureSessions', JSON.stringify(s.bleCaptureSessions)],
         ['bleCaptureDurationSec', JSON.stringify(s.bleCaptureDurationSec)],
         ['bleCaptureDraftName',   JSON.stringify(s.bleCaptureDraftName)],
+        ['parks',              JSON.stringify(s.parks)],
+        ['showModeConfig',     JSON.stringify(s.showModeConfig)],
+        ['wandLab',            JSON.stringify(s.wandLab)],
       ]);
     } catch (e) { console.error('[Store] Save error:', e); }
   },
@@ -616,7 +641,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   exportData: () => {
     const s = get();
     return {
-      version: '2.2', exportedAt: new Date().toISOString(),
+      version: CURRENT_CONFIG_VERSION, exportedAt: new Date().toISOString(),
       presets: s.presets, zones: s.zones, indoorZones: s.indoorZones,
       brightnessConfig: s.brightnessConfig, recallState: s.recallState,
       overrideKillOnZone: s.overrideKillOnZone,
@@ -628,32 +653,37 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureSessions: s.bleCaptureSessions,
       customPalettes: s.customPalettes, paletteSets: s.paletteSets,
       customSegmentLayouts: s.customSegmentLayouts,
+      parks: s.parks, showModeConfig: s.showModeConfig, wandLab: s.wandLab,
     };
   },
 
   importData: (data: any) => {
+    const m = migrateConfig(data) as Record<string, any>;
     set({
-      presets:            (data.presets ?? []).map((p: Preset) => normalizePreset(p)),
-      zones:              data.zones              ?? [],
-      indoorZones:        data.indoorZones        ?? [],
-      brightnessConfig:   data.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
-      recallState:        data.recallState        ?? DEFAULT_RECALL,
-      overrideKillOnZone: data.overrideKillOnZone ?? false,
-      starlightEnabled:   data.starlightEnabled   ?? true,
-      starlightTimeoutSec:data.starlightTimeoutSec ?? 15,
-      magicBandEnabled:   data.magicBandEnabled   ?? true,
-      magicBandFivePoint: data.magicBandFivePoint ?? true,
-      magicBandTimeoutSec:data.magicBandTimeoutSec ?? 15,
-      bleEffectTransitionMs: data.bleEffectTransitionMs ?? 700,
-      mbMapping:          normalizeMbMapping(data.mbMapping),
-      bleCaptureSessions: data.bleCaptureSessions ?? [],
-      bleCaptureDurationSec: data.bleCaptureDurationSec ?? 900,
-      bleCaptureDraftName:   data.bleCaptureDraftName   ?? 'Parade capture',
-      customPalettes:     data.customPalettes     ?? [],
-      paletteSets:        data.paletteSets        ?? [],
-      customSegmentLayouts: (data.customSegmentLayouts ?? [])
+      presets:            (m.presets ?? []).map((p: Preset) => normalizePreset(p)),
+      zones:              m.zones              ?? [],
+      indoorZones:        m.indoorZones        ?? [],
+      brightnessConfig:   m.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
+      recallState:        m.recallState        ?? DEFAULT_RECALL,
+      overrideKillOnZone: m.overrideKillOnZone ?? false,
+      starlightEnabled:   m.starlightEnabled   ?? true,
+      starlightTimeoutSec:m.starlightTimeoutSec ?? 15,
+      magicBandEnabled:   m.magicBandEnabled   ?? true,
+      magicBandFivePoint: m.magicBandFivePoint ?? true,
+      magicBandTimeoutSec:m.magicBandTimeoutSec ?? 15,
+      bleEffectTransitionMs: m.bleEffectTransitionMs ?? 700,
+      mbMapping:          normalizeMbMapping(m.mbMapping),
+      bleCaptureSessions: m.bleCaptureSessions ?? data.bleCaptureSessions ?? [],
+      bleCaptureDurationSec: m.bleCaptureDurationSec ?? data.bleCaptureDurationSec ?? 900,
+      bleCaptureDraftName:   m.bleCaptureDraftName   ?? data.bleCaptureDraftName   ?? 'Parade capture',
+      customPalettes:     m.customPalettes     ?? [],
+      paletteSets:        m.paletteSets        ?? [],
+      customSegmentLayouts: (m.customSegmentLayouts ?? [])
         .map((l: CustomSegmentLayout) => normalizeSegmentLayout(l))
         .filter(Boolean) as CustomSegmentLayout[],
+      parks:              (m.parks as ParkConfig[]) ?? [],
+      showModeConfig:     (m.showModeConfig as ShowModeConfig) ?? DEFAULT_SHOW_MODE,
+      wandLab:            (m.wandLab as WandLabConfig) ?? DEFAULT_WAND_LAB,
     });
     get().saveToStorage();
   },

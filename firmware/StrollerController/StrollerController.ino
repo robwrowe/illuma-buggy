@@ -43,7 +43,20 @@ uint8_t mbChaseThickness = 4;    // grp — LEDs per chase block (color width)
 #define MB_MAX_SEG_REFS 8
 #define MB_MAX_COLOR_SLOTS 16
 
-struct WledSegRef { uint8_t id; uint16_t start; uint16_t stop; };
+struct WledSegRef {
+  uint8_t id;
+  uint16_t start;
+  uint16_t stop;
+  uint8_t grp = 1;
+  uint8_t spc = 0;
+  int16_t of = 0;
+  bool rev = false;
+  bool mi = false;
+  int fx = -1;
+  uint8_t sx = 128;
+  uint8_t ix = 128;
+  int pal = -1;
+};
 struct MbSegMap { WledSegRef refs[MB_MAX_SEG_REFS]; uint8_t count; };
 struct MbEffectMap {
   String presetId;
@@ -617,10 +630,20 @@ void parseSegMapArray(JsonArray arr, MbSegMap& out) {
     uint16_t start = (uint16_t)r["start"].as<int>();
     uint16_t stop  = (uint16_t)r["stop"].as<int>();
     if (stop <= start || stop > STRIP_LED_COUNT) continue;
-    out.refs[out.count++] = {
-      (uint8_t)r["id"].as<int>(),
-      start, stop
-    };
+    WledSegRef ref;
+    ref.id    = (uint8_t)r["id"].as<int>();
+    ref.start = start;
+    ref.stop  = stop;
+    ref.grp   = r.containsKey("grp") ? (uint8_t)r["grp"].as<int>() : 1;
+    ref.spc   = r.containsKey("spc") ? (uint8_t)r["spc"].as<int>() : 0;
+    ref.of    = r.containsKey("of")  ? (int16_t)r["of"].as<int>() : 0;
+    ref.rev   = r["rev"] | false;
+    ref.mi    = r["mi"]  | false;
+    ref.fx    = r.containsKey("fx")  ? r["fx"].as<int>() : -1;
+    ref.sx    = r.containsKey("sx")  ? (uint8_t)r["sx"].as<int>() : 128;
+    ref.ix    = r.containsKey("ix")  ? (uint8_t)r["ix"].as<int>() : 128;
+    ref.pal   = r.containsKey("pal") ? r["pal"].as<int>() : -1;
+    out.refs[out.count++] = ref;
   }
 }
 

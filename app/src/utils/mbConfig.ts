@@ -1,12 +1,18 @@
-/**
- * MagicBand+ → WLED mapping configuration (v1)
- * Synced to firmware via BLE `mb_mapping_config`.
- */
+import { withSegRefDefaults } from './configMigration';
 
 export interface WledSegRef {
   id: number;
   start: number;
   stop: number;
+  grp?: number;
+  spc?: number;
+  of?: number;
+  rev?: boolean;
+  mi?: boolean;
+  fx?: number;
+  sx?: number;
+  ix?: number;
+  pal?: number;
 }
 
 export type MbSegmentId =
@@ -164,9 +170,9 @@ export const MB_SEGMENT_META: { id: MbSegmentId; label: string; hint: string }[]
   { id: 'band2', label: 'Band LED 2', hint: 'E905 mask bit 2' },
   { id: 'band3', label: 'Band LED 3', hint: 'E905 mask bit 3' },
   { id: 'band4', label: 'Band LED 4', hint: 'E905 mask bit 4' },
-  { id: 'band5', label: 'Band LED 5', hint: 'E905 mask bit 5' },
-  { id: 'band6', label: 'Band LED 6', hint: 'E905 mask bit 6' },
-  { id: 'band7', label: 'Band LED 7', hint: 'E905 mask bit 7' },
+  { id: 'band5', label: 'Band LED 5', hint: 'reserved — not yet wired to a trigger' },
+  { id: 'band6', label: 'Band LED 6', hint: 'reserved — not yet wired to a trigger' },
+  { id: 'band7', label: 'Band LED 7', hint: 'reserved — not yet wired to a trigger' },
 ];
 
 export const MB_ANIMATION_META: { key: MbAnimationKey; label: string }[] = [
@@ -246,8 +252,8 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
   for (const { id } of MB_SEGMENT_META) {
     const src = raw.segments?.[id];
     segments[id] = src?.length
-      ? src.map(s => ({ id: s.id ?? 0, start: s.start, stop: s.stop }))
-      : d.segments[id].map(s => ({ ...s }));
+      ? src.map(s => withSegRefDefaults(s))
+      : d.segments[id].map(s => withSegRefDefaults(s));
   }
   return {
     version: 1,

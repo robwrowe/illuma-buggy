@@ -290,13 +290,18 @@ const PRESET_COLORS = [
 ];
 
 const DEFAULT_DATA = {
-  version:'2.2', presets:[], zones:[], indoorZones:[],
+  version:'3.0', presets:[], zones:[], indoorZones:[], parks:[],
   brightnessConfig:{daytime:200,nighttime:80,indoor:120,transitionMinutes:30,solarThresholdDeg:6},
   recallState:{effect:'always',palette:'always',parameters:'memory',color:'memory',segments:'never'},
   overrideKillOnZone:false, magicBandFivePoint:true, bleEffectTransitionMs:700,
   starlightEnabled:true, starlightTimeoutSec:15,
   magicBandEnabled:true, magicBandTimeoutSec:15,
   customPalettes:[], paletteSets:[], customSegmentLayouts:[], savedColors:[],
+  showModeConfig:{
+    parade:{pre:'',live:'',post:''},
+    fireworks:{pre:'',live:'__BLACK__',post:''},
+  },
+  wandLab:{simIp:'',log:[]},
   mbMapping: null, // filled by normalizeMbMapping on load
 };
 
@@ -383,9 +388,9 @@ const MB_SEGMENT_META = [
   { id: 'band2', label: 'Band LED 2', hint: 'E905 mask bit 2' },
   { id: 'band3', label: 'Band LED 3', hint: 'E905 mask bit 3' },
   { id: 'band4', label: 'Band LED 4', hint: 'E905 mask bit 4' },
-  { id: 'band5', label: 'Band LED 5', hint: 'E905 mask bit 5' },
-  { id: 'band6', label: 'Band LED 6', hint: 'E905 mask bit 6' },
-  { id: 'band7', label: 'Band LED 7', hint: 'E905 mask bit 7' },
+  { id: 'band5', label: 'Band LED 5', hint: 'reserved — not yet wired to a trigger' },
+  { id: 'band6', label: 'Band LED 6', hint: 'reserved — not yet wired to a trigger' },
+  { id: 'band7', label: 'Band LED 7', hint: 'reserved — not yet wired to a trigger' },
 ];
 
 const MB_ANIMATION_META = [
@@ -915,8 +920,8 @@ function normalizeMbMapping(raw) {
   MB_SEGMENT_META.forEach(({ id }) => {
     const src = raw.segments?.[id];
     segments[id] = src?.length
-      ? src.map(s => ({ id: s.id ?? 0, start: s.start, stop: s.stop }))
-      : d.segments[id].map(s => ({ ...s }));
+      ? src.map(s => withSegRefDefaults(s))
+      : d.segments[id].map(s => withSegRefDefaults(s));
   });
   return {
     version: 1,
@@ -1244,7 +1249,87 @@ function loadAppData(stored) {
   merged.paletteSets = [];
   merged.zones = (merged.zones || []).map(normalizeZoneRecord);
   merged.indoorZones = (merged.indoorZones || []).map(normalizeZoneRecord);
+  merged.parks = merged.parks || [];
+  merged.showModeConfig = merged.showModeConfig || DEFAULT_DATA.showModeConfig;
+  merged.wandLab = merged.wandLab || DEFAULT_DATA.wandLab;
   return merged;
+}
+
+const CURRENT_VERSION = '3.0';
+
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+function withSegRefDefaults(ref) {
+  return {
+    id: ref.id, start: ref.start, stop: ref.stop,
+    grp: ref.grp ?? 1,
+    spc: ref.spc ?? 0,
+    of: ref.of ?? 0,
+    rev: ref.rev ?? false,
+    mi: ref.mi ?? false,
+    fx: ref.fx ?? -1,
+    sx: ref.sx ?? 128,
+    ix: ref.ix ?? 128,
+    pal: ref.pal ?? -1,
+  };
+}
+
+function migrateSegmentMetadata(data) {
+  const mbMapping = data.mbMapping ? { ...data.mbMapping } : undefined;
+  if (mbMapping?.segments) {
+    const segments = {};
+    Object.entries(mbMapping.segments).forEach(([key, refs]) => {
+      segments[key] = (refs || []).map(withSegRefDefaults);
+    });
+    mbMapping.segments = segments;
+  }
+  const customSegmentLayouts = (data.customSegmentLayouts || []).map(layout => ({
+    ...layout,
+    segments: (layout.segments || []).map(withSegRefDefaults),
+  }));
+  return { ...data, mbMapping, customSegmentLayouts };
+}
+
+function migrateParksGrouping(data) {
+  if (data.parks) return data;
+  return { ...data, parks: [] };
+}
+
+function migrateShowModeDefaults(data) {
+  if (data.showModeConfig) return data;
+  return {
+    ...data,
+    showModeConfig: {
+      parade:    { pre: '', live: '', post: '' },
+      fireworks: { pre: '', live: '__BLACK__', post: '' },
+    },
+  };
+}
+
+function migrateWandLabDefaults(data) {
+  if (data.wandLab) return data;
+  return { ...data, wandLab: { simIp: '', log: [] } };
+}
+
+function migrateConfig(raw) {
+  if (!raw) return loadAppData(null);
+  let data = { ...raw };
+  const v = data.version || '1.0';
+  if (compareVersions(v, CURRENT_VERSION) < 0) {
+    data = migrateSegmentMetadata(data);
+    data = migrateParksGrouping(data);
+    data = migrateShowModeDefaults(data);
+    data = migrateWandLabDefaults(data);
+    data.version = CURRENT_VERSION;
+  }
+  return loadAppData(data);
 }
 
 const LS_KEY = 'illuma-buggy-active';
@@ -1545,8 +1630,8 @@ function App() {
   const [tab, setTab]   = useState('map');
   const [mapsReady, setMapsReady] = useState(window.MAPS_LOADED);
   const [data, setData] = useState(() => {
-    try { const s = localStorage.getItem(LS_KEY); return loadAppData(s ? JSON.parse(s) : null); }
-    catch { return loadAppData(null); }
+    try { const s = localStorage.getItem(LS_KEY); return migrateConfig(s ? JSON.parse(s) : null); }
+    catch { return migrateConfig(null); }
   });
   const [profiles, setProfiles] = useState(() => {
     try { return JSON.parse(localStorage.getItem(LS_PROFILES)||'{}'); } catch { return {}; }
@@ -1583,6 +1668,11 @@ function App() {
     return () => clearInterval(t);
   }, []);
 
+  const replaceData = useCallback((next) => {
+    setData(next);
+    try { localStorage.setItem(LS_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+
   const update = useCallback((patch) => {
     setData(prev => {
       const next = {...prev, ...patch};
@@ -1602,7 +1692,7 @@ function App() {
   const loadProfile = (name) => {
     if (!profiles[name]) return;
     const {savedAt, ...rest} = profiles[name];
-    update({...DEFAULT_DATA, ...rest});
+    replaceData(migrateConfig(rest));
     setShowProfiles(false);
   };
 
@@ -1624,7 +1714,7 @@ function App() {
   const importJSON = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => { try { update(loadAppData(JSON.parse(ev.target.result))); alert('Imported!'); } catch { alert('Invalid file'); } };
+    reader.onload = ev => { try { replaceData(migrateConfig(JSON.parse(ev.target.result))); alert('Imported!'); } catch { alert('Invalid file'); } };
     reader.readAsText(file);
     e.target.value = '';
   };
