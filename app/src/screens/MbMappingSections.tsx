@@ -6,6 +6,8 @@ import {
   MbMappingConfig, MbEffectMapping, MbSegmentId, WledSegRef,
   MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
   SW_ANIMATION_META, DEFAULT_MB_MAPPING,
+  MB_PAL_OFF, MB_PAL_UNIQUE, MB_PAL_RANDOM,
+  defaultRandomPaletteIndices, mbPaletteEligibleForRandom,
 } from '../utils/mbConfig';
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
@@ -158,6 +160,131 @@ function EffectRow({
         onClose={() => setPickerOpen(false)}
         colors={colors}
       />
+    </View>
+  );
+}
+
+function RandomPoolEditor({
+  randomPool, paletteColors, themeColors, onChange,
+}: {
+  randomPool: MbMappingConfig['randomPool'];
+  paletteColors: string[];
+  themeColors: Colors;
+  onChange: (pool: MbMappingConfig['randomPool']) => void;
+}) {
+  const poolSet = new Set(randomPool.paletteIndices);
+  const selectable = Array.from({ length: MB_PAL_RANDOM }, (_, i) => i).filter(mbPaletteEligibleForRandom);
+
+  const togglePalette = (idx: number) => {
+    const next = new Set(poolSet);
+    if (next.has(idx)) next.delete(idx);
+    else next.add(idx);
+    onChange({ ...randomPool, paletteIndices: [...next].sort((a, b) => a - b) });
+  };
+
+  const setCustom = (id: string, patch: Partial<{ name: string; hex: string }>) => {
+    onChange({
+      ...randomPool,
+      custom: randomPool.custom.map(c => c.id === id ? { ...c, ...patch } : c),
+    });
+  };
+
+  const removeCustom = (id: string) => {
+    onChange({ ...randomPool, custom: randomPool.custom.filter(c => c.id !== id) });
+  };
+
+  const addCustom = () => {
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    onChange({
+      ...randomPool,
+      custom: [...randomPool.custom, { id, name: 'Custom', hex: '#ff6600' }],
+    });
+  };
+
+  const resetPool = () => {
+    onChange({ paletteIndices: defaultRandomPaletteIndices(), custom: [] });
+  };
+
+  const chipStyle = (on: boolean) => ({
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, marginRight: 6, marginBottom: 6,
+    borderWidth: 1,
+    borderColor: on ? themeColors.primary : themeColors.border,
+    backgroundColor: on ? themeColors.primary + '22' : themeColors.background,
+  });
+
+  return (
+    <View style={{
+      marginBottom: 16, padding: 12, borderRadius: 8,
+      borderWidth: 1, borderColor: themeColors.border, backgroundColor: themeColors.surfaceAlt,
+    }}>
+      <Text style={{ color: themeColors.textPrimary, fontWeight: '700', fontSize: 14 }}>
+        Random pool (palette {MB_PAL_RANDOM})
+      </Text>
+      <Text style={{ color: themeColors.textMuted, fontSize: 11, marginTop: 4, marginBottom: 10, lineHeight: 16 }}>
+        When the band sends “random”, the board picks uniformly from enabled palettes and custom colors below.
+        Off ({MB_PAL_OFF}) and unique ({MB_PAL_UNIQUE}) are always excluded.
+      </Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+        {selectable.map(idx => {
+          const on = poolSet.has(idx);
+          return (
+            <TouchableOpacity key={idx} onPress={() => togglePalette(idx)} style={chipStyle(on)}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{
+                  width: 14, height: 14, borderRadius: 3,
+                  backgroundColor: paletteColors[idx] ?? '#888',
+                  borderWidth: 1, borderColor: themeColors.border,
+                }} />
+                <Text style={{ color: on ? themeColors.primary : themeColors.textSecondary, fontSize: 11, fontWeight: on ? '600' : '400' }}>
+                  {idx}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={{ color: themeColors.textSecondary, fontSize: 11, fontWeight: '600', marginTop: 12, marginBottom: 6 }}>
+        Custom random-only colors
+      </Text>
+      {randomPool.custom.length === 0 ? (
+        <Text style={{ color: themeColors.textMuted, fontSize: 11, marginBottom: 8 }}>None — add colors not tied to an MB palette slot.</Text>
+      ) : randomPool.custom.map(c => (
+        <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <View style={[styles(themeColors).swatch, { backgroundColor: c.hex }]} />
+          <TextInput
+            style={{ flex: 1, ...styles(themeColors).hexInput, width: undefined }}
+            value={c.name}
+            onChangeText={name => setCustom(c.id, { name })}
+            placeholder="Name"
+            placeholderTextColor={themeColors.textMuted}
+          />
+          <TextInput
+            style={styles(themeColors).hexInput}
+            value={c.hex}
+            onChangeText={hex => {
+              const h = hex.startsWith('#') ? hex : `#${hex}`;
+              if (/^#[0-9a-fA-F]{6}$/.test(h)) setCustom(c.id, { hex: h });
+            }}
+            autoCapitalize="none"
+          />
+          <TouchableOpacity onPress={() => removeCustom(c.id)}>
+            <Text style={{ color: themeColors.danger, fontSize: 18, fontWeight: '700' }}>×</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
+        <TouchableOpacity onPress={addCustom}>
+          <Text style={{ color: themeColors.primary, fontWeight: '600', fontSize: 13 }}>+ Add custom</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={resetPool}>
+          <Text style={{ color: themeColors.textMuted, fontSize: 13 }}>Reset pool</Text>
+        </TouchableOpacity>
+      </View>
+      {randomPool.paletteIndices.length === 0 && randomPool.custom.length === 0 && (
+        <Text style={{ color: themeColors.danger, fontSize: 11, marginTop: 8 }}>
+          Pool is empty — random will fall back to defaults on the board.
+        </Text>
+      )}
     </View>
   );
 }
@@ -344,16 +471,35 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
         </>
       )}
 
-      {tab === 'colors' && MB_COLOR_NAMES.map((name, idx) => (
-        <View key={idx} style={s.colorRow}>
-          <View style={[s.swatch, { backgroundColor: mbMapping.colors[idx] }]} />
-          <View style={{ flex: 1 }}>
-            <Text style={s.label}>{idx} · {name}</Text>
-          </View>
-          <TextInput style={s.hexInput} value={mbMapping.colors[idx]}
-            onChangeText={v => setColor(idx, v)} autoCapitalize="none" />
-        </View>
-      ))}
+      {tab === 'colors' && (
+        <>
+          <RandomPoolEditor
+            randomPool={mbMapping.randomPool}
+            paletteColors={mbMapping.colors}
+            themeColors={colors}
+            onChange={randomPool => push({ ...mbMapping, randomPool })}
+          />
+          {MB_COLOR_NAMES.map((name, idx) => (
+            <View key={idx} style={s.colorRow}>
+              <View style={[s.swatch, { backgroundColor: mbMapping.colors[idx] }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.label}>{idx} · {name}</Text>
+                {idx === MB_PAL_RANDOM && (
+                  <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>
+                    Resolved at runtime from random pool above
+                  </Text>
+                )}
+              </View>
+              {idx === MB_PAL_RANDOM ? (
+                <Text style={{ color: colors.textMuted, fontSize: 11, fontFamily: 'monospace' }}>—</Text>
+              ) : (
+                <TextInput style={s.hexInput} value={mbMapping.colors[idx]}
+                  onChangeText={v => setColor(idx, v)} autoCapitalize="none" />
+              )}
+            </View>
+          ))}
+        </>
+      )}
 
       {tab === 'segments' && (
         <>

@@ -91,7 +91,10 @@ static const uint8_t MB_DEFAULT_COLORS[32][3] = {
   {0,0,0},{255,153,51},{255,0,255}
 };
 
-void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b);
+void paletteToRGBDirect(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b);
+void pickRandomMbColor(uint8_t& r, uint8_t& g, uint8_t& b);
+void loadMbRandomPoolDefaults();
+bool mbPaletteEligibleForRandom(uint8_t idx);
 void loadMbMappingDefaults();
 void loadMbMappingFromJson();
 String mfrToHex(const uint8_t* data, size_t len);
@@ -275,6 +278,15 @@ void processDisneyPayloadQueue() {
 }
 
 uint8_t mbWledColors[32][3];
+#define MB_PAL_OFF            29
+#define MB_PAL_UNIQUE         30
+#define MB_PAL_RANDOM         31
+#define MB_MAX_RANDOM_POOL    32
+#define MB_MAX_RANDOM_CUSTOM  16
+uint8_t mbRandomPool[MB_MAX_RANDOM_POOL];
+uint8_t mbRandomPoolCount = 0;
+uint8_t mbRandomCustom[MB_MAX_RANDOM_CUSTOM][3];
+uint8_t mbRandomCustomCount = 0;
 #define MB_MAX_LAYOUTS 6
 struct MbSegmentLayout {
   char name[24];
@@ -517,6 +529,25 @@ bool sendToWLEDForBleEffect(const String& jsonBody) {
   return sendToWLED(injectWledTransition(jsonBody, bleEffectTransitionMs));
 }
 
+// Solid MB colors snap instantly — WLED crossfades chase→solid and shows wrong palette mid-fade.
+bool sendToWLEDForBleSolid(const String& jsonBody) {
+  return sendToWLED(injectWledTransition(jsonBody, 0));
+}
+
+bool isMbColorBlack(uint8_t r, uint8_t g, uint8_t b) {
+  return r == 0 && g == 0 && b == 0;
+}
+
+void applyMbFullStripOff(OverrideSource src) {
+  if (!canTakeOverride(src)) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  saveWledStateForOverride();
+  // on:false fades brightness without crossfading chase fx → solid black on seg 0
+  sendToWLED(injectWledTransition("{\"on\":false}", bleEffectTransitionMs));
+  setOverride(src);
+  touchOverrideIdleTimer(src);
+}
+
 // GET a WLED endpoint and return the response body
 String getFromWLED(const String& path) {
   if (WiFi.status() != WL_CONNECTED) return "";
@@ -681,9 +712,16 @@ String buildMagicBandChaseJson(const uint8_t paletteIdxs[5]) {
     pd += "[" + String(positions[i]) + "," + String(r) + "," + String(g) + "," + String(b) + "]";
   }
   pd += "]}";
-  return "{" + pd + "," + buildSeg0JsonBody("\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
+  String body = "{" + pd + ",\"seg\":[";
+  bool first = true;
+  uint8_t activeIds[1] = { 0 };
+  uint8_t activeCount = 1;
+  appendDisableInactiveSegments(body, first, activeIds, activeCount, false);
+  body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT) +
          ",\"fx\":" + String(WLED_CHASE_FX) + ",\"sx\":" + String(mbChaseSpeed) +
-         ",\"grp\":" + String(mbChaseThickness) + ",\"pal\":" + String(WLED_MB_PAL_SLOT)) + "}";
+         ",\"grp\":" + String(mbChaseThickness) + ",\"pal\":" + String(WLED_MB_PAL_SLOT) + "}";
+  body += "]}";
+  return body;
 }
 
 void applyMagicBandChase(const uint8_t paletteIdxs[5], OverrideSource src) {
@@ -699,7 +737,6 @@ void applyMagicBandChase(const uint8_t paletteIdxs[5], OverrideSource src) {
   Serial.printf("[MB] Chase spd=%u thick=%u pals=%u,%u,%u,%u,%u\n",
                 mbChaseSpeed, mbChaseThickness,
                 paletteIdxs[0], paletteIdxs[1], paletteIdxs[2], paletteIdxs[3], paletteIdxs[4]);
-  disableMbSplitSegments();
   sendToWLEDForBleEffect(buildMagicBandChaseJson(paletteIdxs));
   setOverride(src);
   touchOverrideIdleTimer(src);
@@ -734,6 +771,43 @@ void loadMbMappingDefaults() {
   for (int i = 0; i < 8; i++) { mbAnimMap[i].presetId = ""; mbAnimMap[i].colorSlotCount = 0; }
   for (int i = 0; i < SW_ANIM_COUNT; i++) { swAnimMap[i].presetId = ""; swAnimMap[i].colorSlotCount = 0; }
   for (int i = 0; i < 5; i++) { mbPatMap[i].presetId = ""; mbPatMap[i].colorSlotCount = 0; }
+  loadMbRandomPoolDefaults();
+}
+
+bool mbPaletteEligibleForRandom(uint8_t idx) {
+  idx &= 0x1F;
+  return idx < MB_PAL_RANDOM && idx != MB_PAL_OFF && idx != MB_PAL_UNIQUE;
+}
+
+void loadMbRandomPoolDefaults() {
+  mbRandomPoolCount = 0;
+  for (uint8_t i = 0; i < MB_PAL_RANDOM; i++) {
+    if (!mbPaletteEligibleForRandom(i)) continue;
+    if (mbRandomPoolCount >= MB_MAX_RANDOM_POOL) break;
+    mbRandomPool[mbRandomPoolCount++] = i;
+  }
+  mbRandomCustomCount = 0;
+}
+
+void pickRandomMbColor(uint8_t& r, uint8_t& g, uint8_t& b) {
+  uint16_t total = mbRandomPoolCount + mbRandomCustomCount;
+  if (total == 0) {
+    loadMbRandomPoolDefaults();
+    total = mbRandomPoolCount;
+  }
+  if (total == 0) {
+    r = g = b = 0;
+    return;
+  }
+  uint16_t pick = (uint16_t)random(0, (long)total);
+  if (pick < mbRandomPoolCount) {
+    paletteToRGBDirect(mbRandomPool[pick], r, g, b);
+    return;
+  }
+  uint8_t ci = (uint8_t)(pick - mbRandomPoolCount);
+  r = mbRandomCustom[ci][0];
+  g = mbRandomCustom[ci][1];
+  b = mbRandomCustom[ci][2];
 }
 
 void parseEffectMap(JsonObject obj, MbEffectMap& out) {
@@ -854,6 +928,31 @@ void loadMbMappingFromJson() {
     JsonObject pats = doc["patterns"];
     for (int i = 0; i < 5; i++) {
       if (pats.containsKey(MB_PAT_KEYS[i])) parseEffectMap(pats[MB_PAT_KEYS[i]], mbPatMap[i]);
+    }
+  }
+  loadMbRandomPoolDefaults();
+  if (doc.containsKey("randomPool")) {
+    JsonObject rp = doc["randomPool"];
+    if (rp.containsKey("palettes")) {
+      mbRandomPoolCount = 0;
+      for (JsonVariant v : rp["palettes"].as<JsonArray>()) {
+        uint8_t idx = (uint8_t)(v.as<int>() & 0x1F);
+        if (!mbPaletteEligibleForRandom(idx)) continue;
+        if (mbRandomPoolCount >= MB_MAX_RANDOM_POOL) break;
+        mbRandomPool[mbRandomPoolCount++] = idx;
+      }
+    }
+    if (rp.containsKey("custom")) {
+      mbRandomCustomCount = 0;
+      for (JsonVariant v : rp["custom"].as<JsonArray>()) {
+        if (!v.is<JsonObject>() || mbRandomCustomCount >= MB_MAX_RANDOM_CUSTOM) break;
+        JsonArray rgb = v["rgb"].as<JsonArray>();
+        if (rgb.isNull() || rgb.size() < 3) continue;
+        mbRandomCustom[mbRandomCustomCount][0] = (uint8_t)rgb[0].as<int>();
+        mbRandomCustom[mbRandomCustomCount][1] = (uint8_t)rgb[1].as<int>();
+        mbRandomCustom[mbRandomCustomCount][2] = (uint8_t)rgb[2].as<int>();
+        mbRandomCustomCount++;
+      }
     }
   }
 }
@@ -979,8 +1078,14 @@ MbSegMap& activeMbSegMap(int keyIdx) {
 void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src) {
   int si = mbSegKeyIndex(segKey);
   if (si < 0) return;
+  if (!canTakeOverride(src)) return;
+  if (WiFi.status() != WL_CONNECTED) return;
   uint8_t r, g, b;
   paletteToRGB(palIdx, r, g, b);
+  if (isMbColorBlack(r, g, b) && strcmp(segKey, "all") == 0) {
+    applyMbFullStripOff(src);
+    return;
+  }
   MbSegMap& map = activeMbSegMap(si);
   if (map.count == 0) return;
   saveWledStateForOverride();
@@ -995,7 +1100,7 @@ void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src)
     appendWledSolidSeg(body, map.refs[i], r, g, b, first);
   }
   body += "]}";
-  sendToWLEDForBleEffect(body);
+  sendToWLEDForBleSolid(body);
   setOverride(src);
   touchOverrideIdleTimer(src);
 }
@@ -1024,7 +1129,7 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
     }
   }
   body += "]}";
-  sendToWLEDForBleEffect(body);
+  sendToWLEDForBleSolid(body);
   setOverride(src);
   touchOverrideIdleTimer(src);
 }
@@ -1090,7 +1195,6 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
 
   String wledJson;
   serializeJson(wled, wledJson);
-  disableMbSplitSegments();
   sendToWLEDForBleEffect(wledJson);
   setOverride(src);
   touchOverrideIdleTimer(src);
@@ -1275,6 +1379,10 @@ void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
     if (src == BLE_STARLIGHT) bleNotify("{\"type\":\"sw_event\",\"event\":\"wifi_down\"}");
     return;
   }
+  if (isMbColorBlack(r, g, b)) {
+    applyMbFullStripOff(src);
+    return;
+  }
   saveWledStateForOverride();
   uint8_t activeIds[1] = { 0 };
   uint8_t activeCount = 1;
@@ -1284,7 +1392,7 @@ void applyFullStripSolid(uint8_t r, uint8_t g, uint8_t b, OverrideSource src) {
   body += "{\"id\":0,\"start\":0,\"stop\":" + String(STRIP_LED_COUNT)
        + ",\"fx\":0,\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
   body += "]}";
-  sendToWLEDForBleEffect(body);
+  sendToWLEDForBleSolid(body);
   setOverride(src);
   touchOverrideIdleTimer(src);
 }
@@ -2060,11 +2168,20 @@ void serviceWandTx() {
 
 // Starlight Wand color-cast signature (13-byte payload after 0x8301 CID)
 
-void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b) {
+void paletteToRGBDirect(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b) {
   idx &= 0x1F;
   r = mbWledColors[idx][0];
   g = mbWledColors[idx][1];
   b = mbWledColors[idx][2];
+}
+
+void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b) {
+  idx &= 0x1F;
+  if (idx == MB_PAL_RANDOM) {
+    pickRandomMbColor(r, g, b);
+    return;
+  }
+  paletteToRGBDirect(idx, r, g, b);
 }
 
 // Strip 0x8301 company ID if present; payload is what Adafruit stores in command_library
@@ -2636,6 +2753,7 @@ void connectToWLED() {
 void setup() {
   Serial.begin(115200);
   delay(500);
+  randomSeed(esp_random());
   Serial.println("\n[Boot] StrollerController v2.1");
 
   // Load NVS config

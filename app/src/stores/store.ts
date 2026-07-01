@@ -5,6 +5,7 @@
 
 import { normalizeTags } from '../utils/tags';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { create } from 'zustand';
 
 // ─────────────────────────────────────────────
 // Types
@@ -140,6 +141,7 @@ import {
 import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
 } from '../utils/segmentLayouts';
+import { normalizeZonePolygon } from '../utils/utils';
 
 export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
 export {
@@ -577,8 +579,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       pairs.forEach(([k, v]) => { if (v) d[k] = JSON.parse(v); });
       set({
         presets:            (d.presets ?? []).map((p: Preset) => normalizePreset(p)),
-        zones:              d.zones              ?? [],
-        indoorZones:        d.indoorZones        ?? [],
+        zones:              (d.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
+        indoorZones:        (d.indoorZones ?? []).map((z: IndoorZone) => normalizeZonePolygon(z)),
         brightnessConfig:   d.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
         overrideKillOnZone: d.overrideKillOnZone ?? false,
         starlightEnabled:   d.starlightEnabled   ?? true,
@@ -732,8 +734,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const m = migrateConfig(data) as Record<string, any>;
     set({
       presets:            (m.presets ?? []).map((p: Preset) => normalizePreset(p)),
-      zones:              m.zones              ?? [],
-      indoorZones:        m.indoorZones        ?? [],
+      zones:              (m.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
+      indoorZones:        (m.indoorZones ?? []).map((z: IndoorZone) => normalizeZonePolygon(z)),
       brightnessConfig:   m.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
       recallState:        m.recallState        ?? DEFAULT_RECALL,
       overrideKillOnZone: m.overrideKillOnZone ?? false,

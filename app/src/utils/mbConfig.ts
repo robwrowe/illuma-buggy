@@ -77,11 +77,62 @@ export interface MbMappingConfig {
   defaultPresetId: string;
   /** WLED hex per MB palette index 0–31 */
   colors: string[];
+  /** When MB sends palette 31 (random), pick from this pool */
+  randomPool: MbRandomPool;
   animations: Record<MbAnimationKey, MbEffectMapping>;
   /** Starlight Wand named effects — checked before MB+ when Starlight is enabled */
   swAnimations: Record<SwAnimationKey, MbEffectMapping>;
   patterns: Record<MbPatternKey, MbEffectMapping>;
   segments: Record<MbSegmentId, WledSegRef[]>;
+}
+
+/** MB palette index 29 = off, 30 = unique, 31 = random (resolved at runtime) */
+export const MB_PAL_OFF = 29;
+export const MB_PAL_UNIQUE = 30;
+export const MB_PAL_RANDOM = 31;
+
+export interface MbRandomCustomColor {
+  id: string;
+  name: string;
+  hex: string;
+}
+
+export interface MbRandomPool {
+  /** Palette indices 0–30 eligible for random picks (never include 29/30/31) */
+  paletteIndices: number[];
+  /** Extra colors used only when random is triggered */
+  custom: MbRandomCustomColor[];
+}
+
+export function mbPaletteEligibleForRandom(idx: number): boolean {
+  return Number.isInteger(idx) && idx >= 0 && idx <= 30 && idx !== MB_PAL_OFF && idx !== MB_PAL_UNIQUE;
+}
+
+export function defaultRandomPaletteIndices(): number[] {
+  return Array.from({ length: MB_PAL_RANDOM }, (_, i) => i).filter(mbPaletteEligibleForRandom);
+}
+
+export function normalizeRandomPool(raw: Partial<MbRandomPool> | undefined): MbRandomPool {
+  const defaultPalettes = defaultRandomPaletteIndices();
+  const paletteIndices = Array.isArray(raw?.paletteIndices)
+    ? [...new Set(raw!.paletteIndices.filter(mbPaletteEligibleForRandom))].sort((a, b) => a - b)
+    : defaultPalettes;
+  const custom: MbRandomCustomColor[] = [];
+  if (Array.isArray(raw?.custom)) {
+    for (const entry of raw.custom) {
+      if (!entry || typeof entry !== 'object') continue;
+      const hex = typeof entry.hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(entry.hex) ? entry.hex : '';
+      if (!hex) continue;
+      const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : 'Custom';
+      const id = typeof entry.id === 'string' && entry.id ? entry.id : `custom-${custom.length}`;
+      custom.push({ id, name, hex });
+      if (custom.length >= 16) break;
+    }
+  }
+  return {
+    paletteIndices: paletteIndices.length > 0 || custom.length > 0 ? paletteIndices : defaultPalettes,
+    custom,
+  };
 }
 
 export const MB_COLOR_NAMES: string[] = [
@@ -107,6 +158,10 @@ export const DEFAULT_MB_MAPPING: MbMappingConfig = {
   version: 1,
   defaultPresetId: '',
   colors: [...DEFAULT_MB_WLED_COLORS],
+  randomPool: {
+    paletteIndices: defaultRandomPaletteIndices(),
+    custom: [],
+  },
   animations: {
     E90C: { presetId: '', colorSlots: [] },
     E90E: { presetId: '', colorSlots: [] },
@@ -258,7 +313,9 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
   return {
     version: 1,
     defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
-    colors, animations, swAnimations, patterns, segments,
+    colors,
+    randomPool: normalizeRandomPool(raw.randomPool),
+    animations, swAnimations, patterns, segments,
   };
 }
 
@@ -293,6 +350,18 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
     version: 1,
     defaultPresetId: config.defaultPresetId || '',
     colors,
+    randomPool: {
+      palettes: config.randomPool.paletteIndices,
+      custom: config.randomPool.custom.map(c => ({
+        id: c.id,
+        name: c.name,
+        rgb: [
+          parseInt(c.hex.slice(1, 3), 16),
+          parseInt(c.hex.slice(3, 5), 16),
+          parseInt(c.hex.slice(5, 7), 16),
+        ],
+      })),
+    },
     animations,
     swAnimations,
     patterns,

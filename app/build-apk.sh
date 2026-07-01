@@ -275,7 +275,7 @@ build_local_dev() {
   maybe_install
   echo ""
   echo "Dev build installed. On your Mac, run:"
-  echo "  cd app && npx expo start --dev-client"
+  echo "  cd app && npm run start:clear"
   echo "Then open Illuma Buggy on the Pixel — it loads JS from Metro."
 }
 
@@ -319,7 +319,7 @@ build_eas() {
   if [[ "$MODE" == "dev" ]]; then
     echo ""
     echo "Dev build downloaded. On your Mac, run:"
-    echo "  cd app && npx expo start --dev-client"
+    echo "  cd app && npm run start:clear"
   else
     echo ""
     echo "Prod build ready — standalone APK, no Metro required."
