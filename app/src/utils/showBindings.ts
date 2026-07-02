@@ -27,7 +27,11 @@ export interface ParkShowBinding {
   /** Minutes after end to remain on Home */
   homeVisibleAfterMin: number;
   /** Skip auto pre/post for all instances of this binding */
-  autoStartDisabled: boolean;
+  autoPrePostDisabled: boolean;
+  /** Skip auto live for all instances (fireworks); parades always auto-live at scheduled start */
+  autoLiveDisabled: boolean;
+  /** @deprecated use autoPrePostDisabled */
+  autoStartDisabled?: boolean;
   /** When set, automation only runs inside this GPS zone; omit for anywhere in the park */
   scopeZoneId?: string | null;
 }
@@ -40,7 +44,12 @@ export interface ShowSettings {
 }
 
 export interface ShowInstanceOverride {
-  autoStartDisabled: boolean;
+  /** When set, overrides binding default for this show instance */
+  autoPrePostDisabled?: boolean;
+  /** Fireworks only — when set, overrides binding default for live auto */
+  autoLiveDisabled?: boolean;
+  /** @deprecated use autoPrePostDisabled */
+  autoStartDisabled?: boolean;
 }
 
 export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
@@ -57,12 +66,13 @@ export function inferShowKind(name: string): ShowKind {
 export function normalizeShowBinding(raw: Partial<ParkShowBinding> | undefined, defaults: ShowSettings): ParkShowBinding | null {
   if (!raw?.parkId || !raw.entityId || !raw.name) return null;
   const presets = raw.presets ?? { pre: '', live: '', post: '' };
+  const kind = raw.kind === 'fireworks' || raw.kind === 'parade' ? raw.kind : inferShowKind(raw.name ?? '');
   return {
     id: raw.id ?? `${raw.parkId}-${raw.entityId}`,
     parkId: raw.parkId,
     entityId: raw.entityId,
     name: raw.name,
-    kind: raw.kind === 'fireworks' || raw.kind === 'parade' ? raw.kind : inferShowKind(raw.name),
+    kind,
     presets: {
       pre: presets.pre ?? '',
       live: presets.live ?? '',
@@ -76,9 +86,30 @@ export function normalizeShowBinding(raw: Partial<ParkShowBinding> | undefined, 
     homeVisibleAfterMin: Number.isFinite(raw.homeVisibleAfterMin)
       ? raw.homeVisibleAfterMin!
       : defaults.defaultHomeVisibleAfterMin,
-    autoStartDisabled: !!raw.autoStartDisabled,
+    autoPrePostDisabled: !!(raw.autoPrePostDisabled ?? raw.autoStartDisabled),
+    autoLiveDisabled: raw.autoLiveDisabled ?? (kind === 'fireworks' ? false : true),
+    autoStartDisabled: !!(raw.autoPrePostDisabled ?? raw.autoStartDisabled),
     scopeZoneId: raw.scopeZoneId || null,
   };
+}
+
+export function isAutoPrePostDisabled(
+  binding: ParkShowBinding,
+  instanceOverride?: ShowInstanceOverride | null,
+): boolean {
+  if (instanceOverride?.autoPrePostDisabled !== undefined) return instanceOverride.autoPrePostDisabled;
+  if (instanceOverride?.autoStartDisabled !== undefined) return instanceOverride.autoStartDisabled;
+  return binding.autoPrePostDisabled || !!binding.autoStartDisabled;
+}
+
+export function isAutoLiveDisabled(
+  binding: ParkShowBinding,
+  instanceOverride: ShowInstanceOverride | null | undefined,
+  kind: ShowKind,
+): boolean {
+  if (kind === 'parade') return false;
+  if (instanceOverride?.autoLiveDisabled !== undefined) return instanceOverride.autoLiveDisabled;
+  return binding.autoLiveDisabled;
 }
 
 /** Park-wide when scopeZoneId is null; otherwise user must be inside that zone polygon. */

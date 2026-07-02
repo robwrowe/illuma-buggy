@@ -42,6 +42,7 @@ module.exports = ({ config }) => ({
       "ACCESS_FINE_LOCATION",
       "ACCESS_COARSE_LOCATION",
       "ACCESS_BACKGROUND_LOCATION",
+      "POST_NOTIFICATIONS",
       "android.permission.BLUETOOTH",
       "android.permission.BLUETOOTH_ADMIN",
       "android.permission.BLUETOOTH_CONNECT",
@@ -59,7 +60,16 @@ module.exports = ({ config }) => ({
           "Allow IllumaBuggy to connect to your stroller controller",
       },
     ],
-    "expo-location",
+    [
+      "expo-location",
+      {
+        locationAlwaysAndWhenInUsePermission:
+          "IllumaBuggy uses your location in the background to trigger LED presets when you enter park zones.",
+        isAndroidBackgroundLocationEnabled: true,
+        isAndroidForegroundServiceEnabled: true,
+      },
+    ],
+    "expo-notifications",
     "expo-document-picker",
   ],
   extra: {

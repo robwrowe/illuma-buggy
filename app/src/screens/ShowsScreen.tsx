@@ -265,11 +265,21 @@ export default function ShowsScreen() {
                         <View style={s.switchRow}>
                           <Text style={s.rowLabel}>Disable auto pre/post (all instances)</Text>
                           <Switch
-                            value={b.autoStartDisabled}
-                            onValueChange={(v) => updateBinding(b.id, { autoStartDisabled: v })}
+                            value={b.autoPrePostDisabled}
+                            onValueChange={(v) => updateBinding(b.id, { autoPrePostDisabled: v, autoStartDisabled: v })}
                             trackColor={{ false: colors.borderFocus, true: colors.primary }}
                           />
                         </View>
+                        {b.kind === 'fireworks' && (
+                          <View style={s.switchRow}>
+                            <Text style={s.rowLabel}>Disable auto live (all instances)</Text>
+                            <Switch
+                              value={b.autoLiveDisabled}
+                              onValueChange={(v) => updateBinding(b.id, { autoLiveDisabled: v })}
+                              trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                            />
+                          </View>
+                        )}
                         {([
                           ['preLeadSec', 'Pre lead (sec)'],
                           ['postDelaySec', 'Post delay (sec)'],

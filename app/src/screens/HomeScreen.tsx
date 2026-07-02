@@ -28,7 +28,8 @@ import { useBLE } from "../hooks/useBLE";
 import { useBoardSync } from "../hooks/useBoardSync";
 import { useAppStore } from "../stores/store";
 import { bleService } from "../services/BLEService";
-import { applyPresetToBoard, fetchLiveWledSummary, type LiveWledSummary } from "../utils/bleBoardSync";
+import { fetchLiveWledSummary, type LiveWledSummary } from "../utils/bleBoardSync";
+import { fireActiveZonePreset } from "../services/parkQuickActions";
 import { formatSyncStatusLabel } from "../utils/boardSyncState";
 import { requestFullBoardSync } from "../utils/connectBootstrap";
 import { useTheme } from "../utils/theme";
@@ -261,32 +262,11 @@ export default function HomeScreen() {
       Alert.alert("No preset", "This zone has no preset assigned.");
       return;
     }
-    const preset = presets.find((p) => p.id === fireZone.presetId);
-    if (!preset) {
-      Alert.alert(
-        "Preset missing",
-        `Zone "${fireZone.name}" references a preset that is not in your library.`,
-      );
-      return;
-    }
     setFiringZone(true);
     try {
-      const s = useAppStore.getState();
-      // zone_trigger is blocked while wand/MB/show override is active — clear first
-      if ((deviceStatus?.override ?? 0) > 0) {
-        await bleService.sendOverrideClear();
-        await new Promise((r) => setTimeout(r, 250));
-      }
-      const ok = await applyPresetToBoard(
-        preset,
-        s.recallState,
-        s.customSegmentLayouts,
-      );
-      if (!ok) {
-        Alert.alert(
-          "Fire failed",
-          "Could not apply the preset. The board may still be syncing presets in the background — wait a few seconds and try again.",
-        );
+      const result = await fireActiveZonePreset();
+      if (!result.ok) {
+        Alert.alert("Fire failed", result.message ?? "Could not apply the preset.");
       }
     } finally {
       setFiringZone(false);
@@ -451,25 +431,42 @@ export default function HomeScreen() {
               No assigned shows in window — configure under Settings → Park Shows
             </Text>
           ) : (
-            parkShows.map((show) => (
-              <View key={show.id} style={s.showRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.zoneName}>{show.name}</Text>
-                  <Text style={s.subText}>{formatShowStatus(show)}</Text>
+            parkShows.map((show) => {
+              const prePostOn = !show.autoPrePostDisabled;
+              const liveOn = !show.autoLiveDisabled;
+              return (
+              <View key={show.id} style={s.showBlock}>
+                <Text style={s.zoneName}>{show.name}</Text>
+                <Text style={s.subText}>{formatShowStatus(show)}</Text>
+                <View style={s.autoRow}>
+                  <Text style={s.autoLabel}>Auto pre/post</Text>
+                  <Switch
+                    value={prePostOn}
+                    onValueChange={(v) => {
+                      setShowInstanceOverride(show.id, { autoPrePostDisabled: !v });
+                      saveToStorage();
+                    }}
+                    trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                    thumbColor="#fff"
+                  />
+                </View>
+                {show.kind === "fireworks" && (
                   <View style={s.autoRow}>
-                    <Text style={s.autoLabel}>Auto pre/post</Text>
+                    <Text style={s.autoLabel}>Auto live</Text>
                     <Switch
-                      value={!show.autoStartDisabled}
+                      value={liveOn}
                       onValueChange={(v) => {
-                        setShowInstanceOverride(show.id, { autoStartDisabled: !v });
+                        setShowInstanceOverride(show.id, { autoLiveDisabled: !v });
                         saveToStorage();
                       }}
                       trackColor={{ false: colors.borderFocus, true: colors.primary }}
                       thumbColor="#fff"
-                      disabled={show.binding.autoStartDisabled}
                     />
                   </View>
-                </View>
+                )}
+                {show.kind === "parade" && (
+                  <Text style={s.autoHint}>Parade live runs automatically at scheduled start.</Text>
+                )}
                 {isConnected && (
                   <View style={s.showControls}>
                     <View style={s.showBtnRow}>
@@ -503,7 +500,7 @@ export default function HomeScreen() {
                   </View>
                 )}
               </View>
-            ))
+            );})}
           )}
         </View>
       )}
@@ -914,14 +911,22 @@ const styles = (
       borderTopWidth: 1,
       borderTopColor: c.border,
     },
-    showControls: { gap: 4, alignItems: "flex-end" },
+    showBlock: {
+      paddingVertical: 10,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+      gap: 6,
+    },
+    showControls: { gap: 4, marginTop: 4 },
     autoRow: {
       flexDirection: "row",
       alignItems: "center",
+      justifyContent: "space-between",
       gap: 8,
-      marginTop: 6,
+      paddingRight: 4,
     },
-    autoLabel: { fontSize: 11, color: c.textMuted },
+    autoLabel: { fontSize: 12, color: c.textMuted, flex: 1 },
+    autoHint: { fontSize: 11, color: c.textMuted, fontStyle: "italic" },
     showBtnRow: { flexDirection: "row", gap: 4 },
     showMiniBtn: {
       paddingHorizontal: 8,

@@ -27,6 +27,9 @@ import { applyParsedE9Mapping } from "./src/utils/e9MbEffect";
 import { runConnectBootstrap, cancelConnectBootstrap } from "./src/utils/connectBootstrap";
 import { useZoneManager } from "./src/hooks/useZoneManager";
 import { useTheme, useThemeStore } from "./src/utils/theme";
+import * as Notifications from "expo-notifications";
+import { initStrollerNotifications } from "./src/services/strollerNotification";
+import { fireActiveZonePreset, fadeToBlackQuick } from "./src/services/parkQuickActions";
 
 import HomeScreen from "./src/screens/HomeScreen";
 import BleCaptureScreen from "./src/screens/BleCaptureScreen";
@@ -155,6 +158,26 @@ export default function App() {
     loadFromStorage();
     loadMode();
 
+    void initStrollerNotifications();
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      }),
+    });
+    const notifSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const action = response.actionIdentifier;
+      if (action === "FIRE_ZONE") {
+        void fireActiveZonePreset().then((r) => {
+          if (!r.ok) console.warn("[Notif] Fire zone:", r.message);
+        });
+      } else if (action === "FTB") {
+        void fadeToBlackQuick();
+      }
+    });
+
     const unsub = bleService.onMessage((msg) => {
       if (msg.type === "preset_list_raw") {
         console.log(
@@ -282,6 +305,7 @@ export default function App() {
       cancelConnectBootstrap();
       unsub();
       unsubState();
+      notifSub.remove();
     };
   }, []);
 

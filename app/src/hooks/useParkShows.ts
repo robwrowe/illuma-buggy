@@ -9,6 +9,8 @@ import { useAppStore } from '../stores/store';
 import {
   bindingForEntity,
   showBindingInScope,
+  isAutoPrePostDisabled,
+  isAutoLiveDisabled,
   type ParkShowBinding,
   type ShowSettings,
   type ShowInstanceOverride,
@@ -17,6 +19,7 @@ import { runShowPhase, stopShowMode } from '../services/showControl';
 import { bleService } from '../services/BLEService';
 
 const POLL_MS = 15 * 60 * 1000;
+const STATUS_TICK_MS = 30_000;
 const DEFAULT_SHOW_MS = 20 * 60 * 1000;
 
 export type ShowStatus = 'upcoming' | 'pre' | 'live' | 'ended';
@@ -31,8 +34,8 @@ export interface UpcomingShow {
   minutesUntil: number;
   kind: 'parade' | 'fireworks';
   binding: ParkShowBinding;
-  autoStartDisabled: boolean;
-  /** User is in park (and zone if scoped) — automation allowed */
+  autoPrePostDisabled: boolean;
+  autoLiveDisabled: boolean;
   inScope: boolean;
 }
 
@@ -74,7 +77,6 @@ function buildUpcomingShows(
 
       const instanceId = `${entity.id}-${startMs}`;
       const instanceOverride = overrides[instanceId];
-      const autoStartDisabled = binding.autoStartDisabled || !!instanceOverride?.autoStartDisabled;
       const inScope = showBindingInScope(binding, parkId, activeZoneIds);
 
       out.push({
@@ -87,7 +89,8 @@ function buildUpcomingShows(
         minutesUntil: Math.round((startMs - now) / 60000),
         kind: binding.kind,
         binding,
-        autoStartDisabled,
+        autoPrePostDisabled: isAutoPrePostDisabled(binding, instanceOverride),
+        autoLiveDisabled: isAutoLiveDisabled(binding, instanceOverride, binding.kind),
         inScope,
       });
     }
@@ -100,6 +103,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastFetchAt, setLastFetchAt] = useState<number | null>(null);
   const autoFiredRef = useRef<Set<string>>(new Set());
+  const lastRawRef = useRef<{ id: string; name: string; showtimes: string[] }[]>([]);
 
   const bindingsRef = useRef(useAppStore.getState().showBindings);
   const settingsRef = useRef(useAppStore.getState().showSettings);
@@ -123,17 +127,78 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
     });
   }, []);
 
+  const recomputeFromCache = useCallback(() => {
+    const parkId = activePark?.id;
+    if (!parkId || lastRawRef.current.length === 0) return [];
+    const now = Date.now();
+    const upcoming = buildUpcomingShows(
+      lastRawRef.current,
+      bindingsRef.current,
+      parkId,
+      settingsRef.current,
+      overridesRef.current,
+      now,
+      activeZoneIdsRef.current,
+    );
+    setShows(upcoming);
+    return upcoming;
+  }, [activePark?.id]);
+
+  const runShowAutomation = useCallback(async (upcoming: UpcomingShow[]) => {
+    if (!isConnected || !bleService.isSessionReady()) return;
+    const now = Date.now();
+    for (const show of upcoming) {
+      if (!show.inScope) continue;
+      const preKey = `${show.id}:pre`;
+      const liveKey = `${show.id}:live`;
+      const postKey = `${show.id}:post`;
+      const exitKey = `${show.id}:exit`;
+      const postAt = show.endMs + show.binding.postDelaySec * 1000;
+
+      if (!show.autoPrePostDisabled && show.status === 'pre' && !autoFiredRef.current.has(preKey)) {
+        autoFiredRef.current.add(preKey);
+        void runShowPhase(
+          show.binding, 'pre',
+          presetsRef.current, recallRef.current, layoutsRef.current, fadeMsRef.current,
+        );
+      }
+      const runLive = show.kind === 'parade'
+        ? !show.autoPrePostDisabled
+        : !show.autoLiveDisabled;
+      if (runLive && show.status === 'live' && !autoFiredRef.current.has(liveKey)) {
+        autoFiredRef.current.add(liveKey);
+        void runShowPhase(
+          show.binding, 'live',
+          presetsRef.current, recallRef.current, layoutsRef.current, fadeMsRef.current,
+        );
+      }
+      if (!show.autoPrePostDisabled && now >= postAt && show.status === 'ended' && !autoFiredRef.current.has(postKey)) {
+        autoFiredRef.current.add(postKey);
+        const ran = await runShowPhase(
+          show.binding, 'post',
+          presetsRef.current, recallRef.current, layoutsRef.current, fadeMsRef.current,
+        );
+        if (ran && !autoFiredRef.current.has(exitKey)) {
+          autoFiredRef.current.add(exitKey);
+          void stopShowMode();
+        }
+      }
+    }
+  }, [isConnected]);
+
   const refresh = useCallback(async () => {
     const entityId = activePark?.themeParksApiEntityId;
     const parkId = activePark?.id;
     if (!entityId || !parkId) {
       setShows([]);
       setFetchError(null);
+      lastRawRef.current = [];
       return;
     }
     try {
       const data = await getEntityLiveData(entityId);
       const raw = extractShowtimes(data.liveData || []);
+      lastRawRef.current = raw;
       const now = Date.now();
       const upcoming = buildUpcomingShows(
         raw,
@@ -148,58 +213,35 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       setLastFetchAt(now);
       setFetchError(null);
 
-      if (!isConnected || !bleService.isSessionReady()) return;
-
-      for (const show of upcoming) {
-        if (show.autoStartDisabled || !show.inScope) continue;
-
-        const preKey = `${show.id}:pre`;
-        const liveKey = `${show.id}:live`;
-        const postKey = `${show.id}:post`;
-        const exitKey = `${show.id}:exit`;
-        const postAt = show.endMs + show.binding.postDelaySec * 1000;
-
-        if (show.status === 'pre' && !autoFiredRef.current.has(preKey)) {
-          autoFiredRef.current.add(preKey);
-          void runShowPhase(
-            show.binding, 'pre',
-            presetsRef.current, recallRef.current, layoutsRef.current, fadeMsRef.current,
-          );
-        }
-        if (show.status === 'live' && !autoFiredRef.current.has(liveKey)) {
-          autoFiredRef.current.add(liveKey);
-          void runShowPhase(
-            show.binding, 'live',
-            presetsRef.current, recallRef.current, layoutsRef.current, fadeMsRef.current,
-          );
-        }
-        if (now >= postAt && show.status === 'ended' && !autoFiredRef.current.has(postKey)) {
-          autoFiredRef.current.add(postKey);
-          const ran = await runShowPhase(
-            show.binding, 'post',
-            presetsRef.current, recallRef.current, layoutsRef.current, fadeMsRef.current,
-          );
-          if (ran && !autoFiredRef.current.has(exitKey)) {
-            autoFiredRef.current.add(exitKey);
-            void stopShowMode();
-          }
-        }
-      }
+      void runShowAutomation(upcoming);
     } catch {
       setFetchError('Showtimes unavailable');
     }
-  }, [activePark?.themeParksApiEntityId, activePark?.id, isConnected]);
+  }, [activePark?.themeParksApiEntityId, activePark?.id, runShowAutomation]);
 
   useEffect(() => {
     autoFiredRef.current.clear();
     refresh();
-    const interval = setInterval(refresh, POLL_MS);
+    const poll = setInterval(refresh, POLL_MS);
+    const statusTick = setInterval(() => {
+      const upcoming = recomputeFromCache();
+      if (upcoming.length) void runShowAutomation(upcoming);
+    }, STATUS_TICK_MS);
     const unsubReady = bleService.onSessionReady(() => refresh());
+  const unsubStore = useAppStore.subscribe((state, prev) => {
+      if (state.showInstanceOverrides !== prev.showInstanceOverrides
+        || state.showBindings !== prev.showBindings
+        || state.activeZoneIds !== prev.activeZoneIds) {
+        recomputeFromCache();
+      }
+    });
     return () => {
-      clearInterval(interval);
+      clearInterval(poll);
+      clearInterval(statusTick);
       unsubReady();
+      unsubStore();
     };
-  }, [refresh]);
+  }, [refresh, recomputeFromCache, runShowAutomation]);
 
   return { shows, fetchError, lastFetchAt, refresh };
 }
