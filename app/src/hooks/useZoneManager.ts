@@ -38,19 +38,21 @@ export function useZoneManager() {
     let appState: AppStateStatus = AppState.currentState;
     let permissionGranted = false;
     let backgroundGranted = false;
+    let backgroundRunning = false;
 
-    const refreshLocationNow = async () => {
+    const refreshLocationNow = async (reason: string) => {
       if (!permissionGranted) return;
       try {
         const loc = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.Balanced,
         });
+        console.log('[Location] refresh', reason, loc.coords.latitude.toFixed(5), loc.coords.longitude.toFixed(5));
         processLocationUpdate({
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
         });
       } catch (e) {
-        console.warn('[Zone] getCurrentPosition failed:', e);
+        console.warn('[Location] getCurrentPosition failed:', reason, e);
       }
     };
 
@@ -69,44 +71,61 @@ export function useZoneManager() {
         }
         permissionGranted = true;
       }
-      await refreshLocationNow();
+      await refreshLocationNow('foreground-start');
       watchSub = await Location.watchPositionAsync(
         watchOptions(zonesEnabledRef.current),
-        (loc) => processLocationUpdate({
-          latitude: loc.coords.latitude,
-          longitude: loc.coords.longitude,
-        }),
+        (loc) => {
+          processLocationUpdate({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+        },
       );
+      console.log('[Location] foreground watch started');
     };
 
-    const startBackgroundTracking = async () => {
+    const ensureBackgroundTracking = async () => {
       if (!zonesEnabledRef.current) return;
-      if (!permissionGranted) return;
+      if (!permissionGranted) {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        permissionGranted = true;
+      }
       if (!backgroundGranted) {
         const { status } = await Location.requestBackgroundPermissionsAsync();
         backgroundGranted = status === 'granted';
         if (!backgroundGranted) {
-          console.warn('[Zone] Background location denied — zones update only in foreground');
+          console.warn('[Location] Background permission denied — foreground-only when app open');
           return;
         }
       }
       const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      if (started) return;
+      if (started) {
+        backgroundRunning = true;
+        return;
+      }
       await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
         accuracy: Location.Accuracy.Balanced,
-        timeInterval: 15000,
-        distanceInterval: 12,
+        timeInterval: 10000,
+        distanceInterval: 10,
         showsBackgroundLocationIndicator: true,
+        pausesUpdatesAutomatically: false,
         foregroundService: {
           notificationTitle: 'Illuma Buggy',
           notificationBody: 'Tracking location for zone presets',
         },
       });
+      backgroundRunning = true;
+      console.log('[Location] background task started');
     };
 
     const stopBackgroundTracking = async () => {
       const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-      if (started) await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      if (started) {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+        console.log('[Location] background task stopped');
+      }
+      backgroundRunning = false;
     };
 
     const syncWatchMode = async () => {
@@ -116,27 +135,29 @@ export function useZoneManager() {
         await dismissStrollerNotification();
         return;
       }
+      // Keep background updates running whenever zones are on (not only when app backgrounded).
+      await ensureBackgroundTracking();
       if (appState === 'active') {
-        await stopBackgroundTracking();
         await startForegroundWatch();
       } else {
         stopForegroundWatch();
-        await startBackgroundTracking();
       }
     };
 
     void syncWatchMode();
 
     const sessionSub = bleService.onSessionReady(async () => {
-      await refreshLocationNow();
+      console.log('[Zone] BLE session ready — refresh location + pending zone');
+      await refreshLocationNow('ble-session-ready');
       flushPendingZoneOnBleReady();
       reapplyCurrentZoneOnConnect();
     });
 
     const appStateSub = AppState.addEventListener('change', (next) => {
       appState = next;
+      console.log('[Location] appState →', next);
       void syncWatchMode();
-      if (next === 'active') void refreshLocationNow();
+      if (next === 'active') void refreshLocationNow('app-foreground');
     });
 
     const storeSub = useAppStore.subscribe((state, prev) => {

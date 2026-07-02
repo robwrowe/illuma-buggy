@@ -6,7 +6,7 @@ import { useAppStore, type Zone, type LatLng } from '../stores/store';
 import { findTriggerZone, findContainingIndoorZone, sunBasedBrightness, zonesContainingPoint } from './utils';
 import { resolveActivePark } from './resolveActivePark';
 import { bleService } from '../services/BLEService';
-import { triggerZonePreset } from './bleBoardSync';
+import { applyZonePreset } from './bleBoardSync';
 import { updateStrollerNotification } from '../services/strollerNotification';
 import { shouldProtectShowFromZones } from './showZoneGuard';
 
@@ -20,6 +20,12 @@ let isIndoor = false;
 let lastBrightness: number | null = null;
 let brightnessTimer: ReturnType<typeof setTimeout> | null = null;
 let zoneTriggersSuppressed = false;
+let lastLoggedActiveIds: string[] = [];
+
+function zoneLog(msg: string, extra?: Record<string, unknown>) {
+  if (extra) console.log('[Zone]', msg, extra);
+  else console.log('[Zone]', msg);
+}
 
 function isShowProtectingZones(activeZoneIds: string[]): boolean {
   const s = useAppStore.getState();
@@ -38,32 +44,44 @@ function shouldApplyZone(zone: Zone, force: boolean): boolean {
   return Date.now() - lastZoneApply.at >= ZONE_REAPPLY_MS;
 }
 
-function applyZoneEntry(zone: Zone, force: boolean) {
+function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
   if (!zone.presetId) return;
-  if (!shouldApplyZone(zone, force)) return;
+  if (!shouldApplyZone(zone, force)) {
+    zoneLog(`skip re-apply "${zone.name}" (throttled)`, { presetId: zone.presetId, reason });
+    return;
+  }
   lastZoneApply = { zoneId: zone.id, at: Date.now() };
 
   const run = async () => {
-    if (!bleService.isSessionReady()) return;
+    if (!bleService.isSessionReady()) {
+      zoneLog(`apply deferred — session not ready`, { zone: zone.name, presetId: zone.presetId });
+      return;
+    }
     const s = useAppStore.getState();
     const preset = s.presets.find(p => p.id === zone.presetId);
-    await bleService.sendOverrideClear();
-    await new Promise(r => setTimeout(r, 200));
-    if (!bleService.isConnected()) return;
-    if (preset) {
-      const ok = await triggerZonePreset(preset, s.recallState, s.customSegmentLayouts);
-      if (!ok && zone.presetId) {
-        console.warn('[Zone] triggerZonePreset failed — retrying zone_trigger', zone.presetId);
-        bleService.sendZoneTrigger(zone.presetId);
-      }
-    } else {
-      bleService.sendZoneTrigger(zone.presetId);
+    if (!preset) {
+      zoneLog(`preset missing in app`, { zone: zone.name, presetId: zone.presetId });
+      return;
     }
+    zoneLog(`ENTER → wled_raw "${preset.name}"`, {
+      zone: zone.name,
+      presetId: preset.id,
+      reason,
+      connected: bleService.isConnected(),
+    });
+    const ok = await applyZonePreset(preset, s.recallState, s.customSegmentLayouts);
+    zoneLog(ok ? 'apply OK' : 'apply FAILED', { presetId: preset.id, zone: zone.name });
   };
   void run();
 }
 
-function runZoneTriggerLogic(pt: LatLng, zones: Zone[], zonesEnabled: boolean, forceReeval = false) {
+function runZoneTriggerLogic(
+  pt: LatLng,
+  zones: Zone[],
+  zonesEnabled: boolean,
+  forceReeval = false,
+  reason = 'gps',
+) {
   if (!zonesEnabled) return;
 
   const triggerZone = findTriggerZone(pt, zones);
@@ -73,23 +91,38 @@ function runZoneTriggerLogic(pt: LatLng, zones: Zone[], zonesEnabled: boolean, f
     prevId = null;
     currentZoneId = null;
     lastZoneApply = null;
+    zoneLog('re-evaluating zones after show protection ended', { reason });
   }
 
   if (triggerZone?.id === prevId) return;
+
+  if (triggerZone?.presetId) {
+    zoneLog(`transition → "${triggerZone.name}"`, {
+      from: prevId,
+      to: triggerZone.id,
+      presetId: triggerZone.presetId,
+      reason,
+    });
+  } else if (prevId) {
+    const left = zones.find(z => z.id === prevId);
+    zoneLog(`EXIT "${left?.name ?? prevId}"`, { reason });
+  }
 
   currentZoneId = triggerZone?.id ?? null;
   if (triggerZone?.presetId) {
     if (!bleService.isSessionReady()) {
       pendingZone = triggerZone;
+      zoneLog('queued pending zone apply', { zone: triggerZone.name });
       return;
     }
-    applyZoneEntry(triggerZone, true);
+    applyZoneEntry(triggerZone, true, reason);
   } else if (prevId) {
     pendingZone = null;
     lastZoneApply = null;
-    if (bleService.isSessionReady()) {
-      const left = zones.find(z => z.id === prevId);
-      if (left?.presetId) bleService.sendOverrideClear();
+    const left = zones.find(z => z.id === prevId);
+    if (left?.presetId && bleService.isSessionReady()) {
+      zoneLog('override_clear after zone exit');
+      bleService.sendOverrideClear();
     }
   }
 }
@@ -101,7 +134,8 @@ export function flushPendingZoneOnBleReady() {
   const zone = pendingZone;
   pendingZone = null;
   currentZoneId = zone.id;
-  applyZoneEntry(zone, true);
+  zoneLog('flushing pending zone on BLE ready', { zone: zone.name });
+  applyZoneEntry(zone, true, 'ble-ready');
 }
 
 export function reapplyCurrentZoneOnConnect() {
@@ -114,21 +148,31 @@ export function reapplyCurrentZoneOnConnect() {
     pendingZone = zone;
     return;
   }
-  applyZoneEntry(zone, false);
+  applyZoneEntry(zone, false, 'reconnect');
 }
 
 export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean }) {
   const s = useAppStore.getState();
   const { zones, indoorZones, parks, brightnessConfig, zonesEnabled } = s;
+  const src = opts?.background ? 'bg' : 'fg';
 
   s.setUserLocation(pt);
   const resolvedPark = resolveActivePark(pt, parks, zones, indoorZones);
   if (resolvedPark?.id !== s.activePark?.id) {
+    zoneLog(`park → ${resolvedPark?.name ?? 'none'}`, { src });
     s.setActivePark(resolvedPark);
   }
 
   const activeIds = zonesContainingPoint(pt, zones).map(z => z.id);
   s.setActiveZoneIds(activeIds);
+
+  const activeIdsKey = activeIds.join(',');
+  const lastKey = lastLoggedActiveIds.join(',');
+  if (activeIdsKey !== lastKey) {
+    const names = activeIds.map(id => zones.find(z => z.id === id)?.name ?? id);
+    zoneLog(`active zones [${src}]`, { zones: names });
+    lastLoggedActiveIds = activeIds;
+  }
 
   const nowIndoor = findContainingIndoorZone(pt, indoorZones) !== null;
   const outdoorBrightness = sunBasedBrightness(pt.latitude, pt.longitude, brightnessConfig);
@@ -161,6 +205,9 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
   const protectShow = isShowProtectingZones(activeIds);
 
   if (protectShow) {
+    if (!zoneTriggersSuppressed) {
+      zoneLog('triggers suppressed — show active in scope', { src });
+    }
     zoneTriggersSuppressed = true;
     return;
   }
@@ -168,7 +215,7 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
   const exitingShowProtection = zoneTriggersSuppressed;
   zoneTriggersSuppressed = false;
 
-  runZoneTriggerLogic(pt, zones, zonesEnabled, exitingShowProtection);
+  runZoneTriggerLogic(pt, zones, zonesEnabled, exitingShowProtection, src);
 }
 
 export function resetZoneLocationRuntime() {
@@ -176,4 +223,5 @@ export function resetZoneLocationRuntime() {
   pendingZone = null;
   lastZoneApply = null;
   zoneTriggersSuppressed = false;
+  lastLoggedActiveIds = [];
 }
