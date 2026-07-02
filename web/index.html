@@ -523,8 +523,30 @@
       };
     }
 
+    const DEFAULT_MB_EFFECT_CLASSES = {
+      singleColor: { presetId: '', useMbColors: true },
+      dualColor: { presetId: '', useMbColors: true },
+      sixBitColor: { presetId: '', useMbColors: true },
+      fivePositionPalette: { presetId: '', useMbColors: true },
+      fivePositionFlash: { presetId: '', useMbColors: true },
+      unclassified: { presetId: '', useMbColors: false },
+      unclassifiedOpcodes: {},
+    };
+
+    const MB_EFFECT_CLASS_META = [
+      { key: 'singleColor', label: 'Single Color', description: 'E905 — one palette color on selected LEDs', badge: 'Fully Decoded', tier: 1 },
+      { key: 'dualColor', label: 'Dual Color', description: 'E906 — inner + outer ring colors', badge: 'Fully Decoded', tier: 1 },
+      { key: 'sixBitColor', label: '6-bit Color', description: 'E908 — raw RGB channels', badge: 'Fully Decoded', tier: 1 },
+      { key: 'fivePositionPalette', label: '5-Position Palette', description: 'E909 / E90C palette mode — five corner slots', badge: 'Fully Decoded', tier: 1 },
+      { key: 'fivePositionFlash', label: '5-Position Flash Pattern', description: 'E90E — subset flash/hold patterns', badge: 'Partially Decoded', tier: 1 },
+      { key: 'unclassified', label: 'Unclassified / Unknown', description: 'E910, E913, E90C animation mode, etc.', badge: 'Preset Only', tier: 2 },
+    ];
+
+    const TIER2_OPCODE_OPTIONS = ['E90C', 'E90F', 'E910', 'E911', 'E912', 'E913', 'E914', 'E91B'];
+
     const DEFAULT_MB_MAPPING = {
       version: 1,
+      effectClasses: JSON.parse(JSON.stringify(DEFAULT_MB_EFFECT_CLASSES)),
       defaultPresetId: '',
       colors: [...DEFAULT_MB_WLED_COLORS],
       randomPool: {
@@ -1127,6 +1149,61 @@
       );
     }
 
+    function normalizeEffectClassMapping(v, fallback) {
+      if (!v) return { ...fallback };
+      return {
+        presetId: typeof v.presetId === 'string' ? v.presetId : fallback.presetId,
+        useMbColors: typeof v.useMbColors === 'boolean' ? v.useMbColors : fallback.useMbColors,
+      };
+    }
+
+    function normalizeEffectClasses(raw) {
+      const d = DEFAULT_MB_EFFECT_CLASSES;
+      const unclassifiedOpcodes = {};
+      if (raw?.unclassifiedOpcodes && typeof raw.unclassifiedOpcodes === 'object') {
+        Object.entries(raw.unclassifiedOpcodes).forEach(([k, v]) => {
+          unclassifiedOpcodes[k] = normalizeEffectClassMapping(v, d.unclassified);
+        });
+      }
+      return {
+        singleColor: normalizeEffectClassMapping(raw?.singleColor, d.singleColor),
+        dualColor: normalizeEffectClassMapping(raw?.dualColor, d.dualColor),
+        sixBitColor: normalizeEffectClassMapping(raw?.sixBitColor, d.sixBitColor),
+        fivePositionPalette: normalizeEffectClassMapping(raw?.fivePositionPalette, d.fivePositionPalette),
+        fivePositionFlash: normalizeEffectClassMapping(raw?.fivePositionFlash, d.fivePositionFlash),
+        unclassified: normalizeEffectClassMapping(raw?.unclassified, d.unclassified),
+        unclassifiedOpcodes,
+      };
+    }
+
+    function mirrorEffectClassesToLegacy(config) {
+      const ec = config.effectClasses;
+      if (!ec) return config;
+      const animations = { ...config.animations };
+      const patterns = { ...config.patterns };
+      const mirrorAnim = (opcode, cls) => {
+        if (cls.presetId && animations[opcode]) animations[opcode] = { ...animations[opcode], presetId: cls.presetId };
+      };
+      mirrorAnim('E90E', ec.fivePositionFlash);
+      Object.entries(ec.unclassifiedOpcodes || {}).forEach(([opcode, mapping]) => {
+        if (mapping?.presetId && animations[opcode]) animations[opcode] = { ...animations[opcode], presetId: mapping.presetId };
+      });
+      if (ec.unclassified.presetId) {
+        MB_ANIMATION_META.forEach(({ key }) => {
+          if (key === 'wand') return;
+          if (!ec.unclassifiedOpcodes?.[key] && !animations[key].presetId) {
+            animations[key] = { ...animations[key], presetId: ec.unclassified.presetId };
+          }
+        });
+      }
+      if (ec.fivePositionPalette.presetId) {
+        MB_PATTERN_META.forEach(({ key }) => {
+          if (!patterns[key].presetId) patterns[key] = { ...patterns[key], presetId: ec.fivePositionPalette.presetId };
+        });
+      }
+      return { ...config, animations, patterns };
+    }
+
     function normalizeMbMapping(raw) {
       const d = DEFAULT_MB_MAPPING;
       if (!raw || raw.version !== 1) return JSON.parse(JSON.stringify(d));
@@ -1168,18 +1245,21 @@
           ? src.map(s => withSegRefDefaults(s))
           : d.segments[id].map(s => withSegRefDefaults(s));
       });
-      return {
+      const base = {
         version: 1,
+        effectClasses: normalizeEffectClasses(raw.effectClasses),
         defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
         colors,
         randomPool: normalizeRandomPool(raw.randomPool),
         animations, swAnimations, patterns, segments,
       };
+      return mirrorEffectClassesToLegacy(base);
     }
 
     function mbMappingToBlePayload(config) {
+      const synced = mirrorEffectClassesToLegacy(normalizeMbMapping(config));
       const colors = {};
-      config.colors.forEach((hex, i) => {
+      synced.colors.forEach((hex, i) => {
         if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
         colors[String(i)] = [
           parseInt(hex.slice(1, 3), 16),
@@ -1189,18 +1269,26 @@
       });
       const mapEffect = (m) => ({ presetId: m.presetId, colorSlots: m.colorSlots });
       const animations = {};
-      Object.entries(config.animations).forEach(([k, v]) => { animations[k] = mapEffect(v); });
+      Object.entries(synced.animations).forEach(([k, v]) => { animations[k] = mapEffect(v); });
       const swAnimations = {};
-      Object.entries(config.swAnimations || {}).forEach(([k, v]) => { swAnimations[k] = mapEffect(v); });
+      Object.entries(synced.swAnimations || {}).forEach(([k, v]) => { swAnimations[k] = mapEffect(v); });
       const patterns = {};
-      Object.entries(config.patterns).forEach(([k, v]) => { patterns[k] = mapEffect(v); });
+      Object.entries(synced.patterns).forEach(([k, v]) => { patterns[k] = mapEffect(v); });
+      const mapClass = (m) => ({ presetId: m.presetId, useMbColors: m.useMbColors });
+      const effectClasses = {};
+      MB_EFFECT_CLASS_META.forEach(({ key }) => { effectClasses[key] = mapClass(synced.effectClasses[key]); });
+      const unclassifiedOpcodes = {};
+      Object.entries(synced.effectClasses.unclassifiedOpcodes || {}).forEach(([k, v]) => {
+        if (v) unclassifiedOpcodes[k] = mapClass(v);
+      });
       return {
         version: 1,
-        defaultPresetId: config.defaultPresetId || '',
+        defaultPresetId: synced.defaultPresetId || '',
+        effectClasses: { ...effectClasses, unclassifiedOpcodes },
         colors,
         randomPool: {
-          palettes: config.randomPool.paletteIndices,
-          custom: (config.randomPool.custom || []).map(c => ({
+          palettes: synced.randomPool.paletteIndices,
+          custom: (synced.randomPool.custom || []).map(c => ({
             id: c.id,
             name: c.name,
             rgb: [
@@ -1213,7 +1301,7 @@
         animations,
         swAnimations,
         patterns,
-        segments: config.segments,
+        segments: synced.segments,
       };
     }
 
@@ -4625,6 +4713,22 @@
       const setAnim = (key, patch) => setMb({ animations: { ...mb.animations, [key]: { ...mb.animations[key], ...patch } } });
       const setSwAnim = (key, patch) => setMb({ swAnimations: { ...mb.swAnimations, [key]: { ...mb.swAnimations[key], ...patch } } });
       const setPat = (key, patch) => setMb({ patterns: { ...mb.patterns, [key]: { ...mb.patterns[key], ...patch } } });
+      const setEffectClass = (key, patch) => {
+        const ec = mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES;
+        setMb({ effectClasses: { ...ec, [key]: { ...ec[key], ...patch } } });
+      };
+      const setUnclassifiedOpcode = (opcode, presetId) => {
+        const ec = mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES;
+        setMb({
+          effectClasses: {
+            ...ec,
+            unclassifiedOpcodes: {
+              ...ec.unclassifiedOpcodes,
+              [opcode]: { presetId, useMbColors: false },
+            },
+          },
+        });
+      };
 
       const updateActiveLayoutSegments = (segKey, refs) => {
         if (!activeLayout) {
@@ -4792,22 +4896,62 @@
         </>}
 
         {bleTab === 'mb' && <>
-          <SectionHead>Animations</SectionHead>
+          <SectionHead>MagicBand+ Effect Mapping</SectionHead>
+          <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12, lineHeight: 1.5 }}>
+            Animation classes group opcodes by behavior. Empty = firmware built-in fallback.
+          </p>
+          {MB_EFFECT_CLASS_META.map(({ key, label, description, badge, tier }) => (
+            <div key={key} style={{ ...cardStyle, marginBottom: 8, padding: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{label}</div>
+                <span style={{ fontSize: 10, color: 'var(--text3)' }}>{badge}</span>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--text3)', margin: '6px 0 10px', lineHeight: 1.4 }}>{description}</p>
+              <Field label="Preset">
+                <SearchableSelect
+                  value={(mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES)[key]?.presetId || ''}
+                  onChange={v => setEffectClass(key, { presetId: v })}
+                  placeholder="Default preset" options={presets.map(p => ({ value: p.id, label: p.name }))} allowEmpty={true} />
+              </Field>
+              {tier === 1 && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 8, cursor: 'pointer' }}>
+                  <input type="checkbox"
+                    checked={(mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES)[key]?.useMbColors !== false}
+                    onChange={e => setEffectClass(key, { useMbColors: e.target.checked })} />
+                  Use MagicBand+ decoded colors
+                </label>
+              )}
+            </div>
+          ))}
+          <SectionHead>Per-opcode Tier 2 overrides</SectionHead>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-            {MB_ANIMATION_META.filter(a => a.key !== 'wand').map(({ key, label }) => (
-              <MbEffectField key={key} label={label} compact
-                mapping={mb.animations[key]} presets={presets}
-                onChange={m => setAnim(key, m)} />
+            {TIER2_OPCODE_OPTIONS.map(opcode => (
+              <Field key={opcode} label={opcode}>
+                <SearchableSelect
+                  value={mb.effectClasses?.unclassifiedOpcodes?.[opcode]?.presetId || ''}
+                  onChange={v => setUnclassifiedOpcode(opcode, v)}
+                  placeholder="Unclassified default" options={presets.map(p => ({ value: p.id, label: p.name }))} allowEmpty={true} />
+              </Field>
             ))}
           </div>
-          <SectionHead>Patterns (E909)</SectionHead>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {MB_PATTERN_META.map(({ key, label }) => (
-              <MbEffectField key={key} label={`${key} — ${label}`} compact
-                mapping={mb.patterns[key]} presets={presets}
-                onChange={m => setPat(key, m)} />
-            ))}
-          </div>
+          <details style={{ marginBottom: 12 }}>
+            <summary style={{ fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text2)' }}>Legacy per-opcode mapping</summary>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+              {MB_ANIMATION_META.filter(a => a.key !== 'wand').map(({ key, label }) => (
+                <MbEffectField key={key} label={label} compact
+                  mapping={mb.animations[key]} presets={presets}
+                  onChange={m => setAnim(key, m)} />
+              ))}
+            </div>
+            <SectionHead>Patterns (E909)</SectionHead>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {MB_PATTERN_META.map(({ key, label }) => (
+                <MbEffectField key={key} label={`${key} — ${label}`} compact
+                  mapping={mb.patterns[key]} presets={presets}
+                  onChange={m => setPat(key, m)} />
+              ))}
+            </div>
+          </details>
         </>}
 
         {bleTab === 'show' && (() => {

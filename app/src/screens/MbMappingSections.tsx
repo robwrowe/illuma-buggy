@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, Alert, Modal, ScrollView, Pressable,
+  View, Text, TextInput, TouchableOpacity, Alert, Modal, ScrollView, Pressable, Switch,
 } from 'react-native';
 import {
-  MbMappingConfig, MbEffectMapping, MbSegmentId, WledSegRef,
+  MbMappingConfig, MbEffectMapping, MbEffectClassMapping, MbSegmentId, WledSegRef,
   MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
-  SW_ANIMATION_META, DEFAULT_MB_MAPPING,
+  MB_EFFECT_CLASS_META, TIER2_OPCODE_OPTIONS, SW_ANIMATION_META, DEFAULT_MB_MAPPING,
   MB_PAL_OFF, MB_PAL_UNIQUE, MB_PAL_RANDOM,
   defaultRandomPaletteIndices, mbPaletteEligibleForRandom,
 } from '../utils/mbConfig';
+import type { MbEffectClassKey } from '../utils/mbConfig';
+import { summarizeTier2FromSessions } from '../utils/tier2Packets';
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { mbMappingToBlePayload } from '../utils/mbConfig';
@@ -31,7 +33,7 @@ type BleTab = 'sw' | 'mb' | 'colors' | 'segments';
 
 const BLE_TABS: { id: BleTab; label: string }[] = [
   { id: 'sw', label: 'Starlight' },
-  { id: 'mb', label: 'MagicBand' },
+  { id: 'mb', label: 'MB Effects' },
   { id: 'colors', label: 'MB Colors' },
   { id: 'segments', label: 'Segments' },
 ];
@@ -101,6 +103,65 @@ export function PresetPickerModal({
         </Pressable>
       </Pressable>
     </Modal>
+  );
+}
+
+function EffectClassRow({
+  label, description, badge, tier, mapping, presets, onChange, colors, showColorToggle,
+}: {
+  label: string;
+  description: string;
+  badge: string;
+  tier: 1 | 2;
+  mapping: MbEffectClassMapping;
+  presets: { id: string; name: string }[];
+  onChange: (m: MbEffectClassMapping) => void;
+  colors: Colors;
+  showColorToggle: boolean;
+}) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const presetName = mapping.presetId
+    ? (presets.find(p => p.id === mapping.presetId)?.name ?? mapping.presetId)
+    : 'Default preset';
+  const badgeColor = tier === 1
+    ? (badge.includes('Partial') ? colors.warning ?? '#cc8800' : colors.success ?? '#22aa44')
+    : colors.textMuted;
+
+  return (
+    <View style={{
+      marginBottom: 10, padding: 12, backgroundColor: colors.background,
+      borderRadius: 8, borderWidth: 1, borderColor: colors.border,
+    }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <Text style={{ color: colors.textPrimary, fontWeight: '700', fontSize: 14, flex: 1 }}>{label}</Text>
+        <Text style={{ color: badgeColor, fontSize: 10, fontWeight: '600', marginLeft: 8 }}>{badge}</Text>
+      </View>
+      <Text style={{ color: colors.textMuted, fontSize: 11, marginTop: 4, lineHeight: 16 }}>{description}</Text>
+      <TouchableOpacity onPress={() => setPickerOpen(true)} style={{ marginTop: 10 }}>
+        <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>{presetName} ›</Text>
+      </TouchableOpacity>
+      {showColorToggle && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10, gap: 8 }}>
+          <Switch
+            value={mapping.useMbColors}
+            onValueChange={v => onChange({ ...mapping, useMbColors: v })}
+            trackColor={{ false: colors.border, true: colors.primary }}
+          />
+          <Text style={{ color: colors.textSecondary, fontSize: 12, flex: 1 }}>
+            {mapping.useMbColors ? 'Use MagicBand+ colors' : "Always use preset's own colors"}
+          </Text>
+        </View>
+      )}
+      <PresetPickerModal
+        visible={pickerOpen}
+        title={label}
+        presets={presets}
+        selectedId={mapping.presetId}
+        onSelect={id => onChange({ ...mapping, presetId: id })}
+        onClose={() => setPickerOpen(false)}
+        colors={colors}
+      />
+    </View>
   );
 }
 
@@ -290,9 +351,17 @@ function RandomPoolEditor({
 }
 
 export function MbMappingSections({ colors, isConnected }: { colors: Colors; isConnected: boolean }) {
-  const { mbMapping, setMbMapping, presets, saveToStorage, customSegmentLayouts } = useAppStore();
+  const {
+    mbMapping, setMbMapping, presets, saveToStorage, customSegmentLayouts,
+    mbSegmentLayouts, mbActiveSegmentLayoutId,
+    switchMbSegmentLayout, addMbSegmentLayout, updateActiveLayoutSegments,
+    bleCaptureSessions, bleCaptureBuffer, bleCaptureActive,
+  } = useAppStore();
   const [tab, setTab] = useState<BleTab>('sw');
   const [defaultPickerOpen, setDefaultPickerOpen] = useState(false);
+  const [showLegacyMb, setShowLegacyMb] = useState(false);
+  const [showTier2Review, setShowTier2Review] = useState(true);
+  const [opcodePickerKey, setOpcodePickerKey] = useState<string | null>(null);
   const [segSnapshots, setSegSnapshots] = useState<Partial<Record<MbSegmentId, WledSegmentDef[]>>>({});
   const [segCaptureId, setSegCaptureId] = useState<MbSegmentId | null>(null);
   const [segSnapshotErr, setSegSnapshotErr] = useState('');
@@ -319,8 +388,60 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
     push({ ...mbMapping, [kind]: block as MbMappingConfig[typeof kind] });
   };
 
+  const setEffectClass = (key: MbEffectClassKey, patch: Partial<MbEffectClassMapping>) => {
+    const ec = mbMapping.effectClasses!;
+    push({
+      ...mbMapping,
+      effectClasses: { ...ec, [key]: { ...ec[key], ...patch } },
+    });
+  };
+
+  const setUnclassifiedOpcode = (opcode: string, patch: Partial<MbEffectClassMapping>) => {
+    const ec = mbMapping.effectClasses!;
+    const prev = ec.unclassifiedOpcodes[opcode] ?? { presetId: '', useMbColors: false };
+    push({
+      ...mbMapping,
+      effectClasses: {
+        ...ec,
+        unclassifiedOpcodes: { ...ec.unclassifiedOpcodes, [opcode]: { ...prev, ...patch } },
+      },
+    });
+  };
+
+  const tier2Summaries = summarizeTier2FromSessions(
+    bleCaptureActive
+      ? [{ id: 'live', name: 'Live', startedAt: 0, endedAt: 0, durationSec: 0,
+          packets: bleCaptureBuffer.map(p => ({ ...p, receivedAt: p.receivedAt ?? Date.now() })) },
+        ...bleCaptureSessions]
+      : bleCaptureSessions,
+  );
+
   const setSegRefs = (segId: MbSegmentId, refs: WledSegRef[]) => {
-    push({ ...mbMapping, segments: { ...mbMapping.segments, [segId]: refs } });
+    updateActiveLayoutSegments(segId, refs);
+    if (isConnected) {
+      const next = useAppStore.getState().mbMapping;
+      bleService.sendMbMappingConfig(mbMappingToBlePayload(next));
+    }
+  };
+
+  const switchLayout = (id: string) => {
+    switchMbSegmentLayout(id);
+    if (!isConnected) return;
+    const s = useAppStore.getState();
+    const idx = Math.max(0, s.mbSegmentLayouts.findIndex(l => l.id === id));
+    bleService.sendMbLayoutSwitch(idx);
+    bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
+  };
+
+  const createLayout = () => {
+    const name = `Layout ${mbSegmentLayouts.length + 1}`;
+    addMbSegmentLayout(name);
+    if (isConnected) {
+      const s = useAppStore.getState();
+      const idx = Math.max(0, s.mbSegmentLayouts.findIndex(l => l.id === s.mbActiveSegmentLayoutId));
+      bleService.sendMbLayoutSet(s.mbSegmentLayouts, idx);
+      bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
+    }
   };
 
   const previewSegment = (segId: MbSegmentId) => {
@@ -449,25 +570,117 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
       {tab === 'mb' && (
         <>
           <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 12, marginBottom: 8, textTransform: 'uppercase' }}>
-            Animations
+            MagicBand+ Effect Mapping
           </Text>
-          {MB_ANIMATION_META.filter(a => a.key !== 'wand').map(({ key, label }) => (
-            <EffectRow key={key} label={label}
-              mapping={mbMapping.animations[key]}
+          {MB_EFFECT_CLASS_META.map(({ key, label, description, badge, tier }) => (
+            <EffectClassRow
+              key={key}
+              label={label}
+              description={description}
+              badge={badge}
+              tier={tier}
+              mapping={mbMapping.effectClasses![key]}
               presets={presets}
-              onChange={m => setEffect('animations', key, m)}
-              colors={colors} />
+              onChange={m => setEffectClass(key, m)}
+              colors={colors}
+              showColorToggle={tier === 1}
+            />
           ))}
-          <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 12, marginTop: 12, marginBottom: 8, textTransform: 'uppercase' }}>
-            Patterns (E909)
+
+          <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 12, marginTop: 8, marginBottom: 6, textTransform: 'uppercase' }}>
+            Per-opcode overrides (Tier 2)
           </Text>
-          {MB_PATTERN_META.map(({ key, label }) => (
-            <EffectRow key={key} label={`${key} — ${label}`}
-              mapping={mbMapping.patterns[key]}
-              presets={presets}
-              onChange={m => setEffect('patterns', key, m)}
-              colors={colors} />
-          ))}
+          <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 8, lineHeight: 16 }}>
+            Narrow unclassified mapping to a specific opcode when you want a different preset than the catch-all above.
+          </Text>
+          {TIER2_OPCODE_OPTIONS.map(opcode => {
+            const mapping = mbMapping.effectClasses!.unclassifiedOpcodes[opcode]
+              ?? { presetId: '', useMbColors: false };
+            const presetName = mapping.presetId
+              ? (presets.find(p => p.id === mapping.presetId)?.name ?? mapping.presetId)
+              : '—';
+            return (
+              <View key={opcode} style={{
+                flexDirection: 'row', alignItems: 'center', marginBottom: 6, paddingVertical: 6,
+                borderBottomWidth: 1, borderBottomColor: colors.border,
+              }}>
+                <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 13, width: 56 }}>{opcode}</Text>
+                <TouchableOpacity style={{ flex: 1 }} onPress={() => setOpcodePickerKey(opcode)}>
+                  <Text style={{ color: mapping.presetId ? colors.primary : colors.textMuted, fontSize: 13 }}>
+                    {presetName} ›
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })}
+          <PresetPickerModal
+            visible={opcodePickerKey !== null}
+            title={opcodePickerKey ? `${opcodePickerKey} preset` : 'Opcode preset'}
+            presets={presets}
+            selectedId={opcodePickerKey ? (mbMapping.effectClasses!.unclassifiedOpcodes[opcodePickerKey]?.presetId ?? '') : ''}
+            onSelect={id => {
+              if (opcodePickerKey) setUnclassifiedOpcode(opcodePickerKey, { presetId: id });
+              setOpcodePickerKey(null);
+            }}
+            onClose={() => setOpcodePickerKey(null)}
+            colors={colors}
+            emptyLabel="Use unclassified default"
+          />
+
+          <TouchableOpacity onPress={() => setShowTier2Review(v => !v)} style={{ marginTop: 12 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: '600' }}>
+              {showTier2Review ? '▾' : '▸'} Recent unclassified packets ({tier2Summaries.length})
+            </Text>
+          </TouchableOpacity>
+          {showTier2Review && (
+            <View style={{ marginTop: 8, marginBottom: 8 }}>
+              {tier2Summaries.length === 0 ? (
+                <Text style={{ color: colors.textMuted, fontSize: 11 }}>
+                  No Tier 2 packets in capture sessions yet — record a parade on the Capture tab.
+                </Text>
+              ) : tier2Summaries.map(row => (
+                <View key={row.signature} style={{
+                  padding: 8, marginBottom: 6, borderRadius: 6,
+                  backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+                }}>
+                  <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 12 }}>
+                    {row.opcode} · ×{row.count}
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={1}>
+                    {row.hex}
+                  </Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>{row.reason}</Text>
+                  <Text style={{ color: colors.textMuted, fontSize: 10 }}>
+                    Last: {new Date(row.lastSeen).toLocaleString()}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          <TouchableOpacity onPress={() => setShowLegacyMb(v => !v)} style={{ marginTop: 8 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 12, fontWeight: '600' }}>
+              {showLegacyMb ? '▾' : '▸'} Legacy per-opcode mapping (advanced)
+            </Text>
+          </TouchableOpacity>
+          {showLegacyMb && (
+            <>
+              {MB_ANIMATION_META.filter(a => a.key !== 'wand').map(({ key, label }) => (
+                <EffectRow key={key} label={label}
+                  mapping={mbMapping.animations[key]}
+                  presets={presets}
+                  onChange={m => setEffect('animations', key, m)}
+                  colors={colors} />
+              ))}
+              {MB_PATTERN_META.map(({ key, label }) => (
+                <EffectRow key={`pat-${key}`} label={`${key} — ${label}`}
+                  mapping={mbMapping.patterns[key]}
+                  presets={presets}
+                  onChange={m => setEffect('patterns', key, m)}
+                  colors={colors} />
+              ))}
+            </>
+          )}
         </>
       )}
 
@@ -503,8 +716,35 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
 
       {tab === 'segments' && (
         <>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+            {mbSegmentLayouts.map(layout => {
+              const active = layout.id === mbActiveSegmentLayoutId;
+              return (
+                <TouchableOpacity
+                  key={layout.id}
+                  onPress={() => switchLayout(layout.id)}
+                  style={{
+                    marginRight: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+                    backgroundColor: active ? colors.primary + '33' : colors.surface,
+                    borderWidth: 1, borderColor: active ? colors.primary : colors.border,
+                  }}>
+                  <Text style={{ color: active ? colors.primary : colors.textPrimary, fontWeight: '600', fontSize: 13 }}>
+                    {layout.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              onPress={createLayout}
+              style={{
+                paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+                borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed',
+              }}>
+              <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>+ New layout</Text>
+            </TouchableOpacity>
+          </ScrollView>
           <Text style={{ color: colors.textMuted, fontSize: 12, marginBottom: 8, lineHeight: 18 }}>
-            Per region: assign WLED segments manually (id + start/stop %) or Capture from the strip and tick segments to add.
+            Layout sets mirror the web tool — switch between parade / default / custom mappings. Per region: assign WLED segments manually or Capture from the strip.
           </Text>
           <TouchableOpacity
             onPress={applyDefaultLayout}
