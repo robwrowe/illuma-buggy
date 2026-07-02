@@ -44,7 +44,7 @@ export default function ShowsScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const {
-    parks, presets, showBindings, showSettings,
+    parks, presets, zones, showBindings, showSettings,
     upsertShowBinding, removeShowBinding, setShowSettings, saveToStorage,
   } = useAppStore();
 
@@ -57,6 +57,7 @@ export default function ShowsScreen() {
 
   const selectedPark = parks.find(p => p.id === selectedParkId) ?? null;
   const parkBindings = showBindings.filter(b => b.parkId === selectedParkId);
+  const parkZones = zones.filter(z => z.parkId === selectedParkId && z.enabled);
 
   const loadApiShows = useCallback(async () => {
     const entityId = selectedPark?.themeParksApiEntityId;
@@ -113,6 +114,28 @@ export default function ShowsScreen() {
   const filteredApi = apiShows.filter(sh =>
     sh.name.toLowerCase().includes(search.toLowerCase()),
   );
+
+  const pickScopeZone = (bindingId: string) => {
+    const b = showBindings.find(x => x.id === bindingId);
+    if (!b) return;
+    const buttons: { text: string; onPress?: () => void; style?: 'cancel' | 'destructive' }[] = [
+      {
+        text: 'Entire park',
+        onPress: () => updateBinding(bindingId, { scopeZoneId: null }),
+      },
+      ...parkZones.map(z => ({
+        text: z.name,
+        onPress: () => updateBinding(bindingId, { scopeZoneId: z.id }),
+      })),
+      { text: 'Cancel', style: 'cancel' as const },
+    ];
+    Alert.alert('Show location', 'Where should automation run?', buttons);
+  };
+
+  const scopeLabel = (binding: ParkShowBinding) => {
+    if (!binding.scopeZoneId) return 'Entire park';
+    return parkZones.find(z => z.id === binding.scopeZoneId)?.name ?? 'Zone';
+  };
 
   const editing = editingId ? showBindings.find(b => b.id === editingId) : null;
   const pickerBinding = picker ? showBindings.find(b => b.id === picker.bindingId) : null;
@@ -202,7 +225,7 @@ export default function ShowsScreen() {
                     <View style={s.rowBetween}>
                       <View style={{ flex: 1 }}>
                         <Text style={s.bindingName}>{b.name}</Text>
-                        <Text style={s.hint}>{b.kind} · pre {b.preLeadSec}s · post +{b.postDelaySec}s</Text>
+                        <Text style={s.hint}>{b.kind} · {scopeLabel(b)} · pre {b.preLeadSec}s · post +{b.postDelaySec}s</Text>
                       </View>
                       <TouchableOpacity
                         onPress={() => {
@@ -221,6 +244,11 @@ export default function ShowsScreen() {
                     </View>
                     {editingId === b.id && (
                       <View style={s.editBlock}>
+                        <TouchableOpacity style={s.phaseRow} onPress={() => pickScopeZone(b.id)}>
+                          <Text style={s.rowLabel}>Location</Text>
+                          <Text style={s.phaseValue}>{scopeLabel(b)}</Text>
+                          <IconPencil size={14} color={colors.textMuted} />
+                        </TouchableOpacity>
                         {(['pre', 'live', 'post'] as PhaseKey[]).map(phase => (
                           <TouchableOpacity
                             key={phase}

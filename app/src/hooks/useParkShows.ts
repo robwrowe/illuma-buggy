@@ -8,6 +8,7 @@ import { getEntityLiveData, extractShowtimes } from '../services/themeParksApi';
 import { useAppStore } from '../stores/store';
 import {
   bindingForEntity,
+  showBindingInScope,
   type ParkShowBinding,
   type ShowSettings,
   type ShowInstanceOverride,
@@ -31,6 +32,8 @@ export interface UpcomingShow {
   kind: 'parade' | 'fireworks';
   binding: ParkShowBinding;
   autoStartDisabled: boolean;
+  /** User is in park (and zone if scoped) — automation allowed */
+  inScope: boolean;
 }
 
 function parseShowStart(iso: string): number {
@@ -45,6 +48,7 @@ function buildUpcomingShows(
   settings: ShowSettings,
   overrides: Record<string, ShowInstanceOverride>,
   now: number,
+  activeZoneIds: string[],
 ): UpcomingShow[] {
   const out: UpcomingShow[] = [];
   for (const entity of raw) {
@@ -71,6 +75,7 @@ function buildUpcomingShows(
       const instanceId = `${entity.id}-${startMs}`;
       const instanceOverride = overrides[instanceId];
       const autoStartDisabled = binding.autoStartDisabled || !!instanceOverride?.autoStartDisabled;
+      const inScope = showBindingInScope(binding, parkId, activeZoneIds);
 
       out.push({
         id: instanceId,
@@ -83,6 +88,7 @@ function buildUpcomingShows(
         kind: binding.kind,
         binding,
         autoStartDisabled,
+        inScope,
       });
     }
   }
@@ -102,6 +108,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
   const recallRef = useRef(useAppStore.getState().recallState);
   const layoutsRef = useRef(useAppStore.getState().customSegmentLayouts);
   const fadeMsRef = useRef(useAppStore.getState().bleEffectTransitionMs);
+  const activeZoneIdsRef = useRef(useAppStore.getState().activeZoneIds);
 
   useEffect(() => {
     return useAppStore.subscribe((state) => {
@@ -112,6 +119,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       recallRef.current = state.recallState;
       layoutsRef.current = state.customSegmentLayouts;
       fadeMsRef.current = state.bleEffectTransitionMs;
+      activeZoneIdsRef.current = state.activeZoneIds;
     });
   }, []);
 
@@ -134,6 +142,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
         settingsRef.current,
         overridesRef.current,
         now,
+        activeZoneIdsRef.current,
       );
       setShows(upcoming);
       setLastFetchAt(now);
@@ -142,7 +151,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       if (!isConnected || !bleService.isSessionReady()) return;
 
       for (const show of upcoming) {
-        if (show.autoStartDisabled) continue;
+        if (show.autoStartDisabled || !show.inScope) continue;
 
         const preKey = `${show.id}:pre`;
         const liveKey = `${show.id}:live`;
@@ -200,6 +209,7 @@ function formatShowTime(ms: number): string {
 }
 
 export function formatShowStatus(show: UpcomingShow): string {
+  if (!show.inScope) return 'Outside show area';
   if (show.status === 'ended') {
     const ago = Math.abs(Math.round((Date.now() - show.endMs) / 60000));
     return ago < 60 ? `Ended ${ago}m ago` : 'Ended';

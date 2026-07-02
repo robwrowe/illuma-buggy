@@ -8,7 +8,6 @@ import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   TextInput, Switch, ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
@@ -20,6 +19,7 @@ import { useTheme } from '../utils/theme';
 import { useBLE } from '../hooks/useBLE';
 import { useAppStore, WledEffect, WledPalette, Preset, PresetMemory, buildRecallPayload, fetchWledSegmentsFromDevice } from '../stores/store';
 import { bleService } from '../services/BLEService';
+import { refreshWledCatalog } from '../utils/bleBoardSync';
 import { generateId } from '../utils/utils';
 
 type Tab = 'effects' | 'palettes';
@@ -89,35 +89,19 @@ export default function LibraryScreen() {
   const { isConnected, isSessionReady } = useBLE();
 
   const fetchAll = useCallback(() => {
-    if (!isConnected) return;
-    setLoading(true);
-    bleService.sendGetFxData();
-    setTimeout(() => bleService.sendGetEffects(), 700);
-    setTimeout(() => bleService.sendGetPalettes(), 1400);
-  }, [isConnected]);
-
-  // Auto-load catalog when connected (also after bootstrap marks session ready).
-  useEffect(() => {
-    if (isConnected && isSessionReady && wledEffects.length === 0 && wledPalettes.length === 0) {
-      fetchAll();
+    if (!isConnected || !isSessionReady) {
+      Alert.alert(
+        'Not ready',
+        'Wait until Home shows Ready before refreshing the WLED catalog (large BLE transfer).',
+      );
+      return;
     }
-  }, [isConnected, isSessionReady, wledEffects.length, wledPalettes.length, fetchAll]);
-
-  useEffect(() => {
-    const unsub = bleService.onSessionReady(() => {
-      if (bleService.isConnected() && useAppStore.getState().wledEffects.length === 0) {
-        fetchAll();
-      }
+    setLoading(true);
+    void refreshWledCatalog().catch((e) => {
+      console.warn('[Library] catalog refresh failed:', e);
+      setLoading(false);
     });
-    return unsub;
-  }, [fetchAll]);
-
-  // Refetch when tab is focused and catalog is still empty
-  useFocusEffect(
-    useCallback(() => {
-      if (isConnected && (wledEffects.length === 0 || wledPalettes.length === 0)) fetchAll();
-    }, [isConnected, wledEffects.length, wledPalettes.length, fetchAll]),
-  );
+  }, [isConnected, isSessionReady]);
 
   // Clear loading spinner when background fetch completes (handled in App.tsx → store)
   useEffect(() => {

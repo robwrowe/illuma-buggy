@@ -48,9 +48,10 @@ export async function ensurePresetOnBoard(
   preset: Preset,
   recall: RecallState,
   layouts: CustomSegmentLayout[],
+  force = false,
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
-  if (isPresetSynced(preset.id)) return true;
+  if (!force && isPresetSynced(preset.id)) return true;
   const ackWait = waitForBleAck('preset_save', preset.id);
   const sent = await bleService.sendPresetSave(
     preset.id,
@@ -72,7 +73,7 @@ export async function ensureMappingPresetsOnBoard(
 ): Promise<void> {
   for (const id of collectMappingPresetIds(mbMapping)) {
     const preset = presets.find(p => p.id === id);
-    if (preset) await ensurePresetOnBoard(preset, recall, layouts);
+    if (preset) await ensurePresetOnBoard(preset, recall, layouts, true);
   }
 }
 
@@ -96,11 +97,9 @@ export function presetWledForBoard(
   const w = preset.wled ?? {};
   const base = finalizeWledSegmentPayload({
     on: w.on ?? true,
-    bri: w.bri,
     seg: buildRecalledSegmentsFromPreset(preset, recall, layouts, BOARD_PRESET_MEMORY),
   });
   const out: Record<string, unknown> = { ...base };
-  if (w.bri !== undefined) out.bri = w.bri;
   if (w.transition !== undefined) out.transition = w.transition;
   if (w.pd !== undefined) out.pd = w.pd;
   return out;
@@ -163,15 +162,26 @@ export async function pushMbSegmentLayoutsToBoard(
   }
 }
 
+let catalogRefreshInFlight: Promise<void> | null = null;
+
+/** Manual Library refresh only — never auto-run on connect (floods BLE ~130 chunks). */
 export async function refreshWledCatalog(): Promise<void> {
-  if (!bleService.isConnected()) return;
-  await bleService.sendGetFxData();
-  await delay(700);
-  if (!bleService.isConnected()) return;
-  await bleService.sendGetEffects();
-  await delay(700);
-  if (!bleService.isConnected()) return;
-  await bleService.sendGetPalettes();
+  if (!bleService.isConnected() || !bleService.isSessionReady()) return;
+  if (catalogRefreshInFlight) return catalogRefreshInFlight;
+  catalogRefreshInFlight = (async () => {
+    console.log('[Catalog] refresh start');
+    await bleService.sendGetFxData();
+    await delay(1200);
+    if (!bleService.isConnected()) return;
+    await bleService.sendGetEffects();
+    await delay(1200);
+    if (!bleService.isConnected()) return;
+    await bleService.sendGetPalettes();
+    console.log('[Catalog] refresh requested (effects → palettes → fxdata)');
+  })().finally(() => {
+    catalogRefreshInFlight = null;
+  });
+  return catalogRefreshInFlight;
 }
 
 export { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
@@ -182,14 +192,34 @@ export async function applyPresetToBoard(
   recall: RecallState,
   layouts: CustomSegmentLayout[],
 ): Promise<boolean> {
-  if (!bleService.isConnected()) return false;
+  if (!bleService.isConnected()) {
+    console.warn('[Apply] blocked — not connected');
+    return false;
+  }
+  if (!bleService.isSessionReady()) {
+    console.warn('[Apply] blocked — session not ready (board still syncing?)');
+    return false;
+  }
   const payload = presetWledForBoard(preset, layouts, recall);
-  const saved = await ensurePresetOnBoard(preset, recall, layouts);
-  if (!saved) return false;
-  const ackWait = waitForBleAck('wled_raw', undefined, 15_000);
+  const segCount = Array.isArray((payload as { seg?: unknown[] }).seg)
+    ? (payload as { seg: unknown[] }).seg.length
+    : 0;
+  console.log('[Apply] start', preset.id, preset.name, `(${JSON.stringify(payload).length} bytes, ${segCount} segs)`);
+
+  // Full wled_raw is authoritative for manual apply — NVS save can run without blocking.
+  void ensurePresetOnBoard(preset, recall, layouts).catch((e) =>
+    console.warn('[Apply] background preset_save failed:', e),
+  );
+
+  const ackWait = waitForBleAck('wled_raw', undefined, 20_000);
   const sent = await bleService.sendWledRaw(payload, preset.id);
-  if (!sent) return false;
-  return ackWait;
+  if (!sent) {
+    console.warn('[Apply] wled_raw send failed');
+    return false;
+  }
+  const ok = await ackWait;
+  console.log('[Apply]', ok ? 'ack ok' : 'ack timeout or WLED failed — check board serial for [BLE] wled_raw / [WLED] POST');
+  return ok;
 }
 
 export async function syncPresetsToBoard(

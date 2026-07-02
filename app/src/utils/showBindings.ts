@@ -28,6 +28,8 @@ export interface ParkShowBinding {
   homeVisibleAfterMin: number;
   /** Skip auto pre/post for all instances of this binding */
   autoStartDisabled: boolean;
+  /** When set, automation only runs inside this GPS zone; omit for anywhere in the park */
+  scopeZoneId?: string | null;
 }
 
 export interface ShowSettings {
@@ -75,7 +77,19 @@ export function normalizeShowBinding(raw: Partial<ParkShowBinding> | undefined, 
       ? raw.homeVisibleAfterMin!
       : defaults.defaultHomeVisibleAfterMin,
     autoStartDisabled: !!raw.autoStartDisabled,
+    scopeZoneId: raw.scopeZoneId || null,
   };
+}
+
+/** Park-wide when scopeZoneId is null; otherwise user must be inside that zone polygon. */
+export function showBindingInScope(
+  binding: ParkShowBinding,
+  activeParkId: string | undefined,
+  activeZoneIds: string[],
+): boolean {
+  if (!activeParkId || binding.parkId !== activeParkId) return false;
+  if (!binding.scopeZoneId) return true;
+  return activeZoneIds.includes(binding.scopeZoneId);
 }
 
 export function bindingForEntity(

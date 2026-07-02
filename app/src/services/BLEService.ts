@@ -145,6 +145,11 @@ class BLEService {
 
   private async sendImmediate(msg: BLEMessage, attempt = 0): Promise<boolean> {
     if (!this.device || this.connState !== 'connected') return false;
+    const kind = String(msg.type ?? '?');
+    if (kind !== 'status') {
+      const extra = msg.id ? ` id=${msg.id}` : msg.preset_id ? ` preset=${msg.preset_id}` : '';
+      console.log(`[BLE] → ${kind}${extra}`);
+    }
     try {
       await this.sendJsonCommand(msg);
       return true;
@@ -469,6 +474,14 @@ class BLEService {
   }
 
   private emit(msg: BLEMessage) {
+    if (msg.type === 'ack') {
+      const ok = msg.ok !== false;
+      console.log(
+        `[BLE] ← ack ${String(msg.action)}${msg.id ? ` id=${msg.id}` : ''} ${ok ? 'ok' : `FAIL${msg.reason ? ` (${msg.reason})` : ''}`}`,
+      );
+    } else if (msg.type === 'error') {
+      console.warn('[BLE] ← error', msg.msg);
+    }
     this.msgHandlers.forEach(h => h(msg));
   }
 

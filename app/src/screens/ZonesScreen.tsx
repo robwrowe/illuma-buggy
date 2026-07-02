@@ -169,10 +169,16 @@ export default function ZonesScreen() {
   };
 
   const commitPresetZone = () => {
-    if (!newZoneName.trim() || !newZonePreset) { Alert.alert('Required', 'Enter a name and select a preset.'); return; }
+    if (!newZoneName.trim()) { Alert.alert('Required', 'Enter a zone name.'); return; }
     const overlapping = zones.find(z => polygonsOverlap(drawPoints, z.polygon));
     const save = () => {
-      addZone({ id: generateId(), name: newZoneName.trim(), polygon: drawPoints, presetId: newZonePreset, enabled: true });
+      addZone({
+        id: generateId(),
+        name: newZoneName.trim(),
+        polygon: drawPoints,
+        presetId: newZonePreset,
+        enabled: true,
+      });
       saveToStorage();
       cancelDrawing();
     };
@@ -371,18 +377,24 @@ export default function ZonesScreen() {
               placeholderTextColor={colors.textMuted} autoFocus />
             {drawMode === 'preset' && (
               <>
-                <Text style={s.fieldLabel}>Preset</Text>
-                {presets.length === 0
-                  ? <Text style={s.hint}>No presets yet — create one in Library first.</Text>
-                  : <ScrollView style={{ maxHeight: 160 }}>
-                      {presets.map(p => (
-                        <TouchableOpacity key={p.id}
-                          style={[s.option, newZonePreset === p.id && s.optionActive]}
-                          onPress={() => setNewZonePreset(p.id)}>
-                          <Text style={[s.optionText, newZonePreset === p.id && { color: colors.primary }]}>{p.name}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>}
+                <Text style={s.fieldLabel}>Preset (optional)</Text>
+                <Text style={s.hint}>Leave as boundary only for show locations or park grouping — no effect on enter.</Text>
+                <ScrollView style={{ maxHeight: 160 }}>
+                  <TouchableOpacity
+                    style={[s.option, !newZonePreset && s.optionActive]}
+                    onPress={() => setNewZonePreset('')}>
+                    <Text style={[s.optionText, !newZonePreset && { color: colors.primary }]}>
+                      None — boundary only
+                    </Text>
+                  </TouchableOpacity>
+                  {presets.map(p => (
+                    <TouchableOpacity key={p.id}
+                      style={[s.option, newZonePreset === p.id && s.optionActive]}
+                      onPress={() => setNewZonePreset(p.id)}>
+                      <Text style={[s.optionText, newZonePreset === p.id && { color: colors.primary }]}>{p.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
               </>
             )}
             <View style={s.modalRow}>
@@ -408,8 +420,15 @@ export default function ZonesScreen() {
                 <TextInput style={s.input} value={editingZone.name}
                   onChangeText={v => setEditingZone({ ...editingZone, name: v })}
                   placeholderTextColor={colors.textMuted} />
-                <Text style={s.fieldLabel}>Preset</Text>
+                <Text style={s.fieldLabel}>Preset (optional)</Text>
                 <ScrollView style={{ maxHeight: 160 }}>
+                  <TouchableOpacity
+                    style={[s.option, !editingZone.presetId && s.optionActive]}
+                    onPress={() => setEditingZone({ ...editingZone, presetId: '' })}>
+                    <Text style={[s.optionText, !editingZone.presetId && { color: colors.primary }]}>
+                      None — boundary only
+                    </Text>
+                  </TouchableOpacity>
                   {presets.map(p => (
                     <TouchableOpacity key={p.id}
                       style={[s.option, editingZone.presetId === p.id && s.optionActive]}
@@ -522,7 +541,11 @@ export default function ZonesScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={s.zoneName}>{z.name}</Text>
                     {'presetId' in z && (
-                      <Text style={s.hint}>{presets.find(p => p.id === (z as Zone).presetId)?.name ?? 'No preset'}</Text>
+                      <Text style={s.hint}>
+                        {(z as Zone).presetId
+                          ? (presets.find(p => p.id === (z as Zone).presetId)?.name ?? 'Preset missing')
+                          : 'Boundary only'}
+                      </Text>
                     )}
                     {activeZoneIds.includes(z.id) && <Text style={{ color: colors.success, fontSize: 11 }}>● Currently inside</Text>}
                   </View>

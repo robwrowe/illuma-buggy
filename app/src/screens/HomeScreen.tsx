@@ -93,6 +93,22 @@ export default function HomeScreen() {
     phase: "pre" | "live" | "post",
   ) => {
     if (!isConnected) return;
+    if (!isSessionReady) {
+      Alert.alert(
+        "Board syncing",
+        "Wait until Home shows Ready before running show phases.",
+      );
+      return;
+    }
+    if (!show.inScope) {
+      Alert.alert(
+        "Outside show area",
+        show.binding.scopeZoneId
+          ? "Move into the assigned zone for this show, or change Location under Settings → Park Shows."
+          : "You must be in this park for show automation.",
+      );
+      return;
+    }
     const key = `${show.id}:${phase}`;
     setRunningShowPhase(key);
     try {

@@ -10,7 +10,6 @@ import {
   ensurePresetOnBoard,
   pushHeavyBoardConfig,
   pushMbSegmentLayoutsToBoard,
-  refreshWledCatalog,
   resolveActiveLayoutIndex,
 } from './bleBoardSync';
 import {
@@ -138,6 +137,17 @@ async function runEssentialConfig(token: number): Promise<boolean> {
 
   await bleService.sendBleEffectConfig(s.bleEffectTransitionMs);
   await delay(300);
+  if (!bleService.isConnected() || token !== bootstrapToken) return false;
+
+  // Mapped presets (wand cast, MB animations) must exist on board NVS — sync every connect.
+  await ensureMappingPresetsOnBoard(
+    s.mbMapping,
+    s.presets,
+    s.recallState,
+    s.customSegmentLayouts,
+  ).catch((e) => console.warn('[Bootstrap] Mapping preset sync failed:', e));
+  await delay(400);
+
   return bleService.isConnected() && token === bootstrapToken;
 }
 
@@ -209,15 +219,6 @@ function markSessionReadyAndStatus(mode: 'quick' | 'full', detail: string) {
   bleService.markSessionReady(true);
   setBoardSyncReady(mode, detail);
   void bleService.sendStatus();
-  const s = useAppStore.getState();
-  if (s.wledEffects.length === 0 || s.wledPalettes.length === 0) {
-    void delay(8000).then(() => {
-      if (!bleService.isSessionReady()) return;
-      void refreshWledCatalog().catch((e) =>
-        console.warn('[Bootstrap] WLED catalog refresh failed:', e),
-      );
-    });
-  }
 }
 
 async function runBackgroundSync(

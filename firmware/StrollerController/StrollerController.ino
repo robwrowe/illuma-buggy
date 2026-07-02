@@ -538,7 +538,10 @@ bool sendToWLED(const String& jsonBody, int timeoutMs = 2000, int retries = 0) {
     }
     if (attempt < retries) delay(80);
   }
-  Serial.printf("[WLED] POST failed: %d (%u bytes)\n", code, (unsigned)jsonBody.length());
+  Serial.printf("[WLED] POST failed: HTTP %d (%u bytes)\n", code, (unsigned)jsonBody.length());
+  if (jsonBody.length() < 120) {
+    Serial.printf("[WLED]   body: %s\n", jsonBody.c_str());
+  }
   http.end();
   return false;
 }
@@ -1577,12 +1580,21 @@ void saveWledStateForOverride() {
         savedRestoreOverride == SHOW_MODE) {
       savedRestoreOverride = NONE;
     }
-    if (currentOverride == ZONE && currentPresetId.length() > 0) {
+    if ((currentOverride == ZONE || currentOverride == MANUAL) && currentPresetId.length() > 0) {
       savedRestorePresetId = currentPresetId;
     }
   }
 
-  // Cache only — never block MB/SW effects with a sync GET here (poll runs in loop()).
+  if (liveWledState.length() == 0) {
+    String state = getFromWLED("/json/state");
+    if (state.length() > 0) {
+      liveWledState = compactWledStateForSave(state);
+      lastLiveStatePollMs = millis();
+      Serial.printf("[WLED] Sync state poll (%u bytes)\n", (unsigned)liveWledState.length());
+    }
+  }
+
+  // Cache only — prefer live/sync poll over stale boot baseline.
   if (liveWledState.length() > 0) {
     savedWledState = liveWledState;
     Serial.printf("[Override] Saved snapshot (%u bytes, preset_fallback=%s)\n",
@@ -1639,7 +1651,6 @@ String prepareWledRestorePayload(const String& json) {
   if (segs.isNull() || segs.size() == 0) {
     DynamicJsonDocument wrapped(WLED_RESTORE_JSON_CAP);
     wrapped["on"] = doc["on"] | true;
-    if (doc.containsKey("bri")) wrapped["bri"] = doc["bri"];
     JsonObject seg0 = wrapped.createNestedArray("seg").createNestedObject();
     seg0["id"] = 0;
     seg0["start"] = 0;
@@ -1689,6 +1700,8 @@ String preparePresetApplyPayload(const String& json) {
       d["stop"] = 0;
     }
   }
+  // Brightness is app-managed (solar / indoor / manual slider) — never from preset apply.
+  doc.remove("bri");
   String out;
   serializeJson(doc, out);
   return out;
@@ -1846,11 +1859,15 @@ void clearOverride() {
   if (restored && (restoreOverride == ZONE || restoreOverride == MANUAL)) {
     setOverride(restoreOverride);
   } else if (restored && presetId.length() > 0) {
-    setOverride(ZONE);
+    setOverride(restoreOverride == MANUAL ? MANUAL : ZONE);
   }
 }
 
 bool zoneWantsPreset(const String& presetId) {
+  if (presetId.length() == 0) {
+    Serial.println("[Zone] Boundary-only zone (no preset)");
+    return false;
+  }
   if (currentOverride != NONE && currentOverride != ZONE) {
     if (!overrideKillOnZone) {
       Serial.println("[Zone] Blocked by active override");
@@ -2049,8 +2066,12 @@ void handleBLECommand(const String& msg) {
   else if (type == "wled_raw") {
     String wled; serializeJson(doc["wled"], wled);
     String presetId = doc["preset_id"] | "";
+    Serial.printf("[BLE] wled_raw preset=%s bytes=%u\n",
+                  presetId.length() ? presetId.c_str() : "(preview)",
+                  (unsigned)wled.length());
     if (presetId.length() > 0) {
       if (!canTakeOverride(MANUAL)) {
+        Serial.println("[BLE] wled_raw blocked by override priority");
         bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":false,\"reason\":\"blocked\"}");
         return;
       }
@@ -2066,9 +2087,10 @@ void handleBLECommand(const String& msg) {
       wled = preparePresetApplyPayload(wled);
     }
     bool ok = sendToWLEDForBleEffect(wled);
+    Serial.printf("[BLE] wled_raw -> WLED %s\n", ok ? "OK" : "FAIL");
     if (ok) {
-      liveWledState = "";
-      lastLiveStatePollMs = 0;
+      liveWledState = compactWledStateForSave(wled);
+      lastLiveStatePollMs = millis();
     }
     bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":" + String(ok ? "true" : "false") + "}");
   }
@@ -2874,6 +2896,8 @@ void processSerialCommands() {
 
   if (line == "help") {
     Serial.println("[Serial] Commands:");
+    Serial.println("  status           — WiFi, override, preset, queue");
+    Serial.println("  wled si          — GET WLED state (fx/bri/segments)");
     Serial.println("  sniff [seconds]  — log every BLE mfr packet (default 30)");
     Serial.println("  sniff off        — stop sniffing");
     Serial.println("  tx on            — broadcast WAND-IDLE beacon (pairing test)");
@@ -2884,6 +2908,39 @@ void processSerialCommands() {
     Serial.println("  mb five <tl bl br tr c>  — E909 five corners (palette 0-31)");
     Serial.println("  mb <palette> [mask]      — E905 single color (mask 0 = all)");
     Serial.println("  mb defer on|off          — forward E9 to app vs firmware apply");
+  } else if (line == "status") {
+    Serial.printf("[Status] WiFi=%s override=%d preset=%s bri=%d queue=%u\n",
+                  WiFi.status() == WL_CONNECTED ? "up" : "down",
+                  (int)currentOverride,
+                  currentPresetId.length() ? currentPresetId.c_str() : "(none)",
+                  currentBrightness,
+                  (unsigned)uxQueueMessagesWaiting(cmdQueue));
+  } else if (line == "wled si") {
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("[WLED] WiFi not connected");
+    } else {
+      HTTPClient http;
+      http.begin("http://" + String(WLED_IP) + ":" + String(WLED_PORT) + "/json/si");
+      http.setTimeout(5000);
+      int code = http.GET();
+      if (code == 200) {
+        String body = http.getString();
+        DynamicJsonDocument doc(4096);
+        if (deserializeJson(doc, body) == DeserializationError::Ok) {
+          JsonObject state = doc["state"];
+          int fx = state["seg"][0]["fx"] | state["fx"] | -1;
+          int bri = state["bri"] | -1;
+          int segN = state["seg"].isNull() ? 0 : (int)state["seg"].size();
+          Serial.printf("[WLED] on=%d bri=%d fx=%d segs=%d (%u bytes)\n",
+                        state["on"] | false, bri, fx, segN, (unsigned)body.length());
+        } else {
+          Serial.printf("[WLED] si parse fail (%u bytes)\n", (unsigned)body.length());
+        }
+      } else {
+        Serial.printf("[WLED] si GET failed HTTP %d\n", code);
+      }
+      http.end();
+    }
   } else if (line == "mb defer on") {
     mbDeferToApp = true;
     prefs.begin("config", false);

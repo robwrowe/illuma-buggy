@@ -65,6 +65,10 @@ export function useZoneManager() {
     };
 
     const applyZoneEntry = (matchedZone: Zone) => {
+      if (!matchedZone.presetId) {
+        console.log('[Zone] Entered (boundary only):', matchedZone.name);
+        return;
+      }
       console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
       const s = useAppStore.getState();
       const preset = s.presets.find(p => p.id === matchedZone.presetId);
@@ -130,7 +134,9 @@ export function useZoneManager() {
       } else if (prevZone) {
         pendingZoneRef.current = null;
         console.log('[Zone] Left all zones');
-        if (bleService.isSessionReady()) bleService.sendOverrideClear();
+        if (prevZone.presetId && bleService.isSessionReady()) {
+          bleService.sendOverrideClear();
+        }
       }
     };
 
