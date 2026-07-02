@@ -1,5 +1,13 @@
 import { withSegRefDefaults } from './configMigration';
 
+export type MbEffectClassKey =
+  | 'singleColor'
+  | 'dualColor'
+  | 'sixBitColor'
+  | 'fivePositionPalette'
+  | 'fivePositionFlash'
+  | 'unclassified';
+
 export interface WledSegRef {
   id: number;
   start: number;
@@ -71,8 +79,28 @@ export interface MbEffectMapping {
   colorSlots: number[];
 }
 
+/** Per animation-class WLED binding (Tier 1 + Tier 2) */
+export interface MbEffectClassMapping {
+  presetId: string;
+  /** Tier 1: apply decoded MB palette colors vs preset's own colors */
+  useMbColors: boolean;
+}
+
+export interface MbEffectClassesConfig {
+  singleColor: MbEffectClassMapping;
+  dualColor: MbEffectClassMapping;
+  sixBitColor: MbEffectClassMapping;
+  fivePositionPalette: MbEffectClassMapping;
+  fivePositionFlash: MbEffectClassMapping;
+  unclassified: MbEffectClassMapping;
+  /** Optional per-opcode Tier 2 bindings (e.g. E910, E913) */
+  unclassifiedOpcodes: Partial<Record<string, MbEffectClassMapping>>;
+}
+
 export interface MbMappingConfig {
   version: 1;
+  /** Animation-class → preset bindings (additive; empty = legacy firmware fallback) */
+  effectClasses?: MbEffectClassesConfig;
   /** Fallback preset when an effect has no presetId — same list as GPS zones */
   defaultPresetId: string;
   /** WLED hex per MB palette index 0–31 */
@@ -153,9 +181,76 @@ export const DEFAULT_MB_WLED_COLORS: string[] = [
 ];
 
 const emptyMapping = (): MbEffectMapping => ({ presetId: '', colorSlots: [] });
+const emptyClassMapping = (): MbEffectClassMapping => ({ presetId: '', useMbColors: true });
+
+export const DEFAULT_MB_EFFECT_CLASSES: MbEffectClassesConfig = {
+  singleColor: emptyClassMapping(),
+  dualColor: emptyClassMapping(),
+  sixBitColor: emptyClassMapping(),
+  fivePositionPalette: emptyClassMapping(),
+  fivePositionFlash: emptyClassMapping(),
+  unclassified: { presetId: '', useMbColors: false },
+  unclassifiedOpcodes: {},
+};
+
+export const MB_EFFECT_CLASS_META: {
+  key: MbEffectClassKey;
+  label: string;
+  description: string;
+  badge: 'Fully Decoded' | 'Partially Decoded' | 'Unmapped Bytes — Preset Only';
+  tier: 1 | 2;
+}[] = [
+  {
+    key: 'singleColor',
+    label: 'Single Color',
+    description: 'One palette color lights selected band LEDs (E905).',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'dualColor',
+    label: 'Dual Color',
+    description: 'Inner and outer ring colors from palette (E906).',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'sixBitColor',
+    label: '6-bit Color',
+    description: 'Raw RGB encoded as 6-bit channels (E908).',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'fivePositionPalette',
+    label: '5-Position Palette',
+    description: 'Five corner/center slots each pick a palette color (E909, E90C palette mode).',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'fivePositionFlash',
+    label: '5-Position Flash Pattern',
+    description: 'Subset of the five positions lights up and can flash or hold steady (E90E).',
+    badge: 'Partially Decoded',
+    tier: 1,
+  },
+  {
+    key: 'unclassified',
+    label: 'Unclassified / Unknown',
+    description: 'Opcodes we cannot decode yet — map to a preset look blindly (E910, E913, E90C animation mode, etc.).',
+    badge: 'Unmapped Bytes — Preset Only',
+    tier: 2,
+  },
+];
+
+export const TIER2_OPCODE_OPTIONS = [
+  'E90C', 'E90F', 'E910', 'E911', 'E912', 'E913', 'E914', 'E91B',
+] as const;
 
 export const DEFAULT_MB_MAPPING: MbMappingConfig = {
   version: 1,
+  effectClasses: JSON.parse(JSON.stringify(DEFAULT_MB_EFFECT_CLASSES)) as MbEffectClassesConfig,
   defaultPresetId: '',
   colors: [...DEFAULT_MB_WLED_COLORS],
   randomPool: {
@@ -262,6 +357,75 @@ export const MB_PATTERN_META: { key: MbPatternKey; label: string }[] = [
   { key: 'B', label: 'All on palette B' },
 ];
 
+function normalizeEffectClassMapping(
+  v: Partial<MbEffectClassMapping> | undefined,
+  fallback: MbEffectClassMapping,
+): MbEffectClassMapping {
+  if (!v) return { ...fallback };
+  return {
+    presetId: typeof v.presetId === 'string' ? v.presetId : fallback.presetId,
+    useMbColors: typeof v.useMbColors === 'boolean' ? v.useMbColors : fallback.useMbColors,
+  };
+}
+
+function normalizeEffectClasses(raw: Partial<MbEffectClassesConfig> | undefined): MbEffectClassesConfig {
+  const d = DEFAULT_MB_EFFECT_CLASSES;
+  const unclassifiedOpcodes: Partial<Record<string, MbEffectClassMapping>> = {};
+  if (raw?.unclassifiedOpcodes && typeof raw.unclassifiedOpcodes === 'object') {
+    for (const [k, v] of Object.entries(raw.unclassifiedOpcodes)) {
+      unclassifiedOpcodes[k] = normalizeEffectClassMapping(v, d.unclassified);
+    }
+  }
+  return {
+    singleColor: normalizeEffectClassMapping(raw?.singleColor, d.singleColor),
+    dualColor: normalizeEffectClassMapping(raw?.dualColor, d.dualColor),
+    sixBitColor: normalizeEffectClassMapping(raw?.sixBitColor, d.sixBitColor),
+    fivePositionPalette: normalizeEffectClassMapping(raw?.fivePositionPalette, d.fivePositionPalette),
+    fivePositionFlash: normalizeEffectClassMapping(raw?.fivePositionFlash, d.fivePositionFlash),
+    unclassified: normalizeEffectClassMapping(raw?.unclassified, d.unclassified),
+    unclassifiedOpcodes,
+  };
+}
+
+/** Mirror effect-class presets into legacy animations/patterns for firmware compat */
+export function mirrorEffectClassesToLegacy(config: MbMappingConfig): MbMappingConfig {
+  const ec = config.effectClasses;
+  if (!ec) return config;
+  const animations = { ...config.animations };
+  const patterns = { ...config.patterns };
+
+  const mirrorAnim = (opcode: MbAnimationKey, cls: MbEffectClassMapping) => {
+    if (cls.presetId && animations[opcode]) {
+      animations[opcode] = { ...animations[opcode], presetId: cls.presetId };
+    }
+  };
+
+  mirrorAnim('E90E', ec.fivePositionFlash);
+  for (const [opcode, mapping] of Object.entries(ec.unclassifiedOpcodes)) {
+    const k = opcode as MbAnimationKey;
+    if (mapping?.presetId && animations[k]) {
+      animations[k] = { ...animations[k], presetId: mapping.presetId };
+    }
+  }
+  if (ec.unclassified.presetId) {
+    for (const { key } of MB_ANIMATION_META) {
+      if (key === 'wand') continue;
+      if (!ec.unclassifiedOpcodes[key] && !animations[key].presetId) {
+        animations[key] = { ...animations[key], presetId: ec.unclassified.presetId };
+      }
+    }
+  }
+  if (ec.fivePositionPalette.presetId) {
+    for (const { key } of MB_PATTERN_META) {
+      if (!patterns[key].presetId) {
+        patterns[key] = { ...patterns[key], presetId: ec.fivePositionPalette.presetId };
+      }
+    }
+  }
+
+  return { ...config, animations, patterns };
+}
+
 export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): MbMappingConfig {
   const d = DEFAULT_MB_MAPPING;
   if (!raw || raw.version !== 1) {
@@ -310,19 +474,23 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
       ? src.map(s => withSegRefDefaults(s))
       : d.segments[id].map(s => withSegRefDefaults(s));
   }
-  return {
+  const effectClasses = normalizeEffectClasses(raw.effectClasses);
+  const base: MbMappingConfig = {
     version: 1,
+    effectClasses,
     defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
     colors,
     randomPool: normalizeRandomPool(raw.randomPool),
     animations, swAnimations, patterns, segments,
   };
+  return mirrorEffectClassesToLegacy(base);
 }
 
 /** Firmware BLE payload */
 export function mbMappingToBlePayload(config: MbMappingConfig): object {
+  const synced = mirrorEffectClassesToLegacy(normalizeMbMapping(config));
   const colors: Record<string, number[]> = {};
-  config.colors.forEach((hex, i) => {
+  synced.colors.forEach((hex, i) => {
     if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
     colors[String(i)] = [
       parseInt(hex.slice(1, 3), 16),
@@ -335,24 +503,38 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
     colorSlots: m.colorSlots,
   });
   const animations: Record<string, object> = {};
-  for (const [k, v] of Object.entries(config.animations)) {
+  for (const [k, v] of Object.entries(synced.animations)) {
     animations[k] = mapEffect(v);
   }
   const swAnimations: Record<string, object> = {};
-  for (const [k, v] of Object.entries(config.swAnimations)) {
+  for (const [k, v] of Object.entries(synced.swAnimations)) {
     swAnimations[k] = mapEffect(v);
   }
   const patterns: Record<string, object> = {};
-  for (const [k, v] of Object.entries(config.patterns)) {
+  for (const [k, v] of Object.entries(synced.patterns)) {
     patterns[k] = mapEffect(v);
+  }
+  const mapClass = (m: MbEffectClassMapping) => ({
+    presetId: m.presetId,
+    useMbColors: m.useMbColors,
+  });
+  const effectClasses: Record<string, object> = {};
+  const ec = synced.effectClasses ?? DEFAULT_MB_EFFECT_CLASSES;
+  for (const { key } of MB_EFFECT_CLASS_META) {
+    effectClasses[key] = mapClass(ec[key]);
+  }
+  const unclassifiedOpcodes: Record<string, object> = {};
+  for (const [k, v] of Object.entries(ec.unclassifiedOpcodes)) {
+    if (v) unclassifiedOpcodes[k] = mapClass(v);
   }
   return {
     version: 1,
-    defaultPresetId: config.defaultPresetId || '',
+    defaultPresetId: synced.defaultPresetId || '',
+    effectClasses: { ...effectClasses, unclassifiedOpcodes },
     colors,
     randomPool: {
-      palettes: config.randomPool.paletteIndices,
-      custom: config.randomPool.custom.map(c => ({
+      palettes: synced.randomPool.paletteIndices,
+      custom: synced.randomPool.custom.map(c => ({
         id: c.id,
         name: c.name,
         rgb: [
@@ -365,6 +547,6 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
     animations,
     swAnimations,
     patterns,
-    segments: config.segments,
+    segments: synced.segments,
   };
 }
