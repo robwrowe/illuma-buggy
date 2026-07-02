@@ -1274,9 +1274,9 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
   }
 
   saveWledStateForOverride();
-  DynamicJsonDocument doc(4096);
+  DynamicJsonDocument doc(12288);
   if (deserializeJson(doc, preset)) return false;
-  DynamicJsonDocument wled(4096);
+  DynamicJsonDocument wled(12288);
   if (deserializeJson(wled, doc["wled"])) return false;
 
   if (map.colorSlotCount <= 0 && packetPalCount > 0) {
@@ -1285,34 +1285,56 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
   }
 
   if (slotCount > 0) {
-    uint8_t r0, g0, b0;
-    uint8_t pal0 = packetPalCount > 0 ? packetPals[0] : 0;
-    if (map.colorSlotCount > 0) pal0 = map.colorSlots[0];
-    paletteToRGB(pal0, r0, g0, b0);
-    JsonArray seg = wled["seg"].to<JsonArray>();
-    if (seg.isNull() || seg.size() == 0) {
-      seg = wled.createNestedArray("seg");
-      seg.add<JsonObject>();
-    }
-    JsonObject seg0 = seg[0];
-    JsonArray col = seg0["col"].to<JsonArray>();
-    col.clear();
-    for (int i = 0; i < slotCount; i++) {
-      uint8_t pal = packetPalCount > 0 ? packetPals[i % packetPalCount] : 0;
-      if (map.colorSlotCount > 0) pal = map.colorSlots[i % map.colorSlotCount];
-      uint8_t r, g, b;
-      paletteToRGB(pal, r, g, b);
-      JsonArray rgb = col.createNestedArray();
-      rgb.add(r); rgb.add(g); rgb.add(b);
+    auto applyColorsToSeg = [&](JsonObject segObj) {
+      int stop = segObj["stop"] | 0;
+      if (stop <= 0 && (segObj["start"] | 0) >= stop) return;
+      JsonArray col = segObj["col"].to<JsonArray>();
+      col.clear();
+      for (int i = 0; i < slotCount; i++) {
+        uint8_t pal = packetPalCount > 0 ? packetPals[i % packetPalCount] : 0;
+        if (map.colorSlotCount > 0) pal = map.colorSlots[i % map.colorSlotCount];
+        uint8_t r, g, b;
+        paletteToRGB(pal, r, g, b);
+        JsonArray rgb = col.createNestedArray();
+        rgb.add(r); rgb.add(g); rgb.add(b);
+      }
+    };
+
+    JsonArray segs = wled["seg"].as<JsonArray>();
+    if (!segs.isNull() && segs.size() > 0) {
+      bool touched = false;
+      for (JsonObject segObj : segs) {
+        int stop = segObj["stop"] | 0;
+        if (stop <= 0) continue;
+        applyColorsToSeg(segObj);
+        touched = true;
+      }
+      if (!touched) applyColorsToSeg(segs[0]);
+    } else {
+      JsonArray col = wled["col"].to<JsonArray>();
+      col.clear();
+      for (int i = 0; i < slotCount; i++) {
+        uint8_t pal = packetPalCount > 0 ? packetPals[i % packetPalCount] : 0;
+        if (map.colorSlotCount > 0) pal = map.colorSlots[i % map.colorSlotCount];
+        uint8_t r, g, b;
+        paletteToRGB(pal, r, g, b);
+        JsonArray rgb = col.createNestedArray();
+        rgb.add(r); rgb.add(g); rgb.add(b);
+      }
     }
   }
 
   String wledJson;
   serializeJson(wled, wledJson);
-  sendToWLEDForBleEffect(wledJson);
+  ensureWledPowerOn();
+  disableAllSplitSegments();
+  delay(80);
+  String payload = preparePresetApplyPayload(wledJson);
+  bool ok = sendToWLED(injectWledTransition(payload, bleEffectTransitionMs), 8000, 2);
+  if (!ok) return false;
   setOverride(src);
   touchOverrideIdleTimer(src);
-  Serial.printf("[BLE] Preset %s + %d color slot(s) (fx preserved)\n", presetId.c_str(), slotCount);
+  Serial.printf("[BLE] Preset %s + %d color slot(s) (full apply)\n", presetId.c_str(), slotCount);
   return true;
 }
 

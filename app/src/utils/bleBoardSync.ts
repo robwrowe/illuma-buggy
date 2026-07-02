@@ -276,3 +276,55 @@ export function fetchWledSegmentsFromDevice(timeoutMs = 8000): Promise<WledSegme
     bleService.sendGetState();
   });
 }
+
+export interface LiveWledSummary {
+  on: boolean;
+  fx: number | null;
+  pal: number | null;
+  activeSegCount: number;
+}
+
+function parseLiveWledSummary(state: Record<string, unknown>): LiveWledSummary {
+  const segs = Array.isArray(state.seg) ? state.seg : [];
+  const active = segs.filter((s: Record<string, unknown>) => {
+    const stop = Number(s.stop ?? 0);
+    const start = Number(s.start ?? 0);
+    return stop > start && s.on !== false;
+  });
+  const primary = (active[0] ?? segs[0] ?? state) as Record<string, unknown>;
+  const fx = primary.fx != null ? Number(primary.fx) : (state.fx != null ? Number(state.fx) : null);
+  const pal = primary.pal != null ? Number(primary.pal) : (state.pal != null ? Number(state.pal) : null);
+  return {
+    on: state.on !== false,
+    fx,
+    pal,
+    activeSegCount: active.length > 0 ? active.length : (segs.length > 0 ? 1 : 0),
+  };
+}
+
+/** On-demand WLED state snapshot (fx / palette / segment count) — not polled continuously. */
+export function fetchLiveWledSummary(timeoutMs = 10_000): Promise<LiveWledSummary> {
+  return new Promise((resolve, reject) => {
+    if (!bleService.isConnected()) {
+      reject(new Error('Not connected'));
+      return;
+    }
+    const timer = setTimeout(() => {
+      unsub();
+      reject(new Error('Timed out waiting for WLED state'));
+    }, timeoutMs);
+    const unsub = bleService.onMessage((msg: BLEMessage) => {
+      if (msg.type !== 'wled_state_done') return;
+      clearTimeout(timer);
+      unsub();
+      try {
+        const raw = (msg.raw as string) ?? (msg.data as string) ?? '{}';
+        const state = JSON.parse(raw) as Record<string, unknown>;
+        resolve(parseLiveWledSummary(state));
+      } catch {
+        reject(new Error('Invalid WLED state JSON'));
+      }
+    });
+    bleService.sendGetState();
+  });
+}

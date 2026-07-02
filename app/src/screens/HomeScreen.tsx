@@ -28,7 +28,7 @@ import { useBLE } from "../hooks/useBLE";
 import { useBoardSync } from "../hooks/useBoardSync";
 import { useAppStore } from "../stores/store";
 import { bleService } from "../services/BLEService";
-import { applyPresetToBoard } from "../utils/bleBoardSync";
+import { applyPresetToBoard, fetchLiveWledSummary, type LiveWledSummary } from "../utils/bleBoardSync";
 import { formatSyncStatusLabel } from "../utils/boardSyncState";
 import { requestFullBoardSync } from "../utils/connectBootstrap";
 import { useTheme } from "../utils/theme";
@@ -75,6 +75,8 @@ export default function HomeScreen() {
     recallState,
     customSegmentLayouts,
     setShowInstanceOverride,
+    wledEffects,
+    wledPalettes,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
@@ -82,6 +84,9 @@ export default function HomeScreen() {
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
   const [firingZone, setFiringZone] = useState(false);
   const [runningShowPhase, setRunningShowPhase] = useState<string | null>(null);
+  const [liveWled, setLiveWled] = useState<LiveWledSummary | null>(null);
+  const [liveWledLoading, setLiveWledLoading] = useState(false);
+  const [liveWledError, setLiveWledError] = useState<string | null>(null);
 
   const { shows: parkShows, fetchError: parkShowsError } = useParkShows(
     activePark,
@@ -211,7 +216,32 @@ export default function HomeScreen() {
   const clearEffect = () => {
     bleService.sendOverrideClear();
     setOverrideDetail(null);
+    setLiveWled(null);
   };
+
+  const refreshLiveWled = async () => {
+    if (!isConnected || !isSessionReady) {
+      Alert.alert("Not ready", "Connect and wait for board sync before fetching live state.");
+      return;
+    }
+    setLiveWledLoading(true);
+    setLiveWledError(null);
+    try {
+      const summary = await fetchLiveWledSummary();
+      setLiveWled(summary);
+    } catch (e) {
+      setLiveWledError(e instanceof Error ? e.message : "Fetch failed");
+    } finally {
+      setLiveWledLoading(false);
+    }
+  };
+
+  const liveWledLabel = (() => {
+    if (!liveWled) return null;
+    const fxName = liveWled.fx != null ? (wledEffects[liveWled.fx] ?? `fx ${liveWled.fx}`) : "—";
+    const palName = liveWled.pal != null ? (wledPalettes[liveWled.pal] ?? `pal ${liveWled.pal}`) : "—";
+    return `${liveWled.on ? "On" : "Off"} · ${fxName} · ${palName} · ${liveWled.activeSegCount} seg(s)`;
+  })();
 
   const handleFireZone = async () => {
     if (!isConnected || firingZone) return;
@@ -545,7 +575,21 @@ export default function HomeScreen() {
 
       {/* Current Mode */}
       <View style={s.card}>
-        <Text style={s.label}>Current Effect</Text>
+        <View style={s.row}>
+          <Text style={s.label}>Current Effect</Text>
+          <TouchableOpacity
+            style={s.liveFetchBtn}
+            onPress={() => void refreshLiveWled()}
+            disabled={!isConnected || liveWledLoading}
+          >
+            {liveWledLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <IconRefresh size={14} color={colors.primary} />
+            )}
+            <Text style={s.liveFetchBtnText}>Live</Text>
+          </TouchableOpacity>
+        </View>
         {deviceStatus ? (
           <>
             <View style={s.row}>
@@ -574,6 +618,12 @@ export default function HomeScreen() {
             <Text style={s.effectText}>
               {effectDescription ?? (isConnected ? "Waiting for status…" : "Not connected")}
             </Text>
+            {liveWledLabel && (
+              <Text style={s.subText}>WLED: {liveWledLabel}</Text>
+            )}
+            {liveWledError && (
+              <Text style={[s.subText, { color: colors.danger }]}>{liveWledError}</Text>
+            )}
             {currentPreset && overrideIndex <= 2 && (
               <Text style={s.subText}>Preset: {currentPreset.name}</Text>
             )}
@@ -729,6 +779,17 @@ const styles = (
       backgroundColor: c.primary + "14",
     },
     syncBtnText: { color: c.primary, fontSize: 13, fontWeight: "600" },
+    liveFetchBtn: {
+      marginLeft: "auto",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      paddingVertical: 4,
+      paddingHorizontal: 8,
+      borderRadius: 8,
+      backgroundColor: c.primary + "14",
+    },
+    liveFetchBtnText: { color: c.primary, fontSize: 12, fontWeight: "600" },
     card: {
       backgroundColor: c.surface,
       borderRadius: 12,

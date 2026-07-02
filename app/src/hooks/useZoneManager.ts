@@ -8,11 +8,13 @@ import { bleService } from '../services/BLEService';
 import { triggerZonePreset } from '../utils/bleBoardSync';
 
 /** Foreground + zone triggers enabled */
-const GPS_ACTIVE_MS = 8000;
-const GPS_ACTIVE_M  = 12;
+const GPS_ACTIVE_MS = 5000;
+const GPS_ACTIVE_M  = 8;
 /** Foreground + zone triggers paused — still need indoor/brightness */
 const GPS_IDLE_MS   = 30000;
 const GPS_IDLE_M    = 25;
+/** Min gap before re-sending the same zone preset (e.g. BLE reconnect while still in zone) */
+const ZONE_REAPPLY_MS = 45_000;
 
 const BRIGHTNESS_RAMP_MS = 2000;
 
@@ -27,6 +29,7 @@ function watchOptions(zonesEnabled: boolean): Location.LocationOptions {
 export function useZoneManager() {
   const currentZoneRef     = useRef<Zone | null>(null);
   const pendingZoneRef     = useRef<Zone | null>(null);
+  const lastZoneApplyRef   = useRef<{ zoneId: string; at: number } | null>(null);
   const isIndoorRef        = useRef(false);
   const lastBrightnessRef  = useRef<number | null>(null);
   const brightnessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -64,12 +67,24 @@ export function useZoneManager() {
       if (bleService.isSessionReady()) bleService.sendBrightness(value);
     };
 
-    const applyZoneEntry = (matchedZone: Zone) => {
+    const shouldApplyZone = (zone: Zone, force: boolean): boolean => {
+      if (force) return true;
+      const last = lastZoneApplyRef.current;
+      if (!last || last.zoneId !== zone.id) return true;
+      return Date.now() - last.at >= ZONE_REAPPLY_MS;
+    };
+
+    const applyZoneEntry = (matchedZone: Zone, opts?: { force?: boolean }) => {
       if (!matchedZone.presetId) {
         console.log('[Zone] Entered (boundary only):', matchedZone.name);
         return;
       }
-      console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
+      if (!shouldApplyZone(matchedZone, opts?.force ?? false)) {
+        console.log('[Zone] Skipping re-apply (throttled):', matchedZone.name);
+        return;
+      }
+      console.log('[Zone] Applying:', matchedZone.name, 'preset:', matchedZone.presetId);
+      lastZoneApplyRef.current = { zoneId: matchedZone.id, at: Date.now() };
       const s = useAppStore.getState();
       const preset = s.presets.find(p => p.id === matchedZone.presetId);
       if (preset) {
@@ -84,7 +99,17 @@ export function useZoneManager() {
       if (!pending || !bleService.isSessionReady()) return;
       pendingZoneRef.current = null;
       currentZoneRef.current = pending;
-      applyZoneEntry(pending);
+      applyZoneEntry(pending, { force: true });
+    };
+
+    const reapplyCurrentZoneOnConnect = () => {
+      const zone = currentZoneRef.current;
+      if (!zone?.presetId || !zonesEnabledRef.current) return;
+      if (!bleService.isSessionReady()) {
+        pendingZoneRef.current = zone;
+        return;
+      }
+      applyZoneEntry(zone, { force: false });
     };
 
     const handleLocation = (pt: LatLng) => {
@@ -130,13 +155,29 @@ export function useZoneManager() {
           pendingZoneRef.current = matchedZone;
           return;
         }
-        applyZoneEntry(matchedZone);
+        applyZoneEntry(matchedZone, { force: true });
       } else if (prevZone) {
         pendingZoneRef.current = null;
+        lastZoneApplyRef.current = null;
         console.log('[Zone] Left all zones');
         if (prevZone.presetId && bleService.isSessionReady()) {
           bleService.sendOverrideClear();
         }
+      }
+    };
+
+    const refreshLocationNow = async () => {
+      if (!permissionGranted) return;
+      try {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        handleLocation({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        });
+      } catch (e) {
+        console.warn('[Zone] getCurrentPosition failed:', e);
       }
     };
 
@@ -155,6 +196,7 @@ export function useZoneManager() {
         }
         permissionGranted = true;
       }
+      await refreshLocationNow();
       watchSub = await Location.watchPositionAsync(
         watchOptions(zonesEnabledRef.current),
         (loc) => handleLocation({
@@ -171,12 +213,20 @@ export function useZoneManager() {
 
     startWatch();
 
-    const sessionSub = bleService.onSessionReady(() => flushPendingZone());
+    const sessionSub = bleService.onSessionReady(async () => {
+      await refreshLocationNow();
+      flushPendingZone();
+      reapplyCurrentZoneOnConnect();
+    });
 
     const appStateSub = AppState.addEventListener('change', (next) => {
       appState = next;
-      if (next === 'active') startWatch();
-      else stopWatch();
+      if (next === 'active') {
+        startWatch();
+        void refreshLocationNow();
+      } else {
+        stopWatch();
+      }
     });
 
     const storeSub = useAppStore.subscribe((state, prev) => {
