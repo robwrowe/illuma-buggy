@@ -32,6 +32,7 @@ import { useTheme } from "../utils/theme";
 import { useNavigation } from "@react-navigation/native";
 import { PresetPickerModal } from "./MbMappingSections";
 import { useParkShows, formatShowStatus } from "../hooks/useParkShows";
+import { runShowPhase, stopShowMode } from "../services/showControl";
 
 const OVERRIDE_LABELS = [
   "—",
@@ -58,10 +59,6 @@ export default function HomeScreen() {
     activeZoneIds,
     zonesEnabled,
     setZonesEnabled,
-    customPalettes,
-    paletteSets,
-    activePaletteSetId,
-    setActivePaletteSet,
     saveToStorage,
     overrideDetail,
     setOverrideDetail,
@@ -71,24 +68,55 @@ export default function HomeScreen() {
     setFtbPresetId,
     bleEffectTransitionMs,
     activePark,
+    recallState,
+    customSegmentLayouts,
+    setShowInstanceOverride,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
   const [events, setEvents] = useState<string[]>([]);
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
   const [firingZone, setFiringZone] = useState(false);
+  const [runningShowPhase, setRunningShowPhase] = useState<string | null>(null);
 
   const { shows: parkShows, fetchError: parkShowsError } = useParkShows(
     activePark,
     isConnected,
   );
 
-  // Request status immediately on connect, then every 5s
+  const runPhase = async (
+    show: (typeof parkShows)[0],
+    phase: "pre" | "live" | "post",
+  ) => {
+    if (!isConnected) return;
+    const key = `${show.id}:${phase}`;
+    setRunningShowPhase(key);
+    try {
+      await runShowPhase(
+        show.binding,
+        phase,
+        presets,
+        recallState,
+        customSegmentLayouts,
+        bleEffectTransitionMs,
+      );
+    } finally {
+      setRunningShowPhase(null);
+    }
+  };
+
+  // Request status after session bootstrap, then every 5s
   useEffect(() => {
     if (!isConnected) return;
-    bleService.sendStatus();
-    const interval = setInterval(() => bleService.sendStatus(), 5000);
-    return () => clearInterval(interval);
+    const poll = () => {
+      if (bleService.isSessionReady()) bleService.sendStatus();
+    };
+    const unsubReady = bleService.onSessionReady(poll);
+    const interval = setInterval(poll, 5000);
+    return () => {
+      unsubReady();
+      clearInterval(interval);
+    };
   }, [isConnected]);
 
   // Sync slider with device
@@ -201,25 +229,6 @@ export default function HomeScreen() {
     } finally {
       setFiringZone(false);
     }
-  };
-
-  // Push active palette set to WLED
-  const activateSet = (setId: string | null) => {
-    setActivePaletteSet(setId);
-    saveToStorage();
-    if (!setId || !isConnected) return;
-
-    const ps = paletteSets.find((p) => p.id === setId);
-    if (!ps) return;
-
-    // Custom palettes must be uploaded to WLED as /paletteN.json (web tool → Palettes → ↑ WLED).
-    // Palette set order is stored here; WLED slot + palette # live on each CustomPalette after sync.
-    const count = ps.paletteIds.length;
-    Alert.alert(
-      "Palette Set Selected",
-      `“${ps.name}” has ${count} palette${count !== 1 ? "s" : ""}. ` +
-        "Sync them to WLED from the web config tool (Palettes tab → ↑ WLED) while on StrollerNet, then presets using those palettes will apply correctly.",
-    );
   };
 
   return (
@@ -351,53 +360,60 @@ export default function HomeScreen() {
           {parkShowsError ? (
             <Text style={s.subText}>{parkShowsError}</Text>
           ) : parkShows.length === 0 ? (
-            <Text style={s.subText}>No shows within the next hour</Text>
+            <Text style={s.subText}>
+              No assigned shows in window — configure under Settings → Park Shows
+            </Text>
           ) : (
             parkShows.map((show) => (
               <View key={show.id} style={s.showRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={s.zoneName}>{show.name}</Text>
                   <Text style={s.subText}>{formatShowStatus(show)}</Text>
-                </View>
-                {show.isFireworks && isConnected && (
-                  <View style={s.showBtnRow}>
-                    <TouchableOpacity
-                      style={s.showMiniBtn}
-                      onPress={() =>
-                        bleService.sendShowModeEnter("fireworks", "pre")
-                      }
-                    >
-                      <Text style={s.showMiniBtnText}>Pre</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={s.showMiniBtn}
-                      onPress={() =>
-                        bleService.sendShowModeEnter("fireworks", "black")
-                      }
-                    >
-                      <Text style={s.showMiniBtnText}>Black</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={s.showMiniBtn}
-                      onPress={() => bleService.sendShowModeExit()}
-                    >
-                      <Text
-                        style={[s.showMiniBtnText, { color: colors.danger }]}
-                      >
-                        End
-                      </Text>
-                    </TouchableOpacity>
+                  <View style={s.autoRow}>
+                    <Text style={s.autoLabel}>Auto pre/post</Text>
+                    <Switch
+                      value={!show.autoStartDisabled}
+                      onValueChange={(v) => {
+                        setShowInstanceOverride(show.id, { autoStartDisabled: !v });
+                        saveToStorage();
+                      }}
+                      trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                      thumbColor="#fff"
+                      disabled={show.binding.autoStartDisabled}
+                    />
                   </View>
-                )}
-                {!show.isFireworks && isConnected && (
-                  <TouchableOpacity
-                    style={s.showMiniBtn}
-                    onPress={() =>
-                      bleService.sendShowModeEnter("parade", "live")
-                    }
-                  >
-                    <Text style={s.showMiniBtnText}>Show</Text>
-                  </TouchableOpacity>
+                </View>
+                {isConnected && (
+                  <View style={s.showControls}>
+                    <View style={s.showBtnRow}>
+                      {(["pre", "live", "post"] as const).map((phase) => (
+                        <TouchableOpacity
+                          key={phase}
+                          style={s.showMiniBtn}
+                          disabled={runningShowPhase === `${show.id}:${phase}`}
+                          onPress={() => runPhase(show, phase)}
+                        >
+                          {runningShowPhase === `${show.id}:${phase}` ? (
+                            <ActivityIndicator size="small" color={colors.primary} />
+                          ) : (
+                            <Text style={s.showMiniBtnText}>
+                              {phase === "live" ? "Start" : phase === "pre" ? "Pre" : "Post"}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <View style={s.showBtnRow}>
+                      <TouchableOpacity
+                        style={[s.showMiniBtn, s.showStopBtn]}
+                        onPress={() => void stopShowMode()}
+                      >
+                        <Text style={[s.showMiniBtnText, { color: colors.danger }]}>
+                          Stop
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 )}
               </View>
             ))
@@ -489,59 +505,6 @@ export default function HomeScreen() {
         )}
       </View>
 
-      {/* Parade show controls */}
-      {isConnected && (
-        <View style={s.card}>
-          <Text style={s.label}>Parade Control</Text>
-          {deviceStatus?.showType === "parade" && deviceStatus.showPhase && (
-            <Text
-              style={[s.subText, { color: colors.primary, marginBottom: 4 }]}
-            >
-              Active: {deviceStatus.showPhase}
-            </Text>
-          )}
-          <View style={s.paradeRow}>
-            <TouchableOpacity
-              style={[
-                s.paradeBtn,
-                deviceStatus?.showType === "parade" &&
-                  deviceStatus?.showPhase === "black" &&
-                  s.paradeBtnActive,
-              ]}
-              disabled={
-                !isConnected ||
-                (deviceStatus?.showType === "parade" &&
-                  deviceStatus?.showPhase === "black")
-              }
-              onPress={() => bleService.sendShowModeEnter("parade", "black")}
-            >
-              <Text style={s.paradeBtnText}>Black Cue</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                s.paradeBtn,
-                deviceStatus?.showType === "parade" &&
-                  deviceStatus?.showPhase === "live" &&
-                  s.paradeBtnActive,
-              ]}
-              disabled={!isConnected}
-              onPress={() => bleService.sendShowModeEnter("parade", "live")}
-            >
-              <Text style={s.paradeBtnText}>Show Look</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.paradeBtn, s.paradeBtnEnd]}
-              disabled={!isConnected || deviceStatus?.showType !== "parade"}
-              onPress={() => bleService.sendShowModeEnter("parade", "post")}
-            >
-              <Text style={[s.paradeBtnText, { color: colors.danger }]}>
-                End Parade
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
       {/* Active Zones */}
       <View style={s.card}>
         <View style={s.row}>
@@ -577,59 +540,6 @@ export default function HomeScreen() {
           })
         )}
       </View>
-
-      {/* Palette Sets */}
-      {paletteSets.length > 0 && (
-        <View style={s.card}>
-          <Text style={s.label}>Palette Set</Text>
-          <Text style={s.subText}>
-            Push a custom palette set to the device for this park
-          </Text>
-          <View style={s.setRow}>
-            <TouchableOpacity
-              style={[
-                s.setChip,
-                activePaletteSetId === null && s.setChipActive,
-              ]}
-              onPress={() => activateSet(null)}
-            >
-              <Text
-                style={[
-                  s.setChipText,
-                  activePaletteSetId === null && { color: colors.primary },
-                ]}
-              >
-                Default
-              </Text>
-            </TouchableOpacity>
-            {paletteSets.map((ps) => (
-              <TouchableOpacity
-                key={ps.id}
-                style={[
-                  s.setChip,
-                  activePaletteSetId === ps.id && s.setChipActive,
-                ]}
-                onPress={() => activateSet(ps.id)}
-              >
-                <Text
-                  style={[
-                    s.setChipText,
-                    activePaletteSetId === ps.id && { color: colors.primary },
-                  ]}
-                >
-                  {ps.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          {activePaletteSetId && (
-            <Text style={[s.subText, { color: colors.success }]}>
-              ✓ {paletteSets.find((p) => p.id === activePaletteSetId)?.name}{" "}
-              active
-            </Text>
-          )}
-        </View>
-      )}
 
       {/* Brightness */}
       <View style={s.card}>
@@ -825,20 +735,31 @@ const styles = (
     quickGear: { position: "absolute", top: 4, right: 4, padding: 4 },
     showRow: {
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       gap: 8,
-      paddingVertical: 6,
+      paddingVertical: 10,
       borderTopWidth: 1,
       borderTopColor: c.border,
     },
+    showControls: { gap: 4, alignItems: "flex-end" },
+    autoRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginTop: 6,
+    },
+    autoLabel: { fontSize: 11, color: c.textMuted },
     showBtnRow: { flexDirection: "row", gap: 4 },
     showMiniBtn: {
       paddingHorizontal: 8,
-      paddingVertical: 4,
+      paddingVertical: 6,
       borderRadius: 6,
       borderWidth: 1,
       borderColor: c.border,
       backgroundColor: c.surfaceAlt,
+      minWidth: 44,
+      alignItems: "center",
     },
+    showStopBtn: { borderColor: c.danger + "66" },
     showMiniBtnText: { fontSize: 10, fontWeight: "600", color: c.textPrimary },
   });

@@ -28,6 +28,13 @@ export interface CustomColor {
   r: number; g: number; b: number; // 0-255
 }
 
+export interface SavedColor {
+  id: string;
+  name: string;
+  hex: string;
+  tags?: string[];
+}
+
 export interface CustomPalette {
   id:     string;
   name:   string;
@@ -142,17 +149,25 @@ import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
   finalizeWledSegmentPayload,
 } from '../utils/segmentLayouts';
-import { normalizeZonePolygon } from '../utils/utils';
-import { generateId } from '../utils/utils';
+import { normalizeZonePolygon, generateId } from '../utils/utils';
+import {
+  DEFAULT_SHOW_SETTINGS,
+  normalizeShowBinding,
+  buildLegacyShowModeConfig,
+  type ParkShowBinding,
+  type ShowSettings,
+  type ShowInstanceOverride,
+} from '../utils/showBindings';
 import { ensureMbSegmentLayouts } from '../utils/configMigration';
 import type { WledSegRef } from '../utils/mbConfig';
 
 export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
 export {
-  buildLayoutPayload, summarizeLayout, fetchWledSegmentsFromDevice,
+  buildLayoutPayload, summarizeLayout,
   normalizeSegmentDef, parseWledStateSegments, buildRecalledSegmentsFromPreset,
   finalizeWledSegmentPayload,
 } from '../utils/segmentLayouts';
+export { fetchWledSegmentsFromDevice } from '../utils/bleBoardSync';
 
 export type { ParkConfig, ShowModeConfig, MbSegmentLayout } from '../utils/configMigration';
 export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
@@ -183,6 +198,10 @@ interface AppState {
 
   // Custom palettes
   customPalettes:      CustomPalette[];
+  savedColors:         SavedColor[];
+  addSavedColor:       (c: SavedColor) => void;
+  updateSavedColor:    (id: string, patch: Partial<SavedColor>) => void;
+  removeSavedColor:    (id: string) => void;
   addCustomPalette:    (p: CustomPalette) => void;
   updateCustomPalette: (id: string, p: Partial<CustomPalette>) => void;
   removeCustomPalette: (id: string) => void;
@@ -277,6 +296,13 @@ interface AppState {
   // v3.0 config (migration defaults; full UI in later sections)
   showModeConfig: ShowModeConfig;
   setShowModeConfig: (config: Partial<ShowModeConfig>) => void;
+  showBindings: ParkShowBinding[];
+  showSettings: ShowSettings;
+  showInstanceOverrides: Record<string, ShowInstanceOverride>;
+  upsertShowBinding: (binding: ParkShowBinding) => void;
+  removeShowBinding: (id: string) => void;
+  setShowSettings: (patch: Partial<ShowSettings>) => void;
+  setShowInstanceOverride: (instanceId: string, patch: Partial<ShowInstanceOverride>) => void;
   ftbPresetId: string;
   setFtbPresetId: (id: string) => void;
   wandLab: WandLabConfig;
@@ -359,6 +385,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   wledPalettes:        [],
   wledFxData:          [],
   customPalettes:      [],
+  savedColors:         [],
   paletteSets:         [],
   activePaletteSetId:  null,
   customSegmentLayouts: [],
@@ -390,6 +417,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   parks:                  [],
   activePark:             null,
   showModeConfig:         DEFAULT_SHOW_MODE,
+  showBindings:           [],
+  showSettings:           { ...DEFAULT_SHOW_SETTINGS },
+  showInstanceOverrides:  {},
   ftbPresetId:            '',
   wandLab:                DEFAULT_WAND_LAB,
   mbSegmentLayouts:       [],
@@ -453,7 +483,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     zones: s.zones.map(z => z.parkId === id ? { ...z, parkId: undefined } : z),
     indoorZones: s.indoorZones.map(z => z.parkId === id ? { ...z, parkId: undefined } : z),
   })),
-  setActivePark: (activePark) => set({ activePark }),
+  setActivePark: (activePark) => set(s => {
+    if (s.activePark?.id === activePark?.id) return s;
+    return {
+      activePark,
+      showModeConfig: buildLegacyShowModeConfig(s.showBindings, activePark?.id),
+    };
+  }),
 
   setShowModeConfig: (patch) => set(s => ({
     showModeConfig: {
@@ -463,6 +499,35 @@ export const useAppStore = create<AppState>((set, get) => ({
       fireworks: { ...s.showModeConfig.fireworks, ...(patch.fireworks ?? {}) },
     },
   })),
+
+  upsertShowBinding: (binding) => set(s => {
+    const next = s.showBindings.filter(b => b.id !== binding.id);
+    next.push(binding);
+    return {
+      showBindings: next,
+      showModeConfig: buildLegacyShowModeConfig(next, s.activePark?.id),
+    };
+  }),
+
+  removeShowBinding: (id) => set(s => {
+    const next = s.showBindings.filter(b => b.id !== id);
+    return {
+      showBindings: next,
+      showModeConfig: buildLegacyShowModeConfig(next, s.activePark?.id),
+    };
+  }),
+
+  setShowSettings: (patch) => set(s => ({
+    showSettings: { ...s.showSettings, ...patch },
+  })),
+
+  setShowInstanceOverride: (instanceId, patch) => set(s => ({
+    showInstanceOverrides: {
+      ...s.showInstanceOverrides,
+      [instanceId]: { ...s.showInstanceOverrides[instanceId], ...patch },
+    },
+  })),
+
   setFtbPresetId: (ftbPresetId) => set({ ftbPresetId }),
 
   // WLED cache
@@ -474,6 +539,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   addCustomPalette:    (p)     => set(s => ({ customPalettes: [...s.customPalettes, p] })),
   updateCustomPalette: (id, p) => set(s => ({ customPalettes: s.customPalettes.map(cp => cp.id === id ? { ...cp, ...p } : cp) })),
   removeCustomPalette: (id)    => set(s => ({ customPalettes: s.customPalettes.filter(cp => cp.id !== id) })),
+
+  addSavedColor:    (c)     => set(s => ({ savedColors: [...s.savedColors, c] })),
+  updateSavedColor: (id, p) => set(s => ({ savedColors: s.savedColors.map(c => c.id === id ? { ...c, ...p } : c) })),
+  removeSavedColor: (id)    => set(s => ({ savedColors: s.savedColors.filter(c => c.id !== id) })),
 
   // Palette sets
   addPaletteSet:    (ps)    => set(s => ({ paletteSets: [...s.paletteSets, ps] })),
@@ -616,8 +685,9 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
-                    'customPalettes','paletteSets','activePaletteSetId',
-                    'customSegmentLayouts','parks','showModeConfig','ftbPresetId','wandLab',
+                    'customPalettes','savedColors','paletteSets','activePaletteSetId',
+                    'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
+                    'showInstanceOverrides','ftbPresetId','wandLab',
                     'mbSegmentLayouts','mbActiveSegmentLayoutId',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
@@ -644,6 +714,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         mbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     (d.customPalettes ?? []).map((p: CustomPalette) => normalizeCustomPalette(p)),
+        savedColors:        d.savedColors ?? [],
         paletteSets:        (d.paletteSets ?? []).map((s: PaletteSet) => normalizePaletteSet(s)),
         activePaletteSetId: d.activePaletteSetId ?? null,
         customSegmentLayouts: (d.customSegmentLayouts ?? [])
@@ -658,6 +729,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         parks:              d.parks              ?? [],
         activePark:         null,
         showModeConfig:     d.showModeConfig     ?? DEFAULT_SHOW_MODE,
+        showBindings:       Array.isArray(d.showBindings)
+          ? d.showBindings.map((b: ParkShowBinding) => normalizeShowBinding(b, d.showSettings ?? DEFAULT_SHOW_SETTINGS)).filter(Boolean) as ParkShowBinding[]
+          : [],
+        showSettings:       { ...DEFAULT_SHOW_SETTINGS, ...(d.showSettings ?? {}) },
+        showInstanceOverrides: d.showInstanceOverrides ?? {},
         ftbPresetId:        d.ftbPresetId        ?? '',
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
         mbSegmentLayouts:   (mbBoot.mbSegmentLayouts as MbSegmentLayout[]) ?? [],
@@ -684,6 +760,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['mbMapping',          JSON.stringify(s.mbMapping)],
         ['recallState',        JSON.stringify(s.recallState)],
         ['customPalettes',     JSON.stringify(s.customPalettes)],
+        ['savedColors',        JSON.stringify(s.savedColors)],
         ['paletteSets',        JSON.stringify(s.paletteSets)],
         ['activePaletteSetId', JSON.stringify(s.activePaletteSetId)],
         ['customSegmentLayouts', JSON.stringify(s.customSegmentLayouts)],
@@ -695,6 +772,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['bleCaptureDraftName',   JSON.stringify(s.bleCaptureDraftName)],
         ['parks',              JSON.stringify(s.parks)],
         ['showModeConfig',     JSON.stringify(s.showModeConfig)],
+        ['showBindings',       JSON.stringify(s.showBindings)],
+        ['showSettings',       JSON.stringify(s.showSettings)],
+        ['showInstanceOverrides', JSON.stringify(s.showInstanceOverrides)],
         ['ftbPresetId',        s.ftbPresetId],
         ['wandLab',            JSON.stringify(s.wandLab)],
         ['mbSegmentLayouts',   JSON.stringify(s.mbSegmentLayouts)],
@@ -775,9 +855,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleEffectTransitionMs: s.bleEffectTransitionMs,
       mbMapping:          s.mbMapping,
       bleCaptureSessions: s.bleCaptureSessions,
-      customPalettes: s.customPalettes, paletteSets: s.paletteSets,
+      customPalettes: s.customPalettes, savedColors: s.savedColors, paletteSets: s.paletteSets,
       customSegmentLayouts: s.customSegmentLayouts,
-      parks: s.parks, showModeConfig: s.showModeConfig, ftbPresetId: s.ftbPresetId, wandLab: s.wandLab,
+      parks: s.parks, showModeConfig: s.showModeConfig,
+      showBindings: s.showBindings, showSettings: s.showSettings,
+      showInstanceOverrides: s.showInstanceOverrides,
+      ftbPresetId: s.ftbPresetId, wandLab: s.wandLab,
       mbSegmentLayouts: s.mbSegmentLayouts, mbActiveSegmentLayoutId: s.mbActiveSegmentLayoutId,
     };
   },
@@ -802,6 +885,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureDurationSec: m.bleCaptureDurationSec ?? data.bleCaptureDurationSec ?? 900,
       bleCaptureDraftName:   m.bleCaptureDraftName   ?? data.bleCaptureDraftName   ?? 'Parade capture',
       customPalettes:     m.customPalettes     ?? [],
+      savedColors:        m.savedColors        ?? [],
       paletteSets:        m.paletteSets        ?? [],
       customSegmentLayouts: (m.customSegmentLayouts ?? [])
         .map((l: CustomSegmentLayout) => normalizeSegmentLayout(l))
@@ -809,6 +893,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       parks:              (m.parks as ParkConfig[]) ?? [],
       activePark:         null,
       showModeConfig:     (m.showModeConfig as ShowModeConfig) ?? DEFAULT_SHOW_MODE,
+      showBindings:       Array.isArray(m.showBindings)
+        ? (m.showBindings as ParkShowBinding[]).map(b => normalizeShowBinding(b, (m.showSettings as ShowSettings) ?? DEFAULT_SHOW_SETTINGS)).filter(Boolean) as ParkShowBinding[]
+        : [],
+      showSettings:       { ...DEFAULT_SHOW_SETTINGS, ...((m.showSettings as ShowSettings) ?? {}) },
+      showInstanceOverrides: (m.showInstanceOverrides as Record<string, ShowInstanceOverride>) ?? {},
       ftbPresetId:        (m.ftbPresetId as string) ?? '',
       wandLab:            (m.wandLab as WandLabConfig) ?? DEFAULT_WAND_LAB,
       mbSegmentLayouts:   (m.mbSegmentLayouts as MbSegmentLayout[]) ?? [],

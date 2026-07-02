@@ -26,6 +26,7 @@ function watchOptions(zonesEnabled: boolean): Location.LocationOptions {
 
 export function useZoneManager() {
   const currentZoneRef     = useRef<Zone | null>(null);
+  const pendingZoneRef     = useRef<Zone | null>(null);
   const isIndoorRef        = useRef(false);
   const lastBrightnessRef  = useRef<number | null>(null);
   const brightnessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,7 +61,26 @@ export function useZoneManager() {
     const sendBrightnessIfChanged = (value: number) => {
       if (lastBrightnessRef.current === value) return;
       lastBrightnessRef.current = value;
-      bleService.sendBrightness(value);
+      if (bleService.isSessionReady()) bleService.sendBrightness(value);
+    };
+
+    const applyZoneEntry = (matchedZone: Zone) => {
+      console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
+      const s = useAppStore.getState();
+      const preset = s.presets.find(p => p.id === matchedZone.presetId);
+      if (preset) {
+        void triggerZonePreset(preset, s.recallState, s.customSegmentLayouts);
+      } else {
+        bleService.sendZoneTrigger(matchedZone.presetId);
+      }
+    };
+
+    const flushPendingZone = () => {
+      const pending = pendingZoneRef.current;
+      if (!pending || !bleService.isSessionReady()) return;
+      pendingZoneRef.current = null;
+      currentZoneRef.current = pending;
+      applyZoneEntry(pending);
     };
 
     const handleLocation = (pt: LatLng) => {
@@ -73,7 +93,11 @@ export function useZoneManager() {
       const setActive       = setActiveZoneIdsRef.current;
 
       setUserLocationRef.current(pt);
-      setActivePark(resolveActivePark(pt, parks, zones, indoorZones));
+      const resolvedPark = resolveActivePark(pt, parks, zones, indoorZones);
+      const currentParkId = useAppStore.getState().activePark?.id;
+      if (resolvedPark?.id !== currentParkId) {
+        setActivePark(resolvedPark);
+      }
 
       const activeIds = zones.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
       setActive(activeIds);
@@ -98,17 +122,15 @@ export function useZoneManager() {
       if (matchedZone?.id === prevZone?.id) return;
       currentZoneRef.current = matchedZone ?? null;
       if (matchedZone) {
-        console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
-        const s = useAppStore.getState();
-        const preset = s.presets.find(p => p.id === matchedZone.presetId);
-        if (preset) {
-          void triggerZonePreset(preset, s.recallState, s.customSegmentLayouts);
-        } else {
-          bleService.sendZoneTrigger(matchedZone.presetId);
+        if (!bleService.isSessionReady()) {
+          pendingZoneRef.current = matchedZone;
+          return;
         }
+        applyZoneEntry(matchedZone);
       } else if (prevZone) {
+        pendingZoneRef.current = null;
         console.log('[Zone] Left all zones');
-        bleService.sendOverrideClear();
+        if (bleService.isSessionReady()) bleService.sendOverrideClear();
       }
     };
 
@@ -143,6 +165,8 @@ export function useZoneManager() {
 
     startWatch();
 
+    const sessionSub = bleService.onSessionReady(() => flushPendingZone());
+
     const appStateSub = AppState.addEventListener('change', (next) => {
       appState = next;
       if (next === 'active') startWatch();
@@ -157,6 +181,7 @@ export function useZoneManager() {
 
     return () => {
       stopWatch();
+      sessionSub();
       appStateSub.remove();
       storeSub();
       if (brightnessTimerRef.current) clearTimeout(brightnessTimerRef.current);

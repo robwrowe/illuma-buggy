@@ -16,6 +16,7 @@ import IconUpload from '@tabler/icons-react-native/dist/esm/icons/IconUpload';
 
 import { useAppStore, RecallState, RecallValue } from '../stores/store';
 import { MbMappingSections, PresetPickerModal } from './MbMappingSections';
+import ShowsScreen from './ShowsScreen';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
 import { useTheme, ThemeMode } from '../utils/theme';
@@ -307,6 +308,15 @@ export default function SettingsScreen() {
           Same presets as GPS zones. Set a default, then per-effect overrides under Starlight / MagicBand tabs.
         </Text>
         <MbMappingSections colors={colors} isConnected={isConnected} />
+      </View>
+
+      {/* Park shows */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Park Shows</Text>
+        <Text style={s.sectionHint}>
+          Assign pre-show, in-show, and post-show presets to parades and fireworks per park.
+        </Text>
+        <ShowsScreen />
       </View>
 
       {/* Brightness */}

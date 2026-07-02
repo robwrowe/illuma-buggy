@@ -2,11 +2,21 @@
  * WLED segment layout library — reusable multi-segment configs for presets.
  */
 
-import { bleService, BLEMessage } from '../services/BLEService';
-
 /** Match firmware STRIP_LED_COUNT — full strip when applying single-segment presets. */
 export const STRIP_LED_COUNT = 100;
 export const WLED_MAX_SEG = 16;
+
+/** Five corners on one strip need spc >= 5 — with spc=4, of=4 wraps to the same LEDs as of=0. */
+export function effectiveFiveCornerSpc(
+  ref: { start: number; stop: number; spc?: number },
+  cornerCount = 5,
+): number {
+  const spc = ref.spc ?? 0;
+  if (spc > 0 && ref.start === 0 && ref.stop >= STRIP_LED_COUNT && cornerCount >= 5 && spc < cornerCount) {
+    return cornerCount;
+  }
+  return spc;
+}
 
 export interface WledSegmentDef {
   id: number;
@@ -283,28 +293,3 @@ export function buildPresetLayoutPayload(
   return null;
 }
 
-export function fetchWledSegmentsFromDevice(timeoutMs = 8000): Promise<WledSegmentDef[]> {
-  return new Promise((resolve, reject) => {
-    if (!bleService.isConnected()) {
-      reject(new Error('Not connected'));
-      return;
-    }
-    const timer = setTimeout(() => {
-      unsub();
-      reject(new Error('Timed out waiting for WLED state'));
-    }, timeoutMs);
-    const unsub = bleService.onMessage((msg: BLEMessage) => {
-      if (msg.type !== 'wled_state_done') return;
-      clearTimeout(timer);
-      unsub();
-      try {
-        const raw = (msg.raw as string) ?? (msg.data as string) ?? '{}';
-        const state = JSON.parse(raw);
-        resolve(parseWledStateSegments(state));
-      } catch {
-        reject(new Error('Invalid WLED state JSON'));
-      }
-    });
-    bleService.sendGetState();
-  });
-}

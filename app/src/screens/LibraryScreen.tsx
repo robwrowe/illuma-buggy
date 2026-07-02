@@ -3,11 +3,12 @@
  * Browse WLED effects and palettes, preview live, save as presets.
  */
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   TextInput, Switch, ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
@@ -97,8 +98,15 @@ export default function LibraryScreen() {
 
   // Auto-load catalog when connected and cache is empty
   useEffect(() => {
-    if (isConnected && wledEffects.length === 0) fetchAll();
-  }, [isConnected, wledEffects.length, fetchAll]);
+    if (isConnected && wledEffects.length === 0 && wledPalettes.length === 0) fetchAll();
+  }, [isConnected, wledEffects.length, wledPalettes.length, fetchAll]);
+
+  // Refetch when tab is focused and catalog is still empty
+  useFocusEffect(
+    useCallback(() => {
+      if (isConnected && wledEffects.length === 0) fetchAll();
+    }, [isConnected, wledEffects.length, fetchAll]),
+  );
 
   // Clear loading spinner when background fetch completes (handled in App.tsx → store)
   useEffect(() => {
@@ -239,7 +247,9 @@ export default function LibraryScreen() {
                 ? <Text style={s.hint}>Refreshing from device…</Text>
                 : <Text style={s.hint}>
                     {isConnected
-                      ? (wledEffects.length === 0 ? 'Tap ↻ to load from WLED' : 'No results')
+                      ? ((tab === 'effects' ? wledEffects.length : wledPalettes.length) === 0
+                        ? 'Tap ↻ to load from WLED'
+                        : 'No results')
                       : 'Connect to IllumaBuggy first'}
                   </Text>}
             </View>

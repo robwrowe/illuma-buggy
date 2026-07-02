@@ -6,7 +6,8 @@
 import { BleManager, Device, State } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid } from 'react-native';
 import base64 from 'base64-js';
-import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks, clearBoardPresetSyncCache } from '../utils/bleBoardSync';
+import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from '../utils/bleChunking';
+import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
 import type { MbSegmentLayout } from '../utils/configMigration';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
@@ -27,6 +28,7 @@ export type ConnectionState = 'disconnected' | 'scanning' | 'connecting' | 'conn
 export type BLEMessage       = Record<string, unknown>;
 export type MessageHandler   = (msg: BLEMessage) => void;
 export type StateHandler     = (state: ConnectionState) => void;
+export type SessionReadyHandler = () => void;
 
 function strToBase64(str: string): string {
   return base64.fromByteArray(new TextEncoder().encode(str));
@@ -48,6 +50,8 @@ class BLEService {
   private sendQueue:      { msg: BLEMessage; resolve: (ok: boolean) => void }[] = [];
   private sendRunning     = false;
   private handlingDisconnect = false;
+  private sessionReady    = false;
+  private readyHandlers:  Set<SessionReadyHandler> = new Set();
 
   private static readonly CHUNKED_TYPES: Record<string, string> = {
     'preset_chunk':  'preset_list_raw',
@@ -72,6 +76,18 @@ class BLEService {
   }
   getConnectionState(): ConnectionState { return this.connState; }
   isConnected(): boolean { return this.connState === 'connected'; }
+  isSessionReady(): boolean { return this.connState === 'connected' && this.sessionReady; }
+
+  onSessionReady(handler: SessionReadyHandler): () => void {
+    this.readyHandlers.add(handler);
+    if (this.isSessionReady()) handler();
+    return () => this.readyHandlers.delete(handler);
+  }
+
+  markSessionReady(ready: boolean) {
+    this.sessionReady = ready;
+    if (ready) this.readyHandlers.forEach(h => h());
+  }
 
   async connect(): Promise<void> {
     console.log('[BLE] connect() called');
@@ -119,7 +135,7 @@ class BLEService {
       const { msg, resolve } = this.sendQueue.shift()!;
       resolve(await this.sendImmediate(msg));
       if (this.sendQueue.length > 0) {
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 350));
       }
     }
     this.sendRunning = false;
@@ -235,9 +251,10 @@ class BLEService {
   sendBleEffectConfig(transitionMs: number) {
     return this.send({ type: 'ble_effect_config', transition_ms: transitionMs });
   }
-  sendMbConfig(enabled: boolean, fivePoint: boolean, timeoutMs?: number) {
+  sendMbConfig(enabled: boolean, fivePoint: boolean, timeoutMs?: number, deferToApp?: boolean) {
     const msg: BLEMessage = { type: 'mb_config', enabled, five_point: fivePoint };
     if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;
+    if (deferToApp !== undefined) msg.defer_to_app = deferToApp;
     return this.send(msg);
   }
   sendSwConfig(enabled: boolean, timeoutMs?: number) {
@@ -349,6 +366,7 @@ class BLEService {
       if (!ready) throw new Error('GATT not ready');
 
       this.device = discovered;
+      this.markSessionReady(false);
       this.setConnState('connected');
       console.log('[BLE] Connected');
     } catch (e) {
@@ -361,6 +379,7 @@ class BLEService {
   private handleDisconnect() {
     if (this.handlingDisconnect) return;
     this.handlingDisconnect = true;
+    this.markSessionReady(false);
     clearBoardPresetSyncCache();
     this.device = null;
     this.notifyBuffer = '';

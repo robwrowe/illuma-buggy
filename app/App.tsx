@@ -22,9 +22,9 @@ import IconDroplet from "@tabler/icons-react-native/dist/esm/icons/IconDroplet";
 import IconBolt from "@tabler/icons-react-native/dist/esm/icons/IconBolt";
 
 import { bleService } from "./src/services/BLEService";
-import { useAppStore, mbMappingToBlePayload } from "./src/stores/store";
-import { pushHeavyBoardConfig } from "./src/utils/bleBoardSync";
+import { useAppStore } from "./src/stores/store";
 import { applyParsedE9Mapping } from "./src/utils/e9MbEffect";
+import { runConnectBootstrap, cancelConnectBootstrap } from "./src/utils/connectBootstrap";
 import { useZoneManager } from "./src/hooks/useZoneManager";
 import { useTheme, useThemeStore } from "./src/utils/theme";
 
@@ -202,6 +202,19 @@ export default function App() {
           len: msg.len as number,
         });
       }
+      if (msg.type === "ble_e9") {
+        const hex = String(msg.hex ?? "");
+        if (hex.length > 0 && bleService.isConnected()) {
+          const s = useAppStore.getState();
+          void applyParsedE9Mapping(
+            hex,
+            s.mbMapping,
+            s.presets,
+            s.recallState,
+            s.customSegmentLayouts,
+          );
+        }
+      }
       if (msg.type === "unknown_anim") {
         appendBleCapturePacket({
           boardTs: msg.ts as number,
@@ -253,44 +266,19 @@ export default function App() {
       }
     });
 
-    const unsubState = bleService.onStateChange(async (state) => {
-      if (state !== "connected") return;
-      const s = useAppStore.getState();
-      const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-      await delay(400);
-      if (!bleService.isConnected()) return;
-      await bleService.sendSwConfig(
-        s.starlightEnabled,
-        s.starlightTimeoutSec * 1000,
+    const unsubState = bleService.onStateChange((state) => {
+      if (state !== "connected") {
+        cancelConnectBootstrap();
+        return;
+      }
+      void runConnectBootstrap().catch((e) =>
+        console.warn("[App] Connect bootstrap failed:", e),
       );
-      await delay(200);
-      await bleService.sendMbConfig(
-        s.magicBandEnabled,
-        s.magicBandFivePoint,
-        s.magicBandTimeoutSec * 1000,
-      );
-      await delay(200);
-      await bleService.sendBleEffectConfig(s.bleEffectTransitionMs);
-      await delay(200);
-      await bleService.sendPresetList();
-
-      // Defer large mapping/layout payloads so the link stays up.
-      setTimeout(() => {
-        if (!bleService.isConnected()) return;
-        pushHeavyBoardConfig(
-          mbMappingToBlePayload(s.mbMapping),
-          s.mbSegmentLayouts,
-          s.mbActiveSegmentLayoutId,
-          s.showModeConfig,
-        ).catch((e) =>
-          console.warn("[App] Deferred board config push failed:", e),
-        );
-      }, 5000);
     });
 
     bleService.connect();
     return () => {
+      cancelConnectBootstrap();
       unsub();
       unsubState();
     };

@@ -148,6 +148,7 @@ String currentPresetId   = "";
 bool          starlightEnabled    = true;
 unsigned long starlightTimeoutMs  = 15000;  // ms before wand effect auto-clears (0 = never)
 bool          magicBandEnabled    = true;
+bool          mbDeferToApp        = false;  // when true + app connected, forward E9 to app (off = firmware applies)
 bool          magicBandFivePoint  = true;   // true = 4 corners + center, false = 4 corners only
 unsigned long magicBandTimeoutMs  = 15000;  // ms before MB override auto-clears (0 = never)
 unsigned long bleEffectTransitionMs = 700;  // fade in/out for MB+SW effects (0 = instant)
@@ -1116,16 +1117,43 @@ void disableAllSplitSegments() {
   sendToWLED(body, 3000, 1);
 }
 
+bool isFiveCornerSegKey(const char* key) {
+  return strcmp(key, "topLeft") == 0 || strcmp(key, "bottomLeft") == 0 ||
+         strcmp(key, "bottomRight") == 0 || strcmp(key, "topRight") == 0 ||
+         strcmp(key, "center") == 0;
+}
+
+bool isFiveCornerBatch(const char* keys[], int n) {
+  if (n != 5) return false;
+  for (int i = 0; i < 5; i++) {
+    if (!isFiveCornerSegKey(keys[i])) return false;
+  }
+  return true;
+}
+
+bool isFullStripInterleaveRef(const WledSegRef& ref) {
+  return ref.spc > 0 && ref.start == 0 && ref.stop >= STRIP_LED_COUNT;
+}
+
+// Five corners on one strip need spc >= 5 — with spc=4, of=4 wraps to the same LEDs as of=0.
+uint8_t effectiveInterleaveSpc(const WledSegRef& ref, uint8_t corners) {
+  if (!isFullStripInterleaveRef(ref)) return ref.spc;
+  if (corners >= 5 && ref.spc < corners) return corners;
+  return ref.spc;
+}
+
 void appendWledSolidSeg(String& body, const WledSegRef& ref,
-                        uint8_t r, uint8_t g, uint8_t b, bool& first) {
+                        uint8_t r, uint8_t g, uint8_t b, bool& first, uint8_t spcOverride = 0) {
   if (ref.stop <= ref.start) return;
   if (!first) body += ",";
   first = false;
   int fx = ref.fx >= 0 ? ref.fx : 0;
+  uint8_t spc = spcOverride > 0 ? spcOverride : ref.spc;
   body += "{\"id\":" + String(ref.id) + ",\"start\":" + String(ref.start) + ",\"stop\":" + String(ref.stop)
-       + ",\"grp\":" + String(ref.grp) + ",\"spc\":" + String(ref.spc)
+       + ",\"grp\":" + String(ref.grp) + ",\"spc\":" + String(spc)
        + ",\"of\":" + String(ref.of) + ",\"rev\":" + String(ref.rev ? "true" : "false")
        + ",\"mi\":" + String(ref.mi ? "true" : "false")
+       + ",\"on\":true"
        + ",\"fx\":" + String(fx) + ",\"sx\":" + String(ref.sx) + ",\"ix\":" + String(ref.ix);
   if (ref.pal >= 0) body += ",\"pal\":" + String(ref.pal);
   body += ",\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
@@ -1183,6 +1211,7 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
     if (si < 0) continue;
     collectActiveSegIds(activeMbSegMap(si), activeIds, activeCount);
   }
+  bool fiveCorners = isFiveCornerBatch(segKeys, n);
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
   // Zone presets use segment 0 full-strip — disable before split layout.
@@ -1194,7 +1223,9 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
     paletteToRGB(pals[i], r, g, b);
     MbSegMap& siMap = activeMbSegMap(si);
     for (uint8_t j = 0; j < siMap.count; j++) {
-      appendWledSolidSeg(body, siMap.refs[j], r, g, b, first);
+      const WledSegRef& ref = siMap.refs[j];
+      uint8_t spc = fiveCorners ? effectiveInterleaveSpc(ref, 5) : 0;
+      appendWledSolidSeg(body, ref, r, g, b, first, spc);
     }
   }
   body += "]}";
@@ -1339,6 +1370,13 @@ uint16_t swPayloadFuncCode(const uint8_t* payload, size_t plen) {
     return ((uint16_t)payload[0] << 8) | payload[1];
   }
   return 0;
+}
+
+void notifyMbE9ToApp(const uint8_t* payload, size_t plen) {
+  if (!bleConnected) return;
+  bleNotify("{\"type\":\"ble_e9\",\"hex\":\"" + mfrToHexFull(payload, plen, 64) +
+            "\",\"len\":" + String(plen) +
+            ",\"ts\":" + String(millis()) + "}");
 }
 
 void notifyUnknownAnimation(const uint8_t* payload, size_t plen, SwMatchQuality quality, uint16_t func) {
@@ -1616,8 +1654,12 @@ String prepareWledRestorePayload(const String& json) {
   return buildWledRestorePayload(normalized);
 }
 
-bool restoreWledSnapshot(const String& json, unsigned long fadeMs) {
+bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBlackFirst = false) {
   if (json.length() == 0) return false;
+  if (dipToBlackFirst && fadeMs > 0) {
+    sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+    delay(fadeMs + 100);
+  }
   disableAllSplitSegments();
   String payload = injectWledTransition(buildWledRestorePayload(json), fadeMs);
   return sendToWLED(payload, 8000, 2);
@@ -1717,9 +1759,10 @@ void clearOverride() {
 
   Serial.println("[Override] Cleared");
 
+  bool dipToBlack = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) && fadeMs > 0;
   bool restored = false;
   if (snapshot.length() > 0) {
-    restored = restoreWledSnapshot(prepareWledRestorePayload(snapshot), fadeMs);
+    restored = restoreWledSnapshot(prepareWledRestorePayload(snapshot), fadeMs, dipToBlack);
     if (restored) {
       Serial.printf("[Override] Restored snapshot (%u bytes)\n", (unsigned)snapshot.length());
     } else {
@@ -1727,6 +1770,10 @@ void clearOverride() {
     }
   }
   if (!restored && presetId.length() > 0) {
+    if (dipToBlack) {
+      sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+      delay(fadeMs + 100);
+    }
     restored = restorePresetWithTransition(presetId, fadeMs);
     if (restored) {
       Serial.printf("[Override] Restored preset: %s\n", presetId.c_str());
@@ -2117,15 +2164,18 @@ void handleBLECommand(const String& msg) {
     if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
     if (doc.containsKey("five_point")) magicBandFivePoint = doc["five_point"].as<bool>();
     if (doc.containsKey("timeout_ms")) magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
+    if (doc.containsKey("defer_to_app")) mbDeferToApp = doc["defer_to_app"].as<bool>();
     prefs.begin("config", false);
     prefs.putBool("mbEn", magicBandEnabled);
     prefs.putBool("mb5pt", magicBandFivePoint);
     prefs.putULong("mbTimeout", magicBandTimeoutMs);
+    prefs.putBool("mbDefer", mbDeferToApp);
     prefs.end();
     String ack = "{\"type\":\"ack\",\"action\":\"mb_config\","
                  "\"enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
                  "\"five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
-                 "\"timeout_ms\":" + String(magicBandTimeoutMs) + "}";
+                 "\"timeout_ms\":" + String(magicBandTimeoutMs) + ","
+                 "\"defer_to_app\":" + String(mbDeferToApp ? "true" : "false") + "}";
     bleNotify(ack);
   }
 
@@ -2572,6 +2622,15 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
   uint16_t func = ((uint16_t)payload[2] << 8) | payload[3];
   Serial.printf("[MB+] func=0x%04X len=%u\n", func, (unsigned)plen);
 
+  if (mbDeferToApp && bleConnected && magicBandEnabled && payload[2] == 0xE9) {
+    if (!canTakeOverride(BLE_MAGIC)) return;
+    rememberMbEffect(payload, plen);
+    notifyMbE9ToApp(payload, plen);
+    touchOverrideIdleTimer(BLE_MAGIC);
+    Serial.println("[MB+] defer to app");
+    return;
+  }
+
   switch (func) {
     case 0xE905:
       if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
@@ -2771,6 +2830,46 @@ void processSerialCommands() {
     Serial.println("  tx cast <0-31>   — broadcast WAND-CAST for 3s");
     Serial.println("  chase speed <0-255>   — MB chase sx (0 = static)");
     Serial.println("  chase thick <1-50>    — MB chase grp (pixels per block)");
+    Serial.println("  mb five <tl bl br tr c>  — E909 five corners (palette 0-31)");
+    Serial.println("  mb <palette> [mask]      — E905 single color (mask 0 = all)");
+    Serial.println("  mb defer on|off          — forward E9 to app vs firmware apply");
+  } else if (line == "mb defer on") {
+    mbDeferToApp = true;
+    prefs.begin("config", false);
+    prefs.putBool("mbDefer", true);
+    prefs.end();
+    Serial.println("[Serial] MB defer to app ON");
+  } else if (line == "mb defer off") {
+    mbDeferToApp = false;
+    prefs.begin("config", false);
+    prefs.putBool("mbDefer", false);
+    prefs.end();
+    Serial.println("[Serial] MB defer to app OFF (firmware applies)");
+  } else if (line.startsWith("mb five")) {
+    int vals[5] = { 0, 0, 0, 0, 0 };
+    int count = 0;
+    int pos = 7;
+    while (pos < (int)line.length() && count < 5) {
+      while (pos < (int)line.length() && line.charAt(pos) == ' ') pos++;
+      if (pos >= (int)line.length()) break;
+      int sp = pos;
+      while (pos < (int)line.length() && line.charAt(pos) != ' ') pos++;
+      vals[count++] = line.substring(sp, pos).toInt();
+    }
+    if (count < 5) {
+      Serial.println("[Serial] Usage: mb five <tl bl br tr c>  (palette indices 0-31)");
+    } else {
+      Serial.printf("[Serial] MB five %d %d %d %d %d\n", vals[0], vals[1], vals[2], vals[3], vals[4]);
+      applyMbFive((uint8_t)vals[0], (uint8_t)vals[1], (uint8_t)vals[2], (uint8_t)vals[3], (uint8_t)vals[4], BLE_MAGIC);
+    }
+  } else if (line.startsWith("mb ")) {
+    int sp = line.indexOf(' ', 3);
+    uint8_t pal = (uint8_t)line.substring(3, sp > 0 ? sp : line.length()).toInt();
+    uint8_t mask = 0;
+    if (sp > 0) mask = (uint8_t)line.substring(sp + 1).toInt();
+    Serial.printf("[Serial] MB single pal=%u mask=%u\n", pal, mask);
+    if (mask == 0) applyMbSegmentSolid("all", pal, BLE_MAGIC);
+    else applyMbSingleMask(mask, pal, BLE_MAGIC);
   } else if (line == "tx on") {
     wandTxBeacon = true;
     wandTxLastAdvMs = 0;
@@ -2874,6 +2973,7 @@ void setup() {
   starlightEnabled    = prefs.getBool("swEn", true);
   starlightTimeoutMs  = prefs.getULong("swTimeout", 15000);
   magicBandEnabled    = prefs.getBool("mbEn", true);
+  mbDeferToApp        = prefs.getBool("mbDefer", false);
   magicBandFivePoint  = prefs.getBool("mb5pt", true);
   overrideKillOnZone  = prefs.getBool("killOnZone", false);
   magicBandTimeoutMs  = prefs.getULong("mbTimeout", 15000);

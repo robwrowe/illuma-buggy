@@ -40,6 +40,7 @@ const BLE_TABS: { id: BleTab; label: string }[] = [
 
 export function PresetPickerModal({
   visible, title, presets, selectedId, onSelect, onClose, colors, emptyLabel = 'Use default preset',
+  extraOptions,
 }: {
   visible: boolean;
   title: string;
@@ -49,6 +50,7 @@ export function PresetPickerModal({
   onClose: () => void;
   colors: Colors;
   emptyLabel?: string;
+  extraOptions?: { id: string; label: string }[];
 }) {
   const [q, setQ] = useState('');
   const filtered = presets.filter(p =>
@@ -84,6 +86,15 @@ export function PresetPickerModal({
                 {emptyLabel}
               </Text>
             </TouchableOpacity>
+            {(extraOptions ?? []).map(opt => (
+              <TouchableOpacity key={opt.id}
+                style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
+                onPress={() => { onSelect(opt.id); onClose(); }}>
+                <Text style={{ color: selectedId === opt.id ? colors.primary : colors.textPrimary, fontWeight: selectedId === opt.id ? '600' : '400' }}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
             {filtered.map(p => (
               <TouchableOpacity key={p.id}
                 style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}

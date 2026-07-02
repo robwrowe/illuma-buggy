@@ -37,3 +37,8 @@ export function extractShowtimes(liveData: { entityType?: string; showtimes?: { 
       showtimes: e.showtimes!.map(s => s.startTime),
     }));
 }
+
+export async function listParkShows(parkEntityId: string) {
+  const data = await getEntityLiveData(parkEntityId);
+  return extractShowtimes(data.liveData || []);
+}

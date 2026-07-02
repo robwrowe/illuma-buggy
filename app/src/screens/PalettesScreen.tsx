@@ -1,7 +1,5 @@
 /**
- * PalettesScreen.tsx
- * Create/edit custom color palettes and organize them into park-specific sets.
- * Sets can be pushed to WLED from the Home screen.
+ * PalettesScreen.tsx — Segment layouts + saved colors (aligned with web Palettes tab).
  */
 
 import React, { useMemo, useState } from 'react';
@@ -12,149 +10,56 @@ import {
 import IconPlus  from '@tabler/icons-react-native/dist/esm/icons/IconPlus';
 import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
 import IconPencil from '@tabler/icons-react-native/dist/esm/icons/IconPencil';
-import IconCheck from '@tabler/icons-react-native/dist/esm/icons/IconCheck';
-import IconCopy from '@tabler/icons-react-native/dist/esm/icons/IconCopy';
 
-import { TagEditor, TagFilterBar, TagChipRow, filterTaggedItems } from '../components/TagFields';
-import { duplicateCustomPalette, duplicatePaletteSet } from '../utils/tags';
-import { useAppStore, CustomPalette, PaletteSet, CustomSegmentLayout, WledSegmentDef, summarizeLayout, buildLayoutPayload, fetchWledSegmentsFromDevice } from '../stores/store';
+import { useAppStore, CustomSegmentLayout, WledSegmentDef, summarizeLayout, buildLayoutPayload, fetchWledSegmentsFromDevice } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
 import { useTheme } from '../utils/theme';
 import { generateId } from '../utils/utils';
 
-type TabType = 'palettes' | 'sets' | 'segments';
-
-const PRESET_COLORS = [
-  '#ff0000','#ff4400','#ff8800','#ffcc00','#ffff00',
-  '#88ff00','#00ff00','#00ff88','#00ffff','#0088ff',
-  '#0000ff','#8800ff','#ff00ff','#ff0088','#ffffff','#000000',
-];
+type TabType = 'segments' | 'colors';
 
 export default function PalettesScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const { isConnected } = useBLE();
   const {
-    customPalettes, addCustomPalette, updateCustomPalette, removeCustomPalette,
-    paletteSets, addPaletteSet, updatePaletteSet, removePaletteSet,
     customSegmentLayouts, addCustomSegmentLayout, updateCustomSegmentLayout, removeCustomSegmentLayout,
+    savedColors, addSavedColor, updateSavedColor, removeSavedColor,
     saveToStorage,
   } = useAppStore();
 
-  const [tab, setTab]               = useState<TabType>('palettes');
-  const [editPalette, setEditPalette] = useState<CustomPalette | null>(null);
-  const [editSet, setEditSet]         = useState<PaletteSet | null>(null);
+  const [tab, setTab]               = useState<TabType>('segments');
   const [editLayout, setEditLayout]   = useState<CustomSegmentLayout | null>(null);
+  const [editColor, setEditColor]     = useState<{ id: string; name: string; hex: string } | null>(null);
   const [capturingLayout, setCapturingLayout] = useState(false);
   const [isNew, setIsNew]             = useState(false);
   const [search, setSearch]           = useState('');
-  const [activeTag, setActiveTag]     = useState<string | null>(null);
 
-  const filteredPalettes = useMemo(
-    () => filterTaggedItems(customPalettes, search, activeTag),
-    [customPalettes, search, activeTag],
-  );
-  const filteredSets = useMemo(
-    () => filterTaggedItems(paletteSets, search, activeTag),
-    [paletteSets, search, activeTag],
+  const filteredColors = useMemo(
+    () => savedColors.filter(c =>
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      c.hex.toLowerCase().includes(search.toLowerCase()),
+    ),
+    [savedColors, search],
   );
 
-  // ── Palette editing ──
+  // ── Saved colors ──
 
-  const newPalette = (): CustomPalette => ({
-    id: generateId(), name: '', colors: ['#a78bfa', '#22c55e', '#f59e0b'], tags: [],
-  });
+  const openNewColor = () => {
+    setEditColor({ id: generateId(), name: '', hex: '#ffffff' });
+    setIsNew(true);
+  };
 
-  const openNewPalette = () => { setEditPalette(newPalette()); setIsNew(true); };
-  const openEditPalette = (p: CustomPalette) => { setEditPalette({ ...p, colors: [...p.colors] }); setIsNew(false); };
-
-  const savePalette = () => {
-    if (!editPalette) return;
-    if (!editPalette.name.trim()) { Alert.alert('Name required'); return; }
-    if (isNew) addCustomPalette(editPalette);
-    else updateCustomPalette(editPalette.id, editPalette);
+  const saveColor = () => {
+    if (!editColor?.name.trim() || !editColor.hex.match(/^#[0-9a-fA-F]{6}$/)) {
+      Alert.alert('Invalid color', 'Name and #RRGGBB hex required.');
+      return;
+    }
+    if (isNew) addSavedColor(editColor);
+    else updateSavedColor(editColor.id, editColor);
     saveToStorage();
-    setEditPalette(null);
-  };
-
-  const deletePalette = (id: string) => {
-    Alert.alert('Delete Palette', 'Delete this palette?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => {
-        removeCustomPalette(id);
-        // Remove from any sets
-        paletteSets.forEach(ps => {
-          if (ps.paletteIds.includes(id)) {
-            updatePaletteSet(ps.id, { paletteIds: ps.paletteIds.filter(pid => pid !== id) });
-          }
-        });
-        saveToStorage();
-        setEditPalette(null);
-      }},
-    ]);
-  };
-
-  const addColor = () => {
-    if (!editPalette || editPalette.colors.length >= 16) return;
-    setEditPalette({ ...editPalette, colors: [...editPalette.colors, '#ffffff'] });
-  };
-
-  const removeColor = (i: number) => {
-    if (!editPalette || editPalette.colors.length <= 2) return;
-    setEditPalette({ ...editPalette, colors: editPalette.colors.filter((_, j) => j !== i) });
-  };
-
-  const setColor = (i: number, hex: string) => {
-    if (!editPalette) return;
-    const c = [...editPalette.colors]; c[i] = hex;
-    setEditPalette({ ...editPalette, colors: c });
-  };
-
-  // ── Palette set editing ──
-
-  const duplicatePalette = (p: CustomPalette) => {
-    const copy = duplicateCustomPalette(p, generateId());
-    addCustomPalette(copy);
-    saveToStorage();
-    openEditPalette(copy);
-  };
-
-  const newSet = (): PaletteSet => ({ id: generateId(), name: '', paletteIds: [], tags: [] });
-  const duplicateSet = (ps: PaletteSet) => {
-    const copy = duplicatePaletteSet(ps, generateId());
-    addPaletteSet(copy);
-    saveToStorage();
-    openEditSet(copy);
-  };
-
-  const openNewSet = () => { setEditSet(newSet()); setIsNew(true); };
-  const openEditSet = (ps: PaletteSet) => { setEditSet({ ...ps, paletteIds: [...ps.paletteIds] }); setIsNew(false); };
-
-  const saveSet = () => {
-    if (!editSet) return;
-    if (!editSet.name.trim()) { Alert.alert('Name required'); return; }
-    if (editSet.paletteIds.length === 0) { Alert.alert('Add at least one palette'); return; }
-    if (isNew) addPaletteSet(editSet);
-    else updatePaletteSet(editSet.id, editSet);
-    saveToStorage();
-    setEditSet(null);
-  };
-
-  const togglePaletteInSet = (id: string) => {
-    if (!editSet) return;
-    const ids = editSet.paletteIds.includes(id)
-      ? editSet.paletteIds.filter(p => p !== id)
-      : [...editSet.paletteIds, id];
-    setEditSet({ ...editSet, paletteIds: ids });
-  };
-
-  const movePaletteInSet = (fromIdx: number, toIdx: number) => {
-    if (!editSet) return;
-    const ids = [...editSet.paletteIds];
-    const [item] = ids.splice(fromIdx, 1);
-    ids.splice(toIdx, 0, item);
-    setEditSet({ ...editSet, paletteIds: ids });
+    setEditColor(null);
   };
 
   // ── Segment layout editing ──
@@ -276,118 +181,54 @@ export default function PalettesScreen() {
     <View style={s.container}>
       {/* Tab bar */}
       <View style={s.tabBar}>
-        {(['palettes', 'sets', 'segments'] as TabType[]).map(t => (
+        {(['segments', 'colors'] as TabType[]).map(t => (
           <TouchableOpacity key={t} style={[s.tab, tab === t && s.tabActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabText, tab === t && s.tabTextActive]}>
-              {t === 'palettes' ? `Palettes (${customPalettes.length})`
-                : t === 'sets' ? `Sets (${paletteSets.length})`
-                : `Segments (${customSegmentLayouts.length})`}
+              {t === 'segments' ? `Segments (${customSegmentLayouts.length})` : `Colors (${savedColors.length})`}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {(tab === 'palettes' || tab === 'sets') && (customPalettes.length > 0 || paletteSets.length > 0) && (
-        <TagFilterBar
-          items={tab === 'palettes' ? customPalettes : paletteSets}
-          search={search}
-          onSearchChange={setSearch}
-          activeTag={activeTag}
-          onActiveTagChange={setActiveTag}
-          colors={colors}
-        />
-      )}
-
-      {/* Palettes tab */}
-      {tab === 'palettes' && (
-        <FlatList
-          data={filteredPalettes}
-          keyExtractor={p => p.id}
-          contentContainerStyle={s.list}
-          ListEmptyComponent={
-            <View style={s.empty}>
-              <Text style={s.emptyText}>No custom palettes yet</Text>
-              <Text style={s.hint}>Create palettes, then group them into park-specific sets</Text>
-            </View>
-          }
-          ListFooterComponent={
-            <TouchableOpacity style={s.addBtn} onPress={openNewPalette}>
-              <IconPlus size={16} color={colors.primary} />
-              <Text style={s.addBtnText}>New Palette</Text>
-            </TouchableOpacity>
-          }
-          renderItem={({ item }) => (
-            <TouchableOpacity style={s.card} onPress={() => openEditPalette(item)}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.cardTitle}>{item.name}</Text>
-                <TagChipRow tags={item.tags} colors={colors} />
-                <View style={s.swatchRow}>
-                  {item.colors.map((c, i) => (
-                    <View key={i} style={[s.swatch, { backgroundColor: c }]} />
-                  ))}
-                </View>
+      {tab === 'colors' && (
+        <>
+          <TextInput
+            style={s.search}
+            placeholder="Search saved colors…"
+            placeholderTextColor={colors.textMuted}
+            value={search}
+            onChangeText={setSearch}
+          />
+          <FlatList
+            data={filteredColors}
+            keyExtractor={c => c.id}
+            contentContainerStyle={s.list}
+            ListEmptyComponent={
+              <View style={s.empty}>
+                <Text style={s.emptyText}>No saved colors yet</Text>
+                <Text style={s.hint}>Named hex colors — same as web Palettes → Colors</Text>
               </View>
-              <TouchableOpacity onPress={() => duplicatePalette(item)} style={s.iconBtn}>
-                <IconCopy size={15} color={colors.textMuted} />
+            }
+            ListFooterComponent={
+              <TouchableOpacity style={s.addBtn} onPress={openNewColor}>
+                <IconPlus size={16} color={colors.primary} />
+                <Text style={s.addBtnText}>New Color</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => openEditPalette(item)} style={s.iconBtn}>
-                <IconPencil size={15} color={colors.textMuted} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => deletePalette(item.id)} style={s.iconBtn}>
-                <IconTrash size={15} color={colors.danger} />
-              </TouchableOpacity>
-            </TouchableOpacity>
-          )}
-        />
-      )}
-
-      {/* Sets tab */}
-      {tab === 'sets' && (
-        <FlatList
-          data={filteredSets}
-          keyExtractor={ps => ps.id}
-          contentContainerStyle={s.list}
-          ListEmptyComponent={
-            <View style={s.empty}>
-              <Text style={s.emptyText}>No palette sets yet</Text>
-              <Text style={s.hint}>Sets let you group palettes for a specific park and push them all to WLED at once from the Home screen</Text>
-            </View>
-          }
-          ListFooterComponent={
-            <TouchableOpacity style={s.addBtn} onPress={openNewSet}>
-              <IconPlus size={16} color={colors.primary} />
-              <Text style={s.addBtnText}>New Set</Text>
-            </TouchableOpacity>
-          }
-          renderItem={({ item }) => (
-            <TouchableOpacity style={s.card} onPress={() => openEditSet(item)}>
-              <View style={{ flex: 1 }}>
-                <Text style={s.cardTitle}>{item.name}</Text>
-                <TagChipRow tags={item.tags} colors={colors} />
-                <Text style={s.hint}>{item.paletteIds.length} palette{item.paletteIds.length !== 1 ? 's' : ''}</Text>
-                <View style={s.swatchRow}>
-                  {item.paletteIds.map(id => {
-                    const pal = customPalettes.find(p => p.id === id);
-                    return pal?.colors.slice(0, 4).map((c, i) => (
-                      <View key={`${id}-${i}`} style={[s.swatch, { backgroundColor: c }]} />
-                    ));
-                  })}
+            }
+            renderItem={({ item }) => (
+              <TouchableOpacity style={s.card} onPress={() => { setEditColor({ ...item }); setIsNew(false); }}>
+                <View style={[s.swatch, { backgroundColor: item.hex, width: 28, height: 28 }]} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={s.cardTitle}>{item.name}</Text>
+                  <Text style={s.hint}>{item.hex}</Text>
                 </View>
-              </View>
-              <TouchableOpacity onPress={() => duplicateSet(item)} style={s.iconBtn}>
-                <IconCopy size={15} color={colors.textMuted} />
+                <TouchableOpacity onPress={() => { removeSavedColor(item.id); saveToStorage(); }} style={s.iconBtn}>
+                  <IconTrash size={15} color={colors.danger} />
+                </TouchableOpacity>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => {
-                Alert.alert('Delete Set', `Delete "${item.name}"?`, [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => { removePaletteSet(item.id); saveToStorage(); } },
-                ]);
-              }} style={s.iconBtn}>
-                <IconTrash size={15} color={colors.danger} />
-              </TouchableOpacity>
-            </TouchableOpacity>
-          )}
-        />
+            )}
+          />
+        </>
       )}
 
       {tab === 'segments' && (
@@ -427,168 +268,26 @@ export default function PalettesScreen() {
         />
       )}
 
-      {/* Edit palette modal */}
-      <Modal visible={!!editPalette} animationType="slide" transparent>
+      {/* Edit saved color modal */}
+      <Modal visible={!!editColor} animationType="slide" transparent>
         <View style={s.overlay}>
           <View style={s.modal}>
             <ScrollView contentContainerStyle={s.modalContent}>
-              <Text style={s.modalTitle}>{isNew ? 'New Palette' : 'Edit Palette'}</Text>
-
+              <Text style={s.modalTitle}>{isNew ? 'New Color' : 'Edit Color'}</Text>
               <Text style={s.fieldLabel}>Name</Text>
-              <TextInput style={s.input} value={editPalette?.name ?? ''}
-                onChangeText={v => editPalette && setEditPalette({ ...editPalette, name: v })}
-                placeholder="e.g. Haunted Mansion" placeholderTextColor={colors.textMuted} />
-
-              {editPalette && (
-                <TagEditor
-                  tags={editPalette.tags || []}
-                  onChange={tags => setEditPalette({ ...editPalette, tags })}
-                  colors={colors}
-                />
-              )}
-
-              <Text style={s.fieldLabel}>Colors ({editPalette?.colors.length ?? 0}/16)</Text>
-
-              {/* Gradient preview */}
-              {editPalette && editPalette.colors.length >= 2 && (
-                <View style={[s.gradientPreview, {
-                  // RN doesn't support multi-stop gradients natively — show swatches instead
-                }]}>
-                  {editPalette.colors.map((c, i) => (
-                    <View key={i} style={{ flex: 1, backgroundColor: c }} />
-                  ))}
-                </View>
-              )}
-
-              <View style={s.colorGrid}>
-                {editPalette?.colors.map((c, i) => (
-                  <View key={i} style={s.colorCell}>
-                    <View style={[s.colorSwatch, { backgroundColor: c }]}>
-                      <Text style={s.colorHex}>{c}</Text>
-                    </View>
-                    {/* Quick color picker — tap preset colors */}
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
-                      {PRESET_COLORS.map(pc => (
-                        <TouchableOpacity key={pc} onPress={() => setColor(i, pc)}
-                          style={[s.presetColor, { backgroundColor: pc }, pc === c && { borderWidth: 2, borderColor: '#fff' }]} />
-                      ))}
-                    </ScrollView>
-                    {(editPalette?.colors.length ?? 0) > 2 && (
-                      <TouchableOpacity style={s.removeColorBtn} onPress={() => removeColor(i)}>
-                        <Text style={s.removeColorBtnText}>Remove</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
-              </View>
-
-              {(editPalette?.colors.length ?? 0) < 16 && (
-                <TouchableOpacity style={s.addColorBtn} onPress={addColor}>
-                  <IconPlus size={14} color={colors.primary} />
-                  <Text style={s.addColorBtnText}>Add Color</Text>
-                </TouchableOpacity>
-              )}
-
+              <TextInput style={s.input} value={editColor?.name ?? ''}
+                onChangeText={v => editColor && setEditColor({ ...editColor, name: v })}
+                placeholder="e.g. Mickey Red" placeholderTextColor={colors.textMuted} />
+              <Text style={s.fieldLabel}>Hex</Text>
+              <TextInput style={s.input} value={editColor?.hex ?? ''}
+                onChangeText={v => editColor && setEditColor({ ...editColor, hex: v })}
+                placeholder="#ff0000" placeholderTextColor={colors.textMuted} autoCapitalize="none" />
               <View style={s.modalBtns}>
-                {!isNew && (
-                  <TouchableOpacity style={[s.btn, { borderColor: colors.danger }]}
-                    onPress={() => editPalette && deletePalette(editPalette.id)}>
-                    <Text style={[s.btnText, { color: colors.danger }]}>Delete</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity style={s.btn} onPress={() => setEditPalette(null)}>
+                <TouchableOpacity style={s.btn} onPress={() => setEditColor(null)}>
                   <Text style={s.btnText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[s.btn, s.btnPrimary]} onPress={savePalette}>
+                <TouchableOpacity style={[s.btn, s.btnPrimary]} onPress={saveColor}>
                   <Text style={[s.btnText, { color: '#fff' }]}>Save</Text>
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Edit set modal */}
-      <Modal visible={!!editSet} animationType="slide" transparent>
-        <View style={s.overlay}>
-          <View style={s.modal}>
-            <ScrollView contentContainerStyle={s.modalContent}>
-              <Text style={s.modalTitle}>{isNew ? 'New Palette Set' : 'Edit Set'}</Text>
-
-              <Text style={s.fieldLabel}>Set Name</Text>
-              <TextInput style={s.input} value={editSet?.name ?? ''}
-                onChangeText={v => editSet && setEditSet({ ...editSet, name: v })}
-                placeholder="e.g. Magic Kingdom" placeholderTextColor={colors.textMuted} />
-
-              {editSet && (
-                <TagEditor
-                  tags={editSet.tags || []}
-                  onChange={tags => setEditSet({ ...editSet, tags })}
-                  colors={colors}
-                />
-              )}
-
-              <Text style={s.fieldLabel}>Palettes (tap to toggle, up to 8)</Text>
-              <Text style={s.hint}>These will be pushed to WLED slots 0-7 when you activate this set</Text>
-
-              {customPalettes.length === 0 && (
-                <Text style={[s.hint, { marginTop: 8 }]}>No palettes yet — create some in the Palettes tab first</Text>
-              )}
-
-              {customPalettes.map(p => {
-                const selected = editSet?.paletteIds.includes(p.id) ?? false;
-                const idx = editSet?.paletteIds.indexOf(p.id) ?? -1;
-                // WLED v16+ supports 100+ custom palettes - no meaningful limit needed
-                const atLimit = false;
-                return (
-                  <TouchableOpacity key={p.id}
-                    style={[s.setPaletteRow, selected && { borderColor: colors.primary, backgroundColor: colors.primaryDim }]}
-                    onPress={() => !atLimit && togglePaletteInSet(p.id)}
-                    disabled={atLimit}>
-                    <View style={s.swatchRow}>
-                      {p.colors.slice(0, 6).map((c, i) => <View key={i} style={[s.swatch, { backgroundColor: c }]} />)}
-                    </View>
-                    <Text style={[s.cardTitle, { flex: 1 }]}>{p.name}</Text>
-                    {selected && (
-                      <View style={[s.badge, { backgroundColor: colors.primary }]}>
-                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>#{idx + 1}</Text>
-                      </View>
-                    )}
-                    {selected && <IconCheck size={16} color={colors.primary} />}
-                  </TouchableOpacity>
-                );
-              })}
-
-              {(editSet?.paletteIds.length ?? 0) > 0 && (
-                <View style={{ marginTop: 8 }}>
-                  <Text style={s.fieldLabel}>Order (slot assignment)</Text>
-                  {editSet!.paletteIds.map((id, i) => {
-                    const pal = customPalettes.find(p => p.id === id);
-                    return (
-                      <View key={id} style={s.orderRow}>
-                        <Text style={[s.hint, { width: 24 }]}>#{i + 1}</Text>
-                        <View style={s.swatchRow}>
-                          {pal?.colors.slice(0, 4).map((c, j) => <View key={j} style={[s.swatch, { backgroundColor: c }]} />)}
-                        </View>
-                        <Text style={{ flex: 1, color: colors.textPrimary, fontSize: 13 }}>{pal?.name}</Text>
-                        <TouchableOpacity disabled={i === 0} onPress={() => movePaletteInSet(i, i - 1)}>
-                          <Text style={[s.orderBtn, i === 0 && { opacity: 0.3 }]}>▲</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity disabled={i === editSet!.paletteIds.length - 1} onPress={() => movePaletteInSet(i, i + 1)}>
-                          <Text style={[s.orderBtn, i === editSet!.paletteIds.length - 1 && { opacity: 0.3 }]}>▼</Text>
-                        </TouchableOpacity>
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-
-              <View style={s.modalBtns}>
-                <TouchableOpacity style={s.btn} onPress={() => setEditSet(null)}>
-                  <Text style={s.btnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.btn, s.btnPrimary]} onPress={saveSet}>
-                  <Text style={[s.btnText, { color: '#fff' }]}>Save Set</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -754,6 +453,7 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   tabActive:       { borderBottomColor: c.primary },
   tabText:         { color: c.textMuted, fontWeight: '600', fontSize: 14 },
   tabTextActive:   { color: c.primary },
+  search:          { margin: 12, backgroundColor: c.surface, borderRadius: 10, borderWidth: 1, borderColor: c.border, color: c.textPrimary, padding: 10, fontSize: 14 },
   list:            { padding: 16, gap: 10, paddingBottom: 40 },
   empty:           { alignItems: 'center', paddingVertical: 48, gap: 8 },
   emptyText:       { color: c.textPrimary, fontSize: 15, fontWeight: '500' },

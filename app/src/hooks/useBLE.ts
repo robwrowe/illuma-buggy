@@ -28,6 +28,7 @@ export function useBLE() {
   return {
     connectionState,
     isConnected: connectionState === 'connected',
+    isSessionReady: bleService.isSessionReady(),
     isScanning:  connectionState === 'scanning',
     lastMessage,
     connect,

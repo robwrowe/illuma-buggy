@@ -11,6 +11,9 @@ export interface ShowModeConfig {
   fireworks: { pre: string; live: string; post: string };
 }
 
+export type { ParkShowBinding, ShowSettings, ShowInstanceOverride } from './showBindings';
+export { DEFAULT_SHOW_SETTINGS } from './showBindings';
+
 export interface ParkConfig {
   id: string;
   name: string;

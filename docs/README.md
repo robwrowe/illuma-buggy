@@ -3,6 +3,7 @@
 | Document | Purpose |
 |----------|---------|
 | [disney-ble-protocol.md](./disney-ble-protocol.md) | **Canonical reference** — Disney `0x0183` BLE packets, palette table, E9 commands, Illuma firmware behavior |
+| [e9-parser-and-effect-mapping.md](./e9-parser-and-effect-mapping.md) | E9 parser tiers, effect-class mapping, app-side WLED routing |
 | [starlight-wand-codes.md](./starlight-wand-codes.md) | Starlight Bubble Wand packets, effects, testing |
 | [magic-band-bluetooth-codes.md](./magic-band-bluetooth-codes.md) | Archived [emcot.world](https://emcot.world/Disney_MagicBand%2B_Bluetooth_Codes) community wiki (detailed byte breakdowns) |
 
