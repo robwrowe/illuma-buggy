@@ -1,6 +1,6 @@
 # Illuma Buggy
 
-A custom LED lighting system for a Disney theme park stroller — phone-controlled effects, GPS-triggered zone presets, and MagicBand+ event reactions, built on an ESP32-S3 logic board paired with a WLED-powered LED controller.
+A custom LED lighting system for a theme park stroller — phone-controlled effects, GPS-triggered zone presets, and MagicBand+ event reactions, built on an ESP32-S3 logic board paired with a WLED-powered LED controller.
 
 This is a personal hobby project built for fun and to make theme park trips with young kids a little more magical.
 
@@ -8,8 +8,8 @@ This is a personal hobby project built for fun and to make theme park trips with
 
 Illuma Buggy is a three-part system:
 
-1. **Firmware** — a custom ESP32-S3 board running NimBLE 2.x that acts simultaneously as a BLE peripheral (for app communication) and a passive BLE scanner (for detecting MagicBand+ event packets).
-2. **LED Controller** — a GLEDOPTO ESP32 controller running [WLED](https://kno.wled.ge/) v16+, driving the physical LED strings.
+1. **Firmware** — a custom [ESP32-S3 board](https://a.co/d/0ixg0t3k) running NimBLE 2.x that acts simultaneously as a BLE peripheral (for app communication) and a passive BLE scanner (for detecting MagicBand+ event packets).
+2. **LED Controller** — a [GLEDOPTO ESP32](https://a.co/d/0g5vyauO) controller running [WLED](https://kno.wled.ge/) v16+, driving the physical LED strings.
 3. **Companion Apps** — a React Native + Expo mobile app (in progress) and a single-file React web configuration tool, both used to configure effects, palettes, GPS zones, and MagicBand+ behavior.
 
 ## Architecture
