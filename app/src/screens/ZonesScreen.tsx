@@ -929,14 +929,23 @@ const styles = (
     drawHint: { color: c.textSecondary, fontSize: 12, flex: 1 },
     activeBanner: { position: "absolute", bottom: 88, left: 16, right: 16 },
     activeBannerInner: {
-      backgroundColor: c.success + "11",
+      backgroundColor: c.success + "B3",
       borderRadius: 10,
       padding: 10,
       borderWidth: 1,
       borderColor: c.success,
     },
-    activeBannerTitle: { color: c.success, fontWeight: "700", fontSize: 13 },
-    activeBannerItem: { color: c.textPrimary, fontSize: 12, marginTop: 2 },
+    activeBannerTitle: {
+      color: c.textPrimary,
+      fontWeight: "700",
+      fontSize: 13,
+    },
+    activeBannerItem: {
+      color: c.textPrimary,
+      fontSize: 12,
+      marginTop: 2,
+      fontWeight: "700",
+    },
     pinHint: {
       position: "absolute",
       top: 12,
