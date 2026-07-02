@@ -362,6 +362,14 @@
         parade: { pre: '', live: '', post: '' },
         fireworks: { pre: '', live: '__BLACK__', post: '' },
       },
+      showBindings: [],
+      showSettings: {
+        defaultPreLeadSec: 300,
+        defaultPostDelaySec: 60,
+        defaultHomeVisibleBeforeMin: 60,
+        defaultHomeVisibleAfterMin: 15,
+      },
+      showInstanceOverrides: {},
       wandLab: { simIp: '', log: [] },
       ftbPresetId: '',
       mbMapping: null, // filled by normalizeMbMapping on load
@@ -1616,6 +1624,9 @@
       merged.indoorZones = (merged.indoorZones || []).map(normalizeZoneRecord);
       merged.parks = merged.parks || [];
       merged.showModeConfig = merged.showModeConfig || DEFAULT_DATA.showModeConfig;
+      merged.showBindings = merged.showBindings || [];
+      merged.showSettings = { ...DEFAULT_DATA.showSettings, ...(merged.showSettings || {}) };
+      merged.showInstanceOverrides = merged.showInstanceOverrides || {};
       merged.wandLab = merged.wandLab || DEFAULT_DATA.wandLab;
       if (!merged.mbSegmentLayouts?.length) {
         const id = generateId();
@@ -1675,6 +1686,16 @@
       return { ...data, parks: [] };
     }
 
+    function migrateShowBindingsDefaults(data) {
+      if (data.showBindings && data.showSettings) return data;
+      return {
+        ...data,
+        showBindings: data.showBindings || [],
+        showSettings: { ...DEFAULT_DATA.showSettings, ...(data.showSettings || {}) },
+        showInstanceOverrides: data.showInstanceOverrides || {},
+      };
+    }
+
     function migrateShowModeDefaults(data) {
       if (data.showModeConfig) return data;
       return {
@@ -1710,6 +1731,7 @@
         data = migrateSegmentMetadata(data);
         data = migrateParksGrouping(data);
         data = migrateShowModeDefaults(data);
+        data = migrateShowBindingsDefaults(data);
         data = migrateWandLabDefaults(data);
         data.version = CURRENT_VERSION;
       }
@@ -2109,6 +2131,7 @@
         { id: 'map', label: '🗺 Map & Zones' },
         { id: 'presets', label: '✨ Presets' },
         { id: 'palettes', label: '🎨 Palettes' },
+        { id: 'shows', label: '🎆 Shows' },
         { id: 'brightness', label: '💡 Brightness' },
         { id: 'wandlab', label: '🪄 Wand Lab' },
         { id: 'settings', label: '⚙️ Settings' },
@@ -2142,6 +2165,7 @@
           {tab === 'map' && <MapZonesTab data={data} update={update} mapsReady={mapsReady} />}
           {tab === 'presets' && <PresetsTab data={data} update={update} />}
           {tab === 'palettes' && <PalettesTab data={data} update={update} />}
+          {tab === 'shows' && <ShowsTab data={data} update={update} />}
           {tab === 'brightness' && <BrightnessTab data={data} update={update} />}
           {tab === 'wandlab' && <WandLabTab data={data} update={update} />}
           {tab === 'settings' && <SettingsTab data={data} update={update} />}
@@ -2213,6 +2237,57 @@
       const data = await res.json();
       themeParkDestCache = data.destinations || [];
       return themeParkDestCache;
+    }
+
+    async function fetchParkShows(parkEntityId) {
+      const res = await fetch(`${THEME_PARKS_API}/entity/${parkEntityId}/live`);
+      if (!res.ok) throw new Error('Could not load park shows');
+      const data = await res.json();
+      return (data.liveData || [])
+        .filter(e => e.entityType === 'SHOW' && e.showtimes?.length)
+        .map(e => ({ id: e.id, name: e.name }));
+    }
+
+    function inferShowKind(name) {
+      return /firework|happily ever after|enchantment|celebrat/i.test(name) ? 'fireworks' : 'parade';
+    }
+
+    function normalizeShowBinding(raw, defaults) {
+      if (!raw?.parkId || !raw.entityId || !raw.name) return null;
+      const presets = raw.presets || { pre: '', live: '', post: '' };
+      return {
+        id: raw.id || `${raw.parkId}-${raw.entityId}`,
+        parkId: raw.parkId,
+        entityId: raw.entityId,
+        name: raw.name,
+        kind: raw.kind === 'fireworks' || raw.kind === 'parade' ? raw.kind : inferShowKind(raw.name),
+        presets: { pre: presets.pre || '', live: presets.live || '', post: presets.post || '' },
+        preLeadSec: Number.isFinite(raw.preLeadSec) ? raw.preLeadSec : defaults.defaultPreLeadSec,
+        postDelaySec: Number.isFinite(raw.postDelaySec) ? raw.postDelaySec : defaults.defaultPostDelaySec,
+        homeVisibleBeforeMin: Number.isFinite(raw.homeVisibleBeforeMin)
+          ? raw.homeVisibleBeforeMin : defaults.defaultHomeVisibleBeforeMin,
+        homeVisibleAfterMin: Number.isFinite(raw.homeVisibleAfterMin)
+          ? raw.homeVisibleAfterMin : defaults.defaultHomeVisibleAfterMin,
+        autoStartDisabled: !!raw.autoStartDisabled,
+      };
+    }
+
+    function buildLegacyShowModeConfig(bindings, parkId) {
+      const parkBindings = parkId ? (bindings || []).filter(b => b.parkId === parkId) : (bindings || []);
+      const parade = parkBindings.find(b => b.kind === 'parade');
+      const fireworks = parkBindings.find(b => b.kind === 'fireworks');
+      return {
+        parade: {
+          pre: parade?.presets.pre || '',
+          live: parade?.presets.live || '',
+          post: parade?.presets.post || '',
+        },
+        fireworks: {
+          pre: fireworks?.presets.pre || '',
+          live: fireworks?.presets.live || '__BLACK__',
+          post: fireworks?.presets.post || '',
+        },
+      };
     }
 
     function parkSelectOptions(parks) {
@@ -3858,6 +3933,271 @@
           </div>
         )}
       </div>;
+    }
+
+    // ── Shows (per-park parade / fireworks bindings) ─────────────────────
+    function ShowsTab({ data, update }) {
+      const parks = data.parks || [];
+      const presets = data.presets || [];
+      const showSettings = data.showSettings || DEFAULT_DATA.showSettings;
+      const showBindings = (data.showBindings || [])
+        .map(b => normalizeShowBinding(b, showSettings))
+        .filter(Boolean);
+
+      const [selectedParkId, setSelectedParkId] = useState(parks[0]?.id || null);
+      const [apiShows, setApiShows] = useState([]);
+      const [loadingShows, setLoadingShows] = useState(false);
+      const [search, setSearch] = useState('');
+      const [editingId, setEditingId] = useState(null);
+      const [picker, setPicker] = useState(null);
+      const [showErr, setShowErr] = useState('');
+
+      const selectedPark = parks.find(p => p.id === selectedParkId) || null;
+      const parkBindings = showBindings.filter(b => b.parkId === selectedParkId);
+      const editing = editingId ? showBindings.find(b => b.id === editingId) : null;
+      const pickerBinding = picker ? showBindings.find(b => b.id === picker.bindingId) : null;
+
+      const persistBindings = (nextBindings, parkId) => {
+        update({
+          showBindings: nextBindings,
+          showModeConfig: buildLegacyShowModeConfig(nextBindings, parkId || selectedParkId),
+        });
+      };
+
+      const loadApiShows = useCallback(async () => {
+        const entityId = selectedPark?.themeParksApiEntityId;
+        if (!entityId) { setApiShows([]); return; }
+        setLoadingShows(true);
+        setShowErr('');
+        try {
+          setApiShows(await fetchParkShows(entityId));
+        } catch (e) {
+          setShowErr(String(e.message || e));
+          setApiShows([]);
+        } finally {
+          setLoadingShows(false);
+        }
+      }, [selectedPark?.themeParksApiEntityId]);
+
+      useEffect(() => { loadApiShows(); }, [loadApiShows]);
+
+      useEffect(() => {
+        if (!selectedParkId && parks[0]?.id) setSelectedParkId(parks[0].id);
+      }, [parks, selectedParkId]);
+
+      const updateBinding = (id, patch) => {
+        const cur = showBindings.find(b => b.id === id);
+        if (!cur) return;
+        const next = showBindings.map(b => {
+          if (b.id !== id) return b;
+          return normalizeShowBinding({ ...b, ...patch }, showSettings);
+        }).filter(Boolean);
+        persistBindings(next, cur.parkId);
+      };
+
+      const assignShow = (entityId, name) => {
+        if (!selectedParkId) return;
+        const existing = showBindings.find(b => b.parkId === selectedParkId && b.entityId === entityId);
+        if (existing) { setEditingId(existing.id); return; }
+        const binding = normalizeShowBinding({
+          id: generateId(),
+          parkId: selectedParkId,
+          entityId,
+          name,
+          kind: inferShowKind(name),
+          presets: { pre: '', live: '', post: '' },
+        }, showSettings);
+        if (!binding) return;
+        persistBindings([...showBindings, binding], selectedParkId);
+        setEditingId(binding.id);
+      };
+
+      const removeBinding = (id) => {
+        const b = showBindings.find(x => x.id === id);
+        if (!b || !confirm(`Remove "${b.name}"?`)) return;
+        const next = showBindings.filter(x => x.id !== id);
+        persistBindings(next, b.parkId);
+        if (editingId === id) setEditingId(null);
+      };
+
+      const filteredApi = apiShows.filter(sh =>
+        sh.name.toLowerCase().includes(search.toLowerCase()),
+      );
+
+      const phaseLabels = { pre: 'Pre-show', live: 'In-show', post: 'Post-show' };
+      const presetOpts = showModePresetOptions(presets);
+      const fwLiveOpts = showModePresetOptions(presets, true);
+
+      return (
+        <div style={{ padding: 24, maxWidth: 720, overflowY: 'auto', height: '100%' }}>
+          <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>Shows</div>
+          <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, lineHeight: 1.5 }}>
+            Assign pre/live/post presets per parade and fireworks show. Synced to the companion app via export/import.
+            Legacy <strong>showModeConfig</strong> (Settings → Show Mode) is updated from the selected park&apos;s bindings for board push.
+          </p>
+
+          <div style={cardStyle}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Default timing</div>
+            <p style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>Applied when adding a new show binding.</p>
+            {([
+              ['defaultPreLeadSec', 'Pre-show lead (sec)'],
+              ['defaultPostDelaySec', 'Post-show delay (sec)'],
+              ['defaultHomeVisibleBeforeMin', 'Home visible before (min)'],
+              ['defaultHomeVisibleAfterMin', 'Home visible after (min)'],
+            ]).map(([key, label]) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <span style={{ fontSize: 13, color: 'var(--text2)' }}>{label}</span>
+                <input type="number" value={showSettings[key]}
+                  onChange={e => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!isNaN(n)) update({ showSettings: { ...showSettings, [key]: n } });
+                  }}
+                  style={{ ...inputStyle, width: 88, textAlign: 'right' }} />
+              </div>
+            ))}
+          </div>
+
+          <div style={cardStyle}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Park</div>
+            {parks.length === 0 ? (
+              <p style={{ fontSize: 12, color: 'var(--text3)' }}>
+                Add a park on the Map tab with a themeparks.wiki entity ID first.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {parks.map(p => (
+                  <button key={p.id} type="button" onClick={() => { setSelectedParkId(p.id); setEditingId(null); }}
+                    style={btn(selectedParkId === p.id ? 'primary' : '', { fontSize: 12 })}>{p.name}</button>
+                ))}
+              </div>
+            )}
+            {selectedPark && !selectedPark.themeParksApiEntityId && (
+              <p style={{ fontSize: 12, color: 'var(--warning)', marginTop: 8 }}>
+                This park has no themeparks.wiki API ID — show search will not work.
+              </p>
+            )}
+          </div>
+
+          {selectedParkId && (<>
+            <div style={cardStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Assigned shows</div>
+                <button type="button" onClick={loadApiShows} disabled={loadingShows}
+                  style={btn('', { fontSize: 12 })}>{loadingShows ? '…' : '↻ Refresh'}</button>
+              </div>
+              {parkBindings.length === 0 ? (
+                <p style={{ fontSize: 12, color: 'var(--text3)' }}>No shows assigned yet — search below.</p>
+              ) : (
+                parkBindings.map(b => (
+                  <div key={b.id} style={{
+                    ...cardStyle, marginBottom: 8,
+                    borderColor: editingId === b.id ? 'var(--primary)' : 'var(--border)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                      <button type="button" onClick={() => setEditingId(editingId === b.id ? null : b.id)}
+                        style={{ ...btn('', { flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0 }) }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{b.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                          {b.kind} · pre {b.preLeadSec}s · post +{b.postDelaySec}s
+                        </div>
+                      </button>
+                      <button type="button" onClick={() => removeBinding(b.id)} style={btn('danger', { fontSize: 11 })}>✕</button>
+                    </div>
+                    {editingId === b.id && (
+                      <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                        {(['pre', 'live', 'post']).map(phase => (
+                          <div key={phase} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                            <span style={{ fontSize: 12, color: 'var(--text2)', width: 88 }}>{phaseLabels[phase]}</span>
+                            <button type="button" onClick={() => setPicker({ bindingId: b.id, phase })}
+                              style={btn('', { flex: 1, fontSize: 12, textAlign: 'left' })}>
+                              {showPresetLabel(presets, b.presets[phase], b.kind, phase)}
+                            </button>
+                          </div>
+                        ))}
+                        <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, marginTop: 8 }}>
+                          <span>Disable auto pre/post (all instances)</span>
+                          <input type="checkbox" checked={!!b.autoStartDisabled}
+                            onChange={e => updateBinding(b.id, { autoStartDisabled: e.target.checked })} />
+                        </label>
+                        {([
+                          ['preLeadSec', 'Pre lead (sec)'],
+                          ['postDelaySec', 'Post delay (sec)'],
+                          ['homeVisibleBeforeMin', 'Home before (min)'],
+                          ['homeVisibleAfterMin', 'Home after (min)'],
+                        ]).map(([key, label]) => (
+                          <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                            <span style={{ fontSize: 12, color: 'var(--text2)' }}>{label}</span>
+                            <input type="number" value={b[key]}
+                              onChange={e => {
+                                const n = parseInt(e.target.value, 10);
+                                if (!isNaN(n)) updateBinding(b.id, { [key]: n });
+                              }}
+                              style={{ ...inputStyle, width: 72, textAlign: 'right', fontSize: 12 }} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div style={cardStyle}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Search park shows</div>
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="Filter parades & fireworks…" style={{ ...inputStyle, marginBottom: 8 }} />
+              {showErr && <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 8 }}>{showErr}</p>}
+              {filteredApi.map(sh => {
+                const assigned = parkBindings.some(b => b.entityId === sh.id);
+                return (
+                  <div key={sh.id} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '10px 0', borderBottom: '1px solid var(--border)',
+                  }}>
+                    <span style={{ fontSize: 13 }}>{sh.name}</span>
+                    {assigned ? (
+                      <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>Assigned</span>
+                    ) : (
+                      <button type="button" onClick={() => assignShow(sh.id, sh.name)}
+                        style={btn('primary', { fontSize: 11 })}>+ Add</button>
+                    )}
+                  </div>
+                );
+              })}
+              {!loadingShows && filteredApi.length === 0 && (
+                <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>No matching shows — check API ID or refresh.</p>
+              )}
+            </div>
+          </>)}
+
+          {picker && pickerBinding && (
+            <Modal title={`${phaseLabels[picker.phase]} preset — ${pickerBinding.name}`}
+              onClose={() => setPicker(null)} width={420}>
+              <SearchableSelect
+                value={pickerBinding.presets[picker.phase] || ''}
+                onChange={v => {
+                  const presetsNext = { ...pickerBinding.presets, [picker.phase]: v };
+                  if (picker.phase === 'live' && pickerBinding.kind === 'fireworks' && !v) {
+                    presetsNext.live = '__BLACK__';
+                  }
+                  updateBinding(picker.bindingId, { presets: presetsNext });
+                  setPicker(null);
+                }}
+                placeholder={picker.phase === 'live' && pickerBinding.kind === 'fireworks' ? 'Black (strip off)' : '(none)'}
+                options={picker.phase === 'live' && pickerBinding.kind === 'fireworks' ? fwLiveOpts : presetOpts}
+                allowEmpty={!(picker.phase === 'live' && pickerBinding.kind === 'fireworks')}
+              />
+            </Modal>
+          )}
+        </div>
+      );
+    }
+
+    function showPresetLabel(presets, id, kind, phase) {
+      if (!id) return '—';
+      if (id === '__BLACK__') return 'Black (strip off)';
+      const p = presets.find(x => x.id === id);
+      return p?.name || id.slice(0, 8);
     }
 
     // ── Brightness ───────────────────────────────────────────────────────

@@ -12,7 +12,6 @@ import {
   pushMbSegmentLayoutsToBoard,
   refreshWledCatalog,
   resolveActiveLayoutIndex,
-  syncPresetsToBoard,
 } from './bleBoardSync';
 import {
   computeBoardConfigFingerprint,
@@ -247,24 +246,12 @@ async function runBackgroundSync(
 
   if (phoneCount > 0 && boardCount >= phoneCount && mode === 'quick') {
     markAllPresetsSynced(s.presets.map(p => p.id));
-  } else {
+  } else if (phoneCount > 0) {
     boardIds = await fetchBoardPresetIds(token);
     if (!bleService.isConnected() || token !== bootstrapToken) return;
     if (boardIds) {
       await syncMissingPresets(token, boardIds);
     }
-  }
-
-  if (!bleService.isConnected() || token !== bootstrapToken) return;
-
-  if (mode === 'full' && phoneCount > 0) {
-    markBoardSyncBackgroundBusy(true, 'Syncing full preset library…');
-    await syncPresetsToBoard(
-      s.presets,
-      s.customSegmentLayouts,
-      s.recallState,
-      (current, total) => setBoardSyncPresetProgress(current, total, 'Syncing full preset library…'),
-    );
   }
 
   if (!bleService.isConnected() || token !== bootstrapToken) return;
@@ -277,9 +264,10 @@ async function runBackgroundSync(
   } : undefined);
 
   markBoardSyncBackgroundBusy(false);
+  setBoardSyncPresetProgress(0, 0);
   setBoardSyncReady(mode, mode === 'quick'
     ? 'Ready — reconnected (board up to date)'
-    : 'Ready — board fully synced');
+    : 'Ready — board synced');
 }
 
 export async function runConnectBootstrap(): Promise<void> {
@@ -332,11 +320,6 @@ export async function runConnectBootstrap(): Promise<void> {
       count: status.mbLayoutCount,
     } : undefined);
     markSessionReadyAndStatus('quick', 'Ready — reconnected (board up to date)');
-    void runBackgroundSync(token, fingerprint, 'quick', {
-      needsLayout: false,
-      activeLayoutIdx: resolvedLayoutIdx,
-      status,
-    }).catch((e) => console.warn('[Bootstrap] Quick background sync failed:', e));
     return;
   }
 

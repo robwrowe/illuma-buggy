@@ -93,10 +93,17 @@ export function presetWledForBoard(
   layouts: CustomSegmentLayout[],
   recall: RecallState = BOARD_RECALL,
 ): object {
-  return finalizeWledSegmentPayload({
-    on: true,
+  const w = preset.wled ?? {};
+  const base = finalizeWledSegmentPayload({
+    on: w.on ?? true,
+    bri: w.bri,
     seg: buildRecalledSegmentsFromPreset(preset, recall, layouts, BOARD_PRESET_MEMORY),
   });
+  const out: Record<string, unknown> = { ...base };
+  if (w.bri !== undefined) out.bri = w.bri;
+  if (w.transition !== undefined) out.transition = w.transition;
+  if (w.pd !== undefined) out.pd = w.pd;
+  return out;
 }
 
 export function resolveActiveLayoutIndex(
@@ -169,17 +176,18 @@ export async function refreshWledCatalog(): Promise<void> {
 
 export { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
 
-/** Apply preset via board NVS + HTTP (small BLE command — no full wled_raw). */
+/** Apply preset — push full recalled WLED JSON (clears stale segments on firmware). */
 export async function applyPresetToBoard(
   preset: Preset,
   recall: RecallState,
   layouts: CustomSegmentLayout[],
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
+  const payload = presetWledForBoard(preset, layouts, recall);
   const saved = await ensurePresetOnBoard(preset, recall, layouts);
   if (!saved) return false;
-  const ackWait = waitForBleAck('preset_apply', preset.id, 15_000);
-  const sent = await bleService.sendPresetApply(preset.id);
+  const ackWait = waitForBleAck('wled_raw', undefined, 15_000);
+  const sent = await bleService.sendWledRaw(payload, preset.id);
   if (!sent) return false;
   return ackWait;
 }

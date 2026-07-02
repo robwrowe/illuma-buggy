@@ -654,7 +654,7 @@ bool applyPreset(const String& id) {
   currentPresetId = id;
   disableAllSplitSegments();
   delay(100);
-  String payload = prepareWledRestorePayload(wledJson);
+  String payload = preparePresetApplyPayload(wledJson);
   bool ok = sendToWLED(payload, 8000, 2);
   if (ok) {
     // Preset JSON is partial — don't overwrite full polled state used for MB restore.
@@ -1666,6 +1666,34 @@ String prepareWledRestorePayload(const String& json) {
   return buildWledRestorePayload(normalized);
 }
 
+// Append stop:0 entries for inactive segment ids so WLED does not keep stale splits lit.
+String preparePresetApplyPayload(const String& json) {
+  String restored = prepareWledRestorePayload(json);
+  DynamicJsonDocument doc(WLED_RESTORE_JSON_CAP);
+  if (deserializeJson(doc, restored) != DeserializationError::Ok) return restored;
+
+  JsonArray segs = doc["seg"].as<JsonArray>();
+  if (segs.isNull() || segs.size() == 0) return restored;
+
+  bool activeIds[MB_WLED_MAX_SEG] = {false};
+  for (JsonObject seg : segs) {
+    int id = seg["id"] | 0;
+    int start = seg["start"] | 0;
+    int stop = seg["stop"] | 0;
+    if (id >= 0 && id < MB_WLED_MAX_SEG && stop > start) activeIds[id] = true;
+  }
+  for (uint8_t id = 0; id < MB_WLED_MAX_SEG; id++) {
+    if (!activeIds[id]) {
+      JsonObject d = doc["seg"].createNestedObject();
+      d["id"] = id;
+      d["stop"] = 0;
+    }
+  }
+  String out;
+  serializeJson(doc, out);
+  return out;
+}
+
 bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBlackFirst = false) {
   if (json.length() == 0) return false;
   if (dipToBlackFirst && fadeMs > 0) {
@@ -2030,20 +2058,12 @@ void handleBLECommand(const String& msg) {
       currentPresetId = presetId;
     }
     ensureWledPowerOn();
-    // Segment geometry merges by id — clear stale splits before layout pushes.
+    // Segment geometry merges by id — clear stale splits before any seg[] payload.
     DynamicJsonDocument wdoc(2048);
     if (!deserializeJson(wdoc, wled) && wdoc.containsKey("seg")) {
-      bool hasGeometry = false;
-      for (JsonObject seg : wdoc["seg"].as<JsonArray>()) {
-        if (seg.containsKey("start") && seg.containsKey("stop") && seg["stop"].as<int>() > seg["start"].as<int>()) {
-          hasGeometry = true;
-          break;
-        }
-      }
-      if (hasGeometry) {
-        disableAllSplitSegments();
-        delay(80);
-      }
+      disableAllSplitSegments();
+      delay(80);
+      wled = preparePresetApplyPayload(wled);
     }
     bool ok = sendToWLEDForBleEffect(wled);
     if (ok) {

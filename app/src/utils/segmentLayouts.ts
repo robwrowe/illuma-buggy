@@ -205,7 +205,7 @@ export function finalizeWledSegmentPayload(payload: {
   for (let id = 1; id < WLED_MAX_SEG; id++) {
     if (!activeIds.has(id)) merged.push({ id, stop: 0, start: 0 });
   }
-  return { on: true, seg: merged };
+  return { on: payload?.on ?? true, seg: merged };
 }
 
 export function buildRecalledSegmentsFromPreset(
