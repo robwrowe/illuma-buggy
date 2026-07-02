@@ -62,11 +62,18 @@ function disableSeg(id: number) {
   return { id, stop: 0 };
 }
 
+/** Dense solid within mapped range; honor of/rev/mi for ring offset, never layout grp/spc. */
 function solidSeg(ref: WledSegRef, rgb: [number, number, number]) {
   return {
     id: ref.id,
     start: ref.start,
     stop: ref.stop,
+    grp: 1,
+    spc: 0,
+    of: ref.of ?? 0,
+    rev: ref.rev ?? false,
+    mi: ref.mi ?? false,
+    on: true,
     fx: 0,
     col: [rgb],
   };
@@ -145,6 +152,9 @@ export function buildMbSingleSegmentPreview(
 ): object {
   return buildMbSolidPreview(segments[target] ?? [], WHITE);
 }
+
+/** @deprecated alias — use buildMbSingleSegmentPreview */
+export const buildSegmentHighlightPreview = buildMbSingleSegmentPreview;
 
 export function buildFiveCornerPreview(
   segments: Record<MbSegmentId, WledSegRef[]>,

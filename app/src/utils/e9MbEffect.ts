@@ -88,15 +88,13 @@ export function buildWledFromParsedE9(
         id: r.id,
         start: r.start,
         stop: r.stop,
-        grp: r.grp ?? 1,
-        spc: r.spc ?? 0,
+        grp: 1,
+        spc: 0,
         of: r.of ?? 0,
         rev: r.rev ?? false,
         mi: r.mi ?? false,
         on: true,
-        fx: r.fx ?? 0,
-        sx: r.sx ?? 128,
-        ix: r.ix ?? 128,
+        fx: 0,
         col: [[rgb[0], rgb[1], rgb[2]]],
       });
     }

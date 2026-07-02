@@ -101,16 +101,20 @@ export async function ensureMappingPresetsOnBoard(
   }
 }
 
-/** Zone trigger — preset must exist on board NVS first. */
+/** Zone trigger — uses NVS preset when synced; falls back to full wled_raw apply. */
 export async function triggerZonePreset(
   preset: Preset,
   recall: RecallState,
   layouts: CustomSegmentLayout[],
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
-  const saved = await ensurePresetOnBoard(preset, recall, layouts);
-  if (!saved) return false;
-  return bleService.sendZoneTrigger(preset.id);
+  const saved = await ensurePresetOnBoard(preset, recall, layouts, true);
+  if (saved) {
+    const sent = await bleService.sendZoneTrigger(preset.id);
+    if (sent) return true;
+  }
+  console.warn('[Zone] preset_save or zone_trigger failed — applying wled_raw', preset.id);
+  return applyPresetToBoard(preset, recall, layouts);
 }
 
 export function presetWledForBoard(

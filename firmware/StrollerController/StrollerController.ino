@@ -1145,21 +1145,18 @@ void disableAllSplitSegments() {
   sendToWLED(body, 3000, 1);
 }
 
+// MB solids: dense fill (grp=1 spc=0); keep start/stop/of/rev/mi for physical ring layout.
 void appendWledSolidSeg(String& body, const WledSegRef& ref,
-                        uint8_t r, uint8_t g, uint8_t b, bool& first, uint8_t spcOverride = 0) {
+                        uint8_t r, uint8_t g, uint8_t b, bool& first) {
   if (ref.stop <= ref.start) return;
   if (!first) body += ",";
   first = false;
-  int fx = ref.fx >= 0 ? ref.fx : 0;
-  uint8_t spc = spcOverride > 0 ? spcOverride : ref.spc;
   body += "{\"id\":" + String(ref.id) + ",\"start\":" + String(ref.start) + ",\"stop\":" + String(ref.stop)
-       + ",\"grp\":" + String(ref.grp) + ",\"spc\":" + String(spc)
+       + ",\"grp\":1,\"spc\":0"
        + ",\"of\":" + String(ref.of) + ",\"rev\":" + String(ref.rev ? "true" : "false")
        + ",\"mi\":" + String(ref.mi ? "true" : "false")
-       + ",\"on\":true"
-       + ",\"fx\":" + String(fx) + ",\"sx\":" + String(ref.sx) + ",\"ix\":" + String(ref.ix);
-  if (ref.pal >= 0) body += ",\"pal\":" + String(ref.pal);
-  body += ",\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
+       + ",\"on\":true,\"fx\":0"
+       + ",\"col\":[[" + String(r) + "," + String(g) + "," + String(b) + "]]}";
 }
 
 MbSegMap& activeMbSegMap(int keyIdx) {
@@ -1916,11 +1913,14 @@ bool zoneWantsPreset(const String& presetId) {
     Serial.println("[Zone] Boundary-only zone (no preset)");
     return false;
   }
-  if (currentOverride != NONE && currentOverride != ZONE) {
+  if (currentOverride == BLE_STARLIGHT || currentOverride == BLE_MAGIC) {
     if (!overrideKillOnZone) {
       Serial.println("[Zone] Blocked by active override");
       return false;
     }
+    clearOverride();
+  } else if (currentOverride == MANUAL || currentOverride == SHOW_MODE) {
+    // App only sends zone_trigger when GPS zone logic should run (not during in-scope show).
     clearOverride();
   }
   setOverride(ZONE);

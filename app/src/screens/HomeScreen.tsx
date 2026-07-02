@@ -28,7 +28,11 @@ import { useBLE } from "../hooks/useBLE";
 import { useBoardSync } from "../hooks/useBoardSync";
 import { useAppStore } from "../stores/store";
 import { bleService } from "../services/BLEService";
-import { fetchLiveWledSummary, type LiveWledSummary } from "../utils/bleBoardSync";
+import {
+  applyPresetToBoard,
+  fetchLiveWledSummary,
+  type LiveWledSummary,
+} from "../utils/bleBoardSync";
 import { fireActiveZonePreset } from "../services/parkQuickActions";
 import { formatSyncStatusLabel } from "../utils/boardSyncState";
 import { requestFullBoardSync } from "../utils/connectBootstrap";
@@ -222,7 +226,10 @@ export default function HomeScreen() {
 
   const refreshLiveWled = async () => {
     if (!isConnected || !isSessionReady) {
-      Alert.alert("Not ready", "Connect and wait for board sync before fetching live state.");
+      Alert.alert(
+        "Not ready",
+        "Connect and wait for board sync before fetching live state.",
+      );
       return;
     }
     setLiveWledLoading(true);
@@ -239,12 +246,16 @@ export default function HomeScreen() {
 
   const liveWledLabel = (() => {
     if (!liveWled) return null;
-    const fxName = liveWled.fx != null
-      ? (wledEffects.find(e => e.id === liveWled.fx)?.name ?? `fx ${liveWled.fx}`)
-      : "—";
-    const palName = liveWled.pal != null
-      ? (wledPalettes.find(p => p.id === liveWled.pal)?.name ?? `pal ${liveWled.pal}`)
-      : "—";
+    const fxName =
+      liveWled.fx != null
+        ? (wledEffects.find((e) => e.id === liveWled.fx)?.name ??
+          `fx ${liveWled.fx}`)
+        : "—";
+    const palName =
+      liveWled.pal != null
+        ? (wledPalettes.find((p) => p.id === liveWled.pal)?.name ??
+          `pal ${liveWled.pal}`)
+        : "—";
     return `${liveWled.on ? "On" : "Off"} · ${fxName} · ${palName} · ${liveWled.activeSegCount} seg(s)`;
   })();
 
@@ -266,7 +277,10 @@ export default function HomeScreen() {
     try {
       const result = await fireActiveZonePreset();
       if (!result.ok) {
-        Alert.alert("Fire failed", result.message ?? "Could not apply the preset.");
+        Alert.alert(
+          "Fire failed",
+          result.message ?? "Could not apply the preset.",
+        );
       }
     } finally {
       setFiringZone(false);
@@ -365,7 +379,8 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={[
                 s.quickBtn,
-                (!fireZone?.presetId || firingZone || !isSessionReady) && s.quickBtnDisabled,
+                (!fireZone?.presetId || firingZone || !isSessionReady) &&
+                  s.quickBtnDisabled,
               ]}
               disabled={!fireZone?.presetId || firingZone || !isSessionReady}
               activeOpacity={0.6}
@@ -428,79 +443,107 @@ export default function HomeScreen() {
             <Text style={s.subText}>{parkShowsError}</Text>
           ) : parkShows.length === 0 ? (
             <Text style={s.subText}>
-              No assigned shows in window — configure under Settings → Park Shows
+              No assigned shows in window — configure under Settings → Park
+              Shows
             </Text>
           ) : (
             parkShows.map((show) => {
               const prePostOn = !show.autoPrePostDisabled;
               const liveOn = !show.autoLiveDisabled;
               return (
-              <View key={show.id} style={s.showBlock}>
-                <Text style={s.zoneName}>{show.name}</Text>
-                <Text style={s.subText}>{formatShowStatus(show)}</Text>
-                <View style={s.autoRow}>
-                  <Text style={s.autoLabel}>Auto pre/post</Text>
-                  <Switch
-                    value={prePostOn}
-                    onValueChange={(v) => {
-                      setShowInstanceOverride(show.id, { autoPrePostDisabled: !v });
-                      saveToStorage();
-                    }}
-                    trackColor={{ false: colors.borderFocus, true: colors.primary }}
-                    thumbColor="#fff"
-                  />
-                </View>
-                {show.kind === "fireworks" && (
+                <View key={show.id} style={s.showBlock}>
+                  <Text style={s.zoneName}>{show.name}</Text>
+                  <Text style={s.subText}>{formatShowStatus(show)}</Text>
                   <View style={s.autoRow}>
-                    <Text style={s.autoLabel}>Auto live</Text>
+                    <Text style={s.autoLabel}>Auto pre/post</Text>
                     <Switch
-                      value={liveOn}
+                      value={prePostOn}
                       onValueChange={(v) => {
-                        setShowInstanceOverride(show.id, { autoLiveDisabled: !v });
+                        setShowInstanceOverride(show.id, {
+                          autoPrePostDisabled: !v,
+                        });
                         saveToStorage();
                       }}
-                      trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                      trackColor={{
+                        false: colors.borderFocus,
+                        true: colors.primary,
+                      }}
                       thumbColor="#fff"
                     />
                   </View>
-                )}
-                {show.kind === "parade" && (
-                  <Text style={s.autoHint}>Parade live runs automatically at scheduled start.</Text>
-                )}
-                {isConnected && (
-                  <View style={s.showControls}>
-                    <View style={s.showBtnRow}>
-                      {(["pre", "live", "post"] as const).map((phase) => (
+                  {show.kind === "fireworks" && (
+                    <View style={s.autoRow}>
+                      <Text style={s.autoLabel}>Auto live</Text>
+                      <Switch
+                        value={liveOn}
+                        onValueChange={(v) => {
+                          setShowInstanceOverride(show.id, {
+                            autoLiveDisabled: !v,
+                          });
+                          saveToStorage();
+                        }}
+                        trackColor={{
+                          false: colors.borderFocus,
+                          true: colors.primary,
+                        }}
+                        thumbColor="#fff"
+                      />
+                    </View>
+                  )}
+                  {show.kind === "parade" && (
+                    <Text style={s.autoHint}>
+                      Parade live runs automatically at scheduled start.
+                    </Text>
+                  )}
+                  {isConnected && (
+                    <View style={s.showControls}>
+                      <View style={s.showBtnRow}>
+                        {(["pre", "live", "post"] as const).map((phase) => (
+                          <TouchableOpacity
+                            key={phase}
+                            style={s.showMiniBtn}
+                            disabled={
+                              runningShowPhase === `${show.id}:${phase}`
+                            }
+                            onPress={() => runPhase(show, phase)}
+                          >
+                            {runningShowPhase === `${show.id}:${phase}` ? (
+                              <ActivityIndicator
+                                size="small"
+                                color={colors.primary}
+                              />
+                            ) : (
+                              <Text style={s.showMiniBtnText}>
+                                {phase === "live"
+                                  ? "Start"
+                                  : phase === "pre"
+                                    ? "Pre"
+                                    : "Post"}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                      <View style={s.showBtnRow}>
                         <TouchableOpacity
-                          key={phase}
-                          style={s.showMiniBtn}
-                          disabled={runningShowPhase === `${show.id}:${phase}`}
-                          onPress={() => runPhase(show, phase)}
+                          style={[s.showMiniBtn, s.showStopBtn]}
+                          onPress={() => void stopShowMode()}
                         >
-                          {runningShowPhase === `${show.id}:${phase}` ? (
-                            <ActivityIndicator size="small" color={colors.primary} />
-                          ) : (
-                            <Text style={s.showMiniBtnText}>
-                              {phase === "live" ? "Start" : phase === "pre" ? "Pre" : "Post"}
-                            </Text>
-                          )}
+                          <Text
+                            style={[
+                              s.showMiniBtnText,
+                              { color: colors.danger },
+                            ]}
+                          >
+                            Stop
+                          </Text>
                         </TouchableOpacity>
-                      ))}
+                      </View>
                     </View>
-                    <View style={s.showBtnRow}>
-                      <TouchableOpacity
-                        style={[s.showMiniBtn, s.showStopBtn]}
-                        onPress={() => void stopShowMode()}
-                      >
-                        <Text style={[s.showMiniBtnText, { color: colors.danger }]}>
-                          Stop
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-              </View>
-            );})}
+                  )}
+                </View>
+              );
+            })
           )}
         </View>
       )}
@@ -536,9 +579,7 @@ export default function HomeScreen() {
             />
           )}
         </View>
-        {isConnected && (
-          <Text style={s.subText}>{syncStatusLabel}</Text>
-        )}
+        {isConnected && <Text style={s.subText}>{syncStatusLabel}</Text>}
         {isConnected && boardSync.mode !== "none" && (
           <Text style={s.subText}>
             Sync mode: {boardSync.mode === "quick" ? "quick reconnect" : "full"}
@@ -617,13 +658,16 @@ export default function HomeScreen() {
               )}
             </View>
             <Text style={s.effectText}>
-              {effectDescription ?? (isConnected ? "Waiting for status…" : "Not connected")}
+              {effectDescription ??
+                (isConnected ? "Waiting for status…" : "Not connected")}
             </Text>
             {liveWledLabel && (
               <Text style={s.subText}>WLED: {liveWledLabel}</Text>
             )}
             {liveWledError && (
-              <Text style={[s.subText, { color: colors.danger }]}>{liveWledError}</Text>
+              <Text style={[s.subText, { color: colors.danger }]}>
+                {liveWledError}
+              </Text>
             )}
             {currentPreset && overrideIndex <= 2 && (
               <Text style={s.subText}>Preset: {currentPreset.name}</Text>
@@ -766,7 +810,12 @@ const styles = (
       backgroundColor: c.surface,
       borderColor: c.border,
     },
-    syncBannerTitle: { color: c.textPrimary, fontSize: 13, fontWeight: "600", flex: 1 },
+    syncBannerTitle: {
+      color: c.textPrimary,
+      fontSize: 13,
+      fontWeight: "600",
+      flex: 1,
+    },
     syncBannerSub: { color: c.textMuted, fontSize: 12, marginTop: 2 },
     syncBtn: {
       flexDirection: "row",

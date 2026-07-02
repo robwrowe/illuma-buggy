@@ -3,11 +3,12 @@
  */
 
 import { useAppStore, type Zone, type LatLng } from '../stores/store';
-import { findContainingZone, findContainingIndoorZone, pointInPolygon, sunBasedBrightness } from './utils';
+import { findTriggerZone, findContainingIndoorZone, sunBasedBrightness, zonesContainingPoint } from './utils';
 import { resolveActivePark } from './resolveActivePark';
 import { bleService } from '../services/BLEService';
 import { triggerZonePreset } from './bleBoardSync';
 import { updateStrollerNotification } from '../services/strollerNotification';
+import { shouldProtectShowFromZones } from './showZoneGuard';
 
 const ZONE_REAPPLY_MS = 45_000;
 const BRIGHTNESS_RAMP_MS = 2000;
@@ -18,6 +19,18 @@ let lastZoneApply: { zoneId: string; at: number } | null = null;
 let isIndoor = false;
 let lastBrightness: number | null = null;
 let brightnessTimer: ReturnType<typeof setTimeout> | null = null;
+let zoneTriggersSuppressed = false;
+
+function isShowProtectingZones(activeZoneIds: string[]): boolean {
+  const s = useAppStore.getState();
+  return shouldProtectShowFromZones({
+    activeParkId: s.activePark?.id,
+    activeZoneIds,
+    showBindings: s.showBindings,
+    deviceStatus: s.deviceStatus,
+    showScheduleProtects: s.showProtectsZones,
+  });
+}
 
 function shouldApplyZone(zone: Zone, force: boolean): boolean {
   if (force) return true;
@@ -29,17 +42,62 @@ function applyZoneEntry(zone: Zone, force: boolean) {
   if (!zone.presetId) return;
   if (!shouldApplyZone(zone, force)) return;
   lastZoneApply = { zoneId: zone.id, at: Date.now() };
-  const s = useAppStore.getState();
-  const preset = s.presets.find(p => p.id === zone.presetId);
-  if (preset) {
-    void triggerZonePreset(preset, s.recallState, s.customSegmentLayouts);
-  } else {
-    bleService.sendZoneTrigger(zone.presetId);
+
+  const run = async () => {
+    if (!bleService.isSessionReady()) return;
+    const s = useAppStore.getState();
+    const preset = s.presets.find(p => p.id === zone.presetId);
+    await bleService.sendOverrideClear();
+    await new Promise(r => setTimeout(r, 200));
+    if (!bleService.isConnected()) return;
+    if (preset) {
+      const ok = await triggerZonePreset(preset, s.recallState, s.customSegmentLayouts);
+      if (!ok && zone.presetId) {
+        console.warn('[Zone] triggerZonePreset failed — retrying zone_trigger', zone.presetId);
+        bleService.sendZoneTrigger(zone.presetId);
+      }
+    } else {
+      bleService.sendZoneTrigger(zone.presetId);
+    }
+  };
+  void run();
+}
+
+function runZoneTriggerLogic(pt: LatLng, zones: Zone[], zonesEnabled: boolean, forceReeval = false) {
+  if (!zonesEnabled) return;
+
+  const triggerZone = findTriggerZone(pt, zones);
+  let prevId = currentZoneId;
+
+  if (forceReeval) {
+    prevId = null;
+    currentZoneId = null;
+    lastZoneApply = null;
+  }
+
+  if (triggerZone?.id === prevId) return;
+
+  currentZoneId = triggerZone?.id ?? null;
+  if (triggerZone?.presetId) {
+    if (!bleService.isSessionReady()) {
+      pendingZone = triggerZone;
+      return;
+    }
+    applyZoneEntry(triggerZone, true);
+  } else if (prevId) {
+    pendingZone = null;
+    lastZoneApply = null;
+    if (bleService.isSessionReady()) {
+      const left = zones.find(z => z.id === prevId);
+      if (left?.presetId) bleService.sendOverrideClear();
+    }
   }
 }
 
 export function flushPendingZoneOnBleReady() {
   if (!pendingZone || !bleService.isSessionReady()) return;
+  const s = useAppStore.getState();
+  if (isShowProtectingZones(s.activeZoneIds)) return;
   const zone = pendingZone;
   pendingZone = null;
   currentZoneId = zone.id;
@@ -49,6 +107,7 @@ export function flushPendingZoneOnBleReady() {
 export function reapplyCurrentZoneOnConnect() {
   const s = useAppStore.getState();
   if (!s.zonesEnabled) return;
+  if (isShowProtectingZones(s.activeZoneIds)) return;
   const zone = s.zones.find(z => z.id === currentZoneId);
   if (!zone?.presetId) return;
   if (!bleService.isSessionReady()) {
@@ -68,7 +127,7 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
     s.setActivePark(resolvedPark);
   }
 
-  const activeIds = zones.filter(z => z.enabled && pointInPolygon(pt, z.polygon)).map(z => z.id);
+  const activeIds = zonesContainingPoint(pt, zones).map(z => z.id);
   s.setActiveZoneIds(activeIds);
 
   const nowIndoor = findContainingIndoorZone(pt, indoorZones) !== null;
@@ -89,8 +148,8 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
     sendBrightnessIfChanged(outdoorBrightness);
   }
 
-  const fireZone = zones.find(z => activeIds.includes(z.id) && z.presetId);
-  const firePreset = fireZone ? s.presets.find(p => p.id === fireZone.presetId) : undefined;
+  const fireZone = findTriggerZone(pt, zones);
+  const firePreset = fireZone?.presetId ? s.presets.find(p => p.id === fireZone.presetId) : undefined;
   void updateStrollerNotification({
     zoneName: fireZone?.name ?? (activeIds.length ? zones.find(z => activeIds.includes(z.id))?.name : null),
     bleConnected: bleService.isConnected(),
@@ -99,31 +158,22 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
     background: opts?.background,
   });
 
-  if (!zonesEnabled) return;
+  const protectShow = isShowProtectingZones(activeIds);
 
-  const matchedZone = findContainingZone(pt, zones);
-  const prevId = currentZoneId;
-  if (matchedZone?.id === prevId) return;
-
-  currentZoneId = matchedZone?.id ?? null;
-  if (matchedZone) {
-    if (!bleService.isSessionReady()) {
-      pendingZone = matchedZone;
-      return;
-    }
-    applyZoneEntry(matchedZone, true);
-  } else if (prevId) {
-    pendingZone = null;
-    lastZoneApply = null;
-    if (bleService.isSessionReady()) {
-      const left = zones.find(z => z.id === prevId);
-      if (left?.presetId) bleService.sendOverrideClear();
-    }
+  if (protectShow) {
+    zoneTriggersSuppressed = true;
+    return;
   }
+
+  const exitingShowProtection = zoneTriggersSuppressed;
+  zoneTriggersSuppressed = false;
+
+  runZoneTriggerLogic(pt, zones, zonesEnabled, exitingShowProtection);
 }
 
 export function resetZoneLocationRuntime() {
   currentZoneId = null;
   pendingZone = null;
   lastZoneApply = null;
+  zoneTriggersSuppressed = false;
 }

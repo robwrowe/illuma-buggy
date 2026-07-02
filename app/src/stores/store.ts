@@ -300,6 +300,9 @@ interface AppState {
   showBindings: ParkShowBinding[];
   showSettings: ShowSettings;
   showInstanceOverrides: Record<string, ShowInstanceOverride>;
+  /** Runtime: in-scope show in pre/live — zone GPS must not preempt show automation. */
+  showProtectsZones: boolean;
+  setShowProtectsZones: (protect: boolean) => void;
   upsertShowBinding: (binding: ParkShowBinding) => void;
   removeShowBinding: (id: string) => void;
   setShowSettings: (patch: Partial<ShowSettings>) => void;
@@ -437,6 +440,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   showBindings:           [],
   showSettings:           { ...DEFAULT_SHOW_SETTINGS },
   showInstanceOverrides:  {},
+  showProtectsZones:      false,
   ftbPresetId:            '',
   wandLab:                DEFAULT_WAND_LAB,
   mbSegmentLayouts:       [],
@@ -554,6 +558,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       [instanceId]: { ...s.showInstanceOverrides[instanceId], ...patch },
     },
   })),
+
+  setShowProtectsZones: (showProtectsZones) => set({ showProtectsZones }),
 
   setFtbPresetId: (ftbPresetId) => set({ ftbPresetId }),
 

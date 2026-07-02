@@ -124,6 +124,35 @@ export function findContainingZone(point: LatLng, zones: Zone[]): Zone | null {
   return zones.find((z) => z.enabled && pointInPolygon(point, z.polygon)) ?? null;
 }
 
+/** Shoelace area — smaller polygon wins when zones overlap (inner preset vs outer boundary). */
+export function polygonArea(poly: LatLng[]): number {
+  if (poly.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const j = (i + 1) % poly.length;
+    area += poly[i].latitude * poly[j].longitude - poly[j].latitude * poly[i].longitude;
+  }
+  return Math.abs(area / 2);
+}
+
+export function zonesContainingPoint(point: LatLng, zones: Zone[]): Zone[] {
+  return zones.filter((z) => z.enabled && pointInPolygon(point, z.polygon));
+}
+
+/**
+ * Zone to fire on GPS entry — prefers preset zones; smallest area wins among overlaps
+ * (inner effect zone over outer boundary-only parent).
+ */
+export function findTriggerZone(point: LatLng, zones: Zone[]): Zone | null {
+  const containing = zonesContainingPoint(point, zones);
+  if (!containing.length) return null;
+  const withPreset = containing.filter((z) => z.presetId);
+  const candidates = withPreset.length ? withPreset : containing;
+  return candidates.reduce((best, z) =>
+    polygonArea(z.polygon) < polygonArea(best.polygon) ? z : best,
+  );
+}
+
 export function findContainingIndoorZone(
   point: LatLng,
   zones: IndoorZone[]

@@ -129,7 +129,10 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
 
   const recomputeFromCache = useCallback(() => {
     const parkId = activePark?.id;
-    if (!parkId || lastRawRef.current.length === 0) return [];
+    if (!parkId || lastRawRef.current.length === 0) {
+      useAppStore.getState().setShowProtectsZones(false);
+      return [];
+    }
     const now = Date.now();
     const upcoming = buildUpcomingShows(
       lastRawRef.current,
@@ -140,6 +143,10 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       now,
       activeZoneIdsRef.current,
     );
+    const protect = upcoming.some(
+      (show) => show.inScope && (show.status === 'pre' || show.status === 'live'),
+    );
+    useAppStore.getState().setShowProtectsZones(protect);
     setShows(upcoming);
     return upcoming;
   }, [activePark?.id]);
@@ -193,6 +200,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       setShows([]);
       setFetchError(null);
       lastRawRef.current = [];
+      useAppStore.getState().setShowProtectsZones(false);
       return;
     }
     try {
@@ -209,6 +217,10 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
         now,
         activeZoneIdsRef.current,
       );
+      const protect = upcoming.some(
+        (show) => show.inScope && (show.status === 'pre' || show.status === 'live'),
+      );
+      useAppStore.getState().setShowProtectsZones(protect);
       setShows(upcoming);
       setLastFetchAt(now);
       setFetchError(null);
