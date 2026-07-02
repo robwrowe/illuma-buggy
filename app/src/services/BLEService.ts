@@ -6,11 +6,22 @@
 import { BleManager, Device, State } from 'react-native-ble-plx';
 import { Platform, PermissionsAndroid } from 'react-native';
 import base64 from 'base64-js';
+import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks, clearBoardPresetSyncCache } from '../utils/bleBoardSync';
+import type { MbSegmentLayout } from '../utils/configMigration';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
 export const SERVICE_UUID     = '12345678-1234-1234-1234-123456789abc';
 export const CMD_CHAR_UUID    = '12345678-1234-1234-1234-123456789abd';
 export const NOTIFY_CHAR_UUID = '12345678-1234-1234-1234-123456789abe';
+
+const GATT_BUSY_ERROR_CODE = 4; // BleErrorCode.OperationStartFailed
+
+function isGattBusy(e: unknown): boolean {
+  const code = (e as { errorCode?: number })?.errorCode;
+  if (code === GATT_BUSY_ERROR_CODE) return true;
+  const errMsg = String((e as Error)?.message ?? e);
+  return /rejected|busy|133|gatt/i.test(errMsg);
+}
 
 export type ConnectionState = 'disconnected' | 'scanning' | 'connecting' | 'connected' | 'error';
 export type BLEMessage       = Record<string, unknown>;
@@ -36,6 +47,7 @@ class BLEService {
   private chunkBuffer:    Record<string, string> = {};
   private sendQueue:      { msg: BLEMessage; resolve: (ok: boolean) => void }[] = [];
   private sendRunning     = false;
+  private handlingDisconnect = false;
 
   private static readonly CHUNKED_TYPES: Record<string, string> = {
     'preset_chunk':  'preset_list_raw',
@@ -107,7 +119,7 @@ class BLEService {
       const { msg, resolve } = this.sendQueue.shift()!;
       resolve(await this.sendImmediate(msg));
       if (this.sendQueue.length > 0) {
-        await new Promise(r => setTimeout(r, 120));
+        await new Promise(r => setTimeout(r, 200));
       }
     }
     this.sendRunning = false;
@@ -116,21 +128,85 @@ class BLEService {
   private async sendImmediate(msg: BLEMessage, attempt = 0): Promise<boolean> {
     if (!this.device || this.connState !== 'connected') return false;
     try {
-      const b64 = strToBase64(JSON.stringify(msg));
-      // CMD char supports WRITE_NR; without-response avoids GATT write-queue contention on Android.
-      await this.device.writeCharacteristicWithoutResponseForService(
-        SERVICE_UUID, CMD_CHAR_UUID, b64,
-      );
+      await this.sendJsonCommand(msg);
       return true;
     } catch (e) {
-      const errMsg = String((e as Error)?.message ?? e);
-      if (attempt < 2 && /rejected|busy|133|gatt/i.test(errMsg)) {
-        await new Promise(r => setTimeout(r, 150 * (attempt + 1)));
+      if (attempt < 5 && isGattBusy(e)) {
+        await new Promise(r => setTimeout(r, 120 * (attempt + 1)));
         return this.sendImmediate(msg, attempt + 1);
       }
       console.error('[BLE] Send error:', e);
       return false;
     }
+  }
+
+  private async sendJsonCommand(msg: BLEMessage): Promise<void> {
+    if (!this.device) throw new Error('Not connected');
+    const jsonStr = JSON.stringify(msg);
+    const byteLen = new TextEncoder().encode(jsonStr).length;
+    if (byteLen <= BLE_MAX_WRITE_BYTES) {
+      await this.writeCmd(this.device, strToBase64(jsonStr));
+      return;
+    }
+    const pieces = splitCommandForBleChunks(jsonStr);
+    for (let seq = 0; seq < pieces.length; seq++) {
+      const chunk: BLEMessage = {
+        type: 'ble_cmd_chunk',
+        seq,
+        last: seq === pieces.length - 1,
+        data: pieces[seq],
+      };
+      await this.writeCmd(this.device, strToBase64(JSON.stringify(chunk)));
+      if (seq < pieces.length - 1) {
+        await new Promise(r => setTimeout(r, BLE_CHUNK_INTER_MS));
+      }
+    }
+  }
+
+  /** Try with-response first; fall back to WRITE_NR if the stack rejects the queued op. */
+  private async writeCmd(device: Device, b64: string): Promise<void> {
+    try {
+      await device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+      return;
+    } catch (e) {
+      if (!isGattBusy(e)) {
+        try {
+          await device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+          return;
+        } catch (inner) {
+          throw inner;
+        }
+      }
+      throw e;
+    }
+  }
+
+  /** Block until Android finishes CCCD enable and accepts a CMD write. */
+  private async waitForGattReady(device: Device): Promise<boolean> {
+    const probe = strToBase64(JSON.stringify({ type: 'status' }));
+    // CCCD enable from monitorCharacteristicForService is async on Android.
+    await new Promise(r => setTimeout(r, 600));
+    for (let i = 0; i < 30; i++) {
+      try {
+        await device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, probe);
+        console.log('[BLE] GATT ready');
+        return true;
+      } catch (e) {
+        if (!isGattBusy(e)) {
+          try {
+            await device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, probe);
+            console.log('[BLE] GATT ready (with response)');
+            return true;
+          } catch (inner) {
+            console.warn('[BLE] GATT probe failed:', (inner as Error)?.message ?? inner);
+            return false;
+          }
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    console.warn('[BLE] GATT not ready after probe timeout');
+    return false;
   }
 
   sendPresetApply(id: string)                             { return this.send({ type: 'preset_apply', id }); }
@@ -146,7 +222,11 @@ class BLEService {
   }
   sendOverrideMode(killOnZone: boolean)                   { return this.send({ type: 'override_mode', kill_on_zone: killOnZone }); }
   sendBrightness(value: number)                           { return this.send({ type: 'brightness', value }); }
-  sendWledRaw(wled: object)                               { return this.send({ type: 'wled_raw', wled }); }
+  sendWledRaw(wled: object, presetId?: string) {
+    const msg: BLEMessage = { type: 'wled_raw', wled };
+    if (presetId) msg.preset_id = presetId;
+    return this.send(msg);
+  }
   sendStatus()                                            { return this.send({ type: 'status' }); }
   sendGetEffects()                                        { return this.send({ type: 'wled_get_effects' }); }
   sendGetPalettes()                                       { return this.send({ type: 'wled_get_palettes' }); }
@@ -167,6 +247,16 @@ class BLEService {
   }
   sendMbMappingConfig(payload: object) {
     return this.send({ type: 'mb_mapping_config', mapping: payload });
+  }
+  sendMbLayoutSet(layouts: MbSegmentLayout[], activeIndex: number) {
+    return this.send({
+      type: 'mb_layout_set',
+      layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
+      active: activeIndex,
+    });
+  }
+  sendMbLayoutSwitch(index: number) {
+    return this.send({ type: 'mb_layout_switch', index });
   }
   sendShowModeConfig(config: { parade: { pre: string; live: string }; fireworks: { pre: string; live: string; post: string } }) {
     return this.send({ type: 'show_mode_config', ...config });
@@ -228,11 +318,12 @@ class BLEService {
     console.log('[BLE] Connecting to', device.id);
     try {
       const connected = await device.connect({ autoConnect: false });
-      await new Promise(r => setTimeout(r, 500));
-      try { await connected.requestMTU(247); console.log('[BLE] MTU negotiated'); }
-      catch (e) { console.warn('[BLE] MTU skipped:', (e as any)?.message); }
+      await new Promise(r => setTimeout(r, 300));
 
       const discovered = await connected.discoverAllServicesAndCharacteristics();
+
+      try { await discovered.requestMTU(247); console.log('[BLE] MTU negotiated'); }
+      catch (e) { console.warn('[BLE] MTU skipped:', (e as any)?.message); }
 
       discovered.onDisconnected(() => {
         console.log('[BLE] Disconnected');
@@ -242,15 +333,20 @@ class BLEService {
       discovered.monitorCharacteristicForService(SERVICE_UUID, NOTIFY_CHAR_UUID, (err, char) => {
         if (err) {
           if ((err as any)?.errorCode === 205) return;
+          const code = (err as { errorCode?: number })?.errorCode;
+          // 201 = device disconnected — onDisconnected will run; avoid double teardown.
+          if (code === 201) return;
           console.error('[BLE] Notify error:', err);
-          this.handleDisconnect();
           return;
         }
         if (char?.value) this.handleNotification(char.value);
       });
 
-      // Android rejects writes while CCCD enable is still in flight — wait before marking ready.
-      await new Promise(r => setTimeout(r, 400));
+      // Brief pause so the notify subscription can finish enabling CCCD.
+      await new Promise(r => setTimeout(r, 300));
+
+      const ready = await this.waitForGattReady(discovered);
+      if (!ready) throw new Error('GATT not ready');
 
       this.device = discovered;
       this.setConnState('connected');
@@ -263,6 +359,9 @@ class BLEService {
   }
 
   private handleDisconnect() {
+    if (this.handlingDisconnect) return;
+    this.handlingDisconnect = true;
+    clearBoardPresetSyncCache();
     this.device = null;
     this.notifyBuffer = '';
     this.chunkBuffer = {};
@@ -270,6 +369,7 @@ class BLEService {
     this.sendRunning = false;
     this.setConnState('disconnected');
     if (this.shouldReconnect) this.scheduleReconnect();
+    this.handlingDisconnect = false;
   }
 
   private scheduleReconnect(delayMs = 3000) {
