@@ -1,34 +1,49 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, Switch, Alert,
-} from 'react-native';
-import Slider from '@react-native-community/slider';
-import IconBluetooth    from '@tabler/icons-react-native/dist/esm/icons/IconBluetooth';
-import IconBluetoothOff from '@tabler/icons-react-native/dist/esm/icons/IconBluetoothOff';
-import IconBulb         from '@tabler/icons-react-native/dist/esm/icons/IconBulb';
-import IconSparkles     from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
-import IconBolt         from '@tabler/icons-react-native/dist/esm/icons/IconBolt';
-import IconX            from '@tabler/icons-react-native/dist/esm/icons/IconX';
-import IconWifi         from '@tabler/icons-react-native/dist/esm/icons/IconWifi';
-import IconWifiOff      from '@tabler/icons-react-native/dist/esm/icons/IconWifiOff';
-import IconMap          from '@tabler/icons-react-native/dist/esm/icons/IconMap';
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  Switch,
+  Alert,
+} from "react-native";
+import Slider from "@react-native-community/slider";
+import IconBluetooth from "@tabler/icons-react-native/dist/esm/icons/IconBluetooth";
+import IconBluetoothOff from "@tabler/icons-react-native/dist/esm/icons/IconBluetoothOff";
+import IconBulb from "@tabler/icons-react-native/dist/esm/icons/IconBulb";
+import IconSparkles from "@tabler/icons-react-native/dist/esm/icons/IconSparkles";
+import IconBolt from "@tabler/icons-react-native/dist/esm/icons/IconBolt";
+import IconX from "@tabler/icons-react-native/dist/esm/icons/IconX";
+import IconWifi from "@tabler/icons-react-native/dist/esm/icons/IconWifi";
+import IconWifiOff from "@tabler/icons-react-native/dist/esm/icons/IconWifiOff";
+import IconMap from "@tabler/icons-react-native/dist/esm/icons/IconMap";
 
-import IconSettings from '@tabler/icons-react-native/dist/esm/icons/IconSettings';
-import IconMoon       from '@tabler/icons-react-native/dist/esm/icons/IconMoon';
-import IconRefresh    from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
+import IconSettings from "@tabler/icons-react-native/dist/esm/icons/IconSettings";
+import IconMoon from "@tabler/icons-react-native/dist/esm/icons/IconMoon";
+import IconRefresh from "@tabler/icons-react-native/dist/esm/icons/IconRefresh";
 
-import { useBLE } from '../hooks/useBLE';
-import { useAppStore } from '../stores/store';
-import { bleService } from '../services/BLEService';
-import { useTheme } from '../utils/theme';
-import { useNavigation } from '@react-navigation/native';
-import { PresetPickerModal } from './MbMappingSections';
-import { useParkShows, formatShowStatus } from '../hooks/useParkShows';
+import { useBLE } from "../hooks/useBLE";
+import { useAppStore } from "../stores/store";
+import { bleService } from "../services/BLEService";
+import { applyPresetToBoard } from "../utils/bleBoardSync";
+import { useTheme } from "../utils/theme";
+import { useNavigation } from "@react-navigation/native";
+import { PresetPickerModal } from "./MbMappingSections";
+import { useParkShows, formatShowStatus } from "../hooks/useParkShows";
 
-const OVERRIDE_LABELS = ['—', 'Zone', 'Manual', 'Show Mode', 'MagicBand+', 'Starlight Wand'];
-const OVERRIDE_COLORS = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) =>
-  [c.textMuted, c.success, c.warning, '#f472b6', c.primary, '#c084fc'];
+const OVERRIDE_LABELS = [
+  "—",
+  "Zone",
+  "Manual",
+  "Show Mode",
+  "MagicBand+",
+  "Starlight Wand",
+];
+const OVERRIDE_COLORS = (
+  c: ReturnType<typeof import("../utils/theme").useTheme>["colors"],
+) => [c.textMuted, c.success, c.warning, "#f472b6", c.primary, "#c084fc"];
 
 export default function HomeScreen() {
   const { colors } = useTheme();
@@ -37,21 +52,36 @@ export default function HomeScreen() {
   const { connectionState, isConnected } = useBLE();
 
   const {
-    deviceStatus, presets, zones,
-    activeZoneIds, zonesEnabled, setZonesEnabled,
-    customPalettes, paletteSets, activePaletteSetId,
-    setActivePaletteSet, saveToStorage,
-    overrideDetail, setOverrideDetail,
-    bleCaptureActive, bleCaptureLiveCount,
-    ftbPresetId, setFtbPresetId, bleEffectTransitionMs,
+    deviceStatus,
+    presets,
+    zones,
+    activeZoneIds,
+    zonesEnabled,
+    setZonesEnabled,
+    customPalettes,
+    paletteSets,
+    activePaletteSetId,
+    setActivePaletteSet,
+    saveToStorage,
+    overrideDetail,
+    setOverrideDetail,
+    bleCaptureActive,
+    bleCaptureLiveCount,
+    ftbPresetId,
+    setFtbPresetId,
+    bleEffectTransitionMs,
     activePark,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
-  const [events, setEvents]         = useState<string[]>([]);
+  const [events, setEvents] = useState<string[]>([]);
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
+  const [firingZone, setFiringZone] = useState(false);
 
-  const { shows: parkShows, fetchError: parkShowsError } = useParkShows(activePark, isConnected);
+  const { shows: parkShows, fetchError: parkShowsError } = useParkShows(
+    activePark,
+    isConnected,
+  );
 
   // Request status immediately on connect, then every 5s
   useEffect(() => {
@@ -63,56 +93,114 @@ export default function HomeScreen() {
 
   // Sync slider with device
   useEffect(() => {
-    if (deviceStatus?.brightness !== undefined) setBrightness(deviceStatus.brightness);
+    if (deviceStatus?.brightness !== undefined)
+      setBrightness(deviceStatus.brightness);
   }, [deviceStatus?.brightness]);
 
   // BLE effect event feed (Starlight Wand + MagicBand+)
   useEffect(() => {
     return bleService.onMessage((msg) => {
-      if (msg.type === 'sw_color') {
+      if (msg.type === "sw_color") {
         const label = `Wand palette ${msg.palette} → R${msg.r} G${msg.g} B${msg.b}`;
-        setEvents(prev => [label, ...prev].slice(0, 12));
-      } else if (msg.type === 'sw_debug') {
+        setEvents((prev) => [label, ...prev].slice(0, 12));
+      } else if (msg.type === "sw_debug") {
         const label = `Wand [${msg.reason}] ${msg.hex} (${msg.len}b)`;
-        setEvents(prev => [label, ...prev].slice(0, 12));
-      } else if (msg.type === 'sw_event') {
-        const name = msg.name ? ` (${msg.name})` : '';
-        setEvents(prev => [`Wand: ${String(msg.event)}${name}`, ...prev].slice(0, 12));
-      } else if (msg.type === 'ble_event' || msg.type === 'ble_color') {
-        const label = msg.type === 'ble_color'
-          ? `MB+ color → R${msg.r} G${msg.g} B${msg.b}`
-          : `MB+: ${String(msg.event)}`;
-        setEvents(prev => [label, ...prev].slice(0, 12));
+        setEvents((prev) => [label, ...prev].slice(0, 12));
+      } else if (msg.type === "sw_event") {
+        const name = msg.name ? ` (${msg.name})` : "";
+        setEvents((prev) =>
+          [`Wand: ${String(msg.event)}${name}`, ...prev].slice(0, 12),
+        );
+      } else if (msg.type === "ble_event" || msg.type === "ble_color") {
+        const label =
+          msg.type === "ble_color"
+            ? `MB+ color → R${msg.r} G${msg.g} B${msg.b}`
+            : `MB+: ${String(msg.event)}`;
+        setEvents((prev) => [label, ...prev].slice(0, 12));
       }
     });
   }, []);
 
-  const overrideIndex  = deviceStatus?.override ?? 0;
-  const overrideColor  = OVERRIDE_COLORS(colors)[overrideIndex] ?? colors.textMuted;
-  const currentPreset  = presets.find(p => p.id === deviceStatus?.currentPreset);
-  const activeZones    = zones.filter(z => activeZoneIds.includes(z.id));
+  const overrideIndex = deviceStatus?.override ?? 0;
+  const overrideColor =
+    OVERRIDE_COLORS(colors)[overrideIndex] ?? colors.textMuted;
+  const currentPreset = presets.find(
+    (p) => p.id === deviceStatus?.currentPreset,
+  );
+  const activeZones = zones.filter((z) => activeZoneIds.includes(z.id));
   const overrideActive = overrideIndex > 0;
-  const fireZone       = activeZones.find(z => z.presetId) ?? null;
-  const firePreset     = fireZone ? presets.find(p => p.id === fireZone.presetId) : null;
-  const ftbPreset      = ftbPresetId ? presets.find(p => p.id === ftbPresetId) : null;
+  const fireZone = activeZones.find((z) => z.presetId) ?? null;
+  const firePreset = fireZone
+    ? presets.find((p) => p.id === fireZone.presetId)
+    : null;
+  const ftbPreset = ftbPresetId
+    ? presets.find((p) => p.id === ftbPresetId)
+    : null;
 
   const effectDescription = (() => {
-    if (!deviceStatus || overrideIndex === 0) return 'Normal — zone or idle';
+    if (!deviceStatus) return null;
     if (overrideDetail) return overrideDetail;
     if (currentPreset) return currentPreset.name;
-    if (overrideIndex === 1) return 'Zone preset';
-    if (overrideIndex === 2) return 'Manual preset';
-    if (overrideIndex === 3) return deviceStatus?.showType
-      ? `Show: ${deviceStatus.showType}${deviceStatus.showPhase ? ` (${deviceStatus.showPhase})` : ''}`
-      : 'Show mode';
-    if (overrideIndex === 4) return 'MagicBand+ effect';
-    if (overrideIndex === 5) return 'Starlight Wand effect';
-    return 'Active override';
+    if (activeZones.length > 0) {
+      const z = activeZones[0];
+      const p = presets.find((pr) => pr.id === z.presetId);
+      if (p) return `${z.name} → ${p.name}`;
+      if (z.presetId) return `${z.name} (preset missing)`;
+      return z.name;
+    }
+    if (overrideIndex === 0) return "Idle — no active override";
+    if (overrideIndex === 1) return "Zone preset";
+    if (overrideIndex === 2) return "Manual preset";
+    if (overrideIndex === 3)
+      return deviceStatus.showType
+        ? `Show: ${deviceStatus.showType}${deviceStatus.showPhase ? ` (${deviceStatus.showPhase})` : ""}`
+        : "Show mode";
+    if (overrideIndex === 4) return "MagicBand+ effect";
+    if (overrideIndex === 5) return "Starlight Wand effect";
+    return "Active override";
   })();
 
   const clearEffect = () => {
     bleService.sendOverrideClear();
     setOverrideDetail(null);
+  };
+
+  const handleFireZone = async () => {
+    if (!isConnected || firingZone) return;
+    if (!fireZone?.presetId) {
+      Alert.alert("No preset", "This zone has no preset assigned.");
+      return;
+    }
+    const preset = presets.find((p) => p.id === fireZone.presetId);
+    if (!preset) {
+      Alert.alert(
+        "Preset missing",
+        `Zone "${fireZone.name}" references a preset that is not in your library.`,
+      );
+      return;
+    }
+    setFiringZone(true);
+    try {
+      const s = useAppStore.getState();
+      // zone_trigger is blocked while wand/MB/show override is active — clear first
+      if ((deviceStatus?.override ?? 0) > 0) {
+        await bleService.sendOverrideClear();
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      const ok = await applyPresetToBoard(
+        preset,
+        s.recallState,
+        s.customSegmentLayouts,
+      );
+      if (!ok) {
+        Alert.alert(
+          "Fire failed",
+          "Could not apply the preset. Check BLE connection and that the logic board can reach WLED.",
+        );
+      }
+    } finally {
+      setFiringZone(false);
+    }
   };
 
   // Push active palette set to WLED
@@ -121,26 +209,25 @@ export default function HomeScreen() {
     saveToStorage();
     if (!setId || !isConnected) return;
 
-    const ps = paletteSets.find(p => p.id === setId);
+    const ps = paletteSets.find((p) => p.id === setId);
     if (!ps) return;
 
     // Custom palettes must be uploaded to WLED as /paletteN.json (web tool → Palettes → ↑ WLED).
     // Palette set order is stored here; WLED slot + palette # live on each CustomPalette after sync.
     const count = ps.paletteIds.length;
     Alert.alert(
-      'Palette Set Selected',
-      `“${ps.name}” has ${count} palette${count !== 1 ? 's' : ''}. ` +
-      'Sync them to WLED from the web config tool (Palettes tab → ↑ WLED) while on StrollerNet, then presets using those palettes will apply correctly.',
+      "Palette Set Selected",
+      `“${ps.name}” has ${count} palette${count !== 1 ? "s" : ""}. ` +
+        "Sync them to WLED from the web config tool (Palettes tab → ↑ WLED) while on StrollerNet, then presets using those palettes will apply correctly.",
     );
   };
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
-
       {bleCaptureActive && (
         <TouchableOpacity
           style={s.captureBanner}
-          onPress={() => navigation.navigate('Capture' as never)}
+          onPress={() => navigation.navigate("Capture" as never)}
         >
           <IconBolt size={16} color={colors.danger} />
           <Text style={s.captureBannerText}>
@@ -167,10 +254,15 @@ export default function HomeScreen() {
                 <IconMoon size={20} color={colors.textPrimary} />
                 <Text style={s.quickBtnText}>Fade to Black</Text>
                 {ftbPreset && (
-                  <Text style={s.quickBtnHint} numberOfLines={1}>{ftbPreset.name}</Text>
+                  <Text style={s.quickBtnHint} numberOfLines={1}>
+                    {ftbPreset.name}
+                  </Text>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity style={s.quickGear} onPress={() => setFtbPickerOpen(true)}>
+              <TouchableOpacity
+                style={s.quickGear}
+                onPress={() => setFtbPickerOpen(true)}
+              >
                 <IconSettings size={14} color={colors.textMuted} />
               </TouchableOpacity>
             </View>
@@ -179,22 +271,56 @@ export default function HomeScreen() {
               disabled={overrideIndex === 0}
               onPress={clearEffect}
             >
-              <IconRefresh size={20} color={overrideIndex === 0 ? colors.textMuted : colors.textPrimary} />
-              <Text style={[s.quickBtnText, overrideIndex === 0 && s.quickBtnTextDisabled]}>Previous State</Text>
+              <IconRefresh
+                size={20}
+                color={
+                  overrideIndex === 0 ? colors.textMuted : colors.textPrimary
+                }
+              />
+              <Text
+                style={[
+                  s.quickBtnText,
+                  overrideIndex === 0 && s.quickBtnTextDisabled,
+                ]}
+              >
+                Previous State
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[s.quickBtn, !fireZone && s.quickBtnDisabled]}
-              disabled={!fireZone}
-              onPress={() => fireZone && bleService.sendZoneTrigger(fireZone.presetId)}
+              style={[
+                s.quickBtn,
+                (!fireZone?.presetId || firingZone) && s.quickBtnDisabled,
+              ]}
+              disabled={!fireZone?.presetId || firingZone || !isConnected}
+              activeOpacity={0.6}
+              onPress={() => void handleFireZone()}
             >
-              <IconBolt size={20} color={!fireZone ? colors.textMuted : colors.primary} />
-              <Text style={[s.quickBtnText, !fireZone && s.quickBtnTextDisabled]} numberOfLines={2}>
-                {fireZone
-                  ? `Fire: ${fireZone.name}`
-                  : 'Fire Zone'}
+              {firingZone ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <IconBolt
+                  size={20}
+                  color={fireZone?.presetId ? colors.primary : colors.textMuted}
+                />
+              )}
+              <Text
+                style={[
+                  s.quickBtnText,
+                  !fireZone?.presetId && s.quickBtnTextDisabled,
+                ]}
+                numberOfLines={2}
+              >
+                {fireZone ? `Fire: ${fireZone.name}` : "Fire Zone"}
               </Text>
               {firePreset && (
-                <Text style={s.quickBtnHint} numberOfLines={1}>{firePreset.name}</Text>
+                <Text style={s.quickBtnHint} numberOfLines={1}>
+                  {firePreset.name}
+                </Text>
+              )}
+              {fireZone?.presetId && !firePreset && (
+                <Text style={[s.quickBtnHint, { color: colors.danger }]}>
+                  Preset not found
+                </Text>
               )}
             </TouchableOpacity>
           </View>
@@ -207,7 +333,10 @@ export default function HomeScreen() {
         presets={presets}
         selectedId={ftbPresetId}
         emptyLabel="Pure black (no preset)"
-        onSelect={(id) => { setFtbPresetId(id); saveToStorage(); }}
+        onSelect={(id) => {
+          setFtbPresetId(id);
+          saveToStorage();
+        }}
         onClose={() => setFtbPickerOpen(false)}
         colors={colors}
       />
@@ -224,7 +353,7 @@ export default function HomeScreen() {
           ) : parkShows.length === 0 ? (
             <Text style={s.subText}>No shows within the next hour</Text>
           ) : (
-            parkShows.map(show => (
+            parkShows.map((show) => (
               <View key={show.id} style={s.showRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={s.zoneName}>{show.name}</Text>
@@ -234,13 +363,17 @@ export default function HomeScreen() {
                   <View style={s.showBtnRow}>
                     <TouchableOpacity
                       style={s.showMiniBtn}
-                      onPress={() => bleService.sendShowModeEnter('fireworks', 'pre')}
+                      onPress={() =>
+                        bleService.sendShowModeEnter("fireworks", "pre")
+                      }
                     >
                       <Text style={s.showMiniBtnText}>Pre</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={s.showMiniBtn}
-                      onPress={() => bleService.sendShowModeEnter('fireworks', 'black')}
+                      onPress={() =>
+                        bleService.sendShowModeEnter("fireworks", "black")
+                      }
                     >
                       <Text style={s.showMiniBtnText}>Black</Text>
                     </TouchableOpacity>
@@ -248,14 +381,20 @@ export default function HomeScreen() {
                       style={s.showMiniBtn}
                       onPress={() => bleService.sendShowModeExit()}
                     >
-                      <Text style={[s.showMiniBtnText, { color: colors.danger }]}>End</Text>
+                      <Text
+                        style={[s.showMiniBtnText, { color: colors.danger }]}
+                      >
+                        End
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 )}
                 {!show.isFireworks && isConnected && (
                   <TouchableOpacity
                     style={s.showMiniBtn}
-                    onPress={() => bleService.sendShowModeEnter('parade', 'live')}
+                    onPress={() =>
+                      bleService.sendShowModeEnter("parade", "live")
+                    }
                   >
                     <Text style={s.showMiniBtnText}>Show</Text>
                   </TouchableOpacity>
@@ -269,26 +408,40 @@ export default function HomeScreen() {
       {/* Connection */}
       <View style={s.card}>
         <View style={s.row}>
-          {isConnected
-            ? <IconBluetooth size={18} color={colors.success} />
-            : <IconBluetoothOff size={18} color={colors.danger} />}
+          {isConnected ? (
+            <IconBluetooth size={18} color={colors.success} />
+          ) : (
+            <IconBluetoothOff size={18} color={colors.danger} />
+          )}
           <Text style={s.statusText}>
-            {connectionState === 'connected'    ? 'Connected to IllumaBuggy' :
-             connectionState === 'scanning'     ? 'Scanning…' :
-             connectionState === 'connecting'   ? 'Connecting…' :
-             connectionState === 'disconnected' ? 'Disconnected — will retry' :
-                                                  'Connection error — retrying'}
+            {connectionState === "connected"
+              ? "Connected to IllumaBuggy"
+              : connectionState === "scanning"
+                ? "Scanning…"
+                : connectionState === "connecting"
+                  ? "Connecting…"
+                  : connectionState === "disconnected"
+                    ? "Disconnected — will retry"
+                    : "Connection error — retrying"}
           </Text>
-          {(connectionState === 'scanning' || connectionState === 'connecting') &&
-            <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 'auto' }} />}
+          {(connectionState === "scanning" ||
+            connectionState === "connecting") && (
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+              style={{ marginLeft: "auto" }}
+            />
+          )}
         </View>
         {deviceStatus && (
           <View style={s.row}>
-            {deviceStatus.wifiConnected
-              ? <IconWifi size={13} color={colors.success} />
-              : <IconWifiOff size={13} color={colors.danger} />}
+            {deviceStatus.wifiConnected ? (
+              <IconWifi size={13} color={colors.success} />
+            ) : (
+              <IconWifiOff size={13} color={colors.danger} />
+            )}
             <Text style={s.subText}>
-              WLED: {deviceStatus.wifiConnected ? 'connected' : 'not connected'}
+              WLED: {deviceStatus.wifiConnected ? "connected" : "not connected"}
             </Text>
           </View>
         )}
@@ -300,23 +453,39 @@ export default function HomeScreen() {
         {deviceStatus ? (
           <>
             <View style={s.row}>
-              <View style={[s.badge, { backgroundColor: overrideColor + '22', borderColor: overrideColor }]}>
-                <Text style={[s.badgeText, { color: overrideColor }]}>{OVERRIDE_LABELS[overrideIndex]}</Text>
+              <View
+                style={[
+                  s.badge,
+                  {
+                    backgroundColor: overrideColor + "22",
+                    borderColor: overrideColor,
+                  },
+                ]}
+              >
+                <Text style={[s.badgeText, { color: overrideColor }]}>
+                  {OVERRIDE_LABELS[overrideIndex]}
+                </Text>
               </View>
               {overrideActive && (
                 <TouchableOpacity style={s.clearBtn} onPress={clearEffect}>
                   <IconX size={14} color={colors.danger} />
-                  <Text style={[s.clearBtnText, { color: colors.danger }]}>Clear Effect</Text>
+                  <Text style={[s.clearBtnText, { color: colors.danger }]}>
+                    Clear Effect
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
-            <Text style={s.effectText}>{effectDescription}</Text>
+            <Text style={s.effectText}>
+              {effectDescription ?? (isConnected ? "Waiting for status…" : "Not connected")}
+            </Text>
             {currentPreset && overrideIndex <= 2 && (
               <Text style={s.subText}>Preset: {currentPreset.name}</Text>
             )}
           </>
         ) : (
-          <Text style={s.subText}>{isConnected ? 'Waiting for status…' : 'Not connected'}</Text>
+          <Text style={s.subText}>
+            {isConnected ? "Waiting for status…" : "Not connected"}
+          </Text>
         )}
       </View>
 
@@ -324,89 +493,130 @@ export default function HomeScreen() {
       {isConnected && (
         <View style={s.card}>
           <Text style={s.label}>Parade Control</Text>
-          {deviceStatus?.showType === 'parade' && deviceStatus.showPhase && (
-            <Text style={[s.subText, { color: colors.primary, marginBottom: 4 }]}>
+          {deviceStatus?.showType === "parade" && deviceStatus.showPhase && (
+            <Text
+              style={[s.subText, { color: colors.primary, marginBottom: 4 }]}
+            >
               Active: {deviceStatus.showPhase}
             </Text>
           )}
           <View style={s.paradeRow}>
             <TouchableOpacity
-              style={[s.paradeBtn, deviceStatus?.showType === 'parade' && deviceStatus?.showPhase === 'black' && s.paradeBtnActive]}
-              disabled={!isConnected || (deviceStatus?.showType === 'parade' && deviceStatus?.showPhase === 'black')}
-              onPress={() => bleService.sendShowModeEnter('parade', 'black')}
+              style={[
+                s.paradeBtn,
+                deviceStatus?.showType === "parade" &&
+                  deviceStatus?.showPhase === "black" &&
+                  s.paradeBtnActive,
+              ]}
+              disabled={
+                !isConnected ||
+                (deviceStatus?.showType === "parade" &&
+                  deviceStatus?.showPhase === "black")
+              }
+              onPress={() => bleService.sendShowModeEnter("parade", "black")}
             >
               <Text style={s.paradeBtnText}>Black Cue</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[s.paradeBtn, deviceStatus?.showType === 'parade' && deviceStatus?.showPhase === 'live' && s.paradeBtnActive]}
+              style={[
+                s.paradeBtn,
+                deviceStatus?.showType === "parade" &&
+                  deviceStatus?.showPhase === "live" &&
+                  s.paradeBtnActive,
+              ]}
               disabled={!isConnected}
-              onPress={() => bleService.sendShowModeEnter('parade', 'live')}
+              onPress={() => bleService.sendShowModeEnter("parade", "live")}
             >
               <Text style={s.paradeBtnText}>Show Look</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.paradeBtn, s.paradeBtnEnd]}
-              disabled={!isConnected || deviceStatus?.showType !== 'parade'}
-              onPress={() => bleService.sendShowModeEnter('parade', 'post')}
+              disabled={!isConnected || deviceStatus?.showType !== "parade"}
+              onPress={() => bleService.sendShowModeEnter("parade", "post")}
             >
-              <Text style={[s.paradeBtnText, { color: colors.danger }]}>End Parade</Text>
+              <Text style={[s.paradeBtnText, { color: colors.danger }]}>
+                End Parade
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
       )}
 
       {/* Active Zones */}
-      {(activeZones.length > 0 || zonesEnabled) && (
-        <View style={s.card}>
-          <View style={s.row}>
-            <IconMap size={15} color={colors.textSecondary} />
-            <Text style={s.label}>Active Zones</Text>
-            <Switch
-              value={zonesEnabled}
-              onValueChange={v => { setZonesEnabled(v); saveToStorage(); }}
-              trackColor={{ false: colors.borderFocus, true: colors.primary }}
-              thumbColor="#fff"
-              style={{ marginLeft: 'auto' }}
-            />
-          </View>
-          {activeZones.length === 0 ? (
-            <Text style={s.subText}>{zonesEnabled ? 'Not in any zone' : 'Zone triggers paused'}</Text>
-          ) : (
-            activeZones.map(z => {
-              const preset = presets.find(p => p.id === z.presetId);
-              return (
-                <View key={z.id} style={s.zoneRow}>
-                  <View style={s.zoneDot} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.zoneName}>{z.name}</Text>
-                    {preset && <Text style={s.subText}>{preset.name}</Text>}
-                  </View>
-                </View>
-              );
-            })
-          )}
+      <View style={s.card}>
+        <View style={s.row}>
+          <IconMap size={15} color={colors.textSecondary} />
+          <Text style={s.label}>Active Zones</Text>
+          <Switch
+            value={zonesEnabled}
+            onValueChange={(v) => {
+              setZonesEnabled(v);
+              saveToStorage();
+            }}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+            style={{ marginLeft: "auto" }}
+          />
         </View>
-      )}
+        {activeZones.length === 0 ? (
+          <Text style={s.subText}>
+            {zonesEnabled ? "Not in any zone" : "Zone triggers paused"}
+          </Text>
+        ) : (
+          activeZones.map((z) => {
+            const preset = presets.find((p) => p.id === z.presetId);
+            return (
+              <View key={z.id} style={s.zoneRow}>
+                <View style={s.zoneDot} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.zoneName}>{z.name}</Text>
+                  {preset && <Text style={s.subText}>{preset.name}</Text>}
+                </View>
+              </View>
+            );
+          })
+        )}
+      </View>
 
       {/* Palette Sets */}
       {paletteSets.length > 0 && (
         <View style={s.card}>
           <Text style={s.label}>Palette Set</Text>
-          <Text style={s.subText}>Push a custom palette set to the device for this park</Text>
+          <Text style={s.subText}>
+            Push a custom palette set to the device for this park
+          </Text>
           <View style={s.setRow}>
             <TouchableOpacity
-              style={[s.setChip, activePaletteSetId === null && s.setChipActive]}
+              style={[
+                s.setChip,
+                activePaletteSetId === null && s.setChipActive,
+              ]}
               onPress={() => activateSet(null)}
             >
-              <Text style={[s.setChipText, activePaletteSetId === null && { color: colors.primary }]}>Default</Text>
+              <Text
+                style={[
+                  s.setChipText,
+                  activePaletteSetId === null && { color: colors.primary },
+                ]}
+              >
+                Default
+              </Text>
             </TouchableOpacity>
-            {paletteSets.map(ps => (
+            {paletteSets.map((ps) => (
               <TouchableOpacity
                 key={ps.id}
-                style={[s.setChip, activePaletteSetId === ps.id && s.setChipActive]}
+                style={[
+                  s.setChip,
+                  activePaletteSetId === ps.id && s.setChipActive,
+                ]}
                 onPress={() => activateSet(ps.id)}
               >
-                <Text style={[s.setChipText, activePaletteSetId === ps.id && { color: colors.primary }]}>
+                <Text
+                  style={[
+                    s.setChipText,
+                    activePaletteSetId === ps.id && { color: colors.primary },
+                  ]}
+                >
                   {ps.name}
                 </Text>
               </TouchableOpacity>
@@ -414,7 +624,8 @@ export default function HomeScreen() {
           </View>
           {activePaletteSetId && (
             <Text style={[s.subText, { color: colors.success }]}>
-              ✓ {paletteSets.find(p => p.id === activePaletteSetId)?.name} active
+              ✓ {paletteSets.find((p) => p.id === activePaletteSetId)?.name}{" "}
+              active
             </Text>
           )}
         </View>
@@ -425,14 +636,22 @@ export default function HomeScreen() {
         <View style={s.row}>
           <IconBulb size={15} color={colors.textSecondary} />
           <Text style={s.label}>Brightness</Text>
-          <Text style={[s.label, { marginLeft: 'auto', color: colors.textPrimary }]}>{brightness}</Text>
+          <Text
+            style={[s.label, { marginLeft: "auto", color: colors.textPrimary }]}
+          >
+            {brightness}
+          </Text>
         </View>
         <Slider
-          minimumValue={0} maximumValue={255} step={1} value={brightness}
-          minimumTrackTintColor={colors.primary} maximumTrackTintColor={colors.borderFocus}
+          minimumValue={0}
+          maximumValue={255}
+          step={1}
+          value={brightness}
+          minimumTrackTintColor={colors.primary}
+          maximumTrackTintColor={colors.borderFocus}
           thumbTintColor={colors.primary}
           onValueChange={setBrightness}
-          onSlidingComplete={v => bleService.sendBrightness(Math.round(v))}
+          onSlidingComplete={(v) => bleService.sendBrightness(Math.round(v))}
           disabled={!isConnected}
         />
       </View>
@@ -445,59 +664,181 @@ export default function HomeScreen() {
             <Text style={s.label}>BLE Effect Events</Text>
           </View>
           {events.length === 0 ? (
-            <Text style={s.subText}>Wave the wand — raw packets appear here as [packet] hex dumps</Text>
+            <Text style={s.subText}>
+              Wave the wand — raw packets appear here as [packet] hex dumps
+            </Text>
           ) : (
             events.map((e, i) => (
-              <View key={i} style={[s.row, { opacity: Math.max(0.3, 1 - i * 0.08) }]}>
+              <View
+                key={i}
+                style={[s.row, { opacity: Math.max(0.3, 1 - i * 0.08) }]}
+              >
                 <IconBolt size={11} color={colors.primary} />
-                <Text style={[s.subText, { marginLeft: 4, flex: 1 }]} numberOfLines={2}>{e}</Text>
+                <Text
+                  style={[s.subText, { marginLeft: 4, flex: 1 }]}
+                  numberOfLines={2}
+                >
+                  {e}
+                </Text>
               </View>
             ))
           )}
         </View>
       )}
-
     </ScrollView>
   );
 }
 
-const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) => StyleSheet.create({
-  container:    { flex: 1, backgroundColor: c.background },
-  content:      { padding: 16, gap: 12 },
-  captureBanner:{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: c.danger + '18', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: c.danger + '55' },
-  captureBannerText: { color: c.textPrimary, fontSize: 13, fontWeight: '600', flex: 1 },
-  card:         { backgroundColor: c.surface, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: c.border, gap: 8 },
-  row:          { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label:        { color: c.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
-  statusText:   { color: c.textPrimary, fontSize: 14, fontWeight: '500', flex: 1 },
-  subText:      { color: c.textMuted, fontSize: 12 },
-  badge:        { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1 },
-  badgeText:    { fontSize: 13, fontWeight: '600' },
-  effectText:   { color: c.textPrimary, fontSize: 15, fontWeight: '500' },
-  clearBtn:     { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: c.danger + '18', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: c.danger + '44' },
-  clearBtnText: { fontSize: 12, fontWeight: '600' },
-  zoneRow:      { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 2 },
-  zoneDot:      { width: 8, height: 8, borderRadius: 4, backgroundColor: c.success },
-  zoneName:     { color: c.textPrimary, fontSize: 13, fontWeight: '500' },
-  setRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  setChip:      { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt },
-  setChipActive: { borderColor: c.primary, backgroundColor: c.primaryDim },
-  setChipText:  { color: c.textMuted, fontSize: 13, fontWeight: '500' },
-  paradeRow:    { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  paradeBtn:    { flex: 1, minWidth: 90, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt, alignItems: 'center' },
-  paradeBtnActive: { borderColor: c.primary, backgroundColor: c.primaryDim },
-  paradeBtnEnd: { borderColor: c.danger + '66' },
-  paradeBtnText:{ color: c.textPrimary, fontSize: 12, fontWeight: '600', textAlign: 'center' },
-  quickRow:     { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  quickBtnWrap: { flex: 1, minWidth: 100, position: 'relative' },
-  quickBtn:     { flex: 1, minWidth: 100, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt, alignItems: 'center', gap: 4 },
-  quickBtnDisabled: { opacity: 0.45 },
-  quickBtnText: { color: c.textPrimary, fontSize: 11, fontWeight: '600', textAlign: 'center' },
-  quickBtnTextDisabled: { color: c.textMuted },
-  quickBtnHint: { color: c.textMuted, fontSize: 10, textAlign: 'center' },
-  quickGear:    { position: 'absolute', top: 4, right: 4, padding: 4 },
-  showRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderTopWidth: 1, borderTopColor: c.border },
-  showBtnRow:   { flexDirection: 'row', gap: 4 },
-  showMiniBtn:  { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: c.border, backgroundColor: c.surfaceAlt },
-  showMiniBtnText: { fontSize: 10, fontWeight: '600', color: c.textPrimary },
-});
+const styles = (
+  c: ReturnType<typeof import("../utils/theme").useTheme>["colors"],
+) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: c.background },
+    content: { padding: 16, gap: 12 },
+    captureBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: c.danger + "18",
+      borderRadius: 10,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: c.danger + "55",
+    },
+    captureBannerText: {
+      color: c.textPrimary,
+      fontSize: 13,
+      fontWeight: "600",
+      flex: 1,
+    },
+    card: {
+      backgroundColor: c.surface,
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: c.border,
+      gap: 8,
+    },
+    row: { flexDirection: "row", alignItems: "center", gap: 8 },
+    label: {
+      color: c.textSecondary,
+      fontSize: 11,
+      fontWeight: "700",
+      textTransform: "uppercase",
+      letterSpacing: 0.8,
+    },
+    statusText: {
+      color: c.textPrimary,
+      fontSize: 14,
+      fontWeight: "500",
+      flex: 1,
+    },
+    subText: { color: c.textMuted, fontSize: 12 },
+    badge: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 20,
+      borderWidth: 1,
+    },
+    badgeText: { fontSize: 13, fontWeight: "600" },
+    effectText: { color: c.textPrimary, fontSize: 15, fontWeight: "500" },
+    clearBtn: {
+      marginLeft: "auto",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      backgroundColor: c.danger + "18",
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: c.danger + "44",
+    },
+    clearBtnText: { fontSize: 12, fontWeight: "600" },
+    zoneRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      paddingVertical: 2,
+    },
+    zoneDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: c.success,
+    },
+    zoneName: { color: c.textPrimary, fontSize: 13, fontWeight: "500" },
+    setRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    setChip: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceAlt,
+    },
+    setChipActive: { borderColor: c.primary, backgroundColor: c.primaryDim },
+    setChipText: { color: c.textMuted, fontSize: 13, fontWeight: "500" },
+    paradeRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+    paradeBtn: {
+      flex: 1,
+      minWidth: 90,
+      paddingVertical: 10,
+      paddingHorizontal: 8,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceAlt,
+      alignItems: "center",
+    },
+    paradeBtnActive: { borderColor: c.primary, backgroundColor: c.primaryDim },
+    paradeBtnEnd: { borderColor: c.danger + "66" },
+    paradeBtnText: {
+      color: c.textPrimary,
+      fontSize: 12,
+      fontWeight: "600",
+      textAlign: "center",
+    },
+    quickRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+    quickBtnWrap: { flex: 1, minWidth: 100, position: "relative" },
+    quickBtn: {
+      flex: 1,
+      minWidth: 100,
+      paddingVertical: 12,
+      paddingHorizontal: 8,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceAlt,
+      alignItems: "center",
+      gap: 4,
+    },
+    quickBtnDisabled: { opacity: 0.45 },
+    quickBtnText: {
+      color: c.textPrimary,
+      fontSize: 11,
+      fontWeight: "600",
+      textAlign: "center",
+    },
+    quickBtnTextDisabled: { color: c.textMuted },
+    quickBtnHint: { color: c.textMuted, fontSize: 10, textAlign: "center" },
+    quickGear: { position: "absolute", top: 4, right: 4, padding: 4 },
+    showRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingVertical: 6,
+      borderTopWidth: 1,
+      borderTopColor: c.border,
+    },
+    showBtnRow: { flexDirection: "row", gap: 4 },
+    showMiniBtn: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceAlt,
+    },
+    showMiniBtnText: { fontSize: 10, fontWeight: "600", color: c.textPrimary },
+  });
