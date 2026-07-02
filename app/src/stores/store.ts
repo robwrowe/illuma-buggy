@@ -381,6 +381,21 @@ export function normalizePaletteSet(s: PaletteSet): PaletteSet {
 // Store
 // ─────────────────────────────────────────────
 
+/** Extract a JSON string array from chunked BLE catalog payloads (may include noise). */
+function parseWledJsonArray(raw: string | undefined): string[] | null {
+  const trimmed = (raw ?? '').trim();
+  if (!trimmed) return null;
+  const start = trimmed.indexOf('[');
+  const end = trimmed.lastIndexOf(']');
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(trimmed.slice(start, end + 1));
+    return Array.isArray(parsed) ? parsed as string[] : null;
+  } catch {
+    return null;
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   presets:             [],
   wledEffects:         [],
@@ -820,8 +835,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   ingestWledEffectsRaw: (raw) => {
     try {
+      const arr = parseWledJsonArray(raw);
+      if (!arr) {
+        console.warn('[Store] Effects ingest skipped — invalid JSON', (raw ?? '').slice(0, 80));
+        return;
+      }
       const fxData = get().wledFxData;
-      const arr = JSON.parse(raw) as string[];
       const effects: WledEffect[] = arr
         .map((name, id) => ({ id, name, metadata: fxData[id] ?? '' }))
         .filter(e => e.name !== 'RSVD' && e.name !== '-');
@@ -832,7 +851,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   ingestWledPalettesRaw: (raw) => {
     try {
-      const arr = JSON.parse(raw) as string[];
+      const arr = parseWledJsonArray(raw);
+      if (!arr) {
+        console.warn('[Store] Palettes ingest skipped — invalid JSON', (raw ?? '').slice(0, 80));
+        return;
+      }
       set({ wledPalettes: arr.map((name, id) => ({ id, name })) });
       get().saveToStorage();
     } catch (e) { console.error('[Store] Palettes ingest error:', e); }
@@ -840,7 +863,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   ingestWledFxDataRaw: (raw) => {
     try {
-      const arr = JSON.parse(raw) as string[];
+      const arr = parseWledJsonArray(raw);
+      if (!arr) {
+        console.warn('[Store] FxData ingest skipped — invalid JSON', (raw ?? '').slice(0, 80));
+        return;
+      }
       set({ wledFxData: arr });
       const effects = get().wledEffects;
       if (effects.length > 0) {

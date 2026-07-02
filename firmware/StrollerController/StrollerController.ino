@@ -650,8 +650,12 @@ bool applyPreset(const String& id) {
   }
   String wledJson;
   serializeJson(doc["wled"], wledJson);
+  if (wledJson.length() == 0) return false;
   currentPresetId = id;
-  bool ok = sendToWLED(wledJson);
+  disableAllSplitSegments();
+  delay(100);
+  String payload = prepareWledRestorePayload(wledJson);
+  bool ok = sendToWLED(payload, 8000, 2);
   if (ok) {
     // Preset JSON is partial — don't overwrite full polled state used for MB restore.
     liveWledState = "";
@@ -2026,6 +2030,21 @@ void handleBLECommand(const String& msg) {
       currentPresetId = presetId;
     }
     ensureWledPowerOn();
+    // Segment geometry merges by id — clear stale splits before layout pushes.
+    DynamicJsonDocument wdoc(2048);
+    if (!deserializeJson(wdoc, wled) && wdoc.containsKey("seg")) {
+      bool hasGeometry = false;
+      for (JsonObject seg : wdoc["seg"].as<JsonArray>()) {
+        if (seg.containsKey("start") && seg.containsKey("stop") && seg["stop"].as<int>() > seg["start"].as<int>()) {
+          hasGeometry = true;
+          break;
+        }
+      }
+      if (hasGeometry) {
+        disableAllSplitSegments();
+        delay(80);
+      }
+    }
     bool ok = sendToWLEDForBleEffect(wled);
     if (ok) {
       liveWledState = "";

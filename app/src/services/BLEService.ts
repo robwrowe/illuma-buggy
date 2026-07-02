@@ -48,6 +48,7 @@ class BLEService {
   private shouldReconnect = false;
   private notifyBuffer    = '';
   private chunkBuffer:    Record<string, string> = {};
+  private chunkNextSeq:   Record<string, number> = {};
   private sendQueue:      { msg: BLEMessage; resolve: (ok: boolean) => void }[] = [];
   private sendRunning     = false;
   private handlingDisconnect = false;
@@ -386,6 +387,7 @@ class BLEService {
     this.device = null;
     this.notifyBuffer = '';
     this.chunkBuffer = {};
+    this.chunkNextSeq = {};
     while (this.sendQueue.length > 0) this.sendQueue.shift()!.resolve(false);
     this.sendRunning = false;
     this.setConnState('disconnected');
@@ -433,12 +435,27 @@ class BLEService {
     const finalType = BLEService.CHUNKED_TYPES[msg.type as string];
     if (finalType) {
       const t       = msg.type as string;
+      const seq     = Number(msg.seq ?? 0);
       const dataStr = (msg.data as string) ?? '';
+
+      if (seq === 0) {
+        this.chunkBuffer[t] = '';
+        this.chunkNextSeq[t] = 0;
+      } else if (seq !== (this.chunkNextSeq[t] ?? 0)) {
+        console.warn(
+          `[BLE] Chunk ${t} seq mismatch (got ${seq}, expected ${this.chunkNextSeq[t] ?? 0}) — resetting`,
+        );
+        this.chunkBuffer[t] = '';
+        this.chunkNextSeq[t] = seq;
+      }
+
       this.chunkBuffer[t] = (this.chunkBuffer[t] ?? '') + dataStr;
-      console.log(`[BLE] Chunk ${t} seq=${msg.seq} last=${msg.last} bufLen=${this.chunkBuffer[t].length}`);
+      this.chunkNextSeq[t] = seq + 1;
+
       if (msg.last) {
         const raw = this.chunkBuffer[t];
         delete this.chunkBuffer[t];
+        delete this.chunkNextSeq[t];
         if (!raw || raw.length === 0) {
           console.warn(`[BLE] Empty assembled ${t}, skipping`);
           return;

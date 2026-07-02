@@ -36,6 +36,8 @@ export interface BoardSyncMeta {
   fullSyncAt: number;
   fingerprint: string;
   syncedPresetIds: string[];
+  mbLayoutActive?: number;
+  mbLayoutCount?: number;
 }
 
 const META_KEY = 'boardSyncMeta';

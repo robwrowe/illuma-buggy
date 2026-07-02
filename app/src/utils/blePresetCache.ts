@@ -32,11 +32,17 @@ export function getSyncedPresetIds(): string[] {
 }
 
 /** Persist synced ids into board sync meta (call after full/quick verify). */
-export async function persistPresetSyncCache(fingerprint: string, fullSync: boolean): Promise<void> {
+export async function persistPresetSyncCache(
+  fingerprint: string,
+  fullSync: boolean,
+  layout?: { active: number; count: number },
+): Promise<void> {
   const prev = await loadBoardSyncMeta();
   await saveBoardSyncMeta({
     fullSyncAt: fullSync ? Date.now() : (prev?.fullSyncAt ?? Date.now()),
     fingerprint,
     syncedPresetIds: getSyncedPresetIds(),
+    mbLayoutActive: layout?.active ?? prev?.mbLayoutActive,
+    mbLayoutCount: layout?.count ?? prev?.mbLayoutCount,
   });
 }

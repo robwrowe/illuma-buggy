@@ -25,6 +25,7 @@ illuma-buggy/
 │       │   └── BLEService.ts        ← BLE singleton (connect/send/receive/chunk)
 │       ├── hooks/
 │       │   ├── useBLE.ts            ← React hook wrapping BLEService
+│       │   ├── useBoardSync.ts      ← bootstrap/sync status for UI
 │       │   └── useZoneManager.ts    ← GPS watcher → zone triggers → brightness
 │       ├── stores/
 │       │   └── store.ts             ← Zustand store + AsyncStorage persistence
@@ -37,6 +38,8 @@ illuma-buggy/
 │       │   └── SettingsScreen.tsx   ← recall state, MB config, export/import
 │       └── utils/
 │           ├── theme.ts             ← dark/light/system theme, color tokens
+│           ├── connectBootstrap.ts  ← staged BLE connect + quick reconnect
+│           ├── boardSyncState.ts    ← sync fingerprint, status, AsyncStorage meta
 │           └── utils.ts             ← solar elevation, pointInPolygon, zone eval
 └── web/
     ├── index.html                   ← single-file React web tool (Babel standalone)
@@ -127,7 +130,7 @@ each chunk is itself a valid JSON object with `type`, `seq`, `last`, and `data` 
 
 | `type` | Fields | Description |
 |--------|--------|-------------|
-| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_five_point`, `mb_timeout_ms`, `mb_chase_speed`, `mb_chase_thickness`, `scan_log` | Device state |
+| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_five_point`, `mb_timeout_ms`, `mb_chase_speed`, `mb_chase_thickness`, `mb_layout_active`, `mb_layout_count`, `preset_count`, `scan_log` | Device state |
 | `ack` | `action`, `id?`, `ok?` | Command acknowledgement |
 | `error` | `msg` | Firmware error |
 | `preset_list_raw` | assembled from `preset_chunk` chunks | JSON array of all presets |
@@ -195,6 +198,26 @@ interface RecallState { effect: RecallValue; palette: RecallValue; parameters: R
 - **State subscription** — `bleService.onStateChange(handler)` returns unsubscribe
 - **Chunk assembly** — `handleNotification` tries `JSON.parse(incoming)` first (complete packet), falls back to `notifyBuffer` accumulation for MTU-fragmented messages
 - **Chunk buffer** — separate `chunkBuffer[type]` dict for large multi-message payloads; cleared on disconnect
+- **`isSessionReady()`** — `true` after `connectBootstrap` enables commands; gate preset apply / Fire on this, not just `isConnected`
+
+### Connect bootstrap (`connectBootstrap.ts`)
+
+Staged connect to avoid flooding BLE and dropping the link on Android.
+
+1. **Essential config** (small): `sw_config`, `mb_config`, `ble_effect_config`
+2. **`markSessionReady(true)`** — commands enabled before heavy work
+3. **Background sync**: MB layouts, mapping, preset delta/full push, show config
+
+**Quick reconnect** (within 6h + matching config fingerprint in `boardSyncMeta` AsyncStorage):
+- Skips layout push if `status.mb_layout_*` matches saved meta
+- Skips `preset_list` if `status.preset_count` ≥ phone preset count and cached sync IDs match
+- Use **Sync board config** on Home to force full push
+
+**Preset sync cache** (`blePresetCache.ts`): tracks which preset IDs are on board NVS; persisted in `boardSyncMeta` across disconnects.
+
+**WLED catalog** (`wled_get_fxdata` etc.): deferred 8s after session ready, only if Library cache is empty — never blocks connect.
+
+**Segment layouts**: `pushMbSegmentLayoutsToBoard` sends `buildDisableAllSplitSegmentsPayload()` before geometry; firmware `wled_raw` also calls `disableAllSplitSegments()` when seg geometry is posted.
 
 ### Stale closure pattern
 
@@ -448,6 +471,8 @@ Flash via USB. No OTA yet.
 - Chunk `data` field is already JSON-unescaped by the outer `JSON.parse` — never unescape again
 - `bleService` is a singleton — subscribe in `useEffect`, always return the unsubscribe function
 - Firmware chunk size = 100 bytes data + ~55 byte JSON wrapper ≈ 155 bytes total (safely under 247 MTU)
+- **Connect flood** — inbound `preset_list` (49+ chunks) + `wled_get_fxdata` (93 chunks) during bootstrap can drop Android BLE; use quick reconnect + background sync (`connectBootstrap.ts`)
+- Gate user commands on `bleService.isSessionReady()`, not just `isConnected`
 
 ### React Native / Expo
 - `react-native-maps` `draggable` marker prop is unreliable on Android — use tap-to-select + tap-map-to-move pattern instead

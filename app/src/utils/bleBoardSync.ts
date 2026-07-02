@@ -11,7 +11,7 @@ import { buildRecalledSegmentsFromPreset, finalizeWledSegmentPayload, parseWledS
 import type { MbSegmentLayout } from './configMigration';
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
-import { buildMbLayoutWledPayload } from './mbSegmentPreview';
+import { buildMbLayoutWledPayload, buildDisableAllSplitSegmentsPayload } from './mbSegmentPreview';
 import type { MbSegmentId, WledSegRef, MbMappingConfig } from './mbConfig';
 import { collectMappingPresetIds } from './mbConfig';
 
@@ -130,22 +130,29 @@ export async function pushMbSegmentLayoutsToBoard(
 ): Promise<void> {
   if (!bleService.isConnected()) return;
   const activeIdx = resolveActiveLayoutIndex(layouts, activeLayoutId);
+
+  // Tear down stale WLED segment splits before applying new geometry.
+  await bleService.sendWledRaw(buildDisableAllSplitSegmentsPayload());
+  await delay(500);
+  if (!bleService.isConnected()) return;
+
   if (layouts.length > 0) {
     await bleService.sendMbLayoutSet(layouts, activeIdx);
-    await delay(800);
+    await delay(1000);
     if (!bleService.isConnected()) return;
     await bleService.sendMbLayoutSwitch(activeIdx);
-    await delay(400);
+    await delay(600);
   }
   if (!bleService.isConnected()) return;
   await bleService.sendMbMappingConfig(mbMapping);
-  await delay(300);
+  await delay(500);
   if (!bleService.isConnected()) return;
   const wledPayload = buildMbLayoutWledPayload(
     (mbMapping.segments ?? {}) as Record<MbSegmentId, WledSegRef[]>,
   );
   if (wledPayload) {
     await bleService.sendWledRaw(wledPayload);
+    await delay(400);
   }
 }
 
@@ -180,15 +187,20 @@ export async function applyPresetToBoard(
 export async function syncPresetsToBoard(
   presets: Preset[],
   layouts: CustomSegmentLayout[],
+  recall: RecallState,
   onProgress?: (index: number, total: number) => void,
 ): Promise<void> {
   for (let i = 0; i < presets.length; i++) {
     if (!bleService.isConnected()) return;
     const p = presets[i];
-    await bleService.sendPresetSave(p.id, p.name, presetWledForBoard(p, layouts));
-    markPresetSynced(p.id);
+    if (!isPresetSynced(p.id)) {
+      const ok = await ensurePresetOnBoard(p, recall, layouts);
+      if (!ok) {
+        console.warn('[BoardSync] preset_save failed for', p.id);
+      }
+    }
     onProgress?.(i + 1, presets.length);
-    await new Promise(r => setTimeout(r, 400));
+    await delay(500);
   }
 }
 

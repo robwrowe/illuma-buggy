@@ -91,6 +91,14 @@ function buildMbSolidPreview(
   return { on: true, seg: segs };
 }
 
+export function buildDisableAllSplitSegmentsPayload(): { on: boolean; seg: object[] } {
+  const segs: object[] = [];
+  for (let id = 1; id < MB_WLED_MAX_SEG; id++) {
+    segs.push(disableSeg(id));
+  }
+  return { on: true, seg: segs };
+}
+
 /** Push segment geometry to WLED (interleave of/grp/spc) so MB mapping works without manual layout switch. */
 export function buildMbLayoutWledPayload(
   segments: Record<MbSegmentId, WledSegRef[]>,
