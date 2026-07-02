@@ -93,10 +93,13 @@ static const uint8_t MB_DEFAULT_COLORS[32][3] = {
 
 void paletteToRGBDirect(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b);
 void pickRandomMbColor(uint8_t& r, uint8_t& g, uint8_t& b);
+void pickRandomMbColorFresh(uint8_t& r, uint8_t& g, uint8_t& b);
+uint8_t decodeE905Palette(const uint8_t* payload);
 void loadMbRandomPoolDefaults();
 bool mbPaletteEligibleForRandom(uint8_t idx);
 void loadMbMappingDefaults();
 void loadMbMappingFromJson();
+void applyMbMappingJson(JsonObject root);
 String mfrToHex(const uint8_t* data, size_t len);
 String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen);
 void handleDisneyPayload(const uint8_t* payload, size_t plen);
@@ -168,6 +171,8 @@ unsigned long lastWandCastMs      = 0;
 // MB effect dedupe — identical E1/E9 adverts repeat for seconds; re-applying WLED cycles segments
 uint8_t       lastMbEffectPayload[48];
 size_t        lastMbEffectLen = 0;
+uint8_t       lastEphemeralR = 0, lastEphemeralG = 0, lastEphemeralB = 0;
+bool          lastEphemeralValid = false;
 const uint8_t* pendingMbEffectPayload = nullptr;
 size_t        pendingMbEffectPayloadLen = 0;
 
@@ -353,12 +358,21 @@ unsigned long lastWifiRetry = 0;
 const int     WIFI_RETRY_MS = 5000;
 
 // Pending command queue — BLE callbacks queue work here, loop() processes it
-// This prevents HTTPClient from running on the NimBLE stack (insufficient stack space)
 // IMPORTANT: use char arrays not String — FreeRTOS queues copy by value
 struct PendingCmd {
   char type[32];
 };
 QueueHandle_t cmdQueue;
+
+#define BLE_CMD_BUF_SIZE 8192
+struct PendingBleCmd {
+  char* data;  // heap-allocated; freed after processing
+};
+QueueHandle_t bleCmdQueue = nullptr;
+
+void enqueueBleCommand(const String& msg);
+void drainBleCmdQueue();
+void processBleCmdQueue();
 
 // ─────────────────────────────────────────────
 // BLE NOTIFY HELPER
@@ -810,6 +824,55 @@ void pickRandomMbColor(uint8_t& r, uint8_t& g, uint8_t& b) {
   b = mbRandomCustom[ci][2];
 }
 
+// Random palette — new draw from pool on each apply (avoid immediate repeat when pool > 1).
+void pickRandomMbColorFresh(uint8_t& r, uint8_t& g, uint8_t& b) {
+  for (int attempt = 0; attempt < 8; attempt++) {
+    pickRandomMbColor(r, g, b);
+    if (!lastEphemeralValid || r != lastEphemeralR || g != lastEphemeralG || b != lastEphemeralB) break;
+  }
+  lastEphemeralR = r;
+  lastEphemeralG = g;
+  lastEphemeralB = b;
+  lastEphemeralValid = true;
+}
+
+void drainBleCmdQueue() {
+  if (bleCmdQueue == nullptr) return;
+  PendingBleCmd item;
+  while (xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
+    if (item.data) free(item.data);
+  }
+}
+
+void enqueueBleCommand(const String& msg) {
+  if (!bleConnected || bleCmdQueue == nullptr) return;
+  if (msg.length() == 0 || msg.length() >= BLE_CMD_BUF_SIZE) {
+    Serial.printf("[BLE] Command size %u rejected\n", (unsigned)msg.length());
+    return;
+  }
+  char* buf = (char*)malloc(msg.length() + 1);
+  if (!buf) {
+    Serial.println("[BLE] Command alloc failed");
+    return;
+  }
+  memcpy(buf, msg.c_str(), msg.length() + 1);
+  PendingBleCmd item = { buf };
+  if (xQueueSend(bleCmdQueue, &item, 0) != pdTRUE) {
+    Serial.println("[BLE] Command queue full");
+    free(buf);
+  }
+}
+
+void processBleCmdQueue() {
+  if (bleCmdQueue == nullptr) return;
+  PendingBleCmd item;
+  if (xQueueReceive(bleCmdQueue, &item, 0) != pdTRUE) return;
+  if (item.data) {
+    handleBLECommand(String(item.data));
+    free(item.data);
+  }
+}
+
 void parseEffectMap(JsonObject obj, MbEffectMap& out) {
   out.presetId = obj["presetId"] | "";
   out.colorSlotCount = 0;
@@ -876,13 +939,7 @@ String resolveEffectPresetId(const MbEffectMap& map) {
   return bleDefaultPresetId;
 }
 
-void loadMbMappingFromJson() {
-  bleDefaultPresetId = "";
-  if (mbMappingJson.length() == 0) return;
-
-  DynamicJsonDocument doc(12288);
-  if (deserializeJson(doc, mbMappingJson)) return;
-
+void applyMbMappingJson(JsonObject doc) {
   bleDefaultPresetId = doc["defaultPresetId"] | "";
 
   if (doc.containsKey("colors")) {
@@ -957,6 +1014,15 @@ void loadMbMappingFromJson() {
   }
 }
 
+void loadMbMappingFromJson() {
+  bleDefaultPresetId = "";
+  if (mbMappingJson.length() == 0) return;
+
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, mbMappingJson)) return;
+  applyMbMappingJson(doc.as<JsonObject>());
+}
+
 int mbSegKeyIndex(const char* key) {
   for (int i = 0; i < MB_SEG_KEY_COUNT; i++) if (strcmp(key, MB_SEG_KEYS[i]) == 0) return i;
   return -1;
@@ -974,7 +1040,6 @@ uint8_t decodeE905Palette(const uint8_t* payload) {
 }
 
 void applyMbSingleMask(uint8_t mask8, uint8_t pal, OverrideSource src) {
-  if (!canTakeOverride(src)) return;
   if (WiFi.status() != WL_CONNECTED) return;
   if (mask8 == 0) {
     applyMbSegmentSolid("all", pal, src);
@@ -1078,7 +1143,11 @@ MbSegMap& activeMbSegMap(int keyIdx) {
 void applyMbSegmentSolid(const char* segKey, uint8_t palIdx, OverrideSource src) {
   int si = mbSegKeyIndex(segKey);
   if (si < 0) return;
-  if (!canTakeOverride(src)) return;
+  palIdx &= 0x1F;
+  bool isRandom = (palIdx == MB_PAL_RANDOM);
+  if (!isRandom && !canTakeOverride(src)) return;
+  if (isRandom && !magicBandEnabled) return;
+  if (isRandom && currentOverride != src && !canTakeOverride(src)) return;
   if (WiFi.status() != WL_CONNECTED) return;
   uint8_t r, g, b;
   paletteToRGB(palIdx, r, g, b);
@@ -1364,6 +1433,20 @@ void applyMbFive(uint8_t topLeft, uint8_t bottomLeft, uint8_t bottomRight,
   uint8_t pals[5] = { topLeft, bottomLeft, bottomRight, topRight, center };
 
   applyMbMultiSegmentSolid(keys, pals, 5, src);
+}
+
+bool e90cIsPaletteSubMode(const uint8_t* payload, size_t plen) {
+  if (plen < 12) return false;
+  if (payload[6] != 0x0F) return false;
+  for (int i = 7; i <= 11; i++) {
+    if (((payload[i] >> 5) & 0x07) != 0x05) return false;  // mask 101
+  }
+  return true;
+}
+
+uint8_t scale6To8(uint8_t v) {
+  v &= 0x3F;
+  return (uint8_t)((v << 2) | (v >> 4));
 }
 
 bool e909UsesPatternSlots(const uint8_t* payload) {
@@ -1714,12 +1797,15 @@ void processBleCmdChunk(int seq, bool last, const String& data) {
     String complete = cmdChunkBuffer;
     resetCmdChunkBuffer();
     Serial.printf("[BLE] Chunk assembly complete (%u bytes)\n", (unsigned)complete.length());
-    handleBLECommand(complete);
+    enqueueBleCommand(complete);
   }
 }
 
 void handleBLECommand(const String& msg) {
-  DynamicJsonDocument doc(4096);
+  size_t cap = msg.length() + 512;
+  if (cap < 4096) cap = 4096;
+  if (cap > 12288) cap = 12288;
+  DynamicJsonDocument doc(cap);
   DeserializationError err = deserializeJson(doc, msg);
   if (err) {
     Serial.printf("[BLE] JSON parse error: %s\n", err.c_str());
@@ -1874,7 +1960,21 @@ void handleBLECommand(const String& msg) {
   // ── Raw WLED passthrough ──
   else if (type == "wled_raw") {
     String wled; serializeJson(doc["wled"], wled);
-    bool ok = sendToWLED(wled);
+    String presetId = doc["preset_id"] | "";
+    if (presetId.length() > 0) {
+      if (!canTakeOverride(MANUAL)) {
+        bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":false,\"reason\":\"blocked\"}");
+        return;
+      }
+      setOverride(MANUAL);
+      currentPresetId = presetId;
+    }
+    ensureWledPowerOn();
+    bool ok = sendToWLEDForBleEffect(wled);
+    if (ok) {
+      liveWledState = "";
+      lastLiveStatePollMs = 0;
+    }
     bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":" + String(ok ? "true" : "false") + "}");
   }
 
@@ -1962,7 +2062,7 @@ void handleBLECommand(const String& msg) {
       prefs.begin("config", false);
       prefs.putString("mbMapping", mbMappingJson);
       prefs.end();
-      loadMbMappingFromJson();
+      applyMbMappingJson(doc["mapping"]);
       Serial.printf("[MB] Mapping updated (%u bytes)\n", (unsigned)mbMappingJson.length());
     }
     bleNotify("{\"type\":\"ack\",\"action\":\"mb_mapping_config\",\"ok\":true}");
@@ -2073,6 +2173,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
     bleConnected = false;
     resetCmdChunkBuffer();
+    drainBleCmdQueue();
     Serial.println("[BLE] App disconnected — restarting advertising");
     NimBLEDevice::startAdvertising();
   }
@@ -2081,8 +2182,9 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& connInfo) override {
     String val = chr->getValue().c_str();
-    Serial.printf("[BLE] Received: %s\n", val.c_str());
-    handleBLECommand(val);
+    if (val.length() <= 120) Serial.printf("[BLE] Received: %s\n", val.c_str());
+    else Serial.printf("[BLE] Received %u bytes\n", (unsigned)val.length());
+    enqueueBleCommand(val);
   }
 };
 
@@ -2178,7 +2280,7 @@ void paletteToRGBDirect(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b) {
 void paletteToRGB(uint8_t idx, uint8_t& r, uint8_t& g, uint8_t& b) {
   idx &= 0x1F;
   if (idx == MB_PAL_RANDOM) {
-    pickRandomMbColor(r, g, b);
+    pickRandomMbColorFresh(r, g, b);
     return;
   }
   paletteToRGBDirect(idx, r, g, b);
@@ -2494,9 +2596,9 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
     case 0xE908: {
       if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
       if (plen < 12) return;
-      uint8_t r = ((payload[8] >> 1) & 0x3F) * 4;
-      uint8_t g = ((payload[9] >> 1) & 0x3F) * 4;
-      uint8_t b = ((payload[10] >> 1) & 0x3F) * 4;
+      uint8_t r = scale6To8((payload[8] >> 1) & 0x3F);
+      uint8_t g = scale6To8((payload[9] >> 1) & 0x3F);
+      uint8_t b = scale6To8((payload[10] >> 1) & 0x3F);
       applyFullStripSolid(r, g, b, BLE_MAGIC);
       bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
       break;
@@ -2524,8 +2626,19 @@ void handleE1E2Payload(const uint8_t* payload, size_t plen) {
       }
       break;
     case 0xE90C:
-      if (!tryApplySwE9Payload(payload, plen, "E90C", "show_fx"))
+      if (e90cIsPaletteSubMode(payload, plen)) {
+        if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) break;
+        uint8_t tl = payload[7] & 0x1F;
+        uint8_t bl = payload[8] & 0x1F;
+        uint8_t br = payload[9] & 0x1F;
+        uint8_t tr = payload[10] & 0x1F;
+        uint8_t c  = payload[11] & 0x1F;
+        applyMbFive(tl, bl, br, tr, c, BLE_MAGIC);
+        bleNotify("{\"type\":\"ble_event\",\"event\":\"five_color\"}");
+      } else if (!tryApplySwE9Payload(payload, plen, "E90C", "show_fx")) {
+        notifyUnknownAnimation(payload, plen, SW_MATCH_NONE, 0xE90C);
         applyMbAnimOpcode("E90C", "show_fx");
+      }
       break;
     case 0xE90E:
       if (!tryApplySwE9Payload(payload, plen, "E90E", "flash"))
@@ -2797,6 +2910,7 @@ void setup() {
 
   // Create command queue (10 slots)
   cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
+  bleCmdQueue = xQueueCreate(6, sizeof(PendingBleCmd));
 
   xTaskCreatePinnedToCore(
     [](void*) { connectToWLED(); vTaskDelete(NULL); },
@@ -2845,6 +2959,7 @@ void processPendingCommands() {
 void loop() {
   processDisneyPayloadQueue();
   processSerialCommands();
+  processBleCmdQueue();
   processPendingCommands();
   serviceWandTx();
 
