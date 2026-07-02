@@ -25,9 +25,12 @@ import IconMoon from "@tabler/icons-react-native/dist/esm/icons/IconMoon";
 import IconRefresh from "@tabler/icons-react-native/dist/esm/icons/IconRefresh";
 
 import { useBLE } from "../hooks/useBLE";
+import { useBoardSync } from "../hooks/useBoardSync";
 import { useAppStore } from "../stores/store";
 import { bleService } from "../services/BLEService";
 import { applyPresetToBoard } from "../utils/bleBoardSync";
+import { formatSyncStatusLabel } from "../utils/boardSyncState";
+import { requestFullBoardSync } from "../utils/connectBootstrap";
 import { useTheme } from "../utils/theme";
 import { useNavigation } from "@react-navigation/native";
 import { PresetPickerModal } from "./MbMappingSections";
@@ -50,7 +53,8 @@ export default function HomeScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const navigation = useNavigation();
-  const { connectionState, isConnected } = useBLE();
+  const { connectionState, isConnected, isSessionReady } = useBLE();
+  const boardSync = useBoardSync();
 
   const {
     deviceStatus,
@@ -195,6 +199,14 @@ export default function HomeScreen() {
 
   const handleFireZone = async () => {
     if (!isConnected || firingZone) return;
+    if (!isSessionReady) {
+      Alert.alert(
+        "Board syncing",
+        formatSyncStatusLabel(boardSync, connectionState) +
+          "\n\nWait until the status shows Ready, then try again. Use Sync Board if it stays stuck.",
+      );
+      return;
+    }
     if (!fireZone?.presetId) {
       Alert.alert("No preset", "This zone has no preset assigned.");
       return;
@@ -231,8 +243,33 @@ export default function HomeScreen() {
     }
   };
 
+  const syncStatusLabel = formatSyncStatusLabel(boardSync, connectionState);
+  const commandsBlocked = isConnected && !isSessionReady;
+
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
+      {commandsBlocked && (
+        <View style={s.syncBanner}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.syncBannerTitle}>{syncStatusLabel}</Text>
+            {boardSync.presetProgress && (
+              <Text style={s.syncBannerSub}>
+                Presets {boardSync.presetProgress.current}/
+                {boardSync.presetProgress.total}
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
+
+      {isConnected && isSessionReady && boardSync.backgroundBusy && (
+        <View style={[s.syncBanner, s.syncBannerMuted]}>
+          <ActivityIndicator size="small" color={colors.textMuted} />
+          <Text style={s.syncBannerTitle}>{syncStatusLabel}</Text>
+        </View>
+      )}
+
       {bleCaptureActive && (
         <TouchableOpacity
           style={s.captureBanner}
@@ -246,7 +283,7 @@ export default function HomeScreen() {
       )}
 
       {/* Quick actions */}
-      {isConnected && (
+      {isConnected && isSessionReady && (
         <View style={s.card}>
           <Text style={s.label}>Quick Actions</Text>
           <View style={s.quickRow}>
@@ -298,9 +335,9 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={[
                 s.quickBtn,
-                (!fireZone?.presetId || firingZone) && s.quickBtnDisabled,
+                (!fireZone?.presetId || firingZone || !isSessionReady) && s.quickBtnDisabled,
               ]}
-              disabled={!fireZone?.presetId || firingZone || !isConnected}
+              disabled={!fireZone?.presetId || firingZone || !isSessionReady}
               activeOpacity={0.6}
               onPress={() => void handleFireZone()}
             >
@@ -421,7 +458,7 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Connection */}
+      {/* Connection & sync */}
       <View style={s.card}>
         <View style={s.row}>
           {isConnected ? (
@@ -431,7 +468,9 @@ export default function HomeScreen() {
           )}
           <Text style={s.statusText}>
             {connectionState === "connected"
-              ? "Connected to IllumaBuggy"
+              ? isSessionReady
+                ? "Connected — commands enabled"
+                : "Connected — syncing board…"
               : connectionState === "scanning"
                 ? "Scanning…"
                 : connectionState === "connecting"
@@ -441,7 +480,8 @@ export default function HomeScreen() {
                     : "Connection error — retrying"}
           </Text>
           {(connectionState === "scanning" ||
-            connectionState === "connecting") && (
+            connectionState === "connecting" ||
+            commandsBlocked) && (
             <ActivityIndicator
               size="small"
               color={colors.primary}
@@ -449,6 +489,27 @@ export default function HomeScreen() {
             />
           )}
         </View>
+        {isConnected && (
+          <Text style={s.subText}>{syncStatusLabel}</Text>
+        )}
+        {isConnected && boardSync.mode !== "none" && (
+          <Text style={s.subText}>
+            Sync mode: {boardSync.mode === "quick" ? "quick reconnect" : "full"}
+            {deviceStatus?.boardPresetCount != null
+              ? ` · ${deviceStatus.boardPresetCount} preset(s) on board`
+              : ""}
+            {presets.length > 0 ? ` · ${presets.length} in app` : ""}
+          </Text>
+        )}
+        {isConnected && (
+          <TouchableOpacity
+            style={s.syncBtn}
+            onPress={() => requestFullBoardSync()}
+          >
+            <IconRefresh size={14} color={colors.primary} />
+            <Text style={s.syncBtnText}>Sync board config</Text>
+          </TouchableOpacity>
+        )}
         {deviceStatus && (
           <View style={s.row}>
             {deviceStatus.wifiConnected ? (
@@ -458,6 +519,9 @@ export default function HomeScreen() {
             )}
             <Text style={s.subText}>
               WLED: {deviceStatus.wifiConnected ? "connected" : "not connected"}
+              {!deviceStatus.wifiConnected && isSessionReady
+                ? " — preset apply will fail until WiFi is up"
+                : ""}
             </Text>
           </View>
         )}
@@ -562,7 +626,7 @@ export default function HomeScreen() {
           thumbTintColor={colors.primary}
           onValueChange={setBrightness}
           onSlidingComplete={(v) => bleService.sendBrightness(Math.round(v))}
-          disabled={!isConnected}
+          disabled={!isSessionReady}
         />
       </View>
 
@@ -621,6 +685,34 @@ const styles = (
       fontWeight: "600",
       flex: 1,
     },
+    syncBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      backgroundColor: c.primary + "18",
+      borderColor: c.primary + "44",
+      borderWidth: 1,
+      borderRadius: 10,
+      padding: 12,
+    },
+    syncBannerMuted: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+    },
+    syncBannerTitle: { color: c.textPrimary, fontSize: 13, fontWeight: "600", flex: 1 },
+    syncBannerSub: { color: c.textMuted, fontSize: 12, marginTop: 2 },
+    syncBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      alignSelf: "flex-start",
+      marginTop: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+      borderRadius: 8,
+      backgroundColor: c.primary + "14",
+    },
+    syncBtnText: { color: c.primary, fontSize: 13, fontWeight: "600" },
     card: {
       backgroundColor: c.surface,
       borderRadius: 12,

@@ -261,6 +261,7 @@ export default function App() {
           mbTimeoutMs: msg.mb_timeout_ms as number,
           showType: msg.show_type as string | undefined,
           showPhase: msg.show_phase as string | undefined,
+          boardPresetCount: msg.preset_count as number | undefined,
         });
         if (override === 0) setOverrideDetail(null);
       }

@@ -8,6 +8,7 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import base64 from 'base64-js';
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from '../utils/bleChunking';
 import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
+import { resetBoardSyncStatus } from '../utils/boardSyncState';
 import type { MbSegmentLayout } from '../utils/configMigration';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
@@ -381,6 +382,7 @@ class BLEService {
     this.handlingDisconnect = true;
     this.markSessionReady(false);
     clearBoardPresetSyncCache();
+    resetBoardSyncStatus();
     this.device = null;
     this.notifyBuffer = '';
     this.chunkBuffer = {};

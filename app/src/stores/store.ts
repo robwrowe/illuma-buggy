@@ -132,6 +132,7 @@ export interface DeviceStatus {
   mbTimeoutMs:          number;
   showType?:            string;
   showPhase?:           string;
+  boardPresetCount?:    number;
 }
 
 import {
@@ -703,7 +704,19 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
-      pairs.forEach(([k, v]) => { if (v) d[k] = JSON.parse(v); });
+      pairs.forEach(([k, v]) => {
+        if (!v) return;
+        try {
+          d[k] = JSON.parse(v);
+        } catch {
+          // ftbPresetId was historically saved without JSON.stringify — accept bare id strings.
+          if (k === 'ftbPresetId') {
+            d[k] = v;
+          } else {
+            console.warn(`[Store] Skipping corrupt storage key "${k}"`);
+          }
+        }
+      });
       const mbMapping = normalizeMbMapping(d.mbMapping);
       const mbBoot = ensureMbSegmentLayouts({
         mbMapping,
@@ -797,7 +810,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['showBindings',       JSON.stringify(s.showBindings)],
         ['showSettings',       JSON.stringify(s.showSettings)],
         ['showInstanceOverrides', JSON.stringify(s.showInstanceOverrides)],
-        ['ftbPresetId',        s.ftbPresetId],
+        ['ftbPresetId',        JSON.stringify(s.ftbPresetId)],
         ['wandLab',            JSON.stringify(s.wandLab)],
         ['mbSegmentLayouts',   JSON.stringify(s.mbSegmentLayouts)],
         ['mbActiveSegmentLayoutId', JSON.stringify(s.mbActiveSegmentLayoutId)],

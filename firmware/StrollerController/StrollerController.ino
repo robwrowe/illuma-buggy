@@ -484,6 +484,18 @@ String getAllPresets() {
   return result + "]";
 }
 
+int countBoardPresets() {
+  prefs.begin("presets", true);
+  String index = prefs.getString("index", "");
+  prefs.end();
+  if (index.length() == 0) return 0;
+  int count = 1;
+  for (unsigned i = 0; i < index.length(); i++) {
+    if (index.charAt(i) == ',') count++;
+  }
+  return count;
+}
+
 void deletePreset(const String& id) {
   prefs.begin("presets", false);
   prefs.remove(("p_" + id).c_str());
@@ -631,8 +643,11 @@ bool applyPreset(const String& id) {
     Serial.printf("[Preset] Not found: %s\n", id.c_str());
     return false;
   }
-  DynamicJsonDocument doc(8192);
-  if (deserializeJson(doc, preset)) return false;
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, preset)) {
+    Serial.printf("[Preset] JSON parse failed for %s (%u bytes)\n", id.c_str(), (unsigned)preset.length());
+    return false;
+  }
   String wledJson;
   serializeJson(doc["wled"], wledJson);
   currentPresetId = id;
@@ -1874,8 +1889,9 @@ void handleBLECommand(const String& msg) {
       bleNotify("{\"type\":\"ack\",\"action\":\"preset_apply\",\"id\":\"" + id + "\",\"ok\":false}");
       return;
     }
-    setOverride(MANUAL);
     bool ok = applyPreset(id);
+    if (ok) setOverride(MANUAL);
+    else Serial.printf("[Preset] Apply failed for %s\n", id.c_str());
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_apply\",\"id\":\"" + id + "\",\"ok\":" + (ok ? "true" : "false") + "}");
   }
   else if (type == "preset_delete") {
@@ -2195,7 +2211,8 @@ void handleBLECommand(const String& msg) {
       "\"show_type\":\"" + String(showTypeStatusStr()) + "\","
       "\"show_phase\":\"" + String(showPhaseStatusStr()) + "\","
       "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") + ","
-      "\"capture_active\":" + String(bleCaptureToApp ? "true" : "false") +
+      "\"capture_active\":" + String(bleCaptureToApp ? "true" : "false") + ","
+      "\"preset_count\":" + String(countBoardPresets()) +
       "}"
     );
   }

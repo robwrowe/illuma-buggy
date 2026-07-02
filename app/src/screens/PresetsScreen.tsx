@@ -18,16 +18,19 @@ import IconCopy from '@tabler/icons-react-native/dist/esm/icons/IconCopy';
 import { TagEditor, TagFilterBar, TagChipRow, filterTaggedItems } from '../components/TagFields';
 import { duplicatePreset } from '../utils/tags';
 import { useBLE } from '../hooks/useBLE';
+import { useBoardSync } from '../hooks/useBoardSync';
 import { useAppStore, Preset, summarizeLayout } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { generateId } from '../utils/utils';
 import { applyPresetToBoard, presetWledForBoard } from '../utils/bleBoardSync';
+import { formatSyncStatusLabel } from '../utils/boardSyncState';
 import { useTheme } from '../utils/theme';
 
 export default function PresetsScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
-  const { isConnected } = useBLE();
+  const { isConnected, isSessionReady } = useBLE();
+  const boardSync = useBoardSync();
   const { presets, deviceStatus, customSegmentLayouts, addOrUpdatePreset, removePreset, saveToStorage } = useAppStore();
   const [syncing, setSyncing]       = useState(false);
   const [search, setSearch]         = useState('');
@@ -64,13 +67,20 @@ export default function PresetsScreen() {
       return;
     }
     if (!bleService.isSessionReady()) {
-      Alert.alert('Syncing…', 'Wait for board sync to finish, then try again.');
+      Alert.alert(
+        'Board syncing',
+        formatSyncStatusLabel(boardSync, isConnected ? 'connected' : 'disconnected') +
+          '\n\nWait until Home shows Ready, or tap Sync board config.',
+      );
       return;
     }
     const { recallState, customSegmentLayouts } = useAppStore.getState();
     const ok = await applyPresetToBoard(preset, recallState, customSegmentLayouts);
     if (!ok) {
-      Alert.alert('Apply failed', 'Could not apply preset on the board.');
+      Alert.alert(
+        'Apply failed',
+        'Could not apply preset on the board. Wait for sync to finish after connect, then try again. If it keeps failing, check the board serial log for [Preset] or [WLED] errors.',
+      );
     }
   };
 
@@ -121,8 +131,8 @@ export default function PresetsScreen() {
         <TouchableOpacity style={s.iconBtn} onPress={() => duplicateItem(item)}>
           <IconCopy size={16} color={colors.textSecondary} />
         </TouchableOpacity>
-        <TouchableOpacity style={s.applyBtn} onPress={() => applyPreset(item)} disabled={!isConnected}>
-          <Text style={s.applyBtnText}>Apply</Text>
+        <TouchableOpacity style={s.applyBtn} onPress={() => applyPreset(item)} disabled={!isSessionReady}>
+          <Text style={[s.applyBtnText, !isSessionReady && { opacity: 0.45 }]}>Apply</Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.iconBtn} onPress={() => deletePreset(item)}>
           <IconTrash size={16} color={colors.danger} />
@@ -133,6 +143,14 @@ export default function PresetsScreen() {
 
   return (
     <View style={s.container}>
+      {isConnected && !isSessionReady && (
+        <View style={s.syncBar}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          <Text style={s.syncBarText}>
+            {formatSyncStatusLabel(boardSync, 'connected')}
+          </Text>
+        </View>
+      )}
       <View style={s.header}>
         <TouchableOpacity style={s.headerBtn} onPress={refreshFromBoard} disabled={!isConnected || syncing}>
           {syncing
@@ -180,6 +198,8 @@ export default function PresetsScreen() {
 
 const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors']) => StyleSheet.create({
   container:    { flex: 1, backgroundColor: c.background },
+  syncBar:      { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: c.primary + '14', borderBottomWidth: 1, borderBottomColor: c.border },
+  syncBarText:  { color: c.textPrimary, fontSize: 13, flex: 1 },
   header:       { flexDirection: 'row', justifyContent: 'flex-end', padding: 16, gap: 8 },
   list:         { padding: 16, gap: 10 },
   centered:     { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
