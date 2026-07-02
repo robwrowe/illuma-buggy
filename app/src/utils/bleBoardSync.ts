@@ -13,7 +13,7 @@ import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } fro
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
 import { buildMbLayoutWledPayload, buildDisableAllSplitSegmentsPayload } from './mbSegmentPreview';
 import type { MbSegmentId, WledSegRef, MbMappingConfig } from './mbConfig';
-import { collectMappingPresetIds } from './mbConfig';
+import { collectMappingPresetIds, mbMappingToBlePayload } from './mbConfig';
 
 const BOARD_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: true, segments: true,
@@ -24,6 +24,30 @@ const BOARD_RECALL: RecallState = {
 };
 
 export { clearBoardPresetSyncCache } from './blePresetCache';
+
+/** MB mapping for BLE — embeds wand (and other SW) preset wled so cast works without NVS. */
+export function mbMappingEssentialPayload(
+  mbMapping: MbMappingConfig,
+  presets: Preset[],
+  recall: RecallState,
+  layouts: CustomSegmentLayout[],
+): object {
+  const payload = mbMappingToBlePayload(mbMapping) as Record<string, unknown>;
+  const swAnimations = {
+    ...(payload.swAnimations as Record<string, { presetId?: string; colorSlots?: number[]; wled?: object }>),
+  };
+  for (const [key, mapping] of Object.entries(mbMapping.swAnimations ?? {})) {
+    if (!mapping?.presetId) continue;
+    const preset = presets.find(p => p.id === mapping.presetId);
+    if (!preset) continue;
+    swAnimations[key] = {
+      presetId: mapping.presetId,
+      colorSlots: mapping.colorSlots ?? [],
+      wled: presetWledForBoard(preset, layouts, recall),
+    };
+  }
+  return { ...payload, swAnimations };
+}
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 

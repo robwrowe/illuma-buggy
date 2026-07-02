@@ -13,7 +13,6 @@ import type { MbEffectClassKey } from '../utils/mbConfig';
 import { summarizeTier2FromSessions } from '../utils/tier2Packets';
 import { useAppStore } from '../stores/store';
 import { bleService } from '../services/BLEService';
-import { mbMappingToBlePayload } from '../utils/mbConfig';
 import {
   buildSegmentHighlightPreview, buildFiveCornerPreview,
   MB_SEGMENT_SIM_COMMAND, SIM_FIVE_CORNERS,
@@ -27,7 +26,7 @@ import {
 import {
   buildPresetLayoutPayload, fetchWledSegmentsFromDevice, WledSegmentDef,
 } from '../utils/segmentLayouts';
-import { pushMbSegmentLayoutsToBoard } from '../utils/bleBoardSync';
+import { pushMbSegmentLayoutsToBoard, mbMappingEssentialPayload } from '../utils/bleBoardSync';
 
 type Colors = ReturnType<typeof import('../utils/theme').useTheme>['colors'];
 type BleTab = 'sw' | 'mb' | 'colors' | 'segments';
@@ -364,7 +363,7 @@ function RandomPoolEditor({
 
 export function MbMappingSections({ colors, isConnected }: { colors: Colors; isConnected: boolean }) {
   const {
-    mbMapping, setMbMapping, presets, saveToStorage, customSegmentLayouts,
+    mbMapping, setMbMapping, presets, saveToStorage, customSegmentLayouts, recallState,
     mbSegmentLayouts, mbActiveSegmentLayoutId,
     switchMbSegmentLayout, addMbSegmentLayout, updateActiveLayoutSegments,
     bleCaptureSessions, bleCaptureBuffer, bleCaptureActive,
@@ -378,9 +377,12 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
   const [segCaptureId, setSegCaptureId] = useState<MbSegmentId | null>(null);
   const [segSnapshotErr, setSegSnapshotErr] = useState('');
 
+  const mappingBlePayload = (config: MbMappingConfig) =>
+    mbMappingEssentialPayload(config, presets, recallState, customSegmentLayouts);
+
   const push = (next: MbMappingConfig) => {
     setMbMapping(next);
-    if (isConnected) bleService.sendMbMappingConfig(mbMappingToBlePayload(next));
+    if (isConnected) bleService.sendMbMappingConfig(mappingBlePayload(next));
     saveToStorage();
   };
 
@@ -432,7 +434,7 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
     updateActiveLayoutSegments(segId, refs);
     if (isConnected) {
       const next = useAppStore.getState().mbMapping;
-      bleService.sendMbMappingConfig(mbMappingToBlePayload(next));
+      bleService.sendMbMappingConfig(mappingBlePayload(next));
     }
   };
 
@@ -443,7 +445,7 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
     void pushMbSegmentLayoutsToBoard(
       s.mbSegmentLayouts,
       s.mbActiveSegmentLayoutId,
-      mbMappingToBlePayload(s.mbMapping),
+      mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
     );
   };
 
@@ -455,7 +457,7 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
       void pushMbSegmentLayoutsToBoard(
         s.mbSegmentLayouts,
         s.mbActiveSegmentLayoutId,
-        mbMappingToBlePayload(s.mbMapping),
+        mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
       );
     }
   };

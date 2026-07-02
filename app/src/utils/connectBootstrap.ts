@@ -4,10 +4,11 @@
  */
 
 import { bleService } from '../services/BLEService';
-import { useAppStore, mbMappingToBlePayload } from '../stores/store';
+import { useAppStore } from '../stores/store';
 import {
   ensureMappingPresetsOnBoard,
   ensurePresetOnBoard,
+  mbMappingEssentialPayload,
   pushHeavyBoardConfig,
   pushMbSegmentLayoutsToBoard,
   resolveActiveLayoutIndex,
@@ -139,6 +140,12 @@ async function runEssentialConfig(token: number): Promise<boolean> {
   await delay(300);
   if (!bleService.isConnected() || token !== bootstrapToken) return false;
 
+  await bleService.sendMbMappingConfig(
+    mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
+  );
+  await delay(500);
+  if (!bleService.isConnected() || token !== bootstrapToken) return false;
+
   // Mapped presets (wand cast, MB animations) must exist on board NVS — sync every connect.
   await ensureMappingPresetsOnBoard(
     s.mbMapping,
@@ -208,7 +215,12 @@ async function runLayoutPush(token: number): Promise<BoardStatusSnapshot | null>
   await pushMbSegmentLayoutsToBoard(
     s.mbSegmentLayouts,
     s.mbActiveSegmentLayoutId,
-    mbMappingToBlePayload(useAppStore.getState().mbMapping),
+    mbMappingEssentialPayload(
+      useAppStore.getState().mbMapping,
+      s.presets,
+      s.recallState,
+      s.customSegmentLayouts,
+    ),
   ).catch((e) => console.warn('[Bootstrap] MB layout push failed:', e));
   if (!bleService.isConnected() || token !== bootstrapToken) return null;
 

@@ -60,6 +60,7 @@ struct WledSegRef {
 struct MbSegMap { WledSegRef refs[MB_MAX_SEG_REFS]; uint8_t count; };
 struct MbEffectMap {
   String presetId;
+  String wledPayload;  // optional embedded preset wled (wand cast without NVS)
   uint8_t colorSlots[MB_MAX_COLOR_SLOTS];
   uint8_t colorSlotCount;
 };
@@ -82,6 +83,7 @@ static const char* SW_ANIM_KEYS[] = {
   "rainbow", "blink", "palette5", "flash", "sparkle", "pulse", "circle", "fade", "fade2", "wand"
 };
 #define SW_ANIM_COUNT 10
+#define WLED_PAL_COLORS_ONLY 5  // "* Colors Only" — wand/MB custom col[] slots
 
 static const uint8_t MB_DEFAULT_COLORS[32][3] = {
   {0,255,255},{153,0,255},{0,0,255},{0,0,128},{0,102,255},{204,68,255},{204,153,255},{119,0,204},
@@ -805,9 +807,9 @@ void loadMbMappingDefaults() {
       mbLayouts[0].segMaps[i].refs[1] = { 3, 65, 100 };
     }
   }
-  for (int i = 0; i < 8; i++) { mbAnimMap[i].presetId = ""; mbAnimMap[i].colorSlotCount = 0; }
-  for (int i = 0; i < SW_ANIM_COUNT; i++) { swAnimMap[i].presetId = ""; swAnimMap[i].colorSlotCount = 0; }
-  for (int i = 0; i < 5; i++) { mbPatMap[i].presetId = ""; mbPatMap[i].colorSlotCount = 0; }
+  for (int i = 0; i < 8; i++) { mbAnimMap[i].presetId = ""; mbAnimMap[i].wledPayload = ""; mbAnimMap[i].colorSlotCount = 0; }
+  for (int i = 0; i < SW_ANIM_COUNT; i++) { swAnimMap[i].presetId = ""; swAnimMap[i].wledPayload = ""; swAnimMap[i].colorSlotCount = 0; }
+  for (int i = 0; i < 5; i++) { mbPatMap[i].presetId = ""; mbPatMap[i].wledPayload = ""; mbPatMap[i].colorSlotCount = 0; }
   loadMbRandomPoolDefaults();
 }
 
@@ -898,6 +900,10 @@ void processBleCmdQueue() {
 
 void parseEffectMap(JsonObject obj, MbEffectMap& out) {
   out.presetId = obj["presetId"] | "";
+  out.wledPayload = "";
+  if (obj.containsKey("wled")) {
+    serializeJson(obj["wled"], out.wledPayload);
+  }
   out.colorSlotCount = 0;
   if (obj.containsKey("colorSlots")) {
     for (JsonVariant v : obj["colorSlots"].as<JsonArray>()) {
@@ -1240,9 +1246,31 @@ static int countPresetColorSlots(JsonObject wled) {
   return 0;
 }
 
-bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, int packetPalCount, OverrideSource src) {
+// Load wled JSON from embedded mapping payload or board NVS preset.
+bool loadEffectMapWled(const MbEffectMap& map, DynamicJsonDocument& wled) {
+  if (map.wledPayload.length() > 0) {
+    if (deserializeJson(wled, map.wledPayload)) return false;
+    Serial.printf("[BLE] Using embedded wled (%u bytes, preset=%s)\n",
+                  (unsigned)map.wledPayload.length(),
+                  map.presetId.length() ? map.presetId.c_str() : "(inline)");
+    return true;
+  }
   String presetId = resolveEffectPresetId(map);
   if (presetId.length() == 0) return false;
+  String preset = getPreset(presetId);
+  if (preset.length() == 0) {
+    Serial.printf("[BLE] Preset not found on board: %s\n", presetId.c_str());
+    return false;
+  }
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, preset)) return false;
+  if (deserializeJson(wled, doc["wled"])) return false;
+  return true;
+}
+
+bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, int packetPalCount, OverrideSource src) {
+  String presetId = resolveEffectPresetId(map);
+  if (presetId.length() == 0 && map.wledPayload.length() == 0) return false;
   if (!canTakeOverride(src)) return false;
 
   int slotCount = map.colorSlotCount;
@@ -1256,38 +1284,34 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
   // No packet palette and no mapped color slots — apply preset unchanged.
   if (slotCount <= 0) {
     saveWledStateForOverride();
-    bool ok = applyPreset(presetId);
+    bool ok = presetId.length() > 0 ? applyPreset(presetId) : false;
     if (ok) {
       setOverride(src);
       touchOverrideIdleTimer(src);
       Serial.printf("[BLE] Applied preset %s (zone-style)\n", presetId.c_str());
-    } else {
+    } else if (presetId.length() > 0) {
       Serial.printf("[BLE] Preset not found on board: %s\n", presetId.c_str());
     }
     return ok;
   }
 
-  String preset = getPreset(presetId);
-  if (preset.length() == 0) {
-    Serial.printf("[BLE] Preset not found on board: %s\n", presetId.c_str());
-    return false;
-  }
-
   saveWledStateForOverride();
-  DynamicJsonDocument doc(12288);
-  if (deserializeJson(doc, preset)) return false;
   DynamicJsonDocument wled(12288);
-  if (deserializeJson(wled, doc["wled"])) return false;
+  if (!loadEffectMapWled(map, wled)) return false;
 
   if (map.colorSlotCount <= 0 && packetPalCount > 0) {
     int presetSlots = countPresetColorSlots(wled.as<JsonObject>());
     if (presetSlots > slotCount) slotCount = presetSlots;
   }
 
+  const bool wandColors = packetPalCount > 0 && (src == BLE_STARLIGHT || src == BLE_MAGIC);
+
   if (slotCount > 0) {
     auto applyColorsToSeg = [&](JsonObject segObj) {
       int stop = segObj["stop"] | 0;
-      if (stop <= 0 && (segObj["start"] | 0) >= stop) return;
+      int start = segObj["start"] | 0;
+      if (stop <= start && stop <= 0) return;
+      if (wandColors) segObj["pal"] = WLED_PAL_COLORS_ONLY;
       JsonArray col = segObj["col"].to<JsonArray>();
       col.clear();
       for (int i = 0; i < slotCount; i++) {
@@ -1311,6 +1335,7 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
       }
       if (!touched) applyColorsToSeg(segs[0]);
     } else {
+      if (wandColors) wled["pal"] = WLED_PAL_COLORS_ONLY;
       JsonArray col = wled["col"].to<JsonArray>();
       col.clear();
       for (int i = 0; i < slotCount; i++) {
@@ -1334,7 +1359,8 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
   if (!ok) return false;
   setOverride(src);
   touchOverrideIdleTimer(src);
-  Serial.printf("[BLE] Preset %s + %d color slot(s) (full apply)\n", presetId.c_str(), slotCount);
+  Serial.printf("[BLE] Preset %s + %d color slot(s) (full apply, pal=%d)\n",
+                presetId.length() ? presetId.c_str() : "embedded", slotCount, WLED_PAL_COLORS_ONLY);
   return true;
 }
 
@@ -2603,6 +2629,15 @@ void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
     return;
   }
   uint8_t pals[1] = { paletteIdx };
+  int wandIdx = -1;
+  for (int i = 0; i < SW_ANIM_COUNT; i++) {
+    if (strcmp("wand", SW_ANIM_KEYS[i]) == 0) { wandIdx = i; break; }
+  }
+  if (wandIdx >= 0) {
+    Serial.printf("[Wand] map preset=%s embedded=%u bytes\n",
+                  swAnimMap[wandIdx].presetId.c_str(),
+                  (unsigned)swAnimMap[wandIdx].wledPayload.length());
+  }
   if (applySwAnimationKey("wand", pals, 1, src)) {
     if (src == BLE_STARLIGHT) {
       bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
