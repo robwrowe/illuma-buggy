@@ -120,7 +120,7 @@ export function buildMbKeyedSegmentsFromMapping(
   return segments;
 }
 
-function migrateMbSegmentLayouts<T extends Record<string, unknown>>(data: T): T {
+export function ensureMbSegmentLayouts<T extends Record<string, unknown>>(data: T): T {
   if (Array.isArray(data.mbSegmentLayouts) && (data.mbSegmentLayouts as unknown[]).length) return data;
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const mbSegs = (data.mbMapping as { segments?: Record<string, Partial<SegRefWithMeta>[]> } | undefined)?.segments;
@@ -159,6 +159,6 @@ export function migrateConfig(raw: Record<string, unknown> | null | undefined): 
       .map(l => normalizeSegmentLayout(l as CustomSegmentLayout))
       .filter(Boolean);
   }
-  data = migrateMbSegmentLayouts(data);
+  data = ensureMbSegmentLayouts(data);
   return data;
 }

@@ -140,13 +140,18 @@ import {
 } from '../utils/bleCapture';
 import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
+  finalizeWledSegmentPayload,
 } from '../utils/segmentLayouts';
 import { normalizeZonePolygon } from '../utils/utils';
+import { generateId } from '../utils/utils';
+import { ensureMbSegmentLayouts } from '../utils/configMigration';
+import type { WledSegRef } from '../utils/mbConfig';
 
 export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
 export {
   buildLayoutPayload, summarizeLayout, fetchWledSegmentsFromDevice,
   normalizeSegmentDef, parseWledStateSegments, buildRecalledSegmentsFromPreset,
+  finalizeWledSegmentPayload,
 } from '../utils/segmentLayouts';
 
 export type { ParkConfig, ShowModeConfig, MbSegmentLayout } from '../utils/configMigration';
@@ -277,6 +282,9 @@ interface AppState {
   wandLab: WandLabConfig;
   mbSegmentLayouts: MbSegmentLayout[];
   mbActiveSegmentLayoutId: string | null;
+  switchMbSegmentLayout: (id: string) => void;
+  addMbSegmentLayout: (name: string) => void;
+  updateActiveLayoutSegments: (segId: string, refs: import('../utils/mbConfig').WledSegRef[]) => void;
 
   // BLE packet capture (parade / show recording)
   bleCaptureActive:       boolean;
@@ -386,6 +394,44 @@ export const useAppStore = create<AppState>((set, get) => ({
   wandLab:                DEFAULT_WAND_LAB,
   mbSegmentLayouts:       [],
   mbActiveSegmentLayoutId: null,
+
+  switchMbSegmentLayout: (id) => {
+    const s = get();
+    const layout = s.mbSegmentLayouts.find(l => l.id === id);
+    if (!layout) return;
+    const segments = JSON.parse(JSON.stringify(layout.segments)) as Record<string, WledSegRef[]>;
+    set({
+      mbActiveSegmentLayoutId: id,
+      mbMapping: { ...s.mbMapping, segments },
+    });
+    get().saveToStorage();
+  },
+
+  addMbSegmentLayout: (name) => {
+    const s = get();
+    const id = generateId();
+    const segments = JSON.parse(JSON.stringify(s.mbMapping.segments)) as Record<string, WledSegRef[]>;
+    const layout: MbSegmentLayout = { id, name: name.trim() || 'Layout', createdAt: Date.now(), segments };
+    set({
+      mbSegmentLayouts: [...s.mbSegmentLayouts, layout],
+      mbActiveSegmentLayoutId: id,
+    });
+    get().saveToStorage();
+  },
+
+  updateActiveLayoutSegments: (segId, refs) => {
+    const s = get();
+    const segments = { ...s.mbMapping.segments, [segId]: refs };
+    const mbMapping = { ...s.mbMapping, segments };
+    const activeId = s.mbActiveSegmentLayoutId;
+    const mbSegmentLayouts = activeId
+      ? s.mbSegmentLayouts.map(l => l.id === activeId
+        ? { ...l, segments: { ...l.segments, [segId]: refs } }
+        : l)
+      : s.mbSegmentLayouts;
+    set({ mbMapping, mbSegmentLayouts });
+    get().saveToStorage();
+  },
 
   // Presets
   setPresets: (presets) => set({ presets }),
@@ -577,6 +623,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
       pairs.forEach(([k, v]) => { if (v) d[k] = JSON.parse(v); });
+      const mbMapping = normalizeMbMapping(d.mbMapping);
+      const mbBoot = ensureMbSegmentLayouts({
+        mbMapping,
+        mbSegmentLayouts: d.mbSegmentLayouts ?? [],
+        mbActiveSegmentLayoutId: d.mbActiveSegmentLayoutId ?? null,
+      });
       set({
         presets:            (d.presets ?? []).map((p: Preset) => normalizePreset(p)),
         zones:              (d.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
@@ -589,7 +641,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         magicBandFivePoint: d.magicBandFivePoint ?? true,
         magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
         bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
-        mbMapping:          normalizeMbMapping(d.mbMapping),
+        mbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     (d.customPalettes ?? []).map((p: CustomPalette) => normalizeCustomPalette(p)),
         paletteSets:        (d.paletteSets ?? []).map((s: PaletteSet) => normalizePaletteSet(s)),
@@ -608,8 +660,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         showModeConfig:     d.showModeConfig     ?? DEFAULT_SHOW_MODE,
         ftbPresetId:        d.ftbPresetId        ?? '',
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
-        mbSegmentLayouts:   d.mbSegmentLayouts   ?? [],
-        mbActiveSegmentLayoutId: d.mbActiveSegmentLayoutId ?? null,
+        mbSegmentLayouts:   (mbBoot.mbSegmentLayouts as MbSegmentLayout[]) ?? [],
+        mbActiveSegmentLayoutId: (mbBoot.mbActiveSegmentLayoutId as string | null) ?? null,
       });
     } catch (e) { console.error('[Store] Load error:', e); }
   },
@@ -774,13 +826,17 @@ const DEFAULT_RECALL_FALLBACK: RecallState = {
   effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never',
 };
 
-export function buildRecallPayload(preset: Preset, recall: RecallState | undefined): object {
+export function buildRecallPayload(
+  preset: Preset,
+  recall: RecallState | undefined,
+  layouts?: CustomSegmentLayout[],
+): object {
   if (!recall) recall = DEFAULT_RECALL_FALLBACK;
-  const layouts = useAppStore.getState().customSegmentLayouts;
-  return {
+  const layoutList = layouts ?? useAppStore.getState().customSegmentLayouts;
+  return finalizeWledSegmentPayload({
     on: true,
-    seg: buildRecalledSegmentsFromPreset(preset, recall, layouts, DEFAULT_PRESET_MEMORY),
-  };
+    seg: buildRecalledSegmentsFromPreset(preset, recall, layoutList, DEFAULT_PRESET_MEMORY),
+  });
 }
 
 // ─────────────────────────────────────────────
