@@ -16,6 +16,7 @@ import IconCheck from '@tabler/icons-react-native/dist/esm/icons/IconCheck';
 import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 
 import { useTheme } from '../utils/theme';
+import { useBLE } from '../hooks/useBLE';
 import { useAppStore, WledEffect, WledPalette, Preset, PresetMemory, buildRecallPayload, fetchWledSegmentsFromDevice } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { generateId } from '../utils/utils';
@@ -84,7 +85,20 @@ export default function LibraryScreen() {
     effect: true, palette: true, parameters: true, color: false, segments: false
   });
 
-  const isConnected = bleService.isConnected();
+  const { isConnected } = useBLE();
+
+  const fetchAll = useCallback(() => {
+    if (!isConnected) return;
+    setLoading(true);
+    bleService.sendGetFxData();
+    setTimeout(() => bleService.sendGetEffects(), 500);
+    setTimeout(() => bleService.sendGetPalettes(), 1000);
+  }, [isConnected]);
+
+  // Auto-load catalog when connected and cache is empty
+  useEffect(() => {
+    if (isConnected && wledEffects.length === 0) fetchAll();
+  }, [isConnected, wledEffects.length, fetchAll]);
 
   // Clear loading spinner when background fetch completes (handled in App.tsx → store)
   useEffect(() => {
@@ -100,14 +114,6 @@ export default function LibraryScreen() {
     return unsub;
   }, []);
 
-  const fetchAll = useCallback(() => {
-    if (!isConnected) return;
-    setLoading(true);
-    bleService.sendGetFxData();
-    setTimeout(() => bleService.sendGetEffects(), 500);
-    setTimeout(() => bleService.sendGetPalettes(), 1000);
-  }, [isConnected]);
-
   // Preview effect live on WLED
   const previewEffect = (effect: WledEffect) => {
     setSelectedEffect(effect);
@@ -116,7 +122,7 @@ export default function LibraryScreen() {
     if (defaults.ix !== undefined) setIntensity(defaults.ix);
     bleService.sendWledRaw({
       on: true,
-      seg: [{ id: 0, fx: effect.id, sx: speed, ix: intensity }]
+      seg: [{ id: 0, start: 0, stop: 100, fx: effect.id, sx: speed, ix: intensity }],
     });
   };
 
@@ -124,14 +130,14 @@ export default function LibraryScreen() {
     setSelectedPalette(palette);
     bleService.sendWledRaw({
       on: true,
-      seg: [{ id: 0, pal: palette.id }]
+      seg: [{ id: 0, start: 0, stop: 100, pal: palette.id }],
     });
   };
 
   const applyParameters = () => {
     bleService.sendWledRaw({
       on: true,
-      seg: [{ id: 0, sx: speed, ix: intensity, c1, c2, c3, o1, o2, o3 }]
+      seg: [{ id: 0, start: 0, stop: 100, sx: speed, ix: intensity, c1, c2, c3, o1, o2, o3 }],
     });
   };
 

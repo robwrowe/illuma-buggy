@@ -5,6 +5,7 @@ import { useAppStore, Zone, LatLng } from '../stores/store';
 import { findContainingZone, findContainingIndoorZone, pointInPolygon, sunBasedBrightness } from '../utils/utils';
 import { resolveActivePark } from '../utils/resolveActivePark';
 import { bleService } from '../services/BLEService';
+import { triggerZonePreset } from '../utils/bleBoardSync';
 
 /** Foreground + zone triggers enabled */
 const GPS_ACTIVE_MS = 8000;
@@ -98,7 +99,13 @@ export function useZoneManager() {
       currentZoneRef.current = matchedZone ?? null;
       if (matchedZone) {
         console.log('[Zone] Entered:', matchedZone.name, 'preset:', matchedZone.presetId);
-        bleService.sendZoneTrigger(matchedZone.presetId);
+        const s = useAppStore.getState();
+        const preset = s.presets.find(p => p.id === matchedZone.presetId);
+        if (preset) {
+          void triggerZonePreset(preset, s.recallState, s.customSegmentLayouts);
+        } else {
+          bleService.sendZoneTrigger(matchedZone.presetId);
+        }
       } else if (prevZone) {
         console.log('[Zone] Left all zones');
         bleService.sendOverrideClear();

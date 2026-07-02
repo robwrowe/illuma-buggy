@@ -4,6 +4,10 @@
 
 import { bleService, BLEMessage } from '../services/BLEService';
 
+/** Match firmware STRIP_LED_COUNT — full strip when applying single-segment presets. */
+export const STRIP_LED_COUNT = 100;
+export const WLED_MAX_SEG = 16;
+
 export interface WledSegmentDef {
   id: number;
   start: number;
@@ -186,6 +190,26 @@ export function buildRecalledSegment(
   return out;
 }
 
+/** Disable unused WLED segment ids so stale splits do not stay lit (mirrors web tool). */
+export function finalizeWledSegmentPayload(payload: {
+  on?: boolean;
+  seg?: WledSegmentDef[];
+}): { on: boolean; seg: WledSegmentDef[] } {
+  const segs = payload?.seg;
+  if (!Array.isArray(segs) || segs.length === 0) {
+    return { on: payload?.on ?? true, seg: segs ?? [] };
+  }
+  const active = segs.filter(s => Number(s.stop ?? 0) > Number(s.start ?? 0));
+  if (active.length === 0) return { on: true, seg: segs };
+  const activeIds = new Set(active.map(s => Number(s.id ?? 0)));
+  const merged = active.map(s => ({ ...s }));
+  if (!activeIds.has(0)) merged.push({ id: 0, stop: 0, start: 0 });
+  for (let id = 1; id < WLED_MAX_SEG; id++) {
+    if (!activeIds.has(id)) merged.push({ id, stop: 0, start: 0 });
+  }
+  return { on: true, seg: merged };
+}
+
 export function buildRecalledSegmentsFromPreset(
   preset: { wled?: WledLike & { seg?: WledSegmentDef[] }; segmentLayoutId?: string; memory?: MemoryLike },
   recall: RecallLike,
@@ -204,8 +228,14 @@ export function buildRecalledSegmentsFromPreset(
   if (should('segments', m.segments) && active.length > 0) {
     return active.map((seg, i) => buildRecalledSegment(seg, w, should, m, i));
   }
-  const base = active[0] || { id: 0 };
-  return [buildRecalledSegment(base, w, should, m, 0)];
+  const base = active[0] || { id: 0, start: 0, stop: STRIP_LED_COUNT };
+  const seg = buildRecalledSegment(base, w, should, m, 0);
+  // Partial segment updates skip geometry; if seg 0 is inactive on WLED nothing changes.
+  if (!isActiveSegment(seg)) {
+    seg.start = 0;
+    seg.stop = STRIP_LED_COUNT;
+  }
+  return [seg];
 }
 
 export function activeSegmentsFromPreset(

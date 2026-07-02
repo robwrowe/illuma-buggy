@@ -22,9 +22,10 @@ import IconCopy from '@tabler/icons-react-native/dist/esm/icons/IconCopy';
 import { TagEditor, TagFilterBar, TagChipRow, filterTaggedItems } from '../components/TagFields';
 import { duplicatePreset } from '../utils/tags';
 import { useBLE } from '../hooks/useBLE';
-import { useAppStore, Preset, buildRecallPayload, summarizeLayout } from '../stores/store';
+import { useAppStore, Preset, summarizeLayout } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { generateId } from '../utils/utils';
+import { applyPresetToBoard, presetWledForBoard } from '../utils/bleBoardSync';
 import { useTheme } from '../utils/theme';
 
 export default function PresetsScreen() {
@@ -63,11 +64,16 @@ export default function PresetsScreen() {
     return () => clearTimeout(timer);
   }, [syncing]);
 
-  const applyPreset = (preset: Preset) => {
-    const { recallState } = useAppStore.getState();
-    const payload = buildRecallPayload(preset, recallState);
-    bleService.sendWledRaw(payload);
-    bleService.sendPresetApply(preset.id);
+  const applyPreset = async (preset: Preset) => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy first.');
+      return;
+    }
+    const { recallState, customSegmentLayouts } = useAppStore.getState();
+    const ok = await applyPresetToBoard(preset, recallState, customSegmentLayouts);
+    if (!ok) {
+      Alert.alert('Apply failed', 'Could not send preset to the board. Check BLE connection.');
+    }
   };
 
   const deletePreset = (preset: Preset) => {
@@ -88,7 +94,12 @@ export default function PresetsScreen() {
 
   const saveEdit = () => {
     if (!editingPreset) return;
-    bleService.sendPresetSave(editingPreset.id, editingPreset.name, editingPreset.wled);
+    const { customSegmentLayouts } = useAppStore.getState();
+    bleService.sendPresetSave(
+      editingPreset.id,
+      editingPreset.name,
+      presetWledForBoard(editingPreset, customSegmentLayouts),
+    );
     addOrUpdatePreset(editingPreset);
     saveToStorage();
     setShowEdit(false);
@@ -97,7 +108,8 @@ export default function PresetsScreen() {
 
   const duplicateItem = (preset: Preset) => {
     const copy = duplicatePreset(preset, generateId());
-    bleService.sendPresetSave(copy.id, copy.name, copy.wled);
+    const { customSegmentLayouts } = useAppStore.getState();
+    bleService.sendPresetSave(copy.id, copy.name, presetWledForBoard(copy, customSegmentLayouts));
     addOrUpdatePreset(copy);
     saveToStorage();
     openEdit(copy);
