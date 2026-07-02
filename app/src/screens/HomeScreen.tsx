@@ -238,8 +238,12 @@ export default function HomeScreen() {
 
   const liveWledLabel = (() => {
     if (!liveWled) return null;
-    const fxName = liveWled.fx != null ? (wledEffects[liveWled.fx] ?? `fx ${liveWled.fx}`) : "—";
-    const palName = liveWled.pal != null ? (wledPalettes[liveWled.pal] ?? `pal ${liveWled.pal}`) : "—";
+    const fxName = liveWled.fx != null
+      ? (wledEffects.find(e => e.id === liveWled.fx)?.name ?? `fx ${liveWled.fx}`)
+      : "—";
+    const palName = liveWled.pal != null
+      ? (wledPalettes.find(p => p.id === liveWled.pal)?.name ?? `pal ${liveWled.pal}`)
+      : "—";
     return `${liveWled.on ? "On" : "Off"} · ${fxName} · ${palName} · ${liveWled.activeSegCount} seg(s)`;
   })();
 
