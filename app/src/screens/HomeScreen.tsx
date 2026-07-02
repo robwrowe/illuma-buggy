@@ -223,7 +223,7 @@ export default function HomeScreen() {
       if (!ok) {
         Alert.alert(
           "Fire failed",
-          "Could not apply the preset. Check BLE connection and that the logic board can reach WLED.",
+          "Could not apply the preset. The board may still be syncing presets in the background — wait a few seconds and try again.",
         );
       }
     } finally {

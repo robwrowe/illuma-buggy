@@ -33,11 +33,25 @@ export function defaultNewSegRef(refs: WledSegRef[]): WledSegRef {
   return { id, start: 0, stop: STRIP_PCT_MAX };
 }
 
+export function segDefToSegRef(seg: WledSegmentDef): WledSegRef {
+  const ref: WledSegRef = { id: seg.id, start: seg.start, stop: seg.stop };
+  if (seg.grp !== undefined) ref.grp = seg.grp;
+  if (seg.spc !== undefined) ref.spc = seg.spc;
+  if (seg.of !== undefined) ref.of = seg.of;
+  if (seg.fx !== undefined) ref.fx = seg.fx;
+  if (seg.sx !== undefined) ref.sx = seg.sx;
+  if (seg.ix !== undefined) ref.ix = seg.ix;
+  if (seg.pal !== undefined) ref.pal = seg.pal;
+  if (seg.rev !== undefined) ref.rev = seg.rev;
+  if (seg.mi !== undefined) ref.mi = seg.mi;
+  return ref;
+}
+
 export function refsFromSnapshotIds(snapshot: WledSegmentDef[], selectedIds: number[]): WledSegRef[] {
   const set = new Set(selectedIds);
   return snapshot
     .filter(s => set.has(s.id))
-    .map(s => ({ id: s.id, start: s.start, stop: s.stop }));
+    .map(segDefToSegRef);
 }
 
 export function selectedIdsFromRefs(refs: WledSegRef[]): number[] {
@@ -68,7 +82,7 @@ export function toggleSnapshotSelection(
   if (!seg) return currentRefs;
   const selected = currentRefs.some(r => r.id === wledSegId);
   if (selected) return currentRefs.filter(r => r.id !== wledSegId);
-  return appendSegRef(currentRefs, { id: seg.id, start: seg.start, stop: seg.stop });
+  return appendSegRef(currentRefs, segDefToSegRef(seg));
 }
 
 /** After capture: refresh snapshot-sourced refs; keep manually entered refs untouched. */

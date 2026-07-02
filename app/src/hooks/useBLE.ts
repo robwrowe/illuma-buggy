@@ -11,14 +11,22 @@ export function useBLE() {
   const [connectionState, setConnectionState] = useState<ConnectionState>(
     bleService.getConnectionState()
   );
+  const [sessionReady, setSessionReady] = useState(bleService.isSessionReady());
   const [lastMessage, setLastMessage] = useState<BLEMessage | null>(null);
 
   useEffect(() => {
-    const unsubState = bleService.onStateChange(setConnectionState);
+    const unsubState = bleService.onStateChange((state) => {
+      setConnectionState(state);
+      if (state !== 'connected') setSessionReady(false);
+    });
     const unsubMsg   = bleService.onMessage(setLastMessage);
+    const unsubReady = bleService.onSessionReady(() => {
+      setSessionReady(bleService.isSessionReady());
+    });
     return () => {
       unsubState();
       unsubMsg();
+      unsubReady();
     };
   }, []);
 
@@ -28,7 +36,7 @@ export function useBLE() {
   return {
     connectionState,
     isConnected: connectionState === 'connected',
-    isSessionReady: bleService.isSessionReady(),
+    isSessionReady: sessionReady,
     isScanning:  connectionState === 'scanning',
     lastMessage,
     connect,

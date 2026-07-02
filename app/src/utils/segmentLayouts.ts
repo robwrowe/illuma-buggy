@@ -6,18 +6,6 @@
 export const STRIP_LED_COUNT = 100;
 export const WLED_MAX_SEG = 16;
 
-/** Five corners on one strip need spc >= 5 — with spc=4, of=4 wraps to the same LEDs as of=0. */
-export function effectiveFiveCornerSpc(
-  ref: { start: number; stop: number; spc?: number },
-  cornerCount = 5,
-): number {
-  const spc = ref.spc ?? 0;
-  if (spc > 0 && ref.start === 0 && ref.stop >= STRIP_LED_COUNT && cornerCount >= 5 && spc < cornerCount) {
-    return cornerCount;
-  }
-  return spc;
-}
-
 export interface WledSegmentDef {
   id: number;
   start: number;

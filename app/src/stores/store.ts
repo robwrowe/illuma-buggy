@@ -309,6 +309,7 @@ interface AppState {
   mbSegmentLayouts: MbSegmentLayout[];
   mbActiveSegmentLayoutId: string | null;
   switchMbSegmentLayout: (id: string) => void;
+  hydrateMbMappingFromActiveLayout: () => void;
   addMbSegmentLayout: (name: string) => void;
   updateActiveLayoutSegments: (segId: string, refs: import('../utils/mbConfig').WledSegRef[]) => void;
 
@@ -435,6 +436,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       mbMapping: { ...s.mbMapping, segments },
     });
     get().saveToStorage();
+  },
+
+  hydrateMbMappingFromActiveLayout: () => {
+    const s = get();
+    const layout = (s.mbActiveSegmentLayoutId
+      ? s.mbSegmentLayouts.find(l => l.id === s.mbActiveSegmentLayoutId)
+      : undefined) ?? s.mbSegmentLayouts[0];
+    if (!layout) return;
+    const segments = JSON.parse(JSON.stringify(layout.segments)) as Record<string, WledSegRef[]>;
+    set({ mbMapping: { ...s.mbMapping, segments } });
   },
 
   addMbSegmentLayout: (name) => {
@@ -699,6 +710,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         mbSegmentLayouts: d.mbSegmentLayouts ?? [],
         mbActiveSegmentLayoutId: d.mbActiveSegmentLayoutId ?? null,
       });
+      const bootLayouts = (mbBoot.mbSegmentLayouts as MbSegmentLayout[]) ?? [];
+      const bootActiveId = (mbBoot.mbActiveSegmentLayoutId as string | null) ?? null;
+      const bootActiveLayout = (bootActiveId
+        ? bootLayouts.find(l => l.id === bootActiveId)
+        : undefined) ?? bootLayouts[0];
+      const hydratedMbMapping = bootActiveLayout
+        ? {
+          ...mbMapping,
+          segments: JSON.parse(JSON.stringify(bootActiveLayout.segments)) as Record<string, WledSegRef[]>,
+        }
+        : mbMapping;
       set({
         presets:            (d.presets ?? []).map((p: Preset) => normalizePreset(p)),
         zones:              (d.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
@@ -711,7 +733,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         magicBandFivePoint: d.magicBandFivePoint ?? true,
         magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
         bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
-        mbMapping,
+        mbMapping:          hydratedMbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     (d.customPalettes ?? []).map((p: CustomPalette) => normalizeCustomPalette(p)),
         savedColors:        d.savedColors ?? [],

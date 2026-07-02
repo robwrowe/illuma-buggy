@@ -1117,31 +1117,6 @@ void disableAllSplitSegments() {
   sendToWLED(body, 3000, 1);
 }
 
-bool isFiveCornerSegKey(const char* key) {
-  return strcmp(key, "topLeft") == 0 || strcmp(key, "bottomLeft") == 0 ||
-         strcmp(key, "bottomRight") == 0 || strcmp(key, "topRight") == 0 ||
-         strcmp(key, "center") == 0;
-}
-
-bool isFiveCornerBatch(const char* keys[], int n) {
-  if (n != 5) return false;
-  for (int i = 0; i < 5; i++) {
-    if (!isFiveCornerSegKey(keys[i])) return false;
-  }
-  return true;
-}
-
-bool isFullStripInterleaveRef(const WledSegRef& ref) {
-  return ref.spc > 0 && ref.start == 0 && ref.stop >= STRIP_LED_COUNT;
-}
-
-// Five corners on one strip need spc >= 5 — with spc=4, of=4 wraps to the same LEDs as of=0.
-uint8_t effectiveInterleaveSpc(const WledSegRef& ref, uint8_t corners) {
-  if (!isFullStripInterleaveRef(ref)) return ref.spc;
-  if (corners >= 5 && ref.spc < corners) return corners;
-  return ref.spc;
-}
-
 void appendWledSolidSeg(String& body, const WledSegRef& ref,
                         uint8_t r, uint8_t g, uint8_t b, bool& first, uint8_t spcOverride = 0) {
   if (ref.stop <= ref.start) return;
@@ -1211,7 +1186,6 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
     if (si < 0) continue;
     collectActiveSegIds(activeMbSegMap(si), activeIds, activeCount);
   }
-  bool fiveCorners = isFiveCornerBatch(segKeys, n);
   String body = "{\"on\":true,\"seg\":[";
   bool first = true;
   // Zone presets use segment 0 full-strip — disable before split layout.
@@ -1224,8 +1198,7 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
     MbSegMap& siMap = activeMbSegMap(si);
     for (uint8_t j = 0; j < siMap.count; j++) {
       const WledSegRef& ref = siMap.refs[j];
-      uint8_t spc = fiveCorners ? effectiveInterleaveSpc(ref, 5) : 0;
-      appendWledSolidSeg(body, ref, r, g, b, first, spc);
+      appendWledSolidSeg(body, ref, r, g, b, first);
     }
   }
   body += "]}";
@@ -1234,14 +1207,31 @@ void applyMbMultiSegmentSolid(const char* segKeys[], const uint8_t pals[], int n
   touchOverrideIdleTimer(src);
 }
 
+static int countPresetColorSlots(JsonObject wled) {
+  JsonArray segs = wled["seg"].as<JsonArray>();
+  if (!segs.isNull() && segs.size() > 0) {
+    JsonArray col = segs[0]["col"].as<JsonArray>();
+    if (!col.isNull() && col.size() > 0) return (int)col.size();
+  }
+  JsonArray col = wled["col"].as<JsonArray>();
+  if (!col.isNull() && col.size() > 0) return (int)col.size();
+  return 0;
+}
+
 bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, int packetPalCount, OverrideSource src) {
   String presetId = resolveEffectPresetId(map);
   if (presetId.length() == 0) return false;
   if (!canTakeOverride(src)) return false;
 
-  int slotCount = map.colorSlotCount > 0 ? map.colorSlotCount : packetPalCount;
+  int slotCount = map.colorSlotCount;
+  if (slotCount <= 0 && packetPalCount > 0) {
+    // Wand / MB packet palette → fill every preset color slot (e.g. BPM needs 3× same hue).
+    slotCount = 3;
+  } else if (slotCount <= 0) {
+    slotCount = packetPalCount;
+  }
 
-  // No MB color override — apply zone preset unchanged (same path as zone_trigger)
+  // No packet palette and no mapped color slots — apply preset unchanged.
   if (slotCount <= 0) {
     saveWledStateForOverride();
     bool ok = applyPreset(presetId);
@@ -1267,6 +1257,11 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
   DynamicJsonDocument wled(4096);
   if (deserializeJson(wled, doc["wled"])) return false;
 
+  if (map.colorSlotCount <= 0 && packetPalCount > 0) {
+    int presetSlots = countPresetColorSlots(wled.as<JsonObject>());
+    if (presetSlots > slotCount) slotCount = presetSlots;
+  }
+
   if (slotCount > 0) {
     uint8_t r0, g0, b0;
     uint8_t pal0 = packetPalCount > 0 ? packetPals[0] : 0;
@@ -1288,9 +1283,6 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
       JsonArray rgb = col.createNestedArray();
       rgb.add(r); rgb.add(g); rgb.add(b);
     }
-    if (col.size() == 1) {
-      seg0["col"] = col[0];
-    }
   }
 
   String wledJson;
@@ -1298,6 +1290,7 @@ bool applyMbPresetWithColors(const MbEffectMap& map, const uint8_t* packetPals, 
   sendToWLEDForBleEffect(wledJson);
   setOverride(src);
   touchOverrideIdleTimer(src);
+  Serial.printf("[BLE] Preset %s + %d color slot(s) (fx preserved)\n", presetId.c_str(), slotCount);
   return true;
 }
 
@@ -1833,7 +1826,7 @@ void processBleCmdChunk(int seq, bool last, const String& data) {
     resetCmdChunkBuffer();
     return;
   }
-  if (cmdChunkBuffer.length() + data.length() > 8192) {
+  if (cmdChunkBuffer.length() + data.length() > 32768) {
     Serial.println("[BLE] Chunk buffer overflow, aborting");
     resetCmdChunkBuffer();
     return;
@@ -1851,7 +1844,7 @@ void processBleCmdChunk(int seq, bool last, const String& data) {
 void handleBLECommand(const String& msg) {
   size_t cap = msg.length() + 512;
   if (cap < 4096) cap = 4096;
-  if (cap > 12288) cap = 12288;
+  if (cap > 32768) cap = 32768;
   DynamicJsonDocument doc(cap);
   DeserializationError err = deserializeJson(doc, msg);
   if (err) {
@@ -2515,6 +2508,7 @@ void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
       bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
                 ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
     }
+    Serial.printf("[Wand] Applied SW animation preset (palette %u)\n", paletteIdx);
     return;
   }
   if (applyMbAnimationKey("wand", pals, 1, src)) {
@@ -2524,6 +2518,7 @@ void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
     }
     return;
   }
+  Serial.printf("[Wand] No preset on board for SW/MB wand — solid fallback (palette %u)\n", paletteIdx);
   applyMbSegmentSolid("all", paletteIdx, src);
   if (src == BLE_STARLIGHT) {
     bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +

@@ -11,6 +11,9 @@ import { buildRecalledSegmentsFromPreset, finalizeWledSegmentPayload, parseWledS
 import type { MbSegmentLayout } from './configMigration';
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
+import { buildMbLayoutWledPayload } from './mbSegmentPreview';
+import type { MbSegmentId, WledSegRef, MbMappingConfig } from './mbConfig';
+import { collectMappingPresetIds } from './mbConfig';
 
 const BOARD_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: true, segments: true,
@@ -22,6 +25,24 @@ const BOARD_RECALL: RecallState = {
 
 export { clearBoardPresetSyncCache } from './blePresetCache';
 
+const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+function waitForBleAck(action: string, id?: string, timeoutMs = 20_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      unsub();
+      resolve(false);
+    }, timeoutMs);
+    const unsub = bleService.onMessage((msg) => {
+      if (msg.type !== 'ack' || msg.action !== action) return;
+      if (id !== undefined && msg.id !== id) return;
+      clearTimeout(timer);
+      unsub();
+      resolve(msg.ok !== false);
+    });
+  });
+}
+
 /** Save preset to board NVS once per session (zones / preset_apply need it). */
 export async function ensurePresetOnBoard(
   preset: Preset,
@@ -30,13 +51,29 @@ export async function ensurePresetOnBoard(
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
   if (isPresetSynced(preset.id)) return true;
-  const ok = await bleService.sendPresetSave(
+  const ackWait = waitForBleAck('preset_save', preset.id);
+  const sent = await bleService.sendPresetSave(
     preset.id,
     preset.name,
     presetWledForBoard(preset, layouts, recall),
   );
+  if (!sent) return false;
+  const ok = await ackWait;
   if (ok) markPresetSynced(preset.id);
   return ok;
+}
+
+/** Sync presets referenced in MB/SW mapping (wand cast, animations, etc.) to board NVS. */
+export async function ensureMappingPresetsOnBoard(
+  mbMapping: MbMappingConfig,
+  presets: Preset[],
+  recall: RecallState,
+  layouts: CustomSegmentLayout[],
+): Promise<void> {
+  for (const id of collectMappingPresetIds(mbMapping)) {
+    const preset = presets.find(p => p.id === id);
+    if (preset) await ensurePresetOnBoard(preset, recall, layouts);
+  }
 }
 
 /** Zone trigger — preset must exist on board NVS first. */
@@ -62,16 +99,65 @@ export function presetWledForBoard(
   });
 }
 
+export function resolveActiveLayoutIndex(
+  layouts: MbSegmentLayout[],
+  activeLayoutId: string | null,
+): number {
+  if (!layouts.length) return 0;
+  if (activeLayoutId) {
+    const idx = layouts.findIndex(l => l.id === activeLayoutId);
+    if (idx >= 0) return idx;
+  }
+  return 0;
+}
+
 export function mbLayoutSetBlePayload(
   layouts: MbSegmentLayout[],
   activeLayoutId: string | null,
 ): object {
-  const activeIdx = Math.max(0, layouts.findIndex(l => l.id === activeLayoutId));
   return {
     type: 'mb_layout_set',
     layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
-    active: activeIdx,
+    active: resolveActiveLayoutIndex(layouts, activeLayoutId),
   };
+}
+
+/** Push MB segment layouts and activate the saved layout (matches manual layout switch). */
+export async function pushMbSegmentLayoutsToBoard(
+  layouts: MbSegmentLayout[],
+  activeLayoutId: string | null,
+  mbMapping: { segments?: Record<string, WledSegRef[]> },
+): Promise<void> {
+  if (!bleService.isConnected()) return;
+  const activeIdx = resolveActiveLayoutIndex(layouts, activeLayoutId);
+  if (layouts.length > 0) {
+    await bleService.sendMbLayoutSet(layouts, activeIdx);
+    await delay(800);
+    if (!bleService.isConnected()) return;
+    await bleService.sendMbLayoutSwitch(activeIdx);
+    await delay(400);
+  }
+  if (!bleService.isConnected()) return;
+  await bleService.sendMbMappingConfig(mbMapping);
+  await delay(300);
+  if (!bleService.isConnected()) return;
+  const wledPayload = buildMbLayoutWledPayload(
+    (mbMapping.segments ?? {}) as Record<MbSegmentId, WledSegRef[]>,
+  );
+  if (wledPayload) {
+    await bleService.sendWledRaw(wledPayload);
+  }
+}
+
+export async function refreshWledCatalog(): Promise<void> {
+  if (!bleService.isConnected()) return;
+  await bleService.sendGetFxData();
+  await delay(700);
+  if (!bleService.isConnected()) return;
+  await bleService.sendGetEffects();
+  await delay(700);
+  if (!bleService.isConnected()) return;
+  await bleService.sendGetPalettes();
 }
 
 export { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
@@ -83,10 +169,12 @@ export async function applyPresetToBoard(
   layouts: CustomSegmentLayout[],
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
-  if (!bleService.isSessionReady()) return false;
   const saved = await ensurePresetOnBoard(preset, recall, layouts);
   if (!saved) return false;
-  return bleService.sendPresetApply(preset.id);
+  const ackWait = waitForBleAck('preset_apply', preset.id, 15_000);
+  const sent = await bleService.sendPresetApply(preset.id);
+  if (!sent) return false;
+  return ackWait;
 }
 
 export async function syncPresetsToBoard(
@@ -104,22 +192,10 @@ export async function syncPresetsToBoard(
   }
 }
 
-/** Heavy board push — run after connect settles; spaced to avoid overwhelming firmware. */
+/** Show-mode config only — MB layouts are pushed via pushMbSegmentLayoutsToBoard. */
 export async function pushHeavyBoardConfig(
-  mbMapping: object,
-  layouts: MbSegmentLayout[],
-  activeLayoutId: string | null,
   showModeConfig: object,
 ): Promise<void> {
-  if (!bleService.isConnected()) return;
-  await bleService.sendMbMappingConfig(mbMapping);
-  await new Promise(r => setTimeout(r, 800));
-  if (!bleService.isConnected()) return;
-  if (layouts.length > 0) {
-    const activeIdx = Math.max(0, layouts.findIndex(l => l.id === activeLayoutId));
-    await bleService.sendMbLayoutSet(layouts, activeIdx);
-    await new Promise(r => setTimeout(r, 800));
-  }
   if (!bleService.isConnected()) return;
   await bleService.sendShowModeConfig(showModeConfig as Parameters<typeof bleService.sendShowModeConfig>[0]);
 }

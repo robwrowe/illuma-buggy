@@ -86,32 +86,43 @@ export default function LibraryScreen() {
     effect: true, palette: true, parameters: true, color: false, segments: false
   });
 
-  const { isConnected } = useBLE();
+  const { isConnected, isSessionReady } = useBLE();
 
   const fetchAll = useCallback(() => {
     if (!isConnected) return;
     setLoading(true);
     bleService.sendGetFxData();
-    setTimeout(() => bleService.sendGetEffects(), 500);
-    setTimeout(() => bleService.sendGetPalettes(), 1000);
+    setTimeout(() => bleService.sendGetEffects(), 700);
+    setTimeout(() => bleService.sendGetPalettes(), 1400);
   }, [isConnected]);
 
-  // Auto-load catalog when connected and cache is empty
+  // Auto-load catalog when connected (also after bootstrap marks session ready).
   useEffect(() => {
-    if (isConnected && wledEffects.length === 0 && wledPalettes.length === 0) fetchAll();
-  }, [isConnected, wledEffects.length, wledPalettes.length, fetchAll]);
+    if (isConnected && isSessionReady && wledEffects.length === 0 && wledPalettes.length === 0) {
+      fetchAll();
+    }
+  }, [isConnected, isSessionReady, wledEffects.length, wledPalettes.length, fetchAll]);
+
+  useEffect(() => {
+    const unsub = bleService.onSessionReady(() => {
+      if (bleService.isConnected() && useAppStore.getState().wledEffects.length === 0) {
+        fetchAll();
+      }
+    });
+    return unsub;
+  }, [fetchAll]);
 
   // Refetch when tab is focused and catalog is still empty
   useFocusEffect(
     useCallback(() => {
-      if (isConnected && wledEffects.length === 0) fetchAll();
-    }, [isConnected, wledEffects.length, fetchAll]),
+      if (isConnected && (wledEffects.length === 0 || wledPalettes.length === 0)) fetchAll();
+    }, [isConnected, wledEffects.length, wledPalettes.length, fetchAll]),
   );
 
   // Clear loading spinner when background fetch completes (handled in App.tsx → store)
   useEffect(() => {
     const unsub = bleService.onMessage((msg) => {
-      if (msg.type === 'wled_effects_done' || msg.type === 'wled_palettes_done') {
+      if (msg.type === 'wled_effects_done' || msg.type === 'wled_palettes_done' || msg.type === 'wled_fxdata_done') {
         setLoading(false);
       }
       if (msg.type === 'error') {

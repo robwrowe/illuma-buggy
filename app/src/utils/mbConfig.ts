@@ -244,6 +244,31 @@ export const MB_EFFECT_CLASS_META: {
   },
 ];
 
+/** Preset IDs referenced by MB/SW mapping — must exist on board NVS before wand/MB effects fire. */
+export function collectMappingPresetIds(mbMapping: MbMappingConfig): string[] {
+  const ids = new Set<string>();
+  if (mbMapping.defaultPresetId) ids.add(mbMapping.defaultPresetId);
+  const addBlock = (block: Record<string, MbEffectMapping> | undefined) => {
+    if (!block) return;
+    for (const m of Object.values(block)) {
+      if (m?.presetId) ids.add(m.presetId);
+    }
+  };
+  addBlock(mbMapping.animations);
+  addBlock(mbMapping.swAnimations);
+  addBlock(mbMapping.patterns);
+  const ec = mbMapping.effectClasses;
+  if (ec) {
+    for (const { key } of MB_EFFECT_CLASS_META) {
+      if (ec[key]?.presetId) ids.add(ec[key].presetId);
+    }
+    for (const m of Object.values(ec.unclassifiedOpcodes ?? {})) {
+      if (m?.presetId) ids.add(m.presetId);
+    }
+  }
+  return [...ids];
+}
+
 export const TIER2_OPCODE_OPTIONS = [
   'E90C', 'E90F', 'E910', 'E911', 'E912', 'E913', 'E914', 'E91B',
 ] as const;

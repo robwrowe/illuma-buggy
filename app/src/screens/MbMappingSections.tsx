@@ -27,6 +27,7 @@ import {
 import {
   buildPresetLayoutPayload, fetchWledSegmentsFromDevice, WledSegmentDef,
 } from '../utils/segmentLayouts';
+import { pushMbSegmentLayoutsToBoard } from '../utils/bleBoardSync';
 
 type Colors = ReturnType<typeof import('../utils/theme').useTheme>['colors'];
 type BleTab = 'sw' | 'mb' | 'colors' | 'segments';
@@ -439,9 +440,11 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
     switchMbSegmentLayout(id);
     if (!isConnected) return;
     const s = useAppStore.getState();
-    const idx = Math.max(0, s.mbSegmentLayouts.findIndex(l => l.id === id));
-    bleService.sendMbLayoutSwitch(idx);
-    bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
+    void pushMbSegmentLayoutsToBoard(
+      s.mbSegmentLayouts,
+      s.mbActiveSegmentLayoutId,
+      mbMappingToBlePayload(s.mbMapping),
+    );
   };
 
   const createLayout = () => {
@@ -449,9 +452,11 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
     addMbSegmentLayout(name);
     if (isConnected) {
       const s = useAppStore.getState();
-      const idx = Math.max(0, s.mbSegmentLayouts.findIndex(l => l.id === s.mbActiveSegmentLayoutId));
-      bleService.sendMbLayoutSet(s.mbSegmentLayouts, idx);
-      bleService.sendMbMappingConfig(mbMappingToBlePayload(s.mbMapping));
+      void pushMbSegmentLayoutsToBoard(
+        s.mbSegmentLayouts,
+        s.mbActiveSegmentLayoutId,
+        mbMappingToBlePayload(s.mbMapping),
+      );
     }
   };
 
@@ -858,12 +863,34 @@ function MbSegmentAssignEditor({
     const startStr = field === 'start' ? raw : String(cur.start);
     const stopStr = field === 'stop' ? raw : String(cur.stop);
     const parsed = parseSegRefFields(idStr, startStr, stopStr);
-    if (parsed) onChange(updateRefAt(refs, index, parsed));
+    if (parsed) onChange(updateRefAt(refs, index, { ...cur, ...parsed }));
     else onChange(updateRefAt(refs, index, {
+      ...cur,
       id: field === 'id' ? parseInt(raw, 10) || 0 : cur.id,
       start: field === 'start' ? parseInt(raw, 10) || 0 : cur.start,
       stop: field === 'stop' ? parseInt(raw, 10) || 0 : cur.stop,
     }));
+  };
+  const patchOptionalNum = (index: number, field: keyof WledSegRef, raw: string) => {
+    const cur = refs[index];
+    if (!cur) return;
+    const trimmed = raw.trim();
+    const next = { ...cur } as WledSegRef;
+    if (trimmed === '') {
+      delete (next as Record<string, unknown>)[field];
+      onChange(updateRefAt(refs, index, next));
+      return;
+    }
+    const n = parseInt(trimmed, 10);
+    if (!Number.isNaN(n)) {
+      (next as Record<string, unknown>)[field] = n;
+      onChange(updateRefAt(refs, index, next));
+    }
+  };
+  const patchOptionalBool = (index: number, field: keyof WledSegRef, value: boolean) => {
+    const cur = refs[index];
+    if (!cur) return;
+    onChange(updateRefAt(refs, index, { ...cur, [field]: value }));
   };
 
   return (
@@ -903,25 +930,61 @@ function MbSegmentAssignEditor({
       {refs.length === 0 ? (
         <Text style={{ color: colors.textMuted, fontSize: 11, marginBottom: 8 }}>No segments — add manually or capture from WLED.</Text>
       ) : refs.map((ref, index) => (
-        <View key={`${ref.id}-${index}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-          <Text style={{ color: colors.textMuted, fontSize: 10, width: 22 }}>id</Text>
-          <TextInput style={[inputStyle, { width: 36 }]} value={String(ref.id)} keyboardType="number-pad"
-            onChangeText={v => patchRef(index, 'id', v)} />
-          <Text style={{ color: colors.textMuted, fontSize: 10 }}>start</Text>
-          <TextInput style={[inputStyle, { width: 44 }]} value={String(ref.start)} keyboardType="number-pad"
-            onChangeText={v => patchRef(index, 'start', v)} />
-          <Text style={{ color: colors.textMuted, fontSize: 10 }}>stop</Text>
-          <TextInput style={[inputStyle, { width: 44 }]} value={String(ref.stop)} keyboardType="number-pad"
-            onChangeText={v => patchRef(index, 'stop', v)} />
-          {!isValidSegRef(ref) ? (
-            <Text style={{ color: colors.danger, fontSize: 10, flex: 1 }}>invalid</Text>
-          ) : (
-            <Text style={{ color: colors.textMuted, fontSize: 10, flex: 1, fontFamily: 'monospace' }}>LED</Text>
-          )}
-          <TouchableOpacity onPress={() => onChange(removeRefAt(refs, index))}
-            style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
-            <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>×</Text>
-          </TouchableOpacity>
+        <View key={`${ref.id}-${index}`} style={{ marginBottom: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <Text style={{ color: colors.textMuted, fontSize: 10, width: 22 }}>id</Text>
+            <TextInput style={[inputStyle, { width: 36 }]} value={String(ref.id)} keyboardType="number-pad"
+              onChangeText={v => patchRef(index, 'id', v)} />
+            <Text style={{ color: colors.textMuted, fontSize: 10 }}>start</Text>
+            <TextInput style={[inputStyle, { width: 44 }]} value={String(ref.start)} keyboardType="number-pad"
+              onChangeText={v => patchRef(index, 'start', v)} />
+            <Text style={{ color: colors.textMuted, fontSize: 10 }}>stop</Text>
+            <TextInput style={[inputStyle, { width: 44 }]} value={String(ref.stop)} keyboardType="number-pad"
+              onChangeText={v => patchRef(index, 'stop', v)} />
+            {!isValidSegRef(ref) ? (
+              <Text style={{ color: colors.danger, fontSize: 10, flex: 1 }}>invalid</Text>
+            ) : (
+              <Text style={{ color: colors.textMuted, fontSize: 10, flex: 1, fontFamily: 'monospace' }}>LED</Text>
+            )}
+            <TouchableOpacity onPress={() => onChange(removeRefAt(refs, index))}
+              style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ color: colors.danger, fontSize: 16, fontWeight: '700' }}>×</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '600', marginBottom: 4 }}>
+            Advanced — of · grp · spc
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
+            <TextInput style={[inputStyle, { flex: 1 }]} value={ref.of === undefined ? '' : String(ref.of)} keyboardType="number-pad"
+              onChangeText={v => patchOptionalNum(index, 'of', v)} placeholder="of" placeholderTextColor={colors.textMuted} />
+            <TextInput style={[inputStyle, { flex: 1 }]} value={ref.grp === undefined ? '' : String(ref.grp)} keyboardType="number-pad"
+              onChangeText={v => patchOptionalNum(index, 'grp', v)} placeholder="grp" placeholderTextColor={colors.textMuted} />
+            <TextInput style={[inputStyle, { flex: 1 }]} value={ref.spc === undefined ? '' : String(ref.spc)} keyboardType="number-pad"
+              onChangeText={v => patchOptionalNum(index, 'spc', v)} placeholder="spc" placeholderTextColor={colors.textMuted} />
+          </View>
+          <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '600', marginBottom: 4 }}>
+            Effect — fx · sx · ix · pal
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 6, marginBottom: 4 }}>
+            <TextInput style={[inputStyle, { flex: 1 }]} value={ref.fx === undefined ? '' : String(ref.fx)} keyboardType="number-pad"
+              onChangeText={v => patchOptionalNum(index, 'fx', v)} placeholder="fx" placeholderTextColor={colors.textMuted} />
+            <TextInput style={[inputStyle, { flex: 1 }]} value={ref.sx === undefined ? '' : String(ref.sx)} keyboardType="number-pad"
+              onChangeText={v => patchOptionalNum(index, 'sx', v)} placeholder="sx" placeholderTextColor={colors.textMuted} />
+            <TextInput style={[inputStyle, { flex: 1 }]} value={ref.ix === undefined ? '' : String(ref.ix)} keyboardType="number-pad"
+              onChangeText={v => patchOptionalNum(index, 'ix', v)} placeholder="ix" placeholderTextColor={colors.textMuted} />
+            <TextInput style={[inputStyle, { flex: 1 }]} value={ref.pal === undefined ? '' : String(ref.pal)} keyboardType="number-pad"
+              onChangeText={v => patchOptionalNum(index, 'pal', v)} placeholder="pal" placeholderTextColor={colors.textMuted} />
+          </View>
+          <View style={{ flexDirection: 'row', gap: 12, marginBottom: 2 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 11 }}>rev</Text>
+              <Switch value={ref.rev ?? false} onValueChange={v => patchOptionalBool(index, 'rev', v)} />
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 11 }}>mi</Text>
+              <Switch value={ref.mi ?? false} onValueChange={v => patchOptionalBool(index, 'mi', v)} />
+            </View>
+          </View>
         </View>
       ))}
       <TouchableOpacity onPress={() => onChange(appendSegRef(refs, defaultNewSegRef(refs)))}

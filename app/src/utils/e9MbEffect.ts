@@ -6,7 +6,7 @@ import { bleService } from '../services/BLEService';
 import type { Preset, RecallState } from '../stores/store';
 import { buildRecallPayload } from '../stores/store';
 import type { CustomSegmentLayout, WledSegmentDef } from './segmentLayouts';
-import { effectiveFiveCornerSpc, finalizeWledSegmentPayload } from './segmentLayouts';
+import { finalizeWledSegmentPayload } from './segmentLayouts';
 import type { MbMappingConfig, WledSegRef } from './mbConfig';
 import { MB_PAL_OFF, MB_PAL_RANDOM, MB_PAL_UNIQUE } from './mbConfig';
 import { applyPresetToBoard } from './bleBoardSync';
@@ -78,19 +78,18 @@ export function buildWledFromParsedE9(
   const colors = mbMapping.colors;
   const segList: object[] = [];
 
-  const addSegSolid = (segKey: string, rgb: [number, number, number], fiveCorner = false) => {
+  const addSegSolid = (segKey: string, rgb: [number, number, number]) => {
     const refs = mbMapping.segments[segKey as keyof typeof mbMapping.segments];
     if (!refs?.length) return;
     for (const ref of refs) {
       if (ref.stop <= ref.start) continue;
       const r = ref as WledSegRef;
-      const spc = fiveCorner ? effectiveFiveCornerSpc(r) : (r.spc ?? 0);
       segList.push({
         id: r.id,
         start: r.start,
         stop: r.stop,
         grp: r.grp ?? 1,
-        spc,
+        spc: r.spc ?? 0,
         of: r.of ?? 0,
         rev: r.rev ?? false,
         mi: r.mi ?? false,
@@ -130,13 +129,13 @@ export function buildWledFromParsedE9(
     case 'E90C_palette':
       for (const [pos, slot] of Object.entries(parsed.colors) as [E909Position, { paletteIndex: number }][]) {
         const rgb = resolvePaletteRgb(slot.paletteIndex, colors, mbMapping);
-        if (rgb) addSegSolid(E909_SEG[pos], rgb, true);
+        if (rgb) addSegSolid(E909_SEG[pos], rgb);
       }
       break;
     case 'E90E':
       for (const [pos, slot] of Object.entries(parsed.colors) as [E90EPosition, { paletteIndex: number }][]) {
         const rgb = resolvePaletteRgb(slot.paletteIndex, colors, mbMapping);
-        if (rgb) addSegSolid(E90E_SEG[pos], rgb, true);
+        if (rgb) addSegSolid(E90E_SEG[pos], rgb);
       }
       break;
     default:

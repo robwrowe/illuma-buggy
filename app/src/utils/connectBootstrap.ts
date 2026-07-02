@@ -4,7 +4,13 @@
 
 import { bleService } from '../services/BLEService';
 import { useAppStore, mbMappingToBlePayload } from '../stores/store';
-import { pushHeavyBoardConfig, syncPresetsToBoard } from './bleBoardSync';
+import {
+  ensureMappingPresetsOnBoard,
+  pushHeavyBoardConfig,
+  pushMbSegmentLayoutsToBoard,
+  refreshWledCatalog,
+  syncPresetsToBoard,
+} from './bleBoardSync';
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
@@ -25,6 +31,25 @@ function waitForBleMessage(type: string, timeoutMs: number): Promise<void> {
 
 let bootstrapToken = 0;
 
+async function runBackgroundSync(token: number): Promise<void> {
+  // Let connect-time MB layout + early Fire commands finish before preset bulk sync.
+  await delay(5000);
+  if (!bleService.isConnected() || token !== bootstrapToken) return;
+
+  const presetListWait = waitForBleMessage('preset_list_raw', 45_000).catch(() => {});
+  await bleService.sendPresetList();
+  await presetListWait;
+  if (!bleService.isConnected() || token !== bootstrapToken) return;
+
+  const afterList = useAppStore.getState();
+  if (afterList.presets.length > 0) {
+    await syncPresetsToBoard(afterList.presets, afterList.customSegmentLayouts);
+  }
+  if (!bleService.isConnected() || token !== bootstrapToken) return;
+
+  await pushHeavyBoardConfig(afterList.showModeConfig);
+}
+
 export async function runConnectBootstrap(): Promise<void> {
   const token = ++bootstrapToken;
   bleService.markSessionReady(false);
@@ -32,6 +57,7 @@ export async function runConnectBootstrap(): Promise<void> {
   await delay(1200);
   if (!bleService.isConnected() || token !== bootstrapToken) return;
 
+  useAppStore.getState().hydrateMbMappingFromActiveLayout();
   const s = useAppStore.getState();
 
   await bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
@@ -42,7 +68,7 @@ export async function runConnectBootstrap(): Promise<void> {
     s.magicBandEnabled,
     s.magicBandFivePoint,
     s.magicBandTimeoutSec * 1000,
-    false, // firmware applies MB locally; app ble_e9 is optional overlay
+    false,
   );
   await delay(500);
   if (!bleService.isConnected() || token !== bootstrapToken) return;
@@ -51,53 +77,35 @@ export async function runConnectBootstrap(): Promise<void> {
   await delay(500);
   if (!bleService.isConnected() || token !== bootstrapToken) return;
 
-  const presetListWait = waitForBleMessage('preset_list_raw', 45_000).catch(() => {});
-  await bleService.sendPresetList();
-  await presetListWait;
+  // Wand/MB animation presets (e.g. swAnimations.wand → "Starlight Wand Cast") must be on board NVS.
+  await ensureMappingPresetsOnBoard(
+    s.mbMapping,
+    s.presets,
+    s.recallState,
+    s.customSegmentLayouts,
+  ).catch((e) => console.warn('[Bootstrap] Mapping preset sync failed:', e));
   if (!bleService.isConnected() || token !== bootstrapToken) return;
 
-  // Push all phone presets to board NVS so apply is a tiny preset_apply command.
-  const afterList = useAppStore.getState();
-  if (afterList.presets.length > 0) {
-    await syncPresetsToBoard(afterList.presets, afterList.customSegmentLayouts);
-  }
-  if (!bleService.isConnected() || token !== bootstrapToken) return;
-
-  const latest = useAppStore.getState();
-  if (latest.wledEffects.length === 0) {
-    await delay(2500);
-    if (!bleService.isConnected() || token !== bootstrapToken) return;
-
-    const fxWait = waitForBleMessage('wled_fxdata_done', 60_000).catch(() => {});
-    await bleService.sendGetFxData();
-    await fxWait;
-    await delay(1500);
-    if (!bleService.isConnected() || token !== bootstrapToken) return;
-
-    const effWait = waitForBleMessage('wled_effects_done', 45_000).catch(() => {});
-    await bleService.sendGetEffects();
-    await effWait;
-    await delay(1500);
-    if (!bleService.isConnected() || token !== bootstrapToken) return;
-
-    await bleService.sendGetPalettes();
-    await waitForBleMessage('wled_palettes_done', 30_000).catch(() => {});
-  }
-
-  await delay(2000);
-  if (!bleService.isConnected() || token !== bootstrapToken) return;
-
-  await pushHeavyBoardConfig(
-    mbMappingToBlePayload(latest.mbMapping),
-    latest.mbSegmentLayouts,
-    latest.mbActiveSegmentLayoutId,
-    latest.showModeConfig,
-  ).catch((e) => console.warn('[Bootstrap] Heavy config push failed:', e));
+  // MB segment layouts — push + switch before long preset/catalog sync.
+  await pushMbSegmentLayoutsToBoard(
+    s.mbSegmentLayouts,
+    s.mbActiveSegmentLayoutId,
+    mbMappingToBlePayload(useAppStore.getState().mbMapping),
+  ).catch((e) => console.warn('[Bootstrap] MB layout push failed:', e));
 
   if (bleService.isConnected() && token === bootstrapToken) {
     bleService.markSessionReady(true);
     await bleService.sendStatus();
+    // WLED catalog in parallel — Library tab should populate within a few seconds.
+    void refreshWledCatalog().catch((e) =>
+      console.warn('[Bootstrap] WLED catalog refresh failed:', e),
+    );
   }
+
+  // Preset sync + WLED catalog run in background — don't block Fire / Library.
+  void runBackgroundSync(token).catch((e) =>
+    console.warn('[Bootstrap] Background sync failed:', e),
+  );
 }
 
 export function cancelConnectBootstrap(): void {

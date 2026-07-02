@@ -3,14 +3,18 @@
  * disable inactive segment ids (stop:0), never a full-strip black seg 0 overlay.
  */
 
-import type { MbSegmentId, WledSegRef } from './mbConfig';
+import type { MbSegmentId, WledSegRef } from "./mbConfig";
 
 export const STRIP_LED_COUNT = 100;
 
 const WHITE: [number, number, number] = [255, 255, 255];
 
 export const FIVE_CORNER_IDS: MbSegmentId[] = [
-  'topLeft', 'bottomLeft', 'bottomRight', 'topRight', 'center',
+  "topLeft",
+  "bottomLeft",
+  "bottomRight",
+  "topRight",
+  "center",
 ];
 
 /** TL=red, BL=green, BR=blue, TR=white, center=yellow */
@@ -23,25 +27,25 @@ export const FIVE_CORNER_RGB: [number, number, number][] = [
 ];
 
 export const MB_SEGMENT_SIM_COMMAND: Record<MbSegmentId, string> = {
-  all: 'test all',
-  inner: 'test inner',
-  outer: 'test outer',
-  topLeft: 'test topLeft',
-  topRight: 'test topRight',
-  bottomLeft: 'test bottomLeft',
-  bottomRight: 'test bottomRight',
-  center: 'test center',
-  band0: 'test band0',
-  band1: 'test band1',
-  band2: 'test band2',
-  band3: 'test band3',
-  band4: 'test band4',
-  band5: 'test band5',
-  band6: 'test band6',
-  band7: 'test band7',
+  all: "test all",
+  inner: "test inner",
+  outer: "test outer",
+  topLeft: "test topLeft",
+  topRight: "test topRight",
+  bottomLeft: "test bottomLeft",
+  bottomRight: "test bottomRight",
+  center: "test center",
+  band0: "test band0",
+  band1: "test band1",
+  band2: "test band2",
+  band3: "test band3",
+  band4: "test band4",
+  band5: "test band5",
+  band6: "test band6",
+  band7: "test band7",
 };
 
-export const SIM_FIVE_CORNERS = 'test five';
+export const SIM_FIVE_CORNERS = "test five";
 
 const MB_WLED_MAX_SEG = 16;
 
@@ -69,7 +73,10 @@ function solidSeg(ref: WledSegRef, rgb: [number, number, number]) {
 }
 
 /** Disable unused WLED segment ids, then light target refs (matches StrollerController). */
-function buildMbSolidPreview(activeRefs: WledSegRef[], rgb: [number, number, number]): object {
+function buildMbSolidPreview(
+  activeRefs: WledSegRef[],
+  rgb: [number, number, number],
+): object {
   const activeIds = collectActiveIds(activeRefs);
   const segs: object[] = [];
   const disableSeg0 = !activeIds.includes(0);
@@ -84,7 +91,47 @@ function buildMbSolidPreview(activeRefs: WledSegRef[], rgb: [number, number, num
   return { on: true, seg: segs };
 }
 
-export function buildSegmentHighlightPreview(
+/** Push segment geometry to WLED (interleave of/grp/spc) so MB mapping works without manual layout switch. */
+export function buildMbLayoutWledPayload(
+  segments: Record<MbSegmentId, WledSegRef[]>,
+): { on: boolean; seg: object[] } | null {
+  const byId = new Map<number, WledSegRef>();
+  for (const refs of Object.values(segments)) {
+    for (const ref of refs ?? []) {
+      if (ref.stop <= ref.start) continue;
+      if (!byId.has(ref.id)) byId.set(ref.id, { ...ref });
+    }
+  }
+  if (byId.size === 0) return null;
+
+  const activeIds = [...byId.keys()];
+  const segs: object[] = [];
+  if (!activeIds.includes(0)) segs.push(disableSeg(0));
+  for (let id = 1; id < MB_WLED_MAX_SEG; id++) {
+    if (!byId.has(id)) segs.push(disableSeg(id));
+  }
+  for (const ref of byId.values()) {
+    const entry: Record<string, unknown> = {
+      id: ref.id,
+      start: ref.start,
+      stop: ref.stop,
+      on: true,
+    };
+    if (ref.grp !== undefined) entry.grp = ref.grp;
+    if (ref.spc !== undefined) entry.spc = ref.spc;
+    if (ref.of !== undefined) entry.of = ref.of;
+    if (ref.fx !== undefined) entry.fx = ref.fx;
+    if (ref.sx !== undefined) entry.sx = ref.sx;
+    if (ref.ix !== undefined) entry.ix = ref.ix;
+    if (ref.pal !== undefined) entry.pal = ref.pal;
+    if (ref.rev !== undefined) entry.rev = ref.rev;
+    if (ref.mi !== undefined) entry.mi = ref.mi;
+    segs.push(entry);
+  }
+  return { on: true, seg: segs };
+}
+
+export function buildMbSingleSegmentPreview(
   segments: Record<MbSegmentId, WledSegRef[]>,
   target: MbSegmentId,
 ): object {
@@ -94,12 +141,13 @@ export function buildSegmentHighlightPreview(
 export function buildFiveCornerPreview(
   segments: Record<MbSegmentId, WledSegRef[]>,
 ): object {
-  const refsByCorner = FIVE_CORNER_IDS.map(id => ({
+  const refsByCorner = FIVE_CORNER_IDS.map((id, i) => ({
     id,
     refs: segments[id] ?? [],
-    rgb: FIVE_CORNER_RGB[FIVE_CORNER_IDS.indexOf(id)]!,
+    rgb: FIVE_CORNER_RGB[i]!,
   }));
-  const activeIds = collectActiveIds(refsByCorner.flatMap(c => c.refs));
+
+  const activeIds = collectActiveIds(refsByCorner.flatMap((c) => c.refs));
   const segs: object[] = [];
   if (!activeIds.includes(0)) segs.push(disableSeg(0));
   for (let id = 1; id < MB_WLED_MAX_SEG; id++) {
@@ -118,7 +166,10 @@ export function buildFiveCornerPreview(
 export function findMbSegIdConflicts(
   segments: Record<MbSegmentId, WledSegRef[]>,
 ): { id: number; regions: string[]; ranges: string[] }[] {
-  const byId = new Map<number, { region: string; start: number; stop: number }[]>();
+  const byId = new Map<
+    number,
+    { region: string; start: number; stop: number }[]
+  >();
   for (const [region, refs] of Object.entries(segments)) {
     for (const ref of refs || []) {
       if (ref.stop <= ref.start) continue;
@@ -129,11 +180,11 @@ export function findMbSegIdConflicts(
   }
   const conflicts: { id: number; regions: string[]; ranges: string[] }[] = [];
   for (const [id, uses] of byId) {
-    const ranges = [...new Set(uses.map(u => `LED ${u.start}–${u.stop}`))];
+    const ranges = [...new Set(uses.map((u) => `LED ${u.start}–${u.stop}`))];
     if (ranges.length > 1) {
       conflicts.push({
         id,
-        regions: [...new Set(uses.map(u => u.region))],
+        regions: [...new Set(uses.map((u) => u.region))],
         ranges,
       });
     }
@@ -149,7 +200,10 @@ export function centerMatchesRegion(
   const a = segments.center ?? [];
   const b = segments[other] ?? [];
   if (a.length !== b.length) return false;
-  return a.every((ref, i) =>
-    ref.id === b[i]?.id && ref.start === b[i]?.start && ref.stop === b[i]?.stop,
+  return a.every(
+    (ref, i) =>
+      ref.id === b[i]?.id &&
+      ref.start === b[i]?.start &&
+      ref.stop === b[i]?.stop,
   );
 }
