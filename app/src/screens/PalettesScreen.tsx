@@ -7,7 +7,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
-  TextInput, Modal, ScrollView, Alert,
+  TextInput, Modal, ScrollView, Alert, Switch,
 } from 'react-native';
 import IconPlus  from '@tabler/icons-react-native/dist/esm/icons/IconPlus';
 import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
@@ -196,6 +196,57 @@ export default function PalettesScreen() {
     if (isNaN(n)) return;
     const segments = editLayout.segments.map((seg, i) => i === idx ? { ...seg, [field]: n } : seg);
     setEditLayout({ ...editLayout, segments });
+  };
+
+  const updateLayoutSegOptional = (idx: number, field: keyof WledSegmentDef, val: string) => {
+    if (!editLayout) return;
+    const trimmed = val.trim();
+    const segments = editLayout.segments.map((seg, i) => {
+      if (i !== idx) return seg;
+      if (trimmed === '') {
+        const next = { ...seg } as Record<string, unknown>;
+        delete next[field];
+        return next as WledSegmentDef;
+      }
+      const n = parseInt(trimmed, 10);
+      if (isNaN(n)) return seg;
+      return { ...seg, [field]: n };
+    });
+    setEditLayout({ ...editLayout, segments });
+  };
+
+  const updateLayoutSegBool = (idx: number, field: 'rev' | 'mi' | 'on', val: boolean) => {
+    if (!editLayout) return;
+    const segments = editLayout.segments.map((seg, i) => i === idx ? { ...seg, [field]: val } : seg);
+    setEditLayout({ ...editLayout, segments });
+  };
+
+  const parseRgb = (raw: string): number[] | null => {
+    const parts = raw.split(',').map(p => p.trim());
+    if (parts.length !== 3) return null;
+    const vals = parts.map(p => parseInt(p, 10));
+    if (vals.some(v => Number.isNaN(v))) return null;
+    return vals.map(v => Math.max(0, Math.min(255, v)));
+  };
+
+  const updateLayoutSegCol = (idx: number, colorIdx: number, val: string) => {
+    if (!editLayout) return;
+    const rgb = parseRgb(val);
+    if (!rgb) return;
+    const segments = editLayout.segments.map((seg, i) => {
+      if (i !== idx) return seg;
+      const col = Array.isArray(seg.col) ? seg.col.map(c => [...c]) : [];
+      while (col.length < 3) col.push([0, 0, 0]);
+      col[colorIdx] = rgb;
+      return { ...seg, col };
+    });
+    setEditLayout({ ...editLayout, segments });
+  };
+
+  const colorString = (seg: WledSegmentDef, colorIdx: number): string => {
+    const c = seg.col?.[colorIdx];
+    if (!Array.isArray(c) || c.length < 3) return '0,0,0';
+    return `${c[0]},${c[1]},${c[2]}`;
   };
 
   const captureLayoutFromDevice = async () => {
@@ -564,23 +615,101 @@ export default function PalettesScreen() {
                 </Text>
               </TouchableOpacity>
 
-              <Text style={s.fieldLabel}>Segments (id, start LED, stop LED)</Text>
+              <Text style={s.fieldLabel}>Segments</Text>
               {editLayout?.segments.map((seg, idx) => (
-                <View key={idx} style={s.segRow}>
-                  <TextInput style={s.segInput} value={String(seg.id)} keyboardType="number-pad"
-                    onChangeText={v => updateLayoutSeg(idx, 'id', v)} />
-                  <TextInput style={s.segInput} value={String(seg.start)} keyboardType="number-pad"
-                    onChangeText={v => updateLayoutSeg(idx, 'start', v)} />
-                  <TextInput style={s.segInput} value={String(seg.stop)} keyboardType="number-pad"
-                    onChangeText={v => updateLayoutSeg(idx, 'stop', v)} />
-                  {editLayout.segments.length > 1 && (
-                    <TouchableOpacity onPress={() => setEditLayout({
-                      ...editLayout,
-                      segments: editLayout.segments.filter((_, i) => i !== idx),
-                    })}>
-                      <IconTrash size={14} color={colors.danger} />
-                    </TouchableOpacity>
-                  )}
+                <View key={idx} style={s.segCard}>
+                  <View style={s.segHeader}>
+                    <Text style={s.segTitle}>Segment {idx + 1}</Text>
+                    {editLayout.segments.length > 1 && (
+                      <TouchableOpacity onPress={() => setEditLayout({
+                        ...editLayout,
+                        segments: editLayout.segments.filter((_, i) => i !== idx),
+                      })}>
+                        <IconTrash size={14} color={colors.danger} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  <View style={s.segRow}>
+                    <TextInput style={s.segInput} value={String(seg.id)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSeg(idx, 'id', v)} placeholder="id" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={String(seg.start)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSeg(idx, 'start', v)} placeholder="start" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={String(seg.stop)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSeg(idx, 'stop', v)} placeholder="stop" placeholderTextColor={colors.textMuted} />
+                  </View>
+
+                  <View style={s.segRow}>
+                    <TextInput style={s.segInput} value={seg.fx === undefined ? '' : String(seg.fx)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'fx', v)} placeholder="fx" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.pal === undefined ? '' : String(seg.pal)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'pal', v)} placeholder="pal" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.bri === undefined ? '' : String(seg.bri)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'bri', v)} placeholder="bri" placeholderTextColor={colors.textMuted} />
+                  </View>
+
+                  <View style={s.segRow}>
+                    <TextInput style={s.segInput} value={seg.sx === undefined ? '' : String(seg.sx)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'sx', v)} placeholder="speed (sx)" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.ix === undefined ? '' : String(seg.ix)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'ix', v)} placeholder="intensity (ix)" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.of === undefined ? '' : String(seg.of)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'of', v)} placeholder="offset (of)" placeholderTextColor={colors.textMuted} />
+                  </View>
+
+                  <View style={s.segRow}>
+                    <TextInput style={s.segInput} value={seg.grp === undefined ? '' : String(seg.grp)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'grp', v)} placeholder="grouping (grp)" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.spc === undefined ? '' : String(seg.spc)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'spc', v)} placeholder="spacing (spc)" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.bm === undefined ? '' : String(seg.bm)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'bm', v)} placeholder="blend mode (bm)" placeholderTextColor={colors.textMuted} />
+                  </View>
+
+                  <View style={s.segRow}>
+                    <TextInput style={s.segInput} value={seg.c1 === undefined ? '' : String(seg.c1)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'c1', v)} placeholder="c1" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.c2 === undefined ? '' : String(seg.c2)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'c2', v)} placeholder="c2" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={seg.c3 === undefined ? '' : String(seg.c3)} keyboardType="number-pad"
+                      onChangeText={v => updateLayoutSegOptional(idx, 'c3', v)} placeholder="c3" placeholderTextColor={colors.textMuted} />
+                  </View>
+
+                  <View style={s.segRow}>
+                    <TextInput style={s.segInput} value={colorString(seg, 0)}
+                      onChangeText={v => updateLayoutSegCol(idx, 0, v)} placeholder="col1 r,g,b" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={colorString(seg, 1)}
+                      onChangeText={v => updateLayoutSegCol(idx, 1, v)} placeholder="col2 r,g,b" placeholderTextColor={colors.textMuted} />
+                    <TextInput style={s.segInput} value={colorString(seg, 2)}
+                      onChangeText={v => updateLayoutSegCol(idx, 2, v)} placeholder="col3 r,g,b" placeholderTextColor={colors.textMuted} />
+                  </View>
+
+                  <View style={s.segSwitchRow}>
+                    <View style={s.segSwitchItem}>
+                      <Text style={s.switchLabel}>Reverse</Text>
+                      <Switch
+                        value={!!seg.rev}
+                        onValueChange={v => updateLayoutSegBool(idx, 'rev', v)}
+                        trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                      />
+                    </View>
+                    <View style={s.segSwitchItem}>
+                      <Text style={s.switchLabel}>Mirror</Text>
+                      <Switch
+                        value={!!seg.mi}
+                        onValueChange={v => updateLayoutSegBool(idx, 'mi', v)}
+                        trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                      />
+                    </View>
+                    <View style={s.segSwitchItem}>
+                      <Text style={s.switchLabel}>On</Text>
+                      <Switch
+                        value={seg.on ?? true}
+                        onValueChange={v => updateLayoutSegBool(idx, 'on', v)}
+                        trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                      />
+                    </View>
+                  </View>
                 </View>
               ))}
 
@@ -660,6 +789,12 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   badge:           { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 },
   orderRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: c.border },
   orderBtn:        { color: c.textSecondary, fontSize: 16, padding: 4 },
+  segCard:         { backgroundColor: c.background, borderRadius: 10, padding: 10, gap: 8, borderWidth: 1, borderColor: c.border },
+  segHeader:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  segTitle:        { color: c.textPrimary, fontSize: 13, fontWeight: '600' },
   segRow:          { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
   segInput:        { flex: 1, backgroundColor: c.background, borderRadius: 6, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 8, fontSize: 12, textAlign: 'right' as const },
+  segSwitchRow:    { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  segSwitchItem:   { flex: 1, alignItems: 'center', gap: 4, backgroundColor: c.surface, borderRadius: 8, padding: 8, borderWidth: 1, borderColor: c.border },
+  switchLabel:     { color: c.textSecondary, fontSize: 12, fontWeight: '500' },
 });
