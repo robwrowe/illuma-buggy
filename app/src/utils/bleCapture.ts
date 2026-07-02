@@ -1,5 +1,7 @@
 /** Disney BLE packet capture — types and decode helpers for parade/show analysis */
 
+import { disneyPayload as e9DisneyPayload, hexToBytes, parseE9Packet, describeParsedE9 } from './e9Parser';
+
 export interface BleCapturePacket {
   /** Board millis() when packet was received */
   boardTs: number;
@@ -38,66 +40,24 @@ export const CAPTURE_DURATION_OPTIONS: { label: string; sec: BleCaptureDuration 
 export const MAX_CAPTURE_SESSIONS = 20;
 export const MAX_PACKETS_PER_SESSION = 3000;
 
-function hexToBytes(hex: string): number[] {
-  const clean = hex.replace(/[^0-9a-fA-F]/g, '');
-  const out: number[] = [];
-  for (let i = 0; i + 1 < clean.length; i += 2) {
-    out.push(parseInt(clean.slice(i, i + 2), 16));
-  }
-  return out;
+function hexToBytesLocal(hex: string): number[] {
+  return hexToBytes(hex);
 }
 
 /** Payload after optional 8301 CID prefix */
 function disneyPayload(bytes: number[]): number[] {
-  if (bytes.length >= 2 && bytes[0] === 0x83 && bytes[1] === 0x01) return bytes.slice(2);
-  return bytes;
+  return e9DisneyPayload(bytes);
 }
 
 /** Human-readable hint for parade analysis */
 export function describeBlePacket(tag: string, hex: string): string {
-  const bytes = disneyPayload(hexToBytes(hex));
+  const bytes = disneyPayload(hexToBytesLocal(hex));
   if (bytes.length === 0) return tag;
 
+  const parsed = parseE9Packet(bytes);
+  if (parsed) return describeParsedE9(parsed);
+
   if (bytes[0] === 0xcc && bytes[1] === 0x03) return 'CC03 wake ping';
-
-  if (bytes.length >= 5 && (bytes[0] === 0xe1 || bytes[0] === 0xe2) && bytes[2] === 0xe9) {
-    const func = (bytes[2] << 8) | bytes[3];
-    const op = `E${func.toString(16).toUpperCase().padStart(4, '0')}`;
-    switch (func) {
-      case 0xe905:
-        if (bytes.length >= 9) {
-          const pal = bytes[7] & 0x1f;
-          const mask = (bytes[6] !== 0x0e && bytes[6] !== 0x0f)
-            ? bytes[6]
-            : (bytes[7] >> 5) & 0x07;
-          const maskHex = mask > 7 ? `0x${mask.toString(16)}` : String(mask);
-          return `${op} single pal=${pal} mask=${maskHex}`;
-        }
-        return `${op} single color`;
-      case 0xe906:
-        if (bytes.length >= 10) {
-          return `${op} dual inner=${bytes[7] & 0x1f} outer=${bytes[8] & 0x1f}`;
-        }
-        return `${op} dual color`;
-      case 0xe908:
-        return `${op} RGB`;
-      case 0xe909:
-        if (bytes.length >= 13) {
-          const pat = (bytes[7] >> 5) & 0x07;
-          return `${op} five-color pattern=${pat}`;
-        }
-        return `${op} five-color`;
-      case 0xe90c: return `${op} show FX`;
-      case 0xe90e: return `${op} flash`;
-      default:
-        if (func >= 0xe90f && func <= 0xe913) return `${op} animation`;
-        return op;
-    }
-  }
-
-  if (bytes[0] === 0xe9) {
-    return `E9 show cmd 0x${bytes[1]?.toString(16).toUpperCase() ?? '??'}`;
-  }
 
   if (bytes.length >= 6 && bytes[0] === 0xcf && bytes[1] === 0x0b) {
     const pal = bytes[12] !== undefined ? bytes[12] & 0x1f : -1;
