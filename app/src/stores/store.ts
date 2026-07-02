@@ -267,6 +267,9 @@ interface AppState {
   setMagicBandTimeoutSec:(val: number) => void;
   bleEffectTransitionMs: number;
   setBleEffectTransitionMs:(val: number) => void;
+  /** Background GPS poll interval (seconds) while zones are enabled. */
+  locationPollSec:       number;
+  setLocationPollSec:    (val: number) => void;
   mbMapping:             MbMappingConfig;
   setMbMapping:          (config: MbMappingConfig) => void;
   updateMbMapping:       (patch: Partial<MbMappingConfig>) => void;
@@ -343,6 +346,10 @@ interface AppState {
 const DEFAULT_BRIGHTNESS: BrightnessConfig = {
   daytime: 200, nighttime: 80, indoor: 120, transitionMinutes: 30, solarThresholdDeg: 6,
 };
+
+export const LOCATION_POLL_SEC_MIN = 5;
+export const LOCATION_POLL_SEC_MAX = 300;
+export const DEFAULT_LOCATION_POLL_SEC = __DEV__ ? 5 : 30;
 
 const DEFAULT_RECALL: RecallState = {
   effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never',
@@ -423,6 +430,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   magicBandFivePoint:  true,
   magicBandTimeoutSec: 15,
   bleEffectTransitionMs: 700,
+  locationPollSec:     DEFAULT_LOCATION_POLL_SEC,
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
   brightnessConfig:    DEFAULT_BRIGHTNESS,
@@ -621,6 +629,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMagicBandFivePoint: (val)          => set({ magicBandFivePoint: val }),
   setMagicBandTimeoutSec:(val)          => set({ magicBandTimeoutSec: val }),
   setBleEffectTransitionMs:(val)        => set({ bleEffectTransitionMs: val }),
+  setLocationPollSec:    (val)          => set({
+    locationPollSec: Math.min(LOCATION_POLL_SEC_MAX, Math.max(LOCATION_POLL_SEC_MIN, val)),
+  }),
   setMbMapping:          (mbMapping)   => set({ mbMapping: normalizeMbMapping(mbMapping) }),
   updateMbMapping:       (patch)       => set(s => ({ mbMapping: normalizeMbMapping({ ...s.mbMapping, ...patch }) })),
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
@@ -716,7 +727,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
-                    'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs','mbMapping',
+                    'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','savedColors','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
@@ -767,6 +778,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         magicBandFivePoint: d.magicBandFivePoint ?? true,
         magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
         bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
+        locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
         mbMapping:          hydratedMbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     (d.customPalettes ?? []).map((p: CustomPalette) => normalizeCustomPalette(p)),
@@ -813,6 +825,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['magicBandFivePoint', JSON.stringify(s.magicBandFivePoint)],
         ['magicBandTimeoutSec',JSON.stringify(s.magicBandTimeoutSec)],
         ['bleEffectTransitionMs', JSON.stringify(s.bleEffectTransitionMs)],
+        ['locationPollSec',    JSON.stringify(s.locationPollSec)],
         ['mbMapping',          JSON.stringify(s.mbMapping)],
         ['recallState',        JSON.stringify(s.recallState)],
         ['customPalettes',     JSON.stringify(s.customPalettes)],
@@ -921,6 +934,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
       magicBandTimeoutSec:s.magicBandTimeoutSec,
       bleEffectTransitionMs: s.bleEffectTransitionMs,
+      locationPollSec:    s.locationPollSec,
       mbMapping:          s.mbMapping,
       bleCaptureSessions: s.bleCaptureSessions,
       customPalettes: s.customPalettes, savedColors: s.savedColors, paletteSets: s.paletteSets,
@@ -948,6 +962,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandFivePoint: m.magicBandFivePoint ?? true,
       magicBandTimeoutSec:m.magicBandTimeoutSec ?? 15,
       bleEffectTransitionMs: m.bleEffectTransitionMs ?? 700,
+      locationPollSec:    m.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
       mbMapping:          normalizeMbMapping(m.mbMapping),
       bleCaptureSessions: m.bleCaptureSessions ?? data.bleCaptureSessions ?? [],
       bleCaptureDurationSec: m.bleCaptureDurationSec ?? data.bleCaptureDurationSec ?? 900,

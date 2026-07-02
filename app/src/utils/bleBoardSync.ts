@@ -2,6 +2,7 @@
  * Board sync helpers — mirror web/index.html presetWledForBoard + mb_layout_set payloads.
  */
 
+import { AppState } from 'react-native';
 import { bleService } from '../services/BLEService';
 import type { BLEMessage } from '../services/BLEService';
 import type { Preset, RecallState, PresetMemory } from '../stores/store';
@@ -67,6 +68,18 @@ function waitForBleAck(action: string, id?: string, timeoutMs = 20_000): Promise
   });
 }
 
+export interface ApplyPresetOptions {
+  /** Do not wait for NOTIFY ack — Android often drops GATT notifications while backgrounded. */
+  trustSend?: boolean;
+  /** GPS zone apply — only needs BLE link; do not wait for connect bootstrap. */
+  zoneGps?: boolean;
+}
+
+function shouldTrustSendOnAck(opts?: ApplyPresetOptions): boolean {
+  if (opts?.trustSend) return true;
+  return AppState.currentState !== 'active';
+}
+
 /** Save preset to board NVS once per session (zones / preset_apply need it). */
 export async function ensurePresetOnBoard(
   preset: Preset,
@@ -106,8 +119,9 @@ export async function applyZonePreset(
   preset: Preset,
   recall: RecallState,
   layouts: CustomSegmentLayout[],
+  opts?: ApplyPresetOptions,
 ): Promise<boolean> {
-  return applyPresetToBoard(preset, recall, layouts);
+  return applyPresetToBoard(preset, recall, layouts, opts);
 }
 
 /** @deprecated use applyZonePreset — kept for call-site compat */
@@ -215,12 +229,13 @@ export async function applyPresetToBoard(
   preset: Preset,
   recall: RecallState,
   layouts: CustomSegmentLayout[],
+  opts?: ApplyPresetOptions,
 ): Promise<boolean> {
   if (!bleService.isConnected()) {
     console.warn('[Apply] blocked — not connected');
     return false;
   }
-  if (!bleService.isSessionReady()) {
+  if (!opts?.zoneGps && !bleService.isSessionReady()) {
     console.warn('[Apply] blocked — session not ready (board still syncing?)');
     return false;
   }
@@ -228,9 +243,19 @@ export async function applyPresetToBoard(
   const segCount = Array.isArray((payload as { seg?: unknown[] }).seg)
     ? (payload as { seg: unknown[] }).seg.length
     : 0;
-  console.log('[Apply] start', preset.id, preset.name, `(${JSON.stringify(payload).length} bytes, ${segCount} segs)`);
+  const trustSend = shouldTrustSendOnAck(opts);
+  console.log('[Apply] start', preset.id, preset.name, `(${JSON.stringify(payload).length} bytes, ${segCount} segs)`, trustSend ? '[trust-send]' : '');
 
-  // Full wled_raw is authoritative for manual apply — NVS save can run without blocking.
+  if (trustSend) {
+    const sent = await bleService.sendWledRaw(payload, preset.id);
+    if (!sent) {
+      console.warn('[Apply] wled_raw send failed');
+      return false;
+    }
+    console.log('[Apply] sent ok (ack skipped — app backgrounded or zone GPS apply)');
+    return true;
+  }
+
   void ensurePresetOnBoard(preset, recall, layouts).catch((e) =>
     console.warn('[Apply] background preset_save failed:', e),
   );
@@ -240,6 +265,10 @@ export async function applyPresetToBoard(
   if (!sent) {
     console.warn('[Apply] wled_raw send failed');
     return false;
+  }
+  if (shouldTrustSendOnAck(opts)) {
+    console.log('[Apply] sent ok (ack skipped — app backgrounded during apply)');
+    return true;
   }
   const ok = await ackWait;
   console.log('[Apply]', ok ? 'ack ok' : 'ack timeout or WLED failed — check board serial for [BLE] wled_raw / [WLED] POST');

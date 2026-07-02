@@ -657,10 +657,9 @@ bool applyPreset(const String& id) {
   serializeJson(doc["wled"], wledJson);
   if (wledJson.length() == 0) return false;
   currentPresetId = id;
-  disableAllSplitSegments();
-  delay(100);
   String payload = preparePresetApplyPayload(wledJson);
-  bool ok = sendToWLED(payload, 8000, 2);
+  // Single atomic POST — separate disable pass causes black flash between zone presets.
+  bool ok = sendToWLEDForBleSolid(payload);
   if (ok) {
     // Preset JSON is partial — don't overwrite full polled state used for MB restore.
     liveWledState = "";
@@ -1145,14 +1144,14 @@ void disableAllSplitSegments() {
   sendToWLED(body, 3000, 1);
 }
 
-// MB solids: dense fill (grp=1 spc=0); keep start/stop/of/rev/mi for physical ring layout.
+// MB solids: honor layout grp/spc/of for spaced corners; default dense fill (grp=1 spc=0).
 void appendWledSolidSeg(String& body, const WledSegRef& ref,
                         uint8_t r, uint8_t g, uint8_t b, bool& first) {
   if (ref.stop <= ref.start) return;
   if (!first) body += ",";
   first = false;
   body += "{\"id\":" + String(ref.id) + ",\"start\":" + String(ref.start) + ",\"stop\":" + String(ref.stop)
-       + ",\"grp\":1,\"spc\":0"
+       + ",\"grp\":" + String(ref.grp) + ",\"spc\":" + String(ref.spc)
        + ",\"of\":" + String(ref.of) + ",\"rev\":" + String(ref.rev ? "true" : "false")
        + ",\"mi\":" + String(ref.mi ? "true" : "false")
        + ",\"on\":true,\"fx\":0"
@@ -2127,14 +2126,16 @@ void handleBLECommand(const String& msg) {
       currentPresetId = presetId;
     }
     ensureWledPowerOn();
-    // Segment geometry merges by id — clear stale splits before any seg[] payload.
+    // preparePresetApplyPayload folds inactive seg ids into one POST — no separate disable pass.
     DynamicJsonDocument wdoc(2048);
-    if (!deserializeJson(wdoc, wled) && wdoc.containsKey("seg")) {
-      disableAllSplitSegments();
-      delay(80);
+    bool hasSeg = !deserializeJson(wdoc, wled) && wdoc.containsKey("seg");
+    if (hasSeg) {
       wled = preparePresetApplyPayload(wled);
     }
-    bool ok = sendToWLEDForBleEffect(wled);
+    // Preset / segment applies snap instantly — crossfade shows black/yellow mid-transition.
+    bool ok = (hasSeg || presetId.length() > 0)
+      ? sendToWLEDForBleSolid(wled)
+      : sendToWLEDForBleEffect(wled);
     Serial.printf("[BLE] wled_raw -> WLED %s\n", ok ? "OK" : "FAIL");
     if (ok) {
       liveWledState = compactWledStateForSave(wled);

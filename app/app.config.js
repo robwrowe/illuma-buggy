@@ -24,6 +24,7 @@ module.exports = ({ config }) => ({
         "IllumaBuggy uses your location to trigger LED presets based on where you are in the park.",
       NSLocationAlwaysUsageDescription:
         "IllumaBuggy uses your location in the background to trigger LED presets automatically.",
+      UIBackgroundModes: ["location"],
     },
   },
   android: {
@@ -42,7 +43,12 @@ module.exports = ({ config }) => ({
       "ACCESS_FINE_LOCATION",
       "ACCESS_COARSE_LOCATION",
       "ACCESS_BACKGROUND_LOCATION",
+      "FOREGROUND_SERVICE",
+      "FOREGROUND_SERVICE_LOCATION",
       "POST_NOTIFICATIONS",
+      "android.permission.ACCESS_BACKGROUND_LOCATION",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_LOCATION",
       "android.permission.BLUETOOTH",
       "android.permission.BLUETOOTH_ADMIN",
       "android.permission.BLUETOOTH_CONNECT",

@@ -2,6 +2,7 @@
  * Shared GPS → zones / brightness / BLE zone trigger logic (foreground + background task).
  */
 
+import { AppState } from 'react-native';
 import { useAppStore, type Zone, type LatLng } from '../stores/store';
 import { findTriggerZone, findContainingIndoorZone, sunBasedBrightness, zonesContainingPoint } from './utils';
 import { resolveActivePark } from './resolveActivePark';
@@ -21,6 +22,7 @@ let lastBrightness: number | null = null;
 let brightnessTimer: ReturnType<typeof setTimeout> | null = null;
 let zoneTriggersSuppressed = false;
 let lastLoggedActiveIds: string[] = [];
+let zoneApplyChain: Promise<void> = Promise.resolve();
 
 function zoneLog(msg: string, extra?: Record<string, unknown>) {
   if (extra) console.log('[Zone]', msg, extra);
@@ -53,8 +55,9 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
   lastZoneApply = { zoneId: zone.id, at: Date.now() };
 
   const run = async () => {
-    if (!bleService.isSessionReady()) {
-      zoneLog(`apply deferred — session not ready`, { zone: zone.name, presetId: zone.presetId });
+    if (!bleService.isConnected()) {
+      zoneLog(`apply deferred — not connected`, { zone: zone.name, presetId: zone.presetId });
+      pendingZone = zone;
       return;
     }
     const s = useAppStore.getState();
@@ -63,16 +66,24 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
       zoneLog(`preset missing in app`, { zone: zone.name, presetId: zone.presetId });
       return;
     }
+    const trustSend = reason === 'bg' || AppState.currentState !== 'active';
     zoneLog(`ENTER → wled_raw "${preset.name}"`, {
       zone: zone.name,
       presetId: preset.id,
       reason,
       connected: bleService.isConnected(),
+      sessionReady: bleService.isSessionReady(),
+      trustSend,
     });
-    const ok = await applyZonePreset(preset, s.recallState, s.customSegmentLayouts);
+    const ok = await applyZonePreset(preset, s.recallState, s.customSegmentLayouts, {
+      trustSend,
+      zoneGps: true,
+    });
     zoneLog(ok ? 'apply OK' : 'apply FAILED', { presetId: preset.id, zone: zone.name });
   };
-  void run();
+  zoneApplyChain = zoneApplyChain.then(run).catch((e) => {
+    console.warn('[Zone] apply error:', e);
+  });
 }
 
 function runZoneTriggerLogic(
@@ -110,9 +121,9 @@ function runZoneTriggerLogic(
 
   currentZoneId = triggerZone?.id ?? null;
   if (triggerZone?.presetId) {
-    if (!bleService.isSessionReady()) {
+    if (!bleService.isConnected()) {
       pendingZone = triggerZone;
-      zoneLog('queued pending zone apply', { zone: triggerZone.name });
+      zoneLog('queued pending zone apply (not connected)', { zone: triggerZone.name });
       return;
     }
     applyZoneEntry(triggerZone, true, reason);
@@ -120,22 +131,27 @@ function runZoneTriggerLogic(
     pendingZone = null;
     lastZoneApply = null;
     const left = zones.find(z => z.id === prevId);
-    if (left?.presetId && bleService.isSessionReady()) {
+    if (left?.presetId && bleService.isConnected()) {
       zoneLog('override_clear after zone exit');
       bleService.sendOverrideClear();
     }
   }
 }
 
-export function flushPendingZoneOnBleReady() {
-  if (!pendingZone || !bleService.isSessionReady()) return;
+/** Flush a zone that was queued while BLE was disconnected. */
+export function flushPendingZoneIfConnected(reason: string) {
+  if (!pendingZone || !bleService.isConnected()) return;
   const s = useAppStore.getState();
   if (isShowProtectingZones(s.activeZoneIds)) return;
   const zone = pendingZone;
   pendingZone = null;
   currentZoneId = zone.id;
-  zoneLog('flushing pending zone on BLE ready', { zone: zone.name });
-  applyZoneEntry(zone, true, 'ble-ready');
+  zoneLog('flushing pending zone', { zone: zone.name, reason });
+  applyZoneEntry(zone, true, reason);
+}
+
+export function flushPendingZoneOnBleReady() {
+  flushPendingZoneIfConnected('ble-ready');
 }
 
 export function reapplyCurrentZoneOnConnect() {
@@ -144,7 +160,7 @@ export function reapplyCurrentZoneOnConnect() {
   if (isShowProtectingZones(s.activeZoneIds)) return;
   const zone = s.zones.find(z => z.id === currentZoneId);
   if (!zone?.presetId) return;
-  if (!bleService.isSessionReady()) {
+  if (!bleService.isConnected()) {
     pendingZone = zone;
     return;
   }
@@ -180,7 +196,7 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
   const sendBrightnessIfChanged = (value: number) => {
     if (lastBrightness === value) return;
     lastBrightness = value;
-    if (bleService.isSessionReady()) bleService.sendBrightness(value);
+    if (bleService.isConnected()) bleService.sendBrightness(value);
   };
 
   if (nowIndoor !== isIndoor) {
@@ -216,6 +232,7 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
   zoneTriggersSuppressed = false;
 
   runZoneTriggerLogic(pt, zones, zonesEnabled, exitingShowProtection, src);
+  flushPendingZoneIfConnected('gps-tick');
 }
 
 export function resetZoneLocationRuntime() {

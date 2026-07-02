@@ -14,7 +14,14 @@ import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 import IconDownload from '@tabler/icons-react-native/dist/esm/icons/IconDownload';
 import IconUpload from '@tabler/icons-react-native/dist/esm/icons/IconUpload';
 
-import { useAppStore, RecallState, RecallValue } from '../stores/store';
+import {
+  useAppStore,
+  RecallState,
+  RecallValue,
+  DEFAULT_LOCATION_POLL_SEC,
+  LOCATION_POLL_SEC_MIN,
+  LOCATION_POLL_SEC_MAX,
+} from '../stores/store';
 import { MbMappingSections, PresetPickerModal } from './MbMappingSections';
 import ShowsScreen from './ShowsScreen';
 import { bleService } from '../services/BLEService';
@@ -36,6 +43,7 @@ export default function SettingsScreen() {
     magicBandFivePoint, setMagicBandFivePoint,
     magicBandTimeoutSec, setMagicBandTimeoutSec,
     bleEffectTransitionMs, setBleEffectTransitionMs,
+    locationPollSec, setLocationPollSec,
     ftbPresetId, setFtbPresetId, presets,
     brightnessConfig, setBrightnessConfig,
     recallState, setRecallState,
@@ -282,13 +290,38 @@ export default function SettingsScreen() {
         colors={colors}
       />
 
+      {/* Zone GPS polling */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Zone Location</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>GPS poll interval (sec)</Text>
+            <Text style={s.rowHint}>
+              Background refresh while zones are on ({LOCATION_POLL_SEC_MIN}–{LOCATION_POLL_SEC_MAX} sec).
+              Lower = faster zone updates, more battery. Default {DEFAULT_LOCATION_POLL_SEC} sec.
+            </Text>
+          </View>
+          <TextInput
+            style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
+            value={String(locationPollSec)}
+            onChangeText={v => {
+              const n = parseInt(v, 10);
+              if (!isNaN(n)) setLocationPollSec(n);
+            }}
+            onEndEditing={() => saveToStorage()}
+            keyboardType="number-pad"
+            selectTextOnFocus
+          />
+        </View>
+      </View>
+
       {/* MB / Wand transition */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Effect Transitions</Text>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>Fade duration (ms)</Text>
-            <Text style={s.rowHint}>Crossfade when MB+ or wand effects start and end. 0 = instant (hard cut).</Text>
+            <Text style={s.rowHint}>Crossfade when MB+ or wand effects start and end. Preset/zone applies are always instant. 0 = hard cut.</Text>
           </View>
           <TextInput
             style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
