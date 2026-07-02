@@ -75,8 +75,6 @@ illuma-buggy/
 └── agent.md           # Project reference doc for use with Cursor IDE
 ```
 
-_(Adjust the above to match actual folder names in the repo.)_
-
 ## Status
 
 | Component                           | Status                                                  |
