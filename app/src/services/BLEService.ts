@@ -232,13 +232,16 @@ class BLEService {
   /** Try with-response first; fall back to WRITE_NR if the stack rejects the queued op. */
   private async writeCmd(device: Device, b64: string): Promise<void> {
     const backgrounded = AppState.currentState !== 'active';
+    // Android often never resolves GATT write promises while backgrounded — the native
+    // write still goes out, but awaiting it stalls the send queue until foreground.
+    // Fire-and-forget WRITE_NR so zone applies can finish inside the FGS task window.
     if (backgrounded) {
-      try {
-        await device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
-        return;
-      } catch (e) {
-        if (!isGattBusy(e)) throw e;
-      }
+      void device
+        .writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64)
+        .catch((e) => {
+          if (!isGattBusy(e)) console.warn('[BLE] background NR write failed:', e);
+        });
+      return;
     }
     try {
       await device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);

@@ -3,7 +3,7 @@
  */
 
 import { useAppStore, type Zone, type LatLng } from '../stores/store';
-import { findTriggerZone, findContainingIndoorZone, sunBasedBrightness, zonesContainingPoint } from './utils';
+import { findTriggerZone, findContainingIndoorZone, sunBasedBrightness, zonesContainingPoint, solarElevation } from './utils';
 import { resolveActivePark } from './resolveActivePark';
 import { bleService } from '../services/BLEService';
 import { applyZonePreset } from './bleBoardSync';
@@ -14,6 +14,7 @@ import {
   saveLocationRuntime,
   saveZoneRuntime,
   loadZoneRuntime,
+  enqueuePendingBle,
 } from './locationRuntimeBridge';
 
 const ZONE_REAPPLY_MS = 45_000;
@@ -25,9 +26,16 @@ let lastZoneApply: { zoneId: string; at: number } | null = null;
 let isIndoor = false;
 let lastBrightness: number | null = null;
 let brightnessTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSolarDay: boolean | null = null;
 let zoneTriggersSuppressed = false;
 let lastLoggedActiveIds: string[] = [];
 let zoneApplyChain: Promise<void> = Promise.resolve();
+let lastCompletedApply: { zoneId: string; presetId: string; at: number } | null = null;
+// Collapses duplicate applies of the *same* zone/preset fired in quick succession from
+// different call sites (GPS re-eval, pending-drain, board-sync-idle flush, etc.) — these
+// don't change anything but do add redundant BLE traffic that can contend with other
+// in-flight board sync work.
+const DUPLICATE_APPLY_WINDOW_MS = 4000;
 
 function zoneLog(msg: string, extra?: Record<string, unknown>) {
   if (extra) console.log('[Zone]', msg, extra);
@@ -84,6 +92,19 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
       zoneLog(`preset missing in app`, { zone: zone.name, presetId: zone.presetId });
       return;
     }
+    if (
+      lastCompletedApply &&
+      lastCompletedApply.zoneId === zone.id &&
+      lastCompletedApply.presetId === preset.id &&
+      Date.now() - lastCompletedApply.at < DUPLICATE_APPLY_WINDOW_MS
+    ) {
+      zoneLog(`skip duplicate apply "${preset.name}" (already sent recently)`, {
+        zone: zone.name,
+        presetId: preset.id,
+        reason,
+      });
+      return;
+    }
     zoneLog(`ENTER → wled_raw "${preset.name}"`, {
       zone: zone.name,
       presetId: preset.id,
@@ -97,6 +118,7 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
     });
     zoneLog(ok ? 'apply OK' : 'apply FAILED', { presetId: preset.id, zone: zone.name });
     if (ok) {
+      lastCompletedApply = { zoneId: zone.id, presetId: preset.id, at: Date.now() };
       pendingZone = null;
       void notifyZoneEffectApplied({
         triggerZoneId: zone.id,
@@ -107,6 +129,9 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
       });
     } else {
       pendingZone = zone;
+      if (reason === 'bg') {
+        void enqueuePendingBle({ type: 'zone_preset', presetId: preset.id });
+      }
     }
   };
   zoneApplyChain = zoneApplyChain.then(run).catch((e) => {
@@ -245,6 +270,8 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
 
   const nowIndoor = findContainingIndoorZone(pt, indoorZones) !== null;
   const outdoorBrightness = sunBasedBrightness(pt.latitude, pt.longitude, brightnessConfig);
+  const solarElev = solarElevation(pt.latitude, pt.longitude, new Date());
+  const nowSolarDay = solarElev >= brightnessConfig.solarThresholdDeg;
 
   const sendBrightnessIfChanged = (value: number) => {
     if (lastBrightness === value) return;
@@ -252,13 +279,30 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
     if (bleService.isConnected()) bleService.sendBrightness(value);
   };
 
+  if (lastBrightness == null) {
+    const current = useAppStore.getState().deviceStatus?.brightness;
+    if (typeof current === 'number' && Number.isFinite(current)) {
+      lastBrightness = current;
+    }
+  }
+
   if (nowIndoor !== isIndoor) {
     isIndoor = nowIndoor;
     if (brightnessTimer) clearTimeout(brightnessTimer);
-    const target = nowIndoor ? brightnessConfig.indoor : outdoorBrightness;
+    const target = nowIndoor
+      ? brightnessConfig.indoor
+      : (nowSolarDay ? brightnessConfig.daytime : brightnessConfig.nighttime);
     brightnessTimer = setTimeout(() => sendBrightnessIfChanged(target), nowIndoor ? 0 : BRIGHTNESS_RAMP_MS);
   } else if (!nowIndoor) {
-    sendBrightnessIfChanged(outdoorBrightness);
+    if (lastSolarDay == null) {
+      lastSolarDay = nowSolarDay;
+    } else if (lastSolarDay !== nowSolarDay) {
+      lastSolarDay = nowSolarDay;
+      sendBrightnessIfChanged(nowSolarDay ? brightnessConfig.daytime : brightnessConfig.nighttime);
+    }
+  }
+  if (!nowIndoor) {
+    lastSolarDay = nowSolarDay;
   }
 
   const protectShow = isShowProtectingZones(activeIds);
@@ -341,6 +385,8 @@ export function resetZoneLocationRuntime() {
   currentZoneId = null;
   pendingZone = null;
   lastZoneApply = null;
+  lastCompletedApply = null;
+  lastSolarDay = null;
   zoneTriggersSuppressed = false;
   lastLoggedActiveIds = [];
 }

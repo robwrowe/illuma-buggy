@@ -83,7 +83,15 @@ export function useZoneManager() {
     const startDrainPoll = () => {
       stopDrainPoll();
       drainTimer = setInterval(() => {
-        void syncBackgroundSnapshot('drain-poll');
+        void (async () => {
+          // refreshLocationNow probes GPS + drains pending BLE; catches mock-GPS
+          // changes between native FGS ticks while Illuma is backgrounded.
+          if (appState !== 'active') {
+            await refreshLocationNow('drain-poll');
+          } else {
+            await syncBackgroundSnapshot('drain-poll');
+          }
+        })();
       }, 5000);
       console.log('[Location] drain poll started every 5s');
     };

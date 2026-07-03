@@ -1,5 +1,6 @@
 app/node_modules/
 app/.expo/
+app/.expo-export-test/
 app/android/
 app/dist/
 app/.bundle-out/

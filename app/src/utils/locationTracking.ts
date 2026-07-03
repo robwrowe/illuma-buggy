@@ -17,7 +17,7 @@ export function getLocationPollMs(): number {
 
 function locationTaskOptions(): Location.LocationTaskOptions {
   const pollMs = getLocationPollMs();
-  const maxInterval = __DEV__ ? 5_000 : 15_000;
+  const maxInterval = __DEV__ ? 3_000 : 15_000;
   return {
     accuracy: Location.Accuracy.High,
     timeInterval: Math.min(pollMs, maxInterval),
