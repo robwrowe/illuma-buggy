@@ -492,7 +492,8 @@ export default function HomeScreen() {
                   )}
                   {show.kind === "parade" && (
                     <Text style={s.autoHint}>
-                      Parade live runs automatically at scheduled start.
+                      Start live manually when you&apos;re on the parade route.
+                      Auto pre/post still runs if enabled above.
                     </Text>
                   )}
                   {isConnected && (

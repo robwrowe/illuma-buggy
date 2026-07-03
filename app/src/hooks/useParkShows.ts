@@ -11,6 +11,7 @@ import {
   showBindingInScope,
   isAutoPrePostDisabled,
   isAutoLiveDisabled,
+  shouldScheduleProtectZones,
   type ParkShowBinding,
   type ShowSettings,
   type ShowInstanceOverride,
@@ -90,7 +91,7 @@ function buildUpcomingShows(
         kind: binding.kind,
         binding,
         autoPrePostDisabled: isAutoPrePostDisabled(binding, instanceOverride),
-        autoLiveDisabled: isAutoLiveDisabled(binding, instanceOverride, binding.kind),
+        autoLiveDisabled: isAutoLiveDisabled(binding, instanceOverride),
         inScope,
       });
     }
@@ -143,9 +144,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       now,
       activeZoneIdsRef.current,
     );
-    const protect = upcoming.some(
-      (show) => show.inScope && (show.status === 'pre' || show.status === 'live'),
-    );
+    const protect = upcoming.some(shouldScheduleProtectZones);
     useAppStore.getState().setShowProtectsZones(protect);
     setShows(upcoming);
     return upcoming;
@@ -169,9 +168,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
           presetsRef.current, recallRef.current, layoutsRef.current, fadeMsRef.current,
         );
       }
-      const runLive = show.kind === 'parade'
-        ? !show.autoPrePostDisabled
-        : !show.autoLiveDisabled;
+      const runLive = !show.autoLiveDisabled;
       if (runLive && show.status === 'live' && !autoFiredRef.current.has(liveKey)) {
         autoFiredRef.current.add(liveKey);
         void runShowPhase(
@@ -217,9 +214,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
         now,
         activeZoneIdsRef.current,
       );
-      const protect = upcoming.some(
-        (show) => show.inScope && (show.status === 'pre' || show.status === 'live'),
-      );
+      const protect = upcoming.some(shouldScheduleProtectZones);
       useAppStore.getState().setShowProtectsZones(protect);
       setShows(upcoming);
       setLastFetchAt(now);

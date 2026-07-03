@@ -28,7 +28,7 @@ export interface ParkShowBinding {
   homeVisibleAfterMin: number;
   /** Skip auto pre/post for all instances of this binding */
   autoPrePostDisabled: boolean;
-  /** Skip auto live for all instances (fireworks); parades always auto-live at scheduled start */
+  /** Skip auto live at scheduled start (default off for parades — start live manually on route) */
   autoLiveDisabled: boolean;
   /** @deprecated use autoPrePostDisabled */
   autoStartDisabled?: boolean;
@@ -46,7 +46,7 @@ export interface ShowSettings {
 export interface ShowInstanceOverride {
   /** When set, overrides binding default for this show instance */
   autoPrePostDisabled?: boolean;
-  /** Fireworks only — when set, overrides binding default for live auto */
+  /** When set, overrides binding default for live auto (parades default off) */
   autoLiveDisabled?: boolean;
   /** @deprecated use autoPrePostDisabled */
   autoStartDisabled?: boolean;
@@ -105,11 +105,23 @@ export function isAutoPrePostDisabled(
 export function isAutoLiveDisabled(
   binding: ParkShowBinding,
   instanceOverride: ShowInstanceOverride | null | undefined,
-  kind: ShowKind,
 ): boolean {
-  if (kind === 'parade') return false;
   if (instanceOverride?.autoLiveDisabled !== undefined) return instanceOverride.autoLiveDisabled;
   return binding.autoLiveDisabled;
+}
+
+/** Schedule-based zone protection — parade live is manual-only (SHOW_MODE on device). */
+export function shouldScheduleProtectZones(show: {
+  inScope: boolean;
+  status: 'upcoming' | 'pre' | 'live' | 'ended';
+  kind: ShowKind;
+  autoPrePostDisabled: boolean;
+  autoLiveDisabled: boolean;
+}): boolean {
+  if (!show.inScope) return false;
+  if (show.status === 'pre' && !show.autoPrePostDisabled) return true;
+  if (show.status === 'live' && show.kind === 'fireworks' && !show.autoLiveDisabled) return true;
+  return false;
 }
 
 /** Park-wide when scopeZoneId is null; otherwise user must be inside that zone polygon. */
