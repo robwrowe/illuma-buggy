@@ -4093,6 +4093,14 @@
                 }}
                 style={{ ...inputStyle, width: 88, textAlign: 'right', opacity: showSettings.showAutoBrightness === false ? 0.5 : 1 }} />
             </div>
+            <input type="range" min={0} max={255} step={1}
+              value={showSettings.showNightBrightness ?? 5}
+              disabled={showSettings.showAutoBrightness === false}
+              onChange={e => {
+                const n = parseInt(e.target.value, 10);
+                if (!isNaN(n)) update({ showSettings: { ...showSettings, showNightBrightness: n } });
+              }}
+              style={{ width: '100%', marginTop: 10, opacity: showSettings.showAutoBrightness === false ? 0.5 : 1 }} />
           </div>
 
           <div style={cardStyle}>

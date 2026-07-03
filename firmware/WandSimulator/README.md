@@ -10,8 +10,22 @@ Protocol builders match [Adafruit `magicband_protocol.py`](https://github.com/ad
 ## Setup
 
 1. Flash `WandSimulator.ino` to a spare ESP32 (NimBLE 2.x).
+   - Optional: **`build_opt.h`** in this folder (one line, no comments) passes `-DCONFIG_ESP_BROWNOUT_DET=0` at compile time for ESP32-S3 on arduino-esp32 v3. WiFi staying off at boot is the main brownout fix; skip this file if your toolchain rejects it.
 2. Open Serial Monitor @ 115200.
 3. Place the board within **0.5–2 m** of your MagicBands and/or StrollerController.
+
+**Brownout (`E BOD`) when sending a command?**
+
+The board is almost certainly **not dead**. Brownout means the **5 V USB supply dipped** when the BLE radio turned on — the MCU resets to protect itself. If you see the four-line `[WandSim]` banner and the prompt sits idle, the chip is fine.
+
+Quick checks:
+
+1. **Powered USB hub** or phone charger (not a laptop port) — this fixes most bench WandSim brownouts.
+2. **Shorter / data-rated USB cable** — charge-only cables cause large voltage drop.
+3. **Same board, StrollerController firmware** — if that connects over BLE, hardware is good; WandSim just needs more peak current at TX init.
+4. **Plain ESP32 (not S3)** spare — less picky on USB; WandSim works on any ESP32 + NimBLE.
+
+Software mitigations in this sketch: BLE lazy-init, 80 MHz during radio bring-up, lowest TX power, early brownout disable on S3. If it still resets on `mb red` after a powered supply, try a different devkit for the wand bench role.
 
 ## Testing MagicBands (two bands)
 

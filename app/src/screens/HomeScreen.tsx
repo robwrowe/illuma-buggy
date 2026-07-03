@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Switch,
   Alert,
+  TextInput,
 } from "react-native";
 import Slider from "@react-native-community/slider";
 import IconBluetooth from "@tabler/icons-react-native/dist/esm/icons/IconBluetooth";
@@ -85,6 +86,10 @@ export default function HomeScreen() {
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
+  const [brightnessText, setBrightnessText] = useState(
+    String(deviceStatus?.brightness ?? 128),
+  );
+  const [editingBrightness, setEditingBrightness] = useState(false);
   const [events, setEvents] = useState<string[]>([]);
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
   const [firingZone, setFiringZone] = useState(false);
@@ -151,9 +156,18 @@ export default function HomeScreen() {
 
   // Sync slider with device
   useEffect(() => {
-    if (deviceStatus?.brightness !== undefined)
+    if (deviceStatus?.brightness !== undefined && !editingBrightness) {
       setBrightness(deviceStatus.brightness);
-  }, [deviceStatus?.brightness]);
+      setBrightnessText(String(deviceStatus.brightness));
+    }
+  }, [deviceStatus?.brightness, editingBrightness]);
+
+  const commitBrightness = (raw: number) => {
+    const next = Math.min(255, Math.max(0, Math.round(raw)));
+    setBrightness(next);
+    setBrightnessText(String(next));
+    bleService.sendBrightness(next);
+  };
 
   // BLE effect event feed (Starlight Wand + MagicBand+)
   useEffect(() => {
@@ -722,11 +736,33 @@ export default function HomeScreen() {
         <View style={s.row}>
           <IconBulb size={15} color={colors.textSecondary} />
           <Text style={s.label}>Brightness</Text>
-          <Text
-            style={[s.label, { marginLeft: "auto", color: colors.textPrimary }]}
-          >
-            {brightness}
-          </Text>
+          <TextInput
+            style={s.brightnessInput}
+            keyboardType="number-pad"
+            value={brightnessText}
+            editable={isSessionReady}
+            selectTextOnFocus
+            onFocus={() => setEditingBrightness(true)}
+            onChangeText={(v) => {
+              setBrightnessText(v);
+              const n = parseInt(v, 10);
+              if (!isNaN(n)) {
+                setBrightness(Math.min(255, Math.max(0, n)));
+              }
+            }}
+            onBlur={() => {
+              setEditingBrightness(false);
+              const n = parseInt(brightnessText, 10);
+              if (!isNaN(n)) commitBrightness(n);
+              else setBrightnessText(String(brightness));
+            }}
+            onSubmitEditing={() => {
+              setEditingBrightness(false);
+              const n = parseInt(brightnessText, 10);
+              if (!isNaN(n)) commitBrightness(n);
+              else setBrightnessText(String(brightness));
+            }}
+          />
         </View>
         <Slider
           minimumValue={0}
@@ -736,8 +772,12 @@ export default function HomeScreen() {
           minimumTrackTintColor={colors.primary}
           maximumTrackTintColor={colors.borderFocus}
           thumbTintColor={colors.primary}
-          onValueChange={setBrightness}
-          onSlidingComplete={(v) => bleService.sendBrightness(Math.round(v))}
+          onValueChange={(v) => {
+            const n = Math.round(v);
+            setBrightness(n);
+            setBrightnessText(String(n));
+          }}
+          onSlidingComplete={(v) => commitBrightness(v)}
           disabled={!isSessionReady}
         />
       </View>
@@ -856,6 +896,20 @@ const styles = (
       fontWeight: "700",
       textTransform: "uppercase",
       letterSpacing: 0.8,
+    },
+    brightnessInput: {
+      marginLeft: "auto",
+      width: 72,
+      textAlign: "right",
+      backgroundColor: c.background,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: c.borderFocus,
+      color: c.textPrimary,
+      paddingVertical: 6,
+      paddingHorizontal: 8,
+      fontSize: 14,
+      fontWeight: "600",
     },
     statusText: {
       color: c.textPrimary,

@@ -16,6 +16,10 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+#endif
 
 static const uint8_t WAND_CAST_SIG[6] = { 0xCF, 0x0B, 0x00, 0xC4, 0x20, 0x22 };
 static const uint8_t IDLE_PAYLOAD[19] = {
@@ -24,8 +28,10 @@ static const uint8_t IDLE_PAYLOAD[19] = {
 };
 
 NimBLEAdvertising* adv = nullptr;
+static bool bleReady = false;
 
 void handleLine(String line);
+bool ensureBleReady();
 
 enum LoopMode { LOOP_NONE,
                 LOOP_WAND_CAST,
@@ -87,6 +93,14 @@ static const HexPreset SW_FX_PRESETS[] = {
   { "fade2", "E911 pink to green", PRESET_FADE2, sizeof(PRESET_FADE2), false },
 };
 static const size_t SW_FX_PRESET_COUNT = sizeof(SW_FX_PRESETS) / sizeof(SW_FX_PRESETS[0]);
+
+#if CONFIG_IDF_TARGET_ESP32S3
+// IDF 5 arms brownout before setup(); disable as early as possible on S3 USB builds.
+void wandSimDisableBrownoutEarly() __attribute__((constructor));
+void wandSimDisableBrownoutEarly() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+}
+#endif
 
 // ── Adafruit magicband_protocol.py builders ────────────────────────────────
 
@@ -213,6 +227,29 @@ static size_t buildPing(uint8_t* out) {
 
 // ── BLE TX ─────────────────────────────────────────────────────────────────
 
+bool ensureBleReady() {
+  if (bleReady && adv) return true;
+  Serial.println("[WandSim] Bringing up BLE radio…");
+#if CONFIG_IDF_TARGET_ESP32S3
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+#endif
+  setCpuFrequencyMhz(80);
+  delay(500);
+  NimBLEDevice::init("WandSim");
+  NimBLEDevice::setPower(ESP_PWR_LVL_N12);
+  adv = NimBLEDevice::getAdvertising();
+  if (!adv) {
+    Serial.println("[WandSim] BLE init failed");
+    return false;
+  }
+  adv->setMinInterval(0x20);
+  adv->setMaxInterval(0x30);
+  setCpuFrequencyMhz(160);
+  bleReady = true;
+  Serial.println("[WandSim] BLE ready");
+  return true;
+}
+
 void mfrHex(const uint8_t* data, size_t len) {
   for (size_t i = 0; i < len; i++) {
     if (data[i] < 0x10) Serial.print('0');
@@ -222,6 +259,7 @@ void mfrHex(const uint8_t* data, size_t len) {
 }
 
 void startMfrAdvert(const uint8_t* mfr, size_t mfrLen) {
+  if (!adv) return;
   NimBLEAdvertisementData advData;
   advData.setManufacturerData(std::string((char*)mfr, mfrLen));
   adv->stop();
@@ -236,6 +274,8 @@ void broadcastMfr(const uint8_t* payload, size_t plen, uint32_t durationMs) {
     Serial.println("[TX] payload too long");
     return;
   }
+  if (!ensureBleReady()) return;
+
   uint8_t mfr[29];
   mfr[0] = 0x83;
   mfr[1] = 0x01;
@@ -621,7 +661,7 @@ void handleLine(String line) {
   }
   if (lower == "stop") {
     stopLoops();
-    adv->stop();
+    if (bleReady && adv) adv->stop();
     Serial.println("[WandSim] Loops stopped");
     return;
   }
@@ -855,6 +895,8 @@ void startSimWifiConnect() {
   simWifiConnected = false;
   simWifiConnecting = true;
   wifiConnectStartMs = millis();
+  // First WiFi touch — only after user runs `wifi` (never in setup(); that browns out S3 on USB).
+  WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
 }
@@ -933,13 +975,10 @@ void setup() {
   Serial.println();
   Serial.println("[WandSim] Starlight wand + MagicBand+ BLE broadcaster");
   Serial.println("[WandSim] Adafruit magicband_protocol.py packet builders");
-  WiFi.mode(WIFI_OFF);
-  NimBLEDevice::init("WandSim");
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-  adv = NimBLEDevice::getAdvertising();
-  adv->setMinInterval(0x20);  // 20ms — match Adafruit ~25ms interval
-  adv->setMaxInterval(0x30);
-  printHelp();
+  Serial.println("[WandSim] WiFi is off until you run: wifi <ssid> <password>");
+  Serial.println("[WandSim] BLE starts on first transmit (type help for commands)");
+  delay(200);
+  while (Serial.available()) Serial.read();
 }
 
 void loop() {

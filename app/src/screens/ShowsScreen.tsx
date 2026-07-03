@@ -7,6 +7,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput,
   Switch, ActivityIndicator, Alert,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import IconPlus from '@tabler/icons-react-native/dist/esm/icons/IconPlus';
 import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
 import IconPencil from '@tabler/icons-react-native/dist/esm/icons/IconPencil';
@@ -54,6 +55,7 @@ export default function ShowsScreen() {
   const [search, setSearch] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerTarget>(null);
+  const [showBriDraft, setShowBriDraft] = useState<string | null>(null);
 
   const selectedPark = parks.find(p => p.id === selectedParkId) ?? null;
   const parkBindings = showBindings.filter(b => b.parkId === selectedParkId);
@@ -195,16 +197,40 @@ export default function ShowsScreen() {
               style={s.numInput}
               keyboardType="number-pad"
               editable={showSettings.showAutoBrightness}
-              value={String(showSettings.showNightBrightness)}
+              selectTextOnFocus
+              value={showBriDraft ?? String(showSettings.showNightBrightness)}
               onChangeText={(v) => {
+                setShowBriDraft(v);
                 const n = parseInt(v, 10);
                 if (!isNaN(n)) {
                   setShowSettings({ showNightBrightness: Math.min(255, Math.max(0, n)) });
                 }
               }}
-              onEndEditing={() => saveToStorage()}
+              onBlur={() => {
+                setShowBriDraft(null);
+                saveToStorage();
+              }}
+              onSubmitEditing={() => {
+                setShowBriDraft(null);
+                saveToStorage();
+              }}
             />
           </View>
+          <Slider
+            minimumValue={0}
+            maximumValue={255}
+            step={1}
+            value={showSettings.showNightBrightness}
+            disabled={!showSettings.showAutoBrightness}
+            minimumTrackTintColor={colors.primary}
+            maximumTrackTintColor={colors.borderFocus}
+            thumbTintColor={colors.primary}
+            onValueChange={(v) => {
+              const n = Math.round(v);
+              setShowSettings({ showNightBrightness: n });
+            }}
+            onSlidingComplete={() => saveToStorage()}
+          />
         </View>
 
         {/* Park picker */}
