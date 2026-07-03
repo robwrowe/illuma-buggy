@@ -81,8 +81,29 @@ export async function triggerFadeToBlackEffect(
   fadeMs: number,
   reason: string,
 ): Promise<boolean> {
-  console.log('[Effect] TRIGGER fade_to_black', { presetId: presetId ?? '(pure black)', fadeMs, reason });
-  const msg: BleMsg = { type: 'fade_to_black', fade_ms: fadeMs };
-  if (presetId) msg.preset_id = presetId;
-  return sendEffectCommand(msg, reason);
+  const s = useAppStore.getState();
+  if (presetId) {
+    const preset = s.presets.find(p => p.id === presetId);
+    if (!preset) {
+      console.warn('[Effect] FTB preset missing in app', { presetId, reason });
+      return false;
+    }
+    const payload = presetWledForBoard(preset, s.customSegmentLayouts, s.recallState);
+    // WLED's "transition" field is in deciseconds (tenths of a second), not ms —
+    // the wled_raw firmware path forwards this JSON verbatim (no ms→decisecond
+    // conversion like injectWledTransition does), so we must convert here or the
+    // crossfade runs ~10x too long and you see blended colors linger mid-fade.
+    const tenths = Math.min(655, Math.max(1, Math.round(fadeMs / 100)));
+    const wled = fadeMs > 0 ? { ...payload, transition: tenths } : payload;
+    console.log('[Effect] TRIGGER ftb wled_raw', {
+      presetId,
+      preset: preset.name,
+      fadeMs,
+      reason,
+      bytes: JSON.stringify(wled).length,
+    });
+    return sendEffectCommand({ type: 'wled_raw', wled, preset_id: presetId }, reason);
+  }
+  console.log('[Effect] TRIGGER fade_to_black (pure off)', { fadeMs, reason });
+  return sendEffectCommand({ type: 'fade_to_black', fade_ms: fadeMs }, reason);
 }

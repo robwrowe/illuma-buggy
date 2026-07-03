@@ -76,7 +76,7 @@ export interface ApplyPresetOptions {
 }
 
 function shouldTrustSendOnAck(opts?: ApplyPresetOptions): boolean {
-  if (opts?.trustSend) return true;
+  if (opts?.trustSend || opts?.zoneGps) return true;
   return AppState.currentState !== 'active';
 }
 
@@ -252,7 +252,7 @@ export async function applyPresetToBoard(
       console.warn('[Apply] wled_raw send failed');
       return false;
     }
-    console.log('[Apply] sent ok (ack skipped — app backgrounded or zone GPS apply)');
+    console.log('[Apply] sent ok (trust-send)');
     return true;
   }
 

@@ -11,7 +11,7 @@ import {
   syncRuntimeLocationFromBridge,
 } from '../utils/zoneLocationCore';
 import { drainPendingBleActions } from '../utils/pendingBleDrain';
-import { setBleLinkStatus } from '../utils/locationRuntimeBridge';
+import * as runtimeBridge from '../utils/locationRuntimeBridge';
 import {
   getLocationPollMs,
   ensureLocationTaskRunning,
@@ -40,6 +40,17 @@ export function useZoneManager() {
     let trackingGeneration = 0;
     let appStateGeneration = 0;
     let fgsStartPending = false;
+
+    const persistAppVisibility = (state: AppStateStatus | 'unknown') => {
+      const setter = (runtimeBridge as any).setAppVisibility as
+        | ((s: 'active' | 'background' | 'inactive' | 'unknown') => Promise<void>)
+        | undefined;
+      if (typeof setter === 'function') {
+        void setter((state as 'active' | 'background' | 'inactive') ?? 'unknown');
+      }
+    };
+
+    persistAppVisibility(appState);
 
     const isFgsManifestError = (e: unknown): boolean => {
       const msg = e instanceof Error ? e.message : String(e);
@@ -287,7 +298,7 @@ export function useZoneManager() {
     void syncWatchMode('init');
 
     const sessionSub = bleService.onSessionReady(async () => {
-      void setBleLinkStatus(bleService.isConnected(), true);
+      void runtimeBridge.setBleLinkStatus(bleService.isConnected(), true);
       console.log('[Zone] BLE session ready — refresh location + pending zone');
       await refreshLocationNow('ble-session-ready');
       flushPendingZoneOnBleReady();
@@ -296,19 +307,19 @@ export function useZoneManager() {
     });
 
     const connSub = bleService.onStateChange((state) => {
-      void setBleLinkStatus(
+      void runtimeBridge.setBleLinkStatus(
         state === 'connected',
         state === 'connected' && bleService.isSessionReady(),
       );
       if (state === 'connected') {
-        flushPendingZoneIfConnected('ble-connected');
-        void drainPendingBleActions('ble-connected');
+        // Zone flush waits for session ready + board sync idle (see onSessionReady).
       }
     });
 
     const appStateSub = AppState.addEventListener('change', (next) => {
       const prev = appState;
       appState = next;
+      persistAppVisibility(next);
       const gen = ++appStateGeneration;
       console.log('[Location] appState', prev, '→', next);
       if (!zonesEnabledRef.current) return;
@@ -327,6 +338,11 @@ export function useZoneManager() {
           flushPendingZoneIfConnected('app-foreground');
           if (fgsStartPending && backgroundGranted) {
             void startBackgroundTask('fgs-pending');
+          }
+          if (backgroundGranted) {
+            void restartLocationTask().catch((e) =>
+              console.warn('[Location] FGS refresh on foreground failed:', e),
+            );
           }
           await refreshLocationNow('app-foreground');
         })();

@@ -11,6 +11,7 @@ const ZONE_RUNTIME_KEY = 'illuma-zone-runtime';
 const PENDING_BLE_KEY = 'illuma-pending-ble';
 const BLE_LINK_KEY = 'illuma-ble-link';
 const BLE_DEVICE_ID_KEY = 'illuma-ble-device-id';
+const APP_VISIBILITY_KEY = 'illuma-app-visibility';
 
 export type PendingBleAction =
   | { type: 'zone_preset'; presetId: string; at: number }
@@ -35,6 +36,11 @@ export interface ZoneRuntimeSnapshot {
 export interface BleLinkSnapshot {
   connected: boolean;
   ready: boolean;
+  updatedAt: number;
+}
+
+export interface AppVisibilitySnapshot {
+  state: 'active' | 'background' | 'inactive' | 'unknown';
   updatedAt: number;
 }
 
@@ -90,6 +96,22 @@ export async function getBleLinkStatus(): Promise<BleLinkSnapshot> {
     return JSON.parse(raw) as BleLinkSnapshot;
   } catch {
     return { connected: false, ready: false, updatedAt: 0 };
+  }
+}
+
+
+export async function setAppVisibility(state: 'active' | 'background' | 'inactive' | 'unknown'): Promise<void> {
+  const snap: AppVisibilitySnapshot = { state, updatedAt: Date.now() };
+  await AsyncStorage.setItem(APP_VISIBILITY_KEY, JSON.stringify(snap));
+}
+
+export async function getAppVisibility(): Promise<AppVisibilitySnapshot> {
+  const raw = await AsyncStorage.getItem(APP_VISIBILITY_KEY);
+  if (!raw) return { state: 'unknown', updatedAt: 0 };
+  try {
+    return JSON.parse(raw) as AppVisibilitySnapshot;
+  } catch {
+    return { state: 'unknown', updatedAt: 0 };
   }
 }
 

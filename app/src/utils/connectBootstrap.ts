@@ -224,6 +224,12 @@ async function runLayoutPush(token: number): Promise<BoardStatusSnapshot | null>
   ).catch((e) => console.warn('[Bootstrap] MB layout push failed:', e));
   if (!bleService.isConnected() || token !== bootstrapToken) return null;
 
+  // pushMbSegmentLayoutsToBoard writes raw WLED segment geometry without going through
+  // the override system — if a zone preset was live when this background sync ran, its
+  // segments/colors just got stomped by the MB layout geometry. Force-restore it.
+  const { reapplyCurrentZoneForced } = await import('./zoneLocationCore');
+  reapplyCurrentZoneForced('post-layout-sync');
+
   return requestBoardStatus();
 }
 
@@ -298,7 +304,8 @@ export async function runConnectBootstrap(): Promise<void> {
 
   const fingerprint = getFingerprint();
   const meta = await loadBoardSyncMeta();
-  const useQuick = !forceFullSync && isBoardSyncFresh(meta, fingerprint);
+  const requestedFullSync = forceFullSync;
+  const useQuick = !requestedFullSync && isBoardSyncFresh(meta, fingerprint);
   forceFullSync = false;
 
   const s = useAppStore.getState();
@@ -315,8 +322,10 @@ export async function runConnectBootstrap(): Promise<void> {
   if (!ok) return;
 
   const status = await requestBoardStatus();
-  const needsLayout = !useQuick
-    || !layoutMatchesBoard(meta, status ?? { boardPresetCount: 0, mbLayoutActive: 0, mbLayoutCount: 0 }, resolvedLayoutIdx);
+  // MB layout push can stomp live segments/colors. Keep reconnect bootstrap stable by
+  // only pushing layouts on explicit full-sync requests from the user.
+  const needsLayout = requestedFullSync
+    && !layoutMatchesBoard(meta, status ?? { boardPresetCount: 0, mbLayoutActive: 0, mbLayoutCount: 0 }, resolvedLayoutIdx);
 
   const phoneCount = s.presets.length;
   const boardCount = status?.boardPresetCount ?? 0;

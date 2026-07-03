@@ -10,6 +10,7 @@ import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } fro
 import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
 import { resetBoardSyncStatus } from '../utils/boardSyncState';
 import { saveBleDeviceId } from '../utils/locationRuntimeBridge';
+import { dismissBleDisconnectedNotification, notifyBleDisconnected } from './strollerNotification';
 import type { MbSegmentLayout } from '../utils/configMigration';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
@@ -59,6 +60,7 @@ class BLEService {
   private lastDeviceId:   string | null = null;
   private appStateSub:    NativeEventSubscription | null = null;
   private finishingConnect = false;
+  private attemptingReconnect = false;
 
   private static readonly CHUNKED_TYPES: Record<string, string> = {
     'preset_chunk':  'preset_list_raw',
@@ -438,6 +440,7 @@ class BLEService {
       this.device = discovered;
       this.markSessionReady(false);
       this.setConnState('connected');
+      void dismissBleDisconnectedNotification();
       console.log('[BLE] Connected');
     } catch (e) {
       console.error('[BLE] Connection failed:', e);
@@ -450,18 +453,39 @@ class BLEService {
 
   private async attemptReconnect() {
     if (!this.shouldReconnect) return;
-    if (this.connState === 'connecting' || this.connState === 'scanning') return;
-    if (this.lastDeviceId) {
+    if (this.finishingConnect || this.attemptingReconnect) return;
+    if (this.connState === 'connected' && this.device) {
       try {
-        console.log('[BLE] Direct reconnect to', this.lastDeviceId);
-        const device = await this.getManager().connectToDevice(this.lastDeviceId, { autoConnect: true });
-        await this.finishConnection(device, 'reconnect');
-        return;
-      } catch (e) {
-        console.warn('[BLE] Direct reconnect failed, scanning:', (e as Error)?.message ?? e);
+        if (await this.device.isConnected()) return;
+      } catch {
+        /* fall through */
       }
     }
-    this.scan();
+    if (this.connState === 'connecting' || this.connState === 'scanning') return;
+    this.attemptingReconnect = true;
+    try {
+      if (this.lastDeviceId) {
+        try {
+          console.log('[BLE] Direct reconnect to', this.lastDeviceId);
+          const mgr = this.getManager();
+          if (await mgr.isDeviceConnected(this.lastDeviceId)) {
+            const list = await mgr.devices([this.lastDeviceId]);
+            if (list[0]) {
+              await this.finishConnection(list[0], 'reconnect-adopt');
+              return;
+            }
+          }
+          const device = await mgr.connectToDevice(this.lastDeviceId, { autoConnect: true });
+          await this.finishConnection(device, 'reconnect');
+          return;
+        } catch (e) {
+          console.warn('[BLE] Direct reconnect failed, scanning:', (e as Error)?.message ?? e);
+        }
+      }
+      this.scan();
+    } finally {
+      this.attemptingReconnect = false;
+    }
   }
 
   private handleDisconnect() {
@@ -477,6 +501,7 @@ class BLEService {
     while (this.sendQueue.length > 0) this.sendQueue.shift()!.resolve(false);
     this.sendRunning = false;
     this.setConnState('disconnected');
+    void notifyBleDisconnected();
     if (this.shouldReconnect) this.scheduleReconnect();
     this.handlingDisconnect = false;
   }
