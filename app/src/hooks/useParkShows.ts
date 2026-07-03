@@ -21,7 +21,6 @@ import { bleService } from '../services/BLEService';
 
 const POLL_MS = 15 * 60 * 1000;
 const STATUS_TICK_MS = 30_000;
-const DEFAULT_SHOW_MS = 20 * 60 * 1000;
 
 export type ShowStatus = 'upcoming' | 'pre' | 'live' | 'ended';
 
@@ -38,6 +37,7 @@ export interface UpcomingShow {
   autoPrePostDisabled: boolean;
   autoLiveDisabled: boolean;
   inScope: boolean;
+  durationMin: number;
 }
 
 function parseShowStart(iso: string): number {
@@ -66,7 +66,7 @@ function buildUpcomingShows(
     for (const iso of entity.showtimes) {
       const startMs = parseShowStart(iso);
       if (!Number.isFinite(startMs)) continue;
-      const endMs = startMs + DEFAULT_SHOW_MS;
+      const endMs = startMs + binding.durationMin * 60_000;
       const windowStart = startMs - visibleBeforeMs;
       const windowEnd = endMs + visibleAfterMs;
       if (now < windowStart || now > windowEnd) continue;
@@ -93,6 +93,7 @@ function buildUpcomingShows(
         autoPrePostDisabled: isAutoPrePostDisabled(binding, instanceOverride),
         autoLiveDisabled: isAutoLiveDisabled(binding, instanceOverride),
         inScope,
+        durationMin: binding.durationMin,
       });
     }
   }
@@ -263,8 +264,13 @@ export function formatShowStatus(show: UpcomingShow): string {
     const ago = Math.abs(Math.round((Date.now() - show.endMs) / 60000));
     return ago < 60 ? `Ended ${ago}m ago` : 'Ended';
   }
-  if (show.status === 'live') return 'In progress';
-  if (show.status === 'pre') return `Pre-show · starts in ${Math.max(0, show.minutesUntil)}m`;
-  if (show.minutesUntil <= 0) return 'Starting soon';
-  return `In ${show.minutesUntil}m · ${formatShowTime(show.startMs)}`;
+  if (show.status === 'live') {
+    const minsLeft = Math.max(0, Math.round((show.endMs - Date.now()) / 60000));
+    return `In progress · ${minsLeft}m left · ends ${formatShowTime(show.endMs)}`;
+  }
+  if (show.status === 'pre') {
+    return `Pre-show · starts in ${Math.max(0, show.minutesUntil)}m · ${show.durationMin}m show`;
+  }
+  if (show.minutesUntil <= 0) return `Starting soon · ${show.durationMin}m show`;
+  return `In ${show.minutesUntil}m · ${formatShowTime(show.startMs)} · ${show.durationMin}m`;
 }

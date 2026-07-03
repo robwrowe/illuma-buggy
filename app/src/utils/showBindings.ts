@@ -26,6 +26,8 @@ export interface ParkShowBinding {
   homeVisibleBeforeMin: number;
   /** Minutes after end to remain on Home */
   homeVisibleAfterMin: number;
+  /** Scheduled show length — used to compute end time and post trigger */
+  durationMin: number;
   /** Skip auto pre/post for all instances of this binding */
   autoPrePostDisabled: boolean;
   /** Skip auto live at scheduled start (default off for parades — start live manually on route) */
@@ -41,6 +43,8 @@ export interface ShowSettings {
   defaultPostDelaySec: number;
   defaultHomeVisibleBeforeMin: number;
   defaultHomeVisibleAfterMin: number;
+  defaultParadeDurationMin: number;
+  defaultFireworksDurationMin: number;
   /** WLED bri (0–255) when a show enters live phase at nighttime */
   showNightBrightness: number;
   /** When on, live start (manual or auto) sets showNightBrightness at night */
@@ -61,6 +65,8 @@ export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
   defaultPostDelaySec: 60,
   defaultHomeVisibleBeforeMin: 60,
   defaultHomeVisibleAfterMin: 15,
+  defaultParadeDurationMin: 30,
+  defaultFireworksDurationMin: 20,
   showNightBrightness: 5,
   showAutoBrightness: true,
 };
@@ -92,6 +98,9 @@ export function normalizeShowBinding(raw: Partial<ParkShowBinding> | undefined, 
     homeVisibleAfterMin: Number.isFinite(raw.homeVisibleAfterMin)
       ? raw.homeVisibleAfterMin!
       : defaults.defaultHomeVisibleAfterMin,
+    durationMin: Number.isFinite(raw.durationMin)
+      ? raw.durationMin!
+      : (kind === 'fireworks' ? defaults.defaultFireworksDurationMin : defaults.defaultParadeDurationMin),
     autoPrePostDisabled: !!(raw.autoPrePostDisabled ?? raw.autoStartDisabled),
     autoLiveDisabled: raw.autoLiveDisabled ?? (kind === 'fireworks' ? false : true),
     autoStartDisabled: !!(raw.autoPrePostDisabled ?? raw.autoStartDisabled),

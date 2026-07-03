@@ -155,6 +155,8 @@ export default function ShowsScreen() {
             ['defaultPostDelaySec', 'Post-show delay (sec)', 30],
             ['defaultHomeVisibleBeforeMin', 'Home visible before (min)', 15],
             ['defaultHomeVisibleAfterMin', 'Home visible after (min)', 10],
+            ['defaultParadeDurationMin', 'Default parade duration (min)', 5],
+            ['defaultFireworksDurationMin', 'Default fireworks duration (min)', 5],
           ] as const).map(([key, label, step]) => (
             <View key={key} style={s.numRow}>
               <Text style={s.rowLabel}>{label}</Text>
@@ -286,7 +288,7 @@ export default function ShowsScreen() {
                     <View style={s.rowBetween}>
                       <View style={{ flex: 1 }}>
                         <Text style={s.bindingName}>{b.name}</Text>
-                        <Text style={s.hint}>{b.kind} · {scopeLabel(b)} · pre {b.preLeadSec}s · post +{b.postDelaySec}s</Text>
+                        <Text style={s.hint}>{b.kind} · {scopeLabel(b)} · {b.durationMin}m · pre {b.preLeadSec}s · post +{b.postDelaySec}s</Text>
                       </View>
                       <TouchableOpacity
                         onPress={() => {
@@ -342,6 +344,7 @@ export default function ShowsScreen() {
                           </View>
                         )}
                         {([
+                          ['durationMin', 'Show duration (min)'],
                           ['preLeadSec', 'Pre lead (sec)'],
                           ['postDelaySec', 'Post delay (sec)'],
                           ['homeVisibleBeforeMin', 'Home before (min)'],
