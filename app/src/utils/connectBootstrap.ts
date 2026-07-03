@@ -30,6 +30,7 @@ import {
   persistPresetSyncCache,
   restoreBoardPresetSyncCache,
   clearBoardPresetSyncCache,
+  isPresetSynced,
 } from './blePresetCache';
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -239,6 +240,24 @@ function markSessionReadyAndStatus(mode: 'quick' | 'full', detail: string) {
   void bleService.sendStatus();
 }
 
+async function syncUnsyncedPresetsOnly(token: number): Promise<void> {
+  const s = useAppStore.getState();
+  const missing = s.presets.filter(p => !isPresetSynced(p.id));
+  if (missing.length === 0) {
+    console.log('[Bootstrap] Preset verify skipped — all presets cached as on-board');
+    return;
+  }
+  const label = `Syncing ${missing.length} new preset(s) to board…`;
+  markBoardSyncBackgroundBusy(true, label);
+  setBoardSyncPresetProgress(0, missing.length, label);
+  for (let i = 0; i < missing.length; i++) {
+    if (!bleService.isConnected() || token !== bootstrapToken) return;
+    await ensurePresetOnBoard(missing[i], s.recallState, s.customSegmentLayouts);
+    setBoardSyncPresetProgress(i + 1, missing.length, label);
+    await delay(500);
+  }
+}
+
 async function runBackgroundSync(
   token: number,
   fingerprint: string,
@@ -247,9 +266,11 @@ async function runBackgroundSync(
     needsLayout: boolean;
     activeLayoutIdx: number;
     status: BoardStatusSnapshot | null;
+    requestedFullSync: boolean;
   },
 ): Promise<void> {
-  await delay(mode === 'quick' ? 1500 : 2500);
+  // Let the post-connect zone re-apply finish before background board work.
+  await delay(mode === 'quick' ? 5000 : 8000);
   if (!bleService.isConnected() || token !== bootstrapToken) return;
 
   let status = opts.status;
@@ -260,33 +281,40 @@ async function runBackgroundSync(
 
   const s = useAppStore.getState();
   const phoneCount = s.presets.length;
-  const boardCount = status?.boardPresetCount ?? 0;
-  let boardIds: Set<string> | null = null;
+  let presetVerifyOk = true;
 
-  if (phoneCount > 0 && boardCount >= phoneCount && mode === 'quick') {
-    markAllPresetsSynced(s.presets.map(p => p.id));
-  } else if (phoneCount > 0) {
-    boardIds = await fetchBoardPresetIds(token);
+  if (phoneCount === 0) {
+    // nothing
+  } else if (opts.requestedFullSync) {
+    const boardIds = await fetchBoardPresetIds(token);
     if (!bleService.isConnected() || token !== bootstrapToken) return;
-    if (boardIds) {
+    if (!boardIds) {
+      presetVerifyOk = false;
+      bleService.clearInboundChunks();
+      console.warn('[Bootstrap] Preset verify failed — leaving live WLED state untouched');
+    } else {
       await syncMissingPresets(token, boardIds);
     }
+  } else {
+    await syncUnsyncedPresetsOnly(token);
   }
 
   if (!bleService.isConnected() || token !== bootstrapToken) return;
-  await pushHeavyBoardConfig(s.showModeConfig);
+  if (presetVerifyOk) {
+    await pushHeavyBoardConfig(s.showModeConfig);
+  }
 
   const finalStatus = status ?? await requestBoardStatus();
-  await persistPresetSyncCache(fingerprint, true, finalStatus ? {
+  await persistPresetSyncCache(fingerprint, presetVerifyOk, finalStatus ? {
     active: finalStatus.mbLayoutActive,
     count: finalStatus.mbLayoutCount,
   } : undefined);
 
   markBoardSyncBackgroundBusy(false);
   setBoardSyncPresetProgress(0, 0);
-  setBoardSyncReady(mode, mode === 'quick'
-    ? 'Ready — reconnected (board up to date)'
-    : 'Ready — board synced');
+  setBoardSyncReady(mode, presetVerifyOk
+    ? (mode === 'quick' ? 'Ready — reconnected (board up to date)' : 'Ready — board synced')
+    : 'Ready — preset verify skipped (zone preset unchanged)');
 }
 
 export async function runConnectBootstrap(): Promise<void> {
@@ -314,7 +342,8 @@ export async function runConnectBootstrap(): Promise<void> {
     s.mbActiveSegmentLayoutId,
   );
 
-  if (useQuick && meta?.syncedPresetIds?.length) {
+  // Restore last-known on-board preset ids so reconnect skips preset_list unless forced.
+  if (meta?.syncedPresetIds?.length) {
     restoreBoardPresetSyncCache(meta.syncedPresetIds);
   }
 
@@ -354,6 +383,7 @@ export async function runConnectBootstrap(): Promise<void> {
     needsLayout,
     activeLayoutIdx: resolvedLayoutIdx,
     status,
+    requestedFullSync,
   }).catch((e) => console.warn('[Bootstrap] Background sync failed:', e));
 }
 

@@ -87,7 +87,7 @@ export function useZoneManager() {
           // refreshLocationNow probes GPS + drains pending BLE; catches mock-GPS
           // changes between native FGS ticks while Illuma is backgrounded.
           if (appState !== 'active') {
-            await refreshLocationNow('drain-poll');
+            await refreshLocationNow('drain-poll', true);
           } else {
             await syncBackgroundSnapshot('drain-poll');
           }
@@ -133,7 +133,8 @@ export function useZoneManager() {
       return backgroundGranted;
     };
 
-    const tryLastKnownLocation = async (reason: string) => {
+    const tryLastKnownLocation = async (reason: string, forceBackground?: boolean) => {
+      const srcBackground = forceBackground ?? appState !== 'active';
       if (!(await hasForegroundPermission())) return;
       try {
         const loc = await Location.getLastKnownPositionAsync({ maxAge: 15_000 });
@@ -143,29 +144,32 @@ export function useZoneManager() {
           reason,
           loc.coords.latitude.toFixed(5),
           loc.coords.longitude.toFixed(5),
+          srcBackground ? '[bg]' : '[fg]',
         );
         processLocationUpdate(
           { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
-          { background: appState !== 'active' },
+          { background: srcBackground },
         );
       } catch (e) {
         console.warn('[Location] lastKnown failed:', reason, e);
       }
     };
 
-    const syncBackgroundSnapshot = async (reason: string) => {
+    const syncBackgroundSnapshot = async (reason: string, forceBackground?: boolean) => {
       const updated = await syncRuntimeLocationFromBridge();
       if (updated) {
         console.log('[Location] synced background snapshot', reason);
       }
-      if (appState !== 'active') {
-        await tryLastKnownLocation(reason);
+      const srcBackground = forceBackground ?? appState !== 'active';
+      if (srcBackground) {
+        await tryLastKnownLocation(reason, true);
       }
       await drainPendingBleActions(reason);
     };
 
-    const refreshLocationNow = async (reason: string) => {
-      await syncBackgroundSnapshot(reason);
+    const refreshLocationNow = async (reason: string, forceBackground?: boolean) => {
+      const srcBackground = forceBackground ?? appState !== 'active';
+      await syncBackgroundSnapshot(reason, srcBackground);
       if (!(await hasForegroundPermission())) return;
       try {
         const loc = await Location.getCurrentPositionAsync({
@@ -177,10 +181,11 @@ export function useZoneManager() {
           reason,
           loc.coords.latitude.toFixed(5),
           loc.coords.longitude.toFixed(5),
+          srcBackground ? '[bg]' : '[fg]',
         );
         processLocationUpdate(
           { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
-          { background: appState !== 'active' },
+          { background: srcBackground },
         );
       } catch (e) {
         console.warn('[Location] getCurrentPosition failed:', reason, e);
@@ -347,10 +352,9 @@ export function useZoneManager() {
           if (fgsStartPending && backgroundGranted) {
             void startBackgroundTask('fgs-pending');
           }
-          if (backgroundGranted) {
-            void restartLocationTask().catch((e) =>
-              console.warn('[Location] FGS refresh on foreground failed:', e),
-            );
+          const fgsRunning = backgroundGranted && (await isLocationTaskRunning());
+          if (backgroundGranted && !fgsRunning) {
+            void startBackgroundTask('fgs-missing-on-foreground');
           }
           await refreshLocationNow('app-foreground');
         })();
@@ -378,7 +382,7 @@ export function useZoneManager() {
             );
           }
           await syncBackgroundSnapshot('app-background');
-          await refreshLocationNow('app-background');
+          await refreshLocationNow('app-background', true);
         })();
       }
     });

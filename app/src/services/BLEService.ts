@@ -59,6 +59,7 @@ class BLEService {
   private readyHandlers:  Set<SessionReadyHandler> = new Set();
   private lastDeviceId:   string | null = null;
   private appStateSub:    NativeEventSubscription | null = null;
+  private lastBackgroundAt = Date.now();
   private finishingConnect = false;
   private attemptingReconnect = false;
 
@@ -92,7 +93,10 @@ class BLEService {
   private ensureAppStateListener() {
     if (this.appStateSub) return;
     this.appStateSub = AppState.addEventListener('change', (next) => {
-      if (next !== 'active') return;
+      if (next !== 'active') {
+        this.lastBackgroundAt = Date.now();
+        return;
+      }
       this.onAppForeground();
     });
   }
@@ -105,9 +109,19 @@ class BLEService {
       return;
     }
     if (this.connState === 'connected' && this.device) {
+      // Mock-GPS app switching backgrounds Illuma for only a few seconds — skip status
+      // probes that flood the link and can contend with in-flight zone applies.
+      if (Date.now() - this.lastBackgroundAt < 5000) return;
       console.log('[BLE] Foreground — probing link');
       void this.sendStatus();
     }
+  }
+
+  /** Drop stale inbound chunk assembly (e.g. after preset_list verify timeout). */
+  clearInboundChunks(): void {
+    this.chunkBuffer = {};
+    this.chunkNextSeq = {};
+    this.notifyBuffer = '';
   }
 
   onMessage(handler: MessageHandler): () => void {
