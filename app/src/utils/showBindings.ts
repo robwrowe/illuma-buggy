@@ -41,6 +41,10 @@ export interface ShowSettings {
   defaultPostDelaySec: number;
   defaultHomeVisibleBeforeMin: number;
   defaultHomeVisibleAfterMin: number;
+  /** WLED bri (0–255) when a show enters live phase at nighttime */
+  showNightBrightness: number;
+  /** When on, live start (manual or auto) sets showNightBrightness at night */
+  showAutoBrightness: boolean;
 }
 
 export interface ShowInstanceOverride {
@@ -57,6 +61,8 @@ export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
   defaultPostDelaySec: 60,
   defaultHomeVisibleBeforeMin: 60,
   defaultHomeVisibleAfterMin: 15,
+  showNightBrightness: 5,
+  showAutoBrightness: true,
 };
 
 export function inferShowKind(name: string): ShowKind {

@@ -44,8 +44,8 @@ export default function ShowsScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const {
-    parks, presets, zones, showBindings, showSettings,
-    upsertShowBinding, removeShowBinding, setShowSettings, saveToStorage,
+    parks, presets, zones, showBindings, showSettings, setShowSettings, saveToStorage,
+    upsertShowBinding, removeShowBinding,
   } = useAppStore();
 
   const [selectedParkId, setSelectedParkId] = useState<string | null>(parks[0]?.id ?? null);
@@ -170,6 +170,41 @@ export default function ShowsScreen() {
               />
             </View>
           ))}
+        </View>
+
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>Show brightness</Text>
+          <Text style={s.hint}>
+            At nighttime (below your solar threshold in Settings → Brightness), entering live
+            applies this brightness — manual Start or auto live for fireworks.
+          </Text>
+          <View style={s.switchRow}>
+            <Text style={s.rowLabel}>Auto brightness at live</Text>
+            <Switch
+              value={showSettings.showAutoBrightness}
+              onValueChange={(v) => {
+                setShowSettings({ showAutoBrightness: v });
+                saveToStorage();
+              }}
+              trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            />
+          </View>
+          <View style={s.numRow}>
+            <Text style={s.rowLabel}>Night show brightness (0–255)</Text>
+            <TextInput
+              style={s.numInput}
+              keyboardType="number-pad"
+              editable={showSettings.showAutoBrightness}
+              value={String(showSettings.showNightBrightness)}
+              onChangeText={(v) => {
+                const n = parseInt(v, 10);
+                if (!isNaN(n)) {
+                  setShowSettings({ showNightBrightness: Math.min(255, Math.max(0, n)) });
+                }
+              }}
+              onEndEditing={() => saveToStorage()}
+            />
+          </View>
         </View>
 
         {/* Park picker */}

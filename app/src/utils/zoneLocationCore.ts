@@ -235,6 +235,25 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
   flushPendingZoneIfConnected('gps-tick');
 }
 
+/** Re-apply solar/indoor brightness from current GPS (e.g. after show live dimming). */
+export function applyAmbientBrightnessNow(): void {
+  const s = useAppStore.getState();
+  const pt = s.userLocation;
+  if (!pt) return;
+  const { indoorZones, brightnessConfig } = s;
+  const nowIndoor = findContainingIndoorZone(pt, indoorZones) !== null;
+  const target = nowIndoor
+    ? brightnessConfig.indoor
+    : sunBasedBrightness(pt.latitude, pt.longitude, brightnessConfig);
+  if (brightnessTimer) {
+    clearTimeout(brightnessTimer);
+    brightnessTimer = null;
+  }
+  isIndoor = nowIndoor;
+  lastBrightness = target;
+  if (bleService.isConnected()) bleService.sendBrightness(target);
+}
+
 export function resetZoneLocationRuntime() {
   currentZoneId = null;
   pendingZone = null;
