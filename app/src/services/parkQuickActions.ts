@@ -4,7 +4,10 @@
 
 import { bleService } from './BLEService';
 import { useAppStore } from '../stores/store';
-import { applyPresetToBoard } from '../utils/bleBoardSync';
+import {
+  triggerFadeToBlackEffect,
+  triggerZonePresetEffect,
+} from '../utils/effectTrigger';
 
 export interface QuickActionResult {
   ok: boolean;
@@ -32,7 +35,7 @@ export async function fireActiveZonePreset(): Promise<QuickActionResult> {
     await bleService.sendOverrideClear();
     await new Promise(r => setTimeout(r, 250));
   }
-  const ok = await applyPresetToBoard(preset, s.recallState, s.customSegmentLayouts);
+  const ok = await triggerZonePresetEffect(zone.presetId, zone.name, 'quick-action-fire');
   return ok
     ? { ok: true }
     : { ok: false, message: 'Preset apply failed — check BLE/WLED connection.' };
@@ -46,9 +49,16 @@ export async function fadeToBlackQuick(): Promise<QuickActionResult> {
   if (!bleService.isSessionReady()) {
     return { ok: false, message: 'Board still syncing.' };
   }
-  const sent = await bleService.sendFadeToBlack(
+  const status = s.deviceStatus;
+  if ((status?.override ?? 0) > 0) {
+    console.log('[Effect] FTB clearing override first', status.override);
+    await bleService.sendOverrideClear();
+    await new Promise(r => setTimeout(r, 300));
+  }
+  const ok = await triggerFadeToBlackEffect(
     s.ftbPresetId || undefined,
     s.bleEffectTransitionMs || 800,
+    'quick-action-ftb',
   );
-  return sent ? { ok: true } : { ok: false, message: 'Could not send fade-to-black.' };
+  return ok ? { ok: true } : { ok: false, message: 'Could not send fade-to-black.' };
 }

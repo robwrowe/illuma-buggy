@@ -4,17 +4,19 @@
  */
 
 import { BleManager, Device, State } from 'react-native-ble-plx';
-import { Platform, PermissionsAndroid } from 'react-native';
+import { Platform, PermissionsAndroid, AppState, type NativeEventSubscription } from 'react-native';
 import base64 from 'base64-js';
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from '../utils/bleChunking';
 import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
 import { resetBoardSyncStatus } from '../utils/boardSyncState';
+import { saveBleDeviceId } from '../utils/locationRuntimeBridge';
 import type { MbSegmentLayout } from '../utils/configMigration';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
 export const SERVICE_UUID     = '12345678-1234-1234-1234-123456789abc';
 export const CMD_CHAR_UUID    = '12345678-1234-1234-1234-123456789abd';
 export const NOTIFY_CHAR_UUID = '12345678-1234-1234-1234-123456789abe';
+const BLE_RESTORE_STATE_ID    = 'IllumaBuggyBLE';
 
 const GATT_BUSY_ERROR_CODE = 4; // BleErrorCode.OperationStartFailed
 
@@ -54,6 +56,9 @@ class BLEService {
   private handlingDisconnect = false;
   private sessionReady    = false;
   private readyHandlers:  Set<SessionReadyHandler> = new Set();
+  private lastDeviceId:   string | null = null;
+  private appStateSub:    NativeEventSubscription | null = null;
+  private finishingConnect = false;
 
   private static readonly CHUNKED_TYPES: Record<string, string> = {
     'preset_chunk':  'preset_list_raw',
@@ -64,8 +69,43 @@ class BLEService {
   };
 
   private getManager(): BleManager {
-    if (!this.manager) this.manager = new BleManager();
+    if (!this.manager) {
+      this.manager = new BleManager({
+        restoreStateIdentifier: BLE_RESTORE_STATE_ID,
+        restoreStateFunction: (restoredState) => {
+          if (!restoredState?.connectedPeripherals?.length) return;
+          const peripheral = restoredState.connectedPeripherals.find(
+            (d) => d.name === BLE_DEVICE_NAME || d.localName === BLE_DEVICE_NAME,
+          );
+          if (!peripheral) return;
+          console.log('[BLE] iOS restored peripheral', peripheral.id);
+          this.shouldReconnect = true;
+          void this.finishConnection(peripheral, 'restore');
+        },
+      });
+    }
     return this.manager;
+  }
+
+  private ensureAppStateListener() {
+    if (this.appStateSub) return;
+    this.appStateSub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') return;
+      this.onAppForeground();
+    });
+  }
+
+  private onAppForeground() {
+    if (!this.shouldReconnect) return;
+    if (this.connState === 'disconnected' || this.connState === 'error') {
+      console.log('[BLE] Foreground — reconnecting');
+      void this.attemptReconnect();
+      return;
+    }
+    if (this.connState === 'connected' && this.device) {
+      console.log('[BLE] Foreground — probing link');
+      void this.sendStatus();
+    }
   }
 
   onMessage(handler: MessageHandler): () => void {
@@ -94,6 +134,7 @@ class BLEService {
   async connect(): Promise<void> {
     console.log('[BLE] connect() called');
     this.shouldReconnect = true;
+    this.ensureAppStateListener();
     try {
       await this.requestPermissions();
       await this.waitForBLEReady();
@@ -188,6 +229,15 @@ class BLEService {
 
   /** Try with-response first; fall back to WRITE_NR if the stack rejects the queued op. */
   private async writeCmd(device: Device, b64: string): Promise<void> {
+    const backgrounded = AppState.currentState !== 'active';
+    if (backgrounded) {
+      try {
+        await device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+        return;
+      } catch (e) {
+        if (!isGattBusy(e)) throw e;
+      }
+    }
     try {
       await device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
       return;
@@ -338,10 +388,21 @@ class BLEService {
   }
 
   private async connectToDevice(device: Device) {
+    this.lastDeviceId = device.id;
+    await this.finishConnection(device, 'scan');
+  }
+
+  private async finishConnection(device: Device, reason: string) {
+    if (this.finishingConnect) return;
+    if (this.connState === 'connected' && this.device?.id === device.id) return;
+    this.finishingConnect = true;
     this.setConnState('connecting');
-    console.log('[BLE] Connecting to', device.id);
+    console.log('[BLE] Connecting to', device.id, `(${reason})`);
     try {
-      const connected = await device.connect({ autoConnect: false });
+      const alreadyConnected = await device.isConnected();
+      const connected = alreadyConnected
+        ? device
+        : await device.connect({ autoConnect: reason !== 'scan' });
       await new Promise(r => setTimeout(r, 300));
 
       const discovered = await connected.discoverAllServicesAndCharacteristics();
@@ -372,6 +433,8 @@ class BLEService {
       const ready = await this.waitForGattReady(discovered);
       if (!ready) throw new Error('GATT not ready');
 
+      this.lastDeviceId = discovered.id;
+      void saveBleDeviceId(discovered.id);
       this.device = discovered;
       this.markSessionReady(false);
       this.setConnState('connected');
@@ -380,7 +443,25 @@ class BLEService {
       console.error('[BLE] Connection failed:', e);
       this.setConnState('error');
       this.scheduleReconnect();
+    } finally {
+      this.finishingConnect = false;
     }
+  }
+
+  private async attemptReconnect() {
+    if (!this.shouldReconnect) return;
+    if (this.connState === 'connecting' || this.connState === 'scanning') return;
+    if (this.lastDeviceId) {
+      try {
+        console.log('[BLE] Direct reconnect to', this.lastDeviceId);
+        const device = await this.getManager().connectToDevice(this.lastDeviceId, { autoConnect: true });
+        await this.finishConnection(device, 'reconnect');
+        return;
+      } catch (e) {
+        console.warn('[BLE] Direct reconnect failed, scanning:', (e as Error)?.message ?? e);
+      }
+    }
+    this.scan();
   }
 
   private handleDisconnect() {
@@ -402,7 +483,9 @@ class BLEService {
 
   private scheduleReconnect(delayMs = 3000) {
     this.clearReconnectTimer();
-    this.reconnectTimer = setTimeout(() => { if (this.shouldReconnect) this.scan(); }, delayMs);
+    this.reconnectTimer = setTimeout(() => {
+      if (this.shouldReconnect) void this.attemptReconnect();
+    }, delayMs);
   }
 
   private clearReconnectTimer() {
@@ -476,8 +559,13 @@ class BLEService {
   private emit(msg: BLEMessage) {
     if (msg.type === 'ack') {
       const ok = msg.ok !== false;
+      const action = String(msg.action);
+      const extra = msg.id ? ` id=${msg.id}` : msg.reason ? ` (${msg.reason})` : '';
+      if (action === 'fade_to_black' || action === 'wled_raw' || action === 'zone_trigger') {
+        console.log(`[Effect] ack ${action}${extra} ${ok ? 'ok' : 'FAIL'}`);
+      }
       console.log(
-        `[BLE] ← ack ${String(msg.action)}${msg.id ? ` id=${msg.id}` : ''} ${ok ? 'ok' : `FAIL${msg.reason ? ` (${msg.reason})` : ''}`}`,
+        `[BLE] ← ack ${action}${msg.id ? ` id=${msg.id}` : ''} ${ok ? 'ok' : `FAIL${msg.reason ? ` (${msg.reason})` : ''}`}`,
       );
     } else if (msg.type === 'error') {
       console.warn('[BLE] ← error', msg.msg);
@@ -493,6 +581,8 @@ class BLEService {
   destroy() {
     this.shouldReconnect = false;
     this.clearReconnectTimer();
+    this.appStateSub?.remove();
+    this.appStateSub = null;
     this.manager?.destroy();
   }
 }

@@ -24,7 +24,7 @@ module.exports = ({ config }) => ({
         "IllumaBuggy uses your location to trigger LED presets based on where you are in the park.",
       NSLocationAlwaysUsageDescription:
         "IllumaBuggy uses your location in the background to trigger LED presets automatically.",
-      UIBackgroundModes: ["location"],
+      UIBackgroundModes: ["location", "bluetooth-central", "bluetooth-peripheral"],
     },
   },
   android: {
@@ -60,7 +60,7 @@ module.exports = ({ config }) => ({
     [
       "react-native-ble-plx",
       {
-        isBackgroundEnabled: false,
+        isBackgroundEnabled: true,
         modes: ["peripheral", "central"],
         bluetoothAlwaysPermission:
           "Allow IllumaBuggy to connect to your stroller controller",

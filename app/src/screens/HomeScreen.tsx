@@ -34,7 +34,7 @@ import {
   fetchLiveWledSummary,
   type LiveWledSummary,
 } from "../utils/bleBoardSync";
-import { fireActiveZonePreset } from "../services/parkQuickActions";
+import { fireActiveZonePreset, fadeToBlackQuick } from "../services/parkQuickActions";
 import { formatSyncStatusLabel } from "../utils/boardSyncState";
 import { requestFullBoardSync } from "../utils/connectBootstrap";
 import { useTheme } from "../utils/theme";
@@ -349,10 +349,9 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={s.quickBtn}
                 onPress={() => {
-                  bleService.sendFadeToBlack(
-                    ftbPresetId || undefined,
-                    bleEffectTransitionMs || 800,
-                  );
+                  void fadeToBlackQuick().then((r) => {
+                    if (!r.ok) Alert.alert("Fade to Black", r.message ?? "Failed");
+                  });
                 }}
               >
                 <IconMoon size={20} color={colors.textPrimary} />

@@ -10,6 +10,11 @@ import { bleService } from '../services/BLEService';
 import { applyZonePreset } from './bleBoardSync';
 import { updateStrollerNotification } from '../services/strollerNotification';
 import { shouldProtectShowFromZones } from './showZoneGuard';
+import {
+  saveLocationRuntime,
+  saveZoneRuntime,
+  loadZoneRuntime,
+} from './locationRuntimeBridge';
 
 const ZONE_REAPPLY_MS = 45_000;
 const BRIGHTNESS_RAMP_MS = 2000;
@@ -66,7 +71,7 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
       zoneLog(`preset missing in app`, { zone: zone.name, presetId: zone.presetId });
       return;
     }
-    const trustSend = reason === 'bg' || AppState.currentState !== 'active';
+    const trustSend = reason === 'bg' || reason === 'bg-location' || AppState.currentState !== 'active';
     zoneLog(`ENTER → wled_raw "${preset.name}"`, {
       zone: zone.name,
       presetId: preset.id,
@@ -233,6 +238,46 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
 
   runZoneTriggerLogic(pt, zones, zonesEnabled, exitingShowProtection, src);
   flushPendingZoneIfConnected('gps-tick');
+
+  void saveLocationRuntime({
+    userLocation: pt,
+    activeZoneIds: activeIds,
+    activePark: resolvedPark ?? s.activePark,
+    updatedAt: Date.now(),
+  });
+  void saveZoneRuntime({
+    currentZoneId,
+    lastZoneApply,
+    isIndoor,
+    lastBrightness,
+    zoneTriggersSuppressed,
+  });
+}
+
+/** Pull latest GPS snapshot written by the headless background task into the live store. */
+export async function syncRuntimeLocationFromBridge(): Promise<boolean> {
+  const { loadLocationRuntime } = await import('./locationRuntimeBridge');
+  const snap = await loadLocationRuntime();
+  if (!snap) return false;
+  const s = useAppStore.getState();
+  const parkChanged = snap.activePark?.id !== s.activePark?.id;
+  const locChanged =
+    s.userLocation?.latitude !== snap.userLocation.latitude ||
+    s.userLocation?.longitude !== snap.userLocation.longitude;
+  const zonesChanged = snap.activeZoneIds.join(',') !== s.activeZoneIds.join(',');
+  if (!parkChanged && !locChanged && !zonesChanged) return false;
+  s.setUserLocation(snap.userLocation);
+  s.setActiveZoneIds(snap.activeZoneIds);
+  s.setActivePark(snap.activePark);
+  const zoneRuntime = await loadZoneRuntime();
+  if (zoneRuntime) {
+    currentZoneId = zoneRuntime.currentZoneId;
+    lastZoneApply = zoneRuntime.lastZoneApply;
+    isIndoor = zoneRuntime.isIndoor;
+    lastBrightness = zoneRuntime.lastBrightness;
+    zoneTriggersSuppressed = zoneRuntime.zoneTriggersSuppressed;
+  }
+  return true;
 }
 
 /** Re-apply solar/indoor brightness from current GPS (e.g. after show live dimming). */
