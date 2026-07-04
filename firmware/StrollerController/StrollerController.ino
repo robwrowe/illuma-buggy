@@ -101,6 +101,7 @@ bool mbPaletteEligibleForRandom(uint8_t idx);
 void loadMbMappingDefaults();
 void loadMbMappingFromJson();
 void applyMbMappingJson(JsonObject root);
+void connectToWLED(bool force = false);
 String mfrToHex(const uint8_t* data, size_t len);
 String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen);
 void handleDisneyPayload(const uint8_t* payload, size_t plen);
@@ -359,6 +360,7 @@ MbEffectMap mbPatMap[5];    // 3,4,5,8,B
 // WiFi reconnect
 unsigned long lastWifiRetry = 0;
 const int     WIFI_RETRY_MS = 5000;
+volatile bool wifiConnectInProgress = false;
 
 // Pending command queue — BLE callbacks queue work here, loop() processes it
 // IMPORTANT: use char arrays not String — FreeRTOS queues copy by value
@@ -890,10 +892,13 @@ void enqueueBleCommand(const String& msg) {
 void processBleCmdQueue() {
   if (bleCmdQueue == nullptr) return;
   PendingBleCmd item;
-  if (xQueueReceive(bleCmdQueue, &item, 0) != pdTRUE) return;
-  if (item.data) {
-    handleBLECommand(String(item.data));
-    free(item.data);
+  int drained = 0;
+  while (drained < 4 && xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
+    if (item.data) {
+      handleBLECommand(String(item.data));
+      free(item.data);
+    }
+    drained++;
   }
 }
 
@@ -2208,9 +2213,9 @@ void handleBLECommand(const String& msg) {
                  "\"ssid\":\"" + wledSsid + "\",\"ip\":\"" + wledIp + "\","
                  "\"port\":" + String(wledPort) + "}";
     bleNotify(ack);
-    WiFi.disconnect(true);
-    delay(200);
-    connectToWLED();
+
+    wifiConnectInProgress = false;
+    connectToWLED(true);
   }
 
   // ── Starlight Wand config ──
@@ -2992,6 +2997,7 @@ void processSerialCommands() {
     Serial.println("  mb five <tl bl br tr c>  — E909 five corners (palette 0-31)");
     Serial.println("  mb <palette> [mask]      — E905 single color (mask 0 = all)");
     Serial.println("  mb defer on|off          — forward E9 to app vs firmware apply");
+    Serial.println("  nvs wifi                 — dump stored vs in-memory WiFi config");
   } else if (line == "status") {
     Serial.printf("[Status] WiFi=%s override=%d preset=%s bri=%d queue=%u\n",
                   WiFi.status() == WL_CONNECTED ? "up" : "down",
@@ -2999,6 +3005,32 @@ void processSerialCommands() {
                   currentPresetId.length() ? currentPresetId.c_str() : "(none)",
                   currentBrightness,
                   (unsigned)uxQueueMessagesWaiting(cmdQueue));
+  } else if (line == "nvs wifi") {
+    Preferences dbgPrefs;
+    dbgPrefs.begin("config", true);
+    String nvsSsid = dbgPrefs.getString("wledSsid", "<not set>");
+    String nvsPass = dbgPrefs.getString("wledPass", "<not set>");
+    String nvsIp   = dbgPrefs.getString("wledIp", "<not set>");
+    int    nvsPort = dbgPrefs.getInt("wledPort", -1);
+    dbgPrefs.end();
+
+    Serial.println("[NVS] --- Stored in flash (config namespace) ---");
+    Serial.printf("[NVS] wledSsid = \"%s\"\n", nvsSsid.c_str());
+    Serial.printf("[NVS] wledPass = \"%s\"\n", nvsPass.c_str());
+    Serial.printf("[NVS] wledIp   = \"%s\"\n", nvsIp.c_str());
+    Serial.printf("[NVS] wledPort = %d\n", nvsPort);
+    Serial.println("[NVS] --- Current in-memory values ---");
+    Serial.printf("[NVS] wledSsid = \"%s\"\n", wledSsid.c_str());
+    Serial.printf("[NVS] wledPass = \"%s\"\n", wledPass.c_str());
+    Serial.printf("[NVS] wledIp   = \"%s\"\n", wledIp.c_str());
+    Serial.printf("[NVS] wledPort = %d\n", wledPort);
+    Serial.printf("[NVS] WiFi.status() = %d (%s)\n", (int)WiFi.status(),
+                  WiFi.status() == WL_CONNECTED ? "CONNECTED" :
+                  WiFi.status() == WL_IDLE_STATUS ? "IDLE" :
+                  WiFi.status() == WL_NO_SSID_AVAIL ? "NO_SSID_AVAIL" :
+                  WiFi.status() == WL_CONNECT_FAILED ? "CONNECT_FAILED" :
+                  WiFi.status() == WL_CONNECTION_LOST ? "CONNECTION_LOST" :
+                  WiFi.status() == WL_DISCONNECTED ? "DISCONNECTED" : "OTHER");
   } else if (line == "wled si") {
     if (WiFi.status() != WL_CONNECTED) {
       Serial.println("[WLED] WiFi not connected");
@@ -3127,9 +3159,23 @@ void startBLEScan() {
 // WIFI
 // ─────────────────────────────────────────────
 
-void connectToWLED() {
-  if (WiFi.status() == WL_CONNECTED) { Serial.println("[WiFi] Already connected"); return; }
-  WiFi.disconnect(false); delay(100);
+void connectToWLED(bool force) {
+  if (!force && WiFi.status() == WL_CONNECTED) {
+    Serial.println("[WiFi] Already connected");
+    return;
+  }
+  if (wifiConnectInProgress) {
+    Serial.println("[WiFi] Connect already in progress — skipping");
+    return;
+  }
+  wifiConnectInProgress = true;
+  WiFi.disconnect(true);
+  int waitAttempts = 0;
+  while (WiFi.status() == WL_CONNECTED && waitAttempts < 20) {
+    delay(50);
+    waitAttempts++;
+  }
+  delay(100);
   Serial.printf("[WiFi] Connecting to GLEDOPTO: %s\n", wledSsid.c_str());
   WiFi.mode(WIFI_STA);
   WiFi.begin(wledSsid.c_str(), wledPass.c_str());
@@ -3148,6 +3194,7 @@ void connectToWLED() {
   } else {
     Serial.println("\n[WiFi] Failed — will retry");
   }
+  wifiConnectInProgress = false;
 }
 
 // ─────────────────────────────────────────────
