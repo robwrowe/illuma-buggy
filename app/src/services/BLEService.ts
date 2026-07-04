@@ -62,6 +62,8 @@ class BLEService {
   private lastBackgroundAt = Date.now();
   private finishingConnect = false;
   private attemptingReconnect = false;
+  private scanTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastScanTimedOut = false;
 
   private static readonly CHUNKED_TYPES: Record<string, string> = {
     'preset_chunk':  'preset_list_raw',
@@ -338,6 +340,14 @@ class BLEService {
     if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;
     return this.send(msg);
   }
+  sendWledNetConfig(ssid?: string, pass?: string, ip?: string, port?: number) {
+    const msg: BLEMessage = { type: 'wled_net_config' };
+    if (ssid !== undefined) msg.ssid = ssid;
+    if (pass !== undefined) msg.pass = pass;
+    if (ip !== undefined) msg.ip = ip;
+    if (port !== undefined) msg.port = port;
+    return this.send(msg);
+  }
   sendMbMappingConfig(payload: object) {
     return this.send({ type: 'mb_mapping_config', mapping: payload });
   }
@@ -391,20 +401,39 @@ class BLEService {
 
   private scan() {
     this.setConnState('scanning');
+    this.lastScanTimedOut = false;
     console.log('[BLE] Scanning for', BLE_DEVICE_NAME);
-    this.getManager().startDeviceScan(null, { allowDuplicates: false }, (err, device) => {
+    this.getManager().startDeviceScan([SERVICE_UUID], { allowDuplicates: false }, (err, device) => {
       if (err) {
         console.error('[BLE] Scan error:', err);
+        this.clearScanTimeout();
         this.setConnState('error');
         this.scheduleReconnect();
         return;
       }
       if (device?.name === BLE_DEVICE_NAME) {
         this.getManager().stopDeviceScan();
+        this.clearScanTimeout();
         this.connectToDevice(device);
       }
     });
+    this.scanTimeoutTimer = setTimeout(() => {
+      console.warn('[BLE] Scan timed out — no IllumaBuggy found');
+      this.getManager().stopDeviceScan();
+      this.lastScanTimedOut = true;
+      this.setConnState('error');
+      this.scheduleReconnect();
+    }, 20_000);
   }
+
+  private clearScanTimeout() {
+    if (this.scanTimeoutTimer) {
+      clearTimeout(this.scanTimeoutTimer);
+      this.scanTimeoutTimer = null;
+    }
+  }
+
+  hasScanTimedOut(): boolean { return this.lastScanTimedOut; }
 
   private async connectToDevice(device: Device) {
     this.lastDeviceId = device.id;
@@ -456,11 +485,13 @@ class BLEService {
       void saveBleDeviceId(discovered.id);
       this.device = discovered;
       this.markSessionReady(false);
+      this.lastScanTimedOut = false;
       this.setConnState('connected');
       void dismissBleDisconnectedNotification();
       console.log('[BLE] Connected');
     } catch (e) {
       console.error('[BLE] Connection failed:', e);
+      this.clearScanTimeout();
       this.setConnState('error');
       this.scheduleReconnect();
     } finally {
@@ -480,6 +511,7 @@ class BLEService {
     }
     if (this.connState === 'connecting' || this.connState === 'scanning') return;
     this.attemptingReconnect = true;
+    this.clearScanTimeout();
     try {
       if (this.lastDeviceId) {
         try {

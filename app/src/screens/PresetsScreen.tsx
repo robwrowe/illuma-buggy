@@ -29,7 +29,7 @@ import { useTheme } from '../utils/theme';
 export default function PresetsScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
-  const { isConnected, isSessionReady } = useBLE();
+  const { isConnected, isSessionReady, connectionState } = useBLE();
   const boardSync = useBoardSync();
   const { presets, deviceStatus, customSegmentLayouts, addOrUpdatePreset, removePreset, saveToStorage } = useAppStore();
   const [syncing, setSyncing]       = useState(false);
@@ -69,7 +69,11 @@ export default function PresetsScreen() {
     if (!bleService.isSessionReady()) {
       Alert.alert(
         'Board syncing',
-        formatSyncStatusLabel(boardSync, isConnected ? 'connected' : 'disconnected') +
+        formatSyncStatusLabel(
+          boardSync,
+          isConnected ? 'connected' : connectionState,
+          bleService.hasScanTimedOut(),
+        ) +
           '\n\nWait until Home shows Ready, or tap Sync board config.',
       );
       return;
@@ -147,7 +151,7 @@ export default function PresetsScreen() {
         <View style={s.syncBar}>
           <ActivityIndicator size="small" color={colors.primary} />
           <Text style={s.syncBarText}>
-            {formatSyncStatusLabel(boardSync, 'connected')}
+            {formatSyncStatusLabel(boardSync, 'connected', bleService.hasScanTimedOut())}
           </Text>
         </View>
       )}
