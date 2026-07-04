@@ -13,6 +13,7 @@ import {
   pushMbSegmentLayoutsToBoard,
   resolveActiveLayoutIndex,
 } from './bleBoardSync';
+import { collectMappingPresetIds } from './mbConfig';
 import {
   computeBoardConfigFingerprint,
   extractBoardPresetIds,
@@ -39,6 +40,7 @@ interface BoardStatusSnapshot {
   boardPresetCount: number;
   mbLayoutActive: number;
   mbLayoutCount: number;
+  mbMappingLoaded: boolean;
 }
 
 function waitForBleMessage(type: string, timeoutMs: number): Promise<string | void> {
@@ -70,6 +72,7 @@ function requestBoardStatus(timeoutMs = 8000): Promise<BoardStatusSnapshot | nul
         boardPresetCount: Number(msg.preset_count ?? 0),
         mbLayoutActive: Number(msg.mb_layout_active ?? 0),
         mbLayoutCount: Number(msg.mb_layout_count ?? 0),
+        mbMappingLoaded: msg.mb_mapping_loaded !== false,
       });
     });
     void bleService.sendStatus();
@@ -114,7 +117,18 @@ function layoutMatchesBoard(
     && meta.mbLayoutActive === activeLayoutIdx;
 }
 
-async function runEssentialConfig(token: number): Promise<boolean> {
+function shouldForceMappingPresetSync(
+  status: BoardStatusSnapshot | null,
+  mbMapping: ReturnType<typeof useAppStore.getState>['mbMapping'],
+): boolean {
+  if (!status) return false;
+  const mappingIds = collectMappingPresetIds(mbMapping);
+  if (mappingIds.length === 0) return false;
+  if (!status.mbMappingLoaded) return true;
+  return status.boardPresetCount < mappingIds.length;
+}
+
+async function runEssentialConfig(token: number): Promise<{ ok: boolean; mappingSyncOk: boolean }> {
   setBoardSyncPhase('essential', 'Applying wand & MagicBand settings…', {
     mode: 'full',
     commandsReady: false,
@@ -126,7 +140,7 @@ async function runEssentialConfig(token: number): Promise<boolean> {
 
   await bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
   await delay(400);
-  if (!bleService.isConnected() || token !== bootstrapToken) return false;
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
   await bleService.sendMbConfig(
     s.magicBandEnabled,
@@ -135,28 +149,32 @@ async function runEssentialConfig(token: number): Promise<boolean> {
     false,
   );
   await delay(400);
-  if (!bleService.isConnected() || token !== bootstrapToken) return false;
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
   await bleService.sendBleEffectConfig(s.bleEffectTransitionMs);
   await delay(300);
-  if (!bleService.isConnected() || token !== bootstrapToken) return false;
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
   await bleService.sendMbMappingConfig(
     mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
   );
   await delay(500);
-  if (!bleService.isConnected() || token !== bootstrapToken) return false;
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
-  // Mapped presets (wand cast, MB animations) must exist on board NVS — sync every connect.
-  await ensureMappingPresetsOnBoard(
+  // Mapped presets (wand cast, MB animations) must exist on board NVS.
+  const mappingSyncOk = await ensureMappingPresetsOnBoard(
     s.mbMapping,
     s.presets,
     s.recallState,
     s.customSegmentLayouts,
-  ).catch((e) => console.warn('[Bootstrap] Mapping preset sync failed:', e));
+  ).catch((e) => {
+    console.warn('[Bootstrap] Mapping preset sync failed:', e);
+    return false;
+  });
   await delay(400);
 
-  return bleService.isConnected() && token === bootstrapToken;
+  const ok = bleService.isConnected() && token === bootstrapToken;
+  return { ok, mappingSyncOk };
 }
 
 async function fetchBoardPresetIds(token: number): Promise<Set<string> | null> {
@@ -210,7 +228,10 @@ async function runLayoutPush(token: number): Promise<BoardStatusSnapshot | null>
     s.presets,
     s.recallState,
     s.customSegmentLayouts,
-  ).catch((e) => console.warn('[Bootstrap] Mapping preset sync failed:', e));
+  ).catch((e) => {
+    console.warn('[Bootstrap] Mapping preset sync failed:', e);
+    return false;
+  });
   if (!bleService.isConnected() || token !== bootstrapToken) return null;
 
   await pushMbSegmentLayoutsToBoard(
@@ -234,9 +255,16 @@ async function runLayoutPush(token: number): Promise<BoardStatusSnapshot | null>
   return requestBoardStatus();
 }
 
-function markSessionReadyAndStatus(mode: 'quick' | 'full', detail: string) {
+function markSessionReadyAndStatus(
+  mode: 'quick' | 'full',
+  detail: string,
+  mappingSyncOk = true,
+) {
   bleService.markSessionReady(true);
-  setBoardSyncReady(mode, detail);
+  const finalDetail = mappingSyncOk
+    ? detail
+    : 'Ready — MB+/Wand mapping incomplete, reconnect to retry';
+  setBoardSyncReady(mode, finalDetail, mappingSyncOk);
   void bleService.sendStatus();
 }
 
@@ -330,6 +358,13 @@ export async function runConnectBootstrap(): Promise<void> {
   await delay(600);
   if (!bleService.isConnected() || token !== bootstrapToken) return;
 
+  // Manual sync mode: skip all essential-config/mapping/layout/preset push.
+  // Board runs entirely off its own NVS. User must tap "Sync board config".
+  if (useAppStore.getState().syncMode === 'manual' && !forceFullSync) {
+    markSessionReadyAndStatus('quick', 'Ready — manual sync (using board NVS)');
+    return;
+  }
+
   const fingerprint = getFingerprint();
   const meta = await loadBoardSyncMeta();
   const requestedFullSync = forceFullSync;
@@ -347,18 +382,53 @@ export async function runConnectBootstrap(): Promise<void> {
     restoreBoardPresetSyncCache(meta.syncedPresetIds);
   }
 
-  const ok = await runEssentialConfig(token);
-  if (!ok) return;
+  let mappingSyncOk = true;
+  if (useQuick) {
+    // Quick reconnect — skip essential BLE config push.
+  } else {
+    const essential = await runEssentialConfig(token);
+    if (!essential.ok) return;
+    mappingSyncOk = essential.mappingSyncOk;
+  }
 
   const status = await requestBoardStatus();
+  if (shouldForceMappingPresetSync(status, s.mbMapping)) {
+    setBoardSyncPhase('essential', 'Syncing MB+/Wand mapping presets…', {
+      commandsReady: false,
+      backgroundBusy: false,
+    });
+    if (status && !status.mbMappingLoaded) {
+      await bleService.sendMbMappingConfig(
+        mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
+      );
+      await delay(500);
+      if (!bleService.isConnected() || token !== bootstrapToken) return;
+    }
+    mappingSyncOk = await ensureMappingPresetsOnBoard(
+      s.mbMapping,
+      s.presets,
+      s.recallState,
+      s.customSegmentLayouts,
+      true,
+    ).catch((e) => {
+      console.warn('[Bootstrap] Forced mapping preset sync failed:', e);
+      return false;
+    });
+    if (!bleService.isConnected() || token !== bootstrapToken) return;
+  }
   // MB layout push can stomp live segments/colors. Keep reconnect bootstrap stable by
   // only pushing layouts on explicit full-sync requests from the user.
   const needsLayout = requestedFullSync
-    && !layoutMatchesBoard(meta, status ?? { boardPresetCount: 0, mbLayoutActive: 0, mbLayoutCount: 0 }, resolvedLayoutIdx);
+    && !layoutMatchesBoard(
+      meta,
+      status ?? { boardPresetCount: 0, mbLayoutActive: 0, mbLayoutCount: 0, mbMappingLoaded: false },
+      resolvedLayoutIdx,
+    );
 
   const phoneCount = s.presets.length;
   const boardCount = status?.boardPresetCount ?? 0;
   const canTrustQuick = useQuick
+    && mappingSyncOk
     && meta?.syncedPresetIds?.length
     && phoneCount > 0
     && boardCount >= phoneCount
@@ -370,13 +440,14 @@ export async function runConnectBootstrap(): Promise<void> {
       active: status.mbLayoutActive,
       count: status.mbLayoutCount,
     } : undefined);
-    markSessionReadyAndStatus('quick', 'Ready — reconnected (board up to date)');
+    markSessionReadyAndStatus('quick', 'Ready — reconnected (board up to date)', mappingSyncOk);
     return;
   }
 
   markSessionReadyAndStatus(
     useQuick ? 'quick' : 'full',
     'Ready — syncing board in background…',
+    mappingSyncOk,
   );
 
   void runBackgroundSync(token, fingerprint, useQuick ? 'quick' : 'full', {

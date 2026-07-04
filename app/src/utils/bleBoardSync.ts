@@ -107,11 +107,17 @@ export async function ensureMappingPresetsOnBoard(
   presets: Preset[],
   recall: RecallState,
   layouts: CustomSegmentLayout[],
-): Promise<void> {
+  force = false,
+): Promise<boolean> {
+  let allOk = true;
   for (const id of collectMappingPresetIds(mbMapping)) {
     const preset = presets.find(p => p.id === id);
-    if (preset) await ensurePresetOnBoard(preset, recall, layouts, true);
+    if (preset) {
+      const ok = await ensurePresetOnBoard(preset, recall, layouts, force);
+      if (!ok) allOk = false;
+    }
   }
+  return allOk;
 }
 
 /** GPS / zone apply — always wled_raw (reliable); preset_save runs in background for NVS. */

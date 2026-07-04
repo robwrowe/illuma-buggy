@@ -29,6 +29,7 @@ export interface BoardSyncStatus {
   detail: string;
   commandsReady: boolean;
   backgroundBusy: boolean;
+  mappingComplete?: boolean;
   presetProgress?: { current: number; total: number };
 }
 
@@ -80,13 +81,14 @@ export function setBoardSyncPhase(
   emit({ phase, detail, ...extra });
 }
 
-export function setBoardSyncReady(mode: BoardSyncMode, detail: string) {
+export function setBoardSyncReady(mode: BoardSyncMode, detail: string, mappingComplete = true) {
   emit({
     phase: 'ready',
     mode,
     detail,
     commandsReady: true,
     backgroundBusy: false,
+    mappingComplete,
     presetProgress: undefined,
   });
 }
@@ -181,11 +183,19 @@ export function extractBoardPresetIds(raw: string): Set<string> {
   return ids;
 }
 
-export function formatSyncStatusLabel(s: BoardSyncStatus, connectionState: string): string {
+export function formatSyncStatusLabel(
+  s: BoardSyncStatus,
+  connectionState: string,
+  scanTimedOut = false,
+): string {
   if (connectionState === 'scanning') return 'Scanning for IllumaBuggy…';
   if (connectionState === 'connecting') return 'Connecting…';
   if (connectionState === 'disconnected') return 'Disconnected — reconnecting…';
-  if (connectionState === 'error') return 'Connection error — retrying…';
+  if (connectionState === 'error') {
+    return scanTimedOut
+      ? "Can't find IllumaBuggy — check the board is powered on"
+      : 'Connection error — retrying…';
+  }
   if (!s.commandsReady) {
     if (s.detail) return s.detail;
     if (s.phase === 'essential') return 'Applying wand & MagicBand settings…';
@@ -202,6 +212,9 @@ export function formatSyncStatusLabel(s: BoardSyncStatus, connectionState: strin
     const p = s.presetProgress;
     if (p) return `Ready — updating library (${p.current}/${p.total})`;
     return s.detail || 'Ready — background sync in progress';
+  }
+  if (s.mappingComplete === false) {
+    return 'Ready — MB+/Wand mapping incomplete, reconnect to retry';
   }
   if (s.mode === 'quick') return 'Ready — reconnected (board config up to date)';
   return 'Ready — board synced';
