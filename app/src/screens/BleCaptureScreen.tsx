@@ -18,6 +18,7 @@ import {
   CAPTURE_DURATION_OPTIONS, describeBlePacket, formatCaptureExport,
   BleCaptureSession,
 } from '../utils/bleCapture';
+import { startPhoneBleScan, stopPhoneBleScan } from '../utils/phoneBleScan';
 
 function formatElapsed(ms: number): string {
   const sec = Math.floor(ms / 1000);
@@ -49,8 +50,9 @@ export default function BleCaptureScreen() {
   const {
     bleCaptureActive, bleCaptureDurationSec, bleCaptureStartedAt, bleCaptureEndsAt,
     bleCaptureLiveCount, bleCaptureBuffer, bleCaptureSessions, bleCaptureDraftName,
+    captureSource, setCaptureSource,
     setBleCaptureDurationSec, setBleCaptureDraftName,
-    startBleCapture, stopBleCapture,
+    startBleCapture, stopBleCapture, appendBleCapturePacket,
     deleteBleCaptureSession,
     updateBleCapturePacketNote,
   } = useAppStore();
@@ -69,31 +71,56 @@ export default function BleCaptureScreen() {
     if (remaining <= 0) return;
     const timer = setTimeout(() => {
       stopBleCapture('timeout');
-      bleService.sendBleCaptureConfig(false);
+      if (captureSource === 'firmware') {
+        bleService.sendBleCaptureConfig(false);
+      } else {
+        stopPhoneBleScan();
+      }
     }, remaining);
     return () => clearTimeout(timer);
-  }, [bleCaptureActive, bleCaptureEndsAt]);
+  }, [bleCaptureActive, bleCaptureEndsAt, captureSource]);
+
+  useEffect(() => () => {
+    stopPhoneBleScan();
+  }, []);
 
   const handleStart = async () => {
-    if (!isConnected) {
-      Alert.alert('Not connected', 'Connect to IllumaBuggy first.');
-      return;
-    }
-    startBleCapture();
-    const ok = await bleService.sendBleCaptureConfig(
-      true,
-      bleCaptureDurationSec > 0 ? bleCaptureDurationSec * 1000 : 0,
-      bleCaptureDraftName.trim(),
-    );
-    if (!ok) {
-      stopBleCapture('error');
-      Alert.alert('Capture failed', 'Could not start recording on the board.');
+    if (captureSource === 'firmware') {
+      if (!isConnected) {
+        Alert.alert('Not connected', 'Connect to IllumaBuggy first.');
+        return;
+      }
+      startBleCapture();
+      const ok = await bleService.sendBleCaptureConfig(
+        true,
+        bleCaptureDurationSec > 0 ? bleCaptureDurationSec * 1000 : 0,
+        bleCaptureDraftName.trim(),
+      );
+      if (!ok) {
+        stopBleCapture('error');
+        Alert.alert('Capture failed', 'Could not start recording on the board.');
+      }
+    } else {
+      startBleCapture();
+      startPhoneBleScan((pkt) => {
+        appendBleCapturePacket({
+          boardTs: Date.now(),
+          tag: pkt.tag,
+          rssi: pkt.rssi,
+          hex: pkt.hex,
+          len: pkt.len,
+        });
+      });
     }
   };
 
   const handleStop = async () => {
-    await bleService.sendBleCaptureConfig(false);
     stopBleCapture('manual');
+    if (captureSource === 'firmware') {
+      await bleService.sendBleCaptureConfig(false);
+    } else {
+      stopPhoneBleScan();
+    }
   };
 
   const remainingMs = bleCaptureEndsAt ? Math.max(0, bleCaptureEndsAt - Date.now()) : null;
@@ -116,6 +143,34 @@ export default function BleCaptureScreen() {
             </View>
           )}
         </View>
+
+        <Text style={s.label}>Capture source</Text>
+        <View style={s.chipRow}>
+          <TouchableOpacity
+            style={[s.chip, captureSource === 'firmware' && s.chipActive]}
+            onPress={() => !bleCaptureActive && setCaptureSource('firmware')}
+            disabled={bleCaptureActive}
+          >
+            <Text style={[s.chipText, captureSource === 'firmware' && s.chipTextActive]}>
+              Via Board
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.chip, captureSource === 'phone' && s.chipActive]}
+            onPress={() => !bleCaptureActive && setCaptureSource('phone')}
+            disabled={bleCaptureActive}
+          >
+            <Text style={[s.chipText, captureSource === 'phone' && s.chipTextActive]}>
+              Phone Direct
+            </Text>
+          </TouchableOpacity>
+        </View>
+        {captureSource === 'phone' && (
+          <Text style={s.sub}>
+            Scans directly with your phone's Bluetooth — no board needed. Useful for testing
+            at home or verifying packets independent of firmware.
+          </Text>
+        )}
 
         <Text style={s.label}>Session name</Text>
         <TextInput
@@ -165,7 +220,7 @@ export default function BleCaptureScreen() {
           </View>
         )}
 
-        {!isConnected && (
+        {captureSource === 'firmware' && !isConnected && (
           <Text style={s.warn}>Connect to IllumaBuggy to record.</Text>
         )}
 
@@ -176,9 +231,9 @@ export default function BleCaptureScreen() {
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[s.startBtn, !isConnected && s.btnDisabled]}
+            style={[s.startBtn, captureSource === 'firmware' && !isConnected && s.btnDisabled]}
             onPress={handleStart}
-            disabled={!isConnected}
+            disabled={captureSource === 'firmware' && !isConnected}
           >
             <IconBolt size={18} color="#fff" />
             <Text style={s.startBtnText}>Start recording</Text>

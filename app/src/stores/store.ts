@@ -343,6 +343,8 @@ interface AppState {
   bleCaptureBuffer:       BleCapturePacket[];
   bleCaptureSessions:     BleCaptureSession[];
   bleCaptureDraftName:    string;
+  captureSource:          'firmware' | 'phone';
+  setCaptureSource:       (v: 'firmware' | 'phone') => void;
   setBleCaptureDurationSec: (sec: BleCaptureDuration) => void;
   setBleCaptureDraftName:   (name: string) => void;
   startBleCapture:          () => void;
@@ -461,6 +463,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureBuffer:       [],
   bleCaptureSessions:     [],
   bleCaptureDraftName:    'Parade capture',
+  captureSource:          'firmware',
   parks:                  [],
   activePark:             null,
   showModeConfig:         DEFAULT_SHOW_MODE,
@@ -660,6 +663,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
   setSyncMode:           (val)          => { set({ syncMode: val }); get().saveToStorage(); },
 
+  setCaptureSource:         (val) => set({ captureSource: val }),
   setBleCaptureDurationSec: (sec) => set({ bleCaptureDurationSec: sec }),
   setBleCaptureDraftName:   (name) => set({ bleCaptureDraftName: name }),
 
