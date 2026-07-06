@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -69,6 +69,7 @@ export default function HomeScreen() {
     activeZoneIds,
     zonesEnabled,
     setZonesEnabled,
+    setDeviceStatus,
     saveToStorage,
     overrideDetail,
     setOverrideDetail,
@@ -91,6 +92,7 @@ export default function HomeScreen() {
     String(deviceStatus?.brightness ?? 128),
   );
   const [editingBrightness, setEditingBrightness] = useState(false);
+  const pendingWledBriRef = useRef<number | null>(null);
   const [events, setEvents] = useState<string[]>([]);
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
   const [firingZone, setFiringZone] = useState(false);
@@ -155,18 +157,56 @@ export default function HomeScreen() {
     };
   }, [isConnected]);
 
-  // Sync slider with device
+  const applyBrightnessToUi = (bri: number) => {
+    setBrightness(bri);
+    setBrightnessText(String(bri));
+  };
+
+  // Pull live WLED bri on connect — firmware status often still reports the 128 default.
   useEffect(() => {
-    if (deviceStatus?.brightness !== undefined && !editingBrightness) {
-      setBrightness(deviceStatus.brightness);
-      setBrightnessText(String(deviceStatus.brightness));
+    if (!isSessionReady) {
+      pendingWledBriRef.current = null;
+      return;
     }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const summary = await fetchLiveWledSummary();
+        if (cancelled || editingBrightness || summary.bri == null) return;
+        pendingWledBriRef.current = summary.bri;
+        applyBrightnessToUi(summary.bri);
+        const ds = useAppStore.getState().deviceStatus;
+        if (ds) setDeviceStatus({ ...ds, brightness: summary.bri });
+      } catch {
+        // Status poll / deviceStatus effect remains the fallback.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSessionReady, editingBrightness, setDeviceStatus]);
+
+  // Sync slider when board reports brightness changes (zone auto-bri, manual commands).
+  useEffect(() => {
+    if (deviceStatus?.brightness === undefined || editingBrightness) return;
+    const statusBri = deviceStatus.brightness;
+    const pendingWledBri = pendingWledBriRef.current;
+    if (pendingWledBri != null) {
+      if (statusBri === pendingWledBri) {
+        pendingWledBriRef.current = null;
+      } else if (statusBri === 128 && pendingWledBri !== 128) {
+        return;
+      } else {
+        pendingWledBriRef.current = null;
+      }
+    }
+    applyBrightnessToUi(statusBri);
   }, [deviceStatus?.brightness, editingBrightness]);
 
   const commitBrightness = (raw: number) => {
     const next = Math.min(255, Math.max(0, Math.round(raw)));
-    setBrightness(next);
-    setBrightnessText(String(next));
+    pendingWledBriRef.current = null;
+    applyBrightnessToUi(next);
     bleService.sendBrightness(next);
   };
 
@@ -252,6 +292,12 @@ export default function HomeScreen() {
     try {
       const summary = await fetchLiveWledSummary();
       setLiveWled(summary);
+      if (summary.bri != null && !editingBrightness) {
+        pendingWledBriRef.current = summary.bri;
+        applyBrightnessToUi(summary.bri);
+        const ds = useAppStore.getState().deviceStatus;
+        if (ds) setDeviceStatus({ ...ds, brightness: summary.bri });
+      }
     } catch (e) {
       setLiveWledError(e instanceof Error ? e.message : "Fetch failed");
     } finally {
