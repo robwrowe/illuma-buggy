@@ -2,7 +2,7 @@ name: Deploy web tool to Pages
 on:
   push:
     branches: [main]
-    paths: ["web/**"]
+    paths: ['web/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -12,16 +12,17 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
       - uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install and build
@@ -40,5 +41,9 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          error_count: 20
+          reporting_interval: 10000

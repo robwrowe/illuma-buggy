@@ -7,6 +7,25 @@ import {
 
 const CAPTURE_HEX_FIELD = 6;
 const SHOW_LINE_RE = /^(\d+)\s+([0-9a-fA-F]+)$/i;
+const CAPTURE_HEX_TAIL_RE = /(8301[0-9a-fA-F]{8,})\s*$/i;
+const CAPTURE_HEAD_RE = /^(\d{10,})\s+(-?\d+)\s+(\S+)/;
+
+function extractCaptureHexFromFields(fields) {
+  const fromCol = (fields[CAPTURE_HEX_FIELD] || '').replace(/[^0-9a-fA-F]/g, '');
+  if (fromCol.length >= 12 && fromCol.toLowerCase().startsWith('8301')) return fromCol;
+  for (let i = fields.length - 1; i >= 0; i--) {
+    const h = (fields[i] || '').replace(/[^0-9a-fA-F]/g, '');
+    if (h.length >= 12 && h.toLowerCase().startsWith('8301')) return h;
+  }
+  return fromCol;
+}
+
+function isCaptureLine(line) {
+  const t = (line || '').trim();
+  if (!t || t.startsWith('#')) return false;
+  if (t.includes('\t')) return true;
+  return CAPTURE_HEAD_RE.test(t) && CAPTURE_HEX_TAIL_RE.test(t);
+}
 
 function contentLines(raw) {
   return (raw || '')
@@ -84,10 +103,11 @@ export function parsePasteToPackets(raw, options = {}) {
     };
   }
 
-  if (lines.some((l) => l.includes('\t'))) {
+  if (lines.some(isCaptureLine)) {
     const rows = lines
+      .filter(isCaptureLine)
       .map(parseCaptureLine)
-      .filter((r) => r.hex.length >= 4);
+      .filter((r) => r.hex.length >= 12);
     const packets = captureRowsToPackets(rows, { defaultWaitMs, lastHoldMs, strip8301 });
     return {
       ok: packets.length > 0,
@@ -98,7 +118,7 @@ export function parsePasteToPackets(raw, options = {}) {
     };
   }
 
-  if (lines.length > 1) {
+  if (lines.length > 1 && !lines.some(isCaptureLine)) {
     const packets = lines.map((line, i) => ({
       bytes: hexToPayloadBytes(line, strip8301),
       waitMs: i < lines.length - 1 ? defaultWaitMs : lastHoldMs,
@@ -128,29 +148,45 @@ export function parseCapturePaste(raw) {
   const lines = contentLines(raw);
   if (!lines.length) return { mode: 'empty' };
 
-  if (lines.length > 1 || lines[0].includes('\t')) {
-    const rows = lines.map(parseCaptureLine).filter((r) => r.hex);
+  if (lines.length > 1 || lines[0].includes('\t') || isCaptureLine(lines[0])) {
+    const rows = lines.filter(isCaptureLine).map(parseCaptureLine).filter((r) => r.hex.length >= 12);
     if (rows.length) return { mode: 'capture', rows };
   }
 
-  if (lines[0].includes('\t')) {
+  if (lines[0].includes('\t') || isCaptureLine(lines[0])) {
     const row = parseCaptureLine(lines[0]);
-    if (row.hex) return { mode: 'capture', rows: [row] };
+    if (row.hex.length >= 12) return { mode: 'capture', rows: [row] };
   }
 
   return { mode: 'hex', hex: lines[0].replace(/[^0-9a-fA-F]/g, '') };
 }
 
 function parseCaptureLine(line) {
-  if (line.includes('\t')) {
-    const fields = line.split('\t');
-    const hexField = fields[CAPTURE_HEX_FIELD] || fields[fields.length - 1] || '';
+  const trimmed = (line || '').trim();
+  if (!trimmed) return { ts_ms: null, hex: '', tag: '' };
+
+  if (trimmed.includes('\t')) {
+    const fields = trimmed.split('\t');
+    const hex = extractCaptureHexFromFields(fields);
     const ts = fields[0] && /^\d+$/.test(fields[0]) ? Number(fields[0]) : null;
-    const hex = hexField.replace(/[^0-9a-fA-F]/g, '');
     const tag = fields[2] || '';
     return { ts_ms: ts, hex, tag };
   }
-  const hex = line.replace(/[^0-9a-fA-F]/g, '');
+
+  const hexTail = trimmed.match(CAPTURE_HEX_TAIL_RE);
+  if (hexTail) {
+    const hex = hexTail[1];
+    const head = trimmed.slice(0, hexTail.index).trim();
+    const headMatch = head.match(CAPTURE_HEAD_RE);
+    const parts = head.split(/\s+/);
+    return {
+      ts_ms: headMatch ? Number(headMatch[1]) : null,
+      hex,
+      tag: headMatch ? headMatch[3] : (parts[2] || ''),
+    };
+  }
+
+  const hex = trimmed.replace(/[^0-9a-fA-F]/g, '');
   return { ts_ms: null, hex };
 }
 
