@@ -7,6 +7,11 @@ in the parks.
 
 Protocol builders match [Adafruit `magicband_protocol.py`](https://github.com/adafruit/Adafruit_Learning_System_Guides/blob/main/CLUE_BLE_Beacon_Remote/magicband_protocol.py).
 
+**Connecting a client (web tool, script, agent)?** See [API.md](API.md) for
+the full HTTP + Serial contract — endpoint shapes, the company-ID byte-prefix
+rules, and batch/show playback for replaying a captured parade or fireworks
+show.
+
 ## Setup
 
 1. Flash `WandSimulator.ino` to a spare ESP32 (NimBLE 2.x).
