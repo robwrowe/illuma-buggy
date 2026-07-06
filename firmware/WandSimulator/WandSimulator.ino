@@ -16,6 +16,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ArduinoJson.h>
+#include <vector>
 #if CONFIG_IDF_TARGET_ESP32S3
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
@@ -32,6 +33,7 @@ static bool bleReady = false;
 
 void handleLine(String line);
 bool ensureBleReady();
+size_t parseHexBytes(const String& hexStr, uint8_t* out, size_t maxLen);
 
 enum LoopMode { LOOP_NONE,
                 LOOP_WAND_CAST,
@@ -299,6 +301,33 @@ void broadcastMfr(const uint8_t* payload, size_t plen, uint32_t durationMs) {
   Serial.println("[TX] Done");
 }
 
+// Same hold/interrupt behavior as broadcastMfr, but `mfr` is already the full
+// manufacturer-data payload (company ID included) — for replaying exact
+// captured bytes without re-wrapping them in another 0x8301 prefix.
+void broadcastRawMfr(const uint8_t* mfr, size_t mfrLen, uint32_t durationMs) {
+  if (mfrLen > 31) {
+    Serial.println("[TX] payload too long");
+    return;
+  }
+  if (!ensureBleReady()) return;
+
+  Serial.printf("[TX] Broadcasting raw %ums (%u bytes): ", durationMs, (unsigned)mfrLen);
+  mfrHex(mfr, mfrLen);
+
+  startMfrAdvert(mfr, mfrLen);
+  unsigned long end = millis() + durationMs;
+  while ((long)(millis() - end) < 0) {
+    if (Serial.available()) {
+      adv->stop();
+      Serial.println("[TX] Interrupted");
+      return;
+    }
+    delay(25);
+  }
+  adv->stop();
+  Serial.println("[TX] Done");
+}
+
 void broadcastPayload(const uint8_t* payload, size_t plen, uint32_t durationMs = 4000) {
   broadcastMfr(payload, plen, durationMs);
 }
@@ -416,6 +445,48 @@ void printSwFxList() {
   Serial.println("[SW] Pattern modes (E909 color+pattern): solid spin all corners");
 }
 
+// ── Show playback (sequence of raw captured/hand-built packets with hold times) ────
+
+struct ShowStep {
+  uint8_t data[31];
+  uint8_t len;
+  uint32_t holdMs;
+};
+
+std::vector<ShowStep> showSteps;
+size_t showIndex = 0;
+unsigned long showNextMs = 0;
+bool showActive = false;
+
+void stopShow() {
+  showActive = false;
+  showSteps.clear();
+  showIndex = 0;
+}
+
+void serviceShow() {
+  if (!showActive) return;
+  unsigned long now = millis();
+  if (now < showNextMs) return;
+
+  if (showIndex >= showSteps.size()) {
+    showActive = false;
+    if (adv) adv->stop();
+    Serial.println("[Show] done");
+    return;
+  }
+  if (!ensureBleReady()) {
+    showActive = false;
+    return;
+  }
+  const ShowStep& step = showSteps[showIndex];
+  startMfrAdvert(step.data, step.len);
+  Serial.printf("[Show] step %u/%u hold=%lums\n", (unsigned)(showIndex + 1),
+                (unsigned)showSteps.size(), (unsigned long)step.holdMs);
+  showIndex++;
+  showNextMs = now + step.holdMs;
+}
+
 // ── Serial parsing ──────────────────────────────────────────────────────────
 
 int splitWords(const String& line, String out[], int maxOut) {
@@ -490,6 +561,7 @@ uint8_t parsePatternWord(const String& w) {
 
 void stopLoops() {
   loopMode = LOOP_NONE;
+  stopShow();
 }
 
 static void normalizeSegKey(String& s) {
@@ -569,6 +641,7 @@ void printHelp() {
   Serial.println("  mb five <tl bl br tr c>  E909 corners (TL BL BR TR center)");
   Serial.println("  mb rainbow               E909 preset rainbow corners");
   Serial.println("  ping                     CC03000000 wake ping");
+  Serial.println("  raw <hex>                broadcast exact bytes as-is (company ID included) — for replaying captures");
   Serial.println("  mbsweep                  cycle palettes 0-31 every 3s (both bands)");
   Serial.println("  mbloop <0-31|name>       repeat single MB color every 3s");
   Serial.println("  stop                     cancel loop / mbsweep / mbloop");
@@ -580,6 +653,7 @@ void printHelp() {
   Serial.println("  wifi \"KyLan Ren\" mypass  — quoted SSID/password also work");
   Serial.println("  wifi off                — disconnect WiFi / HTTP");
   Serial.println("  help");
+  Serial.println("  HTTP: GET /status, POST /send {line|hex}, POST /show (batch playback), POST /stop");
   Serial.println("  Names: 0-31, or hyphenated MB palette names");
   Serial.println("         e.g. red midnight-blue yellow-orange lime-green pink-3");
   Serial.println("         Short: cyan purple blue pink yellow lime orange red green white");
@@ -678,6 +752,19 @@ void handleLine(String line) {
   if (lower == "mb rainbow") {
     stopLoops();
     broadcastMbRainbowFive();
+    return;
+  }
+  if (lower.startsWith("raw ")) {
+    stopLoops();
+    String hexStr = line.substring(4);
+    hexStr.trim();
+    uint8_t payload[31];
+    size_t n = parseHexBytes(hexStr, payload, sizeof(payload));
+    if (n == 0) {
+      Serial.println("[WandSim] raw: no valid hex bytes");
+      return;
+    }
+    broadcastRawMfr(payload, n, 4000);
     return;
   }
   if (lower == "mbsweep") {
@@ -827,7 +914,9 @@ void handleSimStatus() {
   String ip = simWifiConnected ? WiFi.localIP().toString() : "";
   simServer->send(200, "application/json",
     String("{\"ok\":true,\"device\":\"WandSim\",\"wifi\":") + (simWifiConnected ? "true" : "false") +
-    ",\"ip\":\"" + ip + "\"}");
+    ",\"ip\":\"" + ip + "\",\"showActive\":" + (showActive ? "true" : "false") +
+    ",\"showStep\":" + String((unsigned)showIndex) +
+    ",\"showTotal\":" + String((unsigned)showSteps.size()) + "}");
 }
 
 void handleSimSend() {
@@ -862,6 +951,61 @@ void handleSimSend() {
   simServer->send(400, "application/json", "{\"ok\":false}");
 }
 
+// Batch playback for a full parade/fireworks show. Body is plain text, one step per
+// line: "<holdMs> <hex>" where <hex> is the exact manufacturer-data bytes to broadcast
+// (company ID included, e.g. straight from a BLE capture) — no JSON, to keep parsing trivial.
+void handleSimShow() {
+  if (!simServer) return;
+  addSimCors();
+  if (!simServer->hasArg("plain")) {
+    simServer->send(400, "application/json", "{\"ok\":false}");
+    return;
+  }
+
+  loopMode = LOOP_NONE;  // cancel any active loop mode without clearing `steps` we're about to build
+  std::vector<ShowStep> steps;
+  String body = simServer->arg("plain");
+  int pos = 0;
+  int total = body.length();
+  while (pos < total) {
+    int nl = body.indexOf('\n', pos);
+    String stepLine = (nl < 0) ? body.substring(pos) : body.substring(pos, nl);
+    pos = (nl < 0) ? total : nl + 1;
+    stepLine.trim();
+    if (stepLine.length() == 0) continue;
+
+    int sp = stepLine.indexOf(' ');
+    if (sp <= 0) continue;
+    ShowStep step;
+    step.holdMs = (uint32_t)stepLine.substring(0, sp).toInt();
+    String hexPart = stepLine.substring(sp + 1);
+    hexPart.trim();
+    step.len = (uint8_t)parseHexBytes(hexPart, step.data, sizeof(step.data));
+    if (step.len == 0) continue;
+    steps.push_back(step);
+  }
+
+  if (steps.empty()) {
+    simServer->send(400, "application/json", "{\"ok\":false,\"error\":\"no steps\"}");
+    return;
+  }
+
+  showSteps = std::move(steps);
+  showIndex = 0;
+  showNextMs = 0;
+  showActive = true;
+  Serial.printf("[Show] queued %u steps\n", (unsigned)showSteps.size());
+  simServer->send(200, "application/json", "{\"ok\":true,\"steps\":" + String(showSteps.size()) + "}");
+}
+
+void handleSimStop() {
+  if (!simServer) return;
+  addSimCors();
+  stopLoops();
+  if (bleReady && adv) adv->stop();
+  simServer->send(200, "application/json", "{\"ok\":true}");
+}
+
 void stopSimHttpServer() {
   if (simServer) {
     simServer->stop();
@@ -876,8 +1020,12 @@ void startSimHttpServer() {
   simServer->on("/status", HTTP_GET, handleSimStatus);
   simServer->on("/send", HTTP_POST, handleSimSend);
   simServer->on("/send", HTTP_OPTIONS, handleSimOptions);
+  simServer->on("/show", HTTP_POST, handleSimShow);
+  simServer->on("/show", HTTP_OPTIONS, handleSimOptions);
+  simServer->on("/stop", HTTP_POST, handleSimStop);
+  simServer->on("/stop", HTTP_OPTIONS, handleSimOptions);
   simServer->begin();
-  Serial.println("[WandSim] HTTP server on :80 (/status, /send)");
+  Serial.println("[WandSim] HTTP server on :80 (/status, /send, /show, /stop)");
 }
 
 void stopSimWifi() {
@@ -987,5 +1135,6 @@ void loop() {
   }
   serviceSimWifi();
   serviceLoops();
+  serviceShow();
   delay(10);
 }
