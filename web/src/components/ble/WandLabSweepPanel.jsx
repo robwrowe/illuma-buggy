@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Button,
+  Checkbox,
   Group,
   NumberInput,
   Stack,
@@ -14,7 +15,11 @@ import {
   payloadToShowHex,
   startShow,
 } from '../../lib/ble/wandSimClient';
+import { MB_PAL_OFF } from '../../lib/ble/mbConstants';
+import { buildMbSingle } from '../../lib/ble/mbPayloads';
 import { useShowProgress } from '../../hooks/useShowProgress';
+
+const MB_OFF_BYTES = buildMbSingle(MB_PAL_OFF);
 
 function parseHexByte(s) {
   const n = parseInt(String(s).replace(/[^0-9a-fA-F]/g, ''), 16);
@@ -34,21 +39,28 @@ export function WandLabSweepPanel({
   const [endHex, setEndHex] = useState('FF');
   const [stepHex, setStepHex] = useState('01');
   const [dwellMs, setDwellMs] = useState(3000);
+  const [offBetween, setOffBetween] = useState(false);
+  const [offWaitMs, setOffWaitMs] = useState(1000);
   const [sweepValues, setSweepValues] = useState([]);
+  const [sweepOffBetween, setSweepOffBetween] = useState(false);
   const [sweepNote, setSweepNote] = useState('');
   const [showSweepLog, setShowSweepLog] = useState(false);
   const { progress, startPolling, stop } = useShowProgress(simIp);
 
   const running = progress?.active;
-  const currentVal = running && sweepValues.length && progress?.step > 0
-    ? sweepValues[Math.min(progress.step - 1, sweepValues.length - 1)]
+  const step = progress?.step ?? 0;
+  const isOffStep = running && sweepOffBetween && step > 0 && step % 2 === 0;
+  const currentVal = running && sweepValues.length && step > 0 && !isOffStep
+    ? sweepValues[Math.min(Math.floor((step - 1) / (sweepOffBetween ? 2 : 1)), sweepValues.length - 1)]
     : null;
 
-  const liveHex = currentVal != null && sweepIndex != null && bytes?.length
-    ? payloadToShowHex(bytes.map((b, i) => (i === sweepIndex ? currentVal : b)))
-    : bytes?.length
-      ? payloadToShowHex(bytes)
-      : '';
+  const liveHex = isOffStep
+    ? payloadToShowHex(MB_OFF_BYTES)
+    : currentVal != null && sweepIndex != null && bytes?.length
+      ? payloadToShowHex(bytes.map((b, i) => (i === sweepIndex ? currentVal : b)))
+      : bytes?.length
+        ? payloadToShowHex(bytes)
+        : '';
 
   const handleRun = async () => {
     const ip = (simIp || '').trim();
@@ -60,13 +72,22 @@ export function WandLabSweepPanel({
     const end = parseHexByte(endHex);
     const step = Math.max(1, parseHexByte(stepHex) || 1);
 
-    const { body, values } = buildShowBodyFromSweep(bytes, sweepIndex, start, end, step, dwellMs);
+    const offOpts = offBetween
+      ? { offBytes: MB_OFF_BYTES, offWaitMs }
+      : null;
+    const { body, values } = buildShowBodyFromSweep(
+      bytes, sweepIndex, start, end, step, dwellMs, undefined, offOpts,
+    );
     if (!values.length) { onStatus?.('Empty sweep range'); return; }
 
     setSweepValues(values);
+    setSweepOffBetween(!!offOpts);
     try {
       await startShow(ip, body);
-      onStatus?.(`Sweep started: ${values.length} values at byte ${sweepIndex}`);
+      const stepCount = offOpts ? values.length * 2 - 1 : values.length;
+      onStatus?.(
+        `Sweep started: ${values.length} values${offOpts ? ` + off between (${stepCount} steps)` : ''} at byte ${sweepIndex}`,
+      );
       startPolling(() => {
         setShowSweepLog(true);
         setSweepNote('');
@@ -104,10 +125,34 @@ export function WandLabSweepPanel({
           />
         </Group>
       )}
+      {opened && (
+        <Stack gap={4}>
+          <Checkbox
+            label="All-off (E905 palette 29) between values"
+            checked={offBetween}
+            onChange={(e) => setOffBetween(e.currentTarget.checked)}
+            size="xs"
+          />
+          {offBetween && (
+            <NumberInput
+              label="Off wait (ms)"
+              description="Hold after off command before next sweep value"
+              value={offWaitMs}
+              onChange={(v) => setOffWaitMs(Number(v) || 1000)}
+              min={50}
+              size="xs"
+              maw={200}
+            />
+          )}
+        </Stack>
+      )}
       {running && liveHex && (
         <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
           Live: {liveHex.toUpperCase()}
-          {currentVal != null && ` (0x${currentVal.toString(16).padStart(2, '0').toUpperCase()}, ${progress?.step ?? 0} / ${progress?.total ?? 0})`}
+          {isOffStep
+            ? ` (off, ${step} / ${progress?.total ?? 0})`
+            : currentVal != null
+              && ` (0x${currentVal.toString(16).padStart(2, '0').toUpperCase()}, ${step} / ${progress?.total ?? 0})`}
         </Text>
       )}
       {opened && (
@@ -140,8 +185,9 @@ export function WandLabSweepPanel({
             size="xs"
             variant="light"
             onClick={() => {
+              const offPart = offBetween ? `, off between (${offWaitMs}ms)` : '';
               const note = sweepNote.trim()
-                || `Sweep byte ${sweepIndex}: 0x${startHex}–0x${endHex} step 0x${stepHex}, ${dwellMs}ms dwell`;
+                || `Sweep byte ${sweepIndex}: 0x${startHex}–0x${endHex} step 0x${stepHex}, ${dwellMs}ms dwell${offPart}`;
               onSweepComplete?.({
                 note,
                 presetKey: `sweep:b${sweepIndex}`,

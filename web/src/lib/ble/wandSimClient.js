@@ -63,6 +63,10 @@ export function buildShowBodyFromPayloadRepeats(
   return lines.join('\n');
 }
 
+/**
+ * @param {number[] | null} [offBetween.offBytes] — payload sent between sweep values
+ * @param {number} [offBetween.offWaitMs] — hold time after off before next sweep value
+ */
 export function buildShowBodyFromSweep(
   baseBytes,
   sweepByteIndex,
@@ -71,11 +75,14 @@ export function buildShowBodyFromSweep(
   stepVal,
   dwellMs,
   lastHoldMs = DEFAULT_LAST_HOLD_MS,
+  offBetween = null,
 ) {
   const lines = [];
   const values = [];
   const step = Math.max(1, stepVal | 0);
   const forward = startVal <= endVal;
+  const offBytes = offBetween?.offBytes?.length ? offBetween.offBytes : null;
+  const offWaitMs = Math.max(50, Number(offBetween?.offWaitMs) || 1000);
 
   for (let v = startVal; forward ? v <= endVal : v >= endVal; v += forward ? step : -step) {
     values.push(v & 0xff);
@@ -87,10 +94,14 @@ export function buildShowBodyFromSweep(
     if (sweepByteIndex >= 0 && sweepByteIndex < bytes.length) {
       bytes[sweepByteIndex] = val;
     }
-    const hold = i < uniq.length - 1 ? dwellMs : lastHoldMs;
+    const isLast = i >= uniq.length - 1;
+    const hold = isLast ? lastHoldMs : dwellMs;
     lines.push(`${hold} ${payloadToShowHex(bytes)}`);
+    if (offBytes && !isLast) {
+      lines.push(`${offWaitMs} ${payloadToShowHex(offBytes)}`);
+    }
   });
-  return { body: lines.join('\n'), values: uniq };
+  return { body: lines.join('\n'), values: uniq, offBetween: !!offBytes };
 }
 
 /** Build /show body from capture rows: [{ ts_ms?, hex }]. */
