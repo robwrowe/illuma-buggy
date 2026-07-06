@@ -1531,8 +1531,10 @@ void applyMbFive(uint8_t topLeft, uint8_t bottomLeft, uint8_t bottomRight,
   if (!canTakeOverride(src)) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
+  // E909 wire order is TL, BL, BR, TR, center (Adafruit). On the stroller strip install,
+  // those slots map to rotated physical corners — permute into our segment key names.
   static const char* keys[5] = { "topLeft", "bottomLeft", "bottomRight", "topRight", "center" };
-  uint8_t pals[5] = { topLeft, bottomLeft, bottomRight, topRight, center };
+  uint8_t pals[5] = { center, topRight, bottomRight, bottomLeft, topLeft };
 
   applyMbMultiSegmentSolid(keys, pals, 5, src);
 }
