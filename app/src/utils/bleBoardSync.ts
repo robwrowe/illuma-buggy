@@ -338,6 +338,7 @@ export function fetchWledSegmentsFromDevice(timeoutMs = 8000): Promise<WledSegme
 
 export interface LiveWledSummary {
   on: boolean;
+  bri: number | null;
   fx: number | null;
   pal: number | null;
   activeSegCount: number;
@@ -353,8 +354,10 @@ function parseLiveWledSummary(state: Record<string, unknown>): LiveWledSummary {
   const primary = (active[0] ?? segs[0] ?? state) as Record<string, unknown>;
   const fx = primary.fx != null ? Number(primary.fx) : (state.fx != null ? Number(state.fx) : null);
   const pal = primary.pal != null ? Number(primary.pal) : (state.pal != null ? Number(state.pal) : null);
+  const bri = state.bri != null ? Number(state.bri) : null;
   return {
     on: state.on !== false,
+    bri,
     fx,
     pal,
     activeSegCount: active.length > 0 ? active.length : (segs.length > 0 ? 1 : 0),
