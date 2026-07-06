@@ -1,6 +1,6 @@
 import { Button, Paper } from '@mantine/core';
 
-export function AppButton({ variant = 'default', children, style, ...props }) {
+export function AppButton({ variant = 'default', children, ...props }) {
   const cfg = {
     primary: { variant: 'filled' },
     success: { variant: 'filled', color: 'green' },
@@ -8,15 +8,15 @@ export function AppButton({ variant = 'default', children, style, ...props }) {
     default: { variant: 'default' },
   }[variant] || { variant: 'default' };
   return (
-    <Button {...cfg} style={style} {...props}>
+    <Button {...cfg} {...props}>
       {children}
     </Button>
   );
 }
 
-export function AppCard({ children, style, ...props }) {
+export function AppCard({ children, ...props }) {
   return (
-    <Paper p="md" mb="sm" style={style} {...props}>
+    <Paper p="md" mb="sm" withBorder {...props}>
       {children}
     </Paper>
   );

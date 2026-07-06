@@ -19,7 +19,7 @@ import { AppButton } from '../shared/styles';
 import { groupZonesByPark, parkSelectOptions } from '../../lib/map/themeParks';
 import { focusMapOnPolygon, generateId, normalizePolygon, presetSelectOptions } from '../../lib/utils';
 
-export function MapZonesTab({ data, update }) {
+export function MapZonesTab({ data, update, mapsReady }) {
   const gmap = useRef(null);
   const mapDiv = useRef(null);
   const zonePoly = useRef([]);
@@ -161,47 +161,53 @@ export function MapZonesTab({ data, update }) {
     setEditInsertMode(false);
   };
 
-  // Init map
+  // Init map once Google Maps API is available
   useEffect(() => {
-    if (!window.google || gmap.current) return;
-    const waitForMaps = setInterval(() => {
-      if (!window.google?.maps) return;
-      clearInterval(waitForMaps);
-      gmap.current = new google.maps.Map(mapDiv.current, {
-        center: { lat: 28.4177, lng: -81.5812 }, zoom: 15,
-        mapTypeId: 'satellite',
-        mapTypeControl: false, streetViewControl: false,
-        fullscreenControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
-      });
-      setMapReady(true);
-      gmap.current.addListener('click', e => {
-        const lat = e.latLng.lat(), lng = e.latLng.lng();
-        if (editingActiveRef.current) {
-          const pts = editPtsRef.current;
-          if (editInsertModeRef.current && pts.length >= 2) {
-            let bestIdx = 0, bestDist = Infinity;
-            for (let i = 0; i < pts.length; i++) {
-              const a = pts[i], b = pts[(i + 1) % pts.length];
-              const midLat = (a.lat + b.lat) / 2, midLng = (a.lng + b.lng) / 2;
-              const d = Math.pow(lat - midLat, 2) + Math.pow(lng - midLng, 2);
-              if (d < bestDist) { bestDist = d; bestIdx = i; }
+    if (!mapsReady || gmap.current || !mapDiv.current) return;
+    if (!window.google?.maps) return;
+
+    gmap.current = new google.maps.Map(mapDiv.current, {
+      center: { lat: 28.4177, lng: -81.5812 },
+      zoom: 15,
+      mapTypeId: 'satellite',
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControlOptions: { position: google.maps.ControlPosition.TOP_LEFT },
+    });
+    setMapReady(true);
+    gmap.current.addListener('click', (e) => {
+      const lat = e.latLng.lat();
+      const lng = e.latLng.lng();
+      if (editingActiveRef.current) {
+        const pts = editPtsRef.current;
+        if (editInsertModeRef.current && pts.length >= 2) {
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < pts.length; i++) {
+            const a = pts[i];
+            const b = pts[(i + 1) % pts.length];
+            const midLat = (a.lat + b.lat) / 2;
+            const midLng = (a.lng + b.lng) / 2;
+            const d = Math.pow(lat - midLat, 2) + Math.pow(lng - midLng, 2);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
             }
-            setEditPoints(prev => {
-              const u = [...prev];
-              u.splice(bestIdx + 1, 0, { lat, lng });
-              return u;
-            });
-          } else {
-            setEditPoints(prev => [...prev, { lat, lng }]);
           }
-          return;
+          setEditPoints((prev) => {
+            const u = [...prev];
+            u.splice(bestIdx + 1, 0, { lat, lng });
+            return u;
+          });
+        } else {
+          setEditPoints((prev) => [...prev, { lat, lng }]);
         }
-        if (drawModeRef.current === 'none') return;
-        addDrawPointRef.current(lat, lng);
-      });
-    }, 200);
-    return () => clearInterval(waitForMaps);
-  }, []);
+        return;
+      }
+      if (drawModeRef.current === 'none') return;
+      addDrawPointRef.current(lat, lng);
+    });
+  }, [mapsReady]);
 
   // Redraw zone polygons
   useEffect(() => {
@@ -630,7 +636,7 @@ export function MapZonesTab({ data, update }) {
                   size="compact-xs"
                   mb={4}
                   onClick={() => toggleParkSection(`preset-${group.key}`)}
-                  styles={{ inner: { justifyContent: 'flex-start' } }}
+                  styles={{ root: { justifyContent: 'flex-start' } }}
                 >
                   {collapsed ? '▸' : '▾'} {group.label} ({group.zones.length})
                 </AppButton>
@@ -667,8 +673,8 @@ export function MapZonesTab({ data, update }) {
 
       {/* Map */}
       <Box style={{ flex: 1, position: 'relative' }}>
-        <div ref={mapDiv} style={{ width: '100%', height: '100%' }} />
-        {!window.MAPS_LOADED && (
+        <div ref={mapDiv} id="map-container" style={{ width: '100%', height: '100%' }} />
+        {!mapsReady && (
           <Box
             style={{
               position: 'absolute',
@@ -679,7 +685,9 @@ export function MapZonesTab({ data, update }) {
               background: 'var(--surface)',
             }}
           >
-            <Text size="sm" c="dimmed">Loading Google Maps… (check your API key in index.html)</Text>
+            <Text size="sm" c="dimmed" ta="center" px="md">
+              Loading Google Maps…
+            </Text>
           </Box>
         )}
       </Box>

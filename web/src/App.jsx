@@ -55,12 +55,17 @@ export function App() {
   const [showBoardSync, setShowBoardSync] = useState(false);
   const [mapsKey, setMapsKey] = useLocalStorage({ key: 'maps-api-key', defaultValue: '' });
   const [keyInput, setKeyInput] = useState(mapsKey);
-  const [keyModalOpened, { close: closeKeyModal }] = useDisclosure(!mapsKey);
+  const [keyModalOpened, setKeyModalOpened] = useState(() => !mapsKey);
   const [newProfileName, setNewProfileName] = useState('');
 
   useEffect(() => {
     if (!mapsKey) return;
     loadGoogleMaps(mapsKey).then(() => setMapsReady(true)).catch(() => {});
+  }, [mapsKey]);
+
+  useEffect(() => {
+    setKeyModalOpened(!mapsKey);
+    if (mapsKey) setKeyInput(mapsKey);
   }, [mapsKey]);
 
   const replaceData = useCallback((next) => {
@@ -80,7 +85,7 @@ export function App() {
     const k = keyInput.trim();
     if (!k) return;
     setMapsKey(k);
-    closeKeyModal();
+    setKeyModalOpened(false);
     loadGoogleMaps(k).then(() => setMapsReady(true)).catch(() => {});
   };
 
@@ -131,30 +136,30 @@ export function App() {
 
   return (
     <AppShell
-      header={{ height: isNarrow ? 96 : 52 }}
+      header={{ height: isNarrow ? 100 : 56 }}
       padding={0}
       styles={{ main: { height: 'calc(100vh - var(--app-shell-header-height))', overflow: 'hidden' } }}
     >
-      <AppShell.Header px="sm" py={isNarrow ? 'xs' : 0} bg="dark.1">
-        <Stack gap={6} h="100%" justify="center">
+      <AppShell.Header px="md">
+        <Stack gap="xs" h="100%" justify="center">
           <Group justify="space-between" wrap="nowrap" gap="xs">
-            <Title order={5} c="violet.4" style={{ color: 'var(--primary)' }}>🔦 Illuma Buggy</Title>
+            <Title order={5}>🔦 Illuma Buggy</Title>
             <Group gap={4} wrap="nowrap">
-              <Button size="compact-xs" variant="default" onClick={() => setShowBoardSync(true)}>📡 Board</Button>
-              <Button size="compact-xs" variant="default" onClick={openProfiles}>
+              <Button size="xs" variant="default" onClick={() => setShowBoardSync(true)}>📡 Board</Button>
+              <Button size="xs" variant="default" onClick={openProfiles}>
                 🗂 {Object.keys(profiles).length > 0 ? `(${Object.keys(profiles).length})` : ''}
               </Button>
               <FileButton onChange={importJSON} accept=".json">
-                {(props) => <Button size="compact-xs" variant="default" {...props}>📥</Button>}
+                {(props) => <Button size="xs" variant="default" {...props}>📥</Button>}
               </FileButton>
-              <Button size="compact-xs" onClick={exportJSON}>📤</Button>
+              <Button size="xs" onClick={exportJSON}>📤</Button>
             </Group>
           </Group>
           <ScrollArea type="never" offsetScrollbars={false}>
-            <Tabs value={tab} onChange={(v) => v && setTab(v)} variant="pills" color="violet" styles={{ list: { flexWrap: 'nowrap' } }}>
+            <Tabs value={tab} onChange={(v) => v && setTab(v)} styles={{ list: { flexWrap: 'nowrap' } }}>
               <Tabs.List grow={!isNarrow}>
                 {TABS.map((t) => (
-                  <Tabs.Tab key={t.id} value={t.id} style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                  <Tabs.Tab key={t.id} value={t.id}>
                     {isNarrow ? t.icon : `${t.icon} ${t.label}`}
                   </Tabs.Tab>
                 ))}
@@ -176,11 +181,13 @@ export function App() {
         </Box>
       </AppShell.Main>
 
-      <Modal opened={keyModalOpened} onClose={mapsKey ? closeKeyModal : () => {}} withCloseButton={!!mapsKey} title="🔑 Google Maps API Key" size="md">
+      <Modal opened={keyModalOpened} onClose={() => setKeyModalOpened(false)} withCloseButton={!!mapsKey} title="🔑 Google Maps API Key" size="md">
         <Stack gap="md">
           <Text size="sm" c="dimmed">
             Stored only in your browser. Get a key at{' '}
-            <a href="https://console.cloud.google.com/google/maps-apis" target="_blank" rel="noreferrer">Google Cloud Console</a>
+            <Text component="a" href="https://console.cloud.google.com/google/maps-apis" target="_blank" rel="noreferrer" c="violet.4" inherit>
+              Google Cloud Console
+            </Text>
             {' '}— enable Maps JavaScript API and Geocoding API.
           </Text>
           <TextInput
@@ -192,7 +199,7 @@ export function App() {
             autoFocus
           />
           <Group>
-            {mapsKey && <Button variant="default" onClick={closeKeyModal} style={{ flex: 1 }}>Cancel</Button>}
+            {mapsKey && <Button variant="default" onClick={() => setKeyModalOpened(false)} style={{ flex: 1 }}>Cancel</Button>}
             <Button onClick={saveMapsKey} disabled={!keyInput.trim()} style={{ flex: 1 }}>Save & Load Map</Button>
           </Group>
         </Stack>
