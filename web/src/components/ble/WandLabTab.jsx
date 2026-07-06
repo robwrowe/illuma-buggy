@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Badge,
+  Box,
   Button,
   Group,
   ScrollArea,
@@ -9,24 +9,23 @@ import {
   Stack,
   Tabs,
   Text,
-  Textarea,
   TextInput,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
-import { SectionHead } from '../shared/SectionHead';
 import {
   MB_PATTERN_MODES,
   SW_FX_PRESET_BYTES,
   WAND_LAB_MB_CMDS,
-  WAND_LAB_TAGS,
   mbPaletteOptions,
 } from '../../lib/ble/mbConstants';
 import { buildMbDual, buildMbFive, buildMbPing, buildMbRgb, buildMbSingle } from '../../lib/ble/mbPayloads';
-import { bytesToHex, sendHex } from '../../lib/ble/wandSimClient';
+import { bytesToHex, parseHexToBytes, sendHex } from '../../lib/ble/wandSimClient';
 import { DEFAULT_DATA, generateId } from '../../lib/utils';
 import { WAND_LAB_SECTIONS } from '../../lib/routes';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
+import { WandLabLogPanel } from './WandLabLogPanel';
 import { WandLabPacketSequence } from './WandLabPacketSequence';
 import { WandLabQuickCommands } from './WandLabQuickCommands';
 import { WandLabShowPanel } from './WandLabShowPanel';
@@ -34,15 +33,48 @@ import { SweepByteIndex, WandLabSweepPanel } from './WandLabSweepPanel';
 
 const LAB_TABS = WAND_LAB_SECTIONS;
 
+function buildLogSnapshot(labTab, bytes, origBytes, presetKey, sequencePackets) {
+  if (labTab === 'sequence') {
+    const valid = sequencePackets.filter((p) => p.bytes?.length);
+    if (valid.length > 1) {
+      return {
+        kind: 'sequence',
+        presetKey: 'sequence',
+        packets: valid.map((p) => ({
+          bytes: bytesToHex(p.bytes),
+          waitMs: p.waitMs ?? 1000,
+        })),
+      };
+    }
+    if (valid.length === 1) {
+      const hex = bytesToHex(valid[0].bytes);
+      return { kind: 'single', presetKey: 'sequence', bytes: hex, origBytes: hex };
+    }
+  }
+  return {
+    kind: 'single',
+    presetKey,
+    bytes: bytesToHex(bytes),
+    origBytes: bytesToHex(origBytes),
+  };
+}
+
 export function WandLabTab({ data, update }) {
   const { section } = useParams();
   const navigate = useNavigate();
+  const isNarrow = useMediaQuery('(max-width: 62em)');
   const labTab = WAND_LAB_SECTIONS.some((t) => t.path === section) ? section : 'quick';
   const setLabTab = (v) => { if (v) navigate(`/wandlab/${v}`); };
+
+  useEffect(() => {
+    if (section === 'log') navigate('/wandlab/quick', { replace: true });
+  }, [section, navigate]);
+
   const lab = data.wandLab || DEFAULT_DATA.wandLab;
   const [presetKey, setPresetKey] = useState('rainbow');
   const [bytes, setBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
   const [origBytes, setOrigBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
+  const [sequencePackets, setSequencePackets] = useState([]);
   const [note, setNote] = useState('');
   const [tag, setTag] = useState('unknown');
   const [sending, setSending] = useState(false);
@@ -144,15 +176,18 @@ export function WandLabTab({ data, update }) {
     await sendBytes(b);
   };
 
-  const addLogEntry = ({ note: logNote, presetKey: pk, bytes: hexOverride }) => {
+  const addLogEntry = ({ note: logNote, presetKey: pk, snapshot: snapOverride } = {}) => {
+    const snap = snapOverride || buildLogSnapshot(labTab, bytes, origBytes, presetKey, sequencePackets);
     const entry = {
       id: editingLogId || generateId(),
       ts: editingLogId
         ? (lab.log || []).find((e) => e.id === editingLogId)?.ts || Date.now()
         : Date.now(),
-      presetKey: pk || presetKey,
-      bytes: hexOverride || bytesToHex(bytes),
-      origBytes: bytesToHex(origBytes),
+      kind: snap.kind,
+      presetKey: pk || snap.presetKey || presetKey,
+      bytes: snap.kind === 'single' ? snap.bytes : (snap.packets?.[0]?.bytes || ''),
+      origBytes: snap.origBytes || snap.bytes || '',
+      packets: snap.kind === 'sequence' ? snap.packets : undefined,
       tag,
       note: (logNote ?? note).trim(),
     };
@@ -165,13 +200,22 @@ export function WandLabTab({ data, update }) {
     setEditingLogId(null);
   };
 
-  const logEntry = () => addLogEntry({});
-
   const loadLogEntry = (e) => {
-    const arr = (e.bytes || '').match(/.{1,2}/g)?.map((h) => parseInt(h, 16)) || [];
-    if (arr.length) {
-      setByteArray(arr, e.presetKey || 'log');
-      setLabTab('bytes');
+    if ((e.kind === 'sequence' || e.packets?.length > 1) && e.packets?.length) {
+      setSequencePackets(e.packets.map((p) => ({
+        id: generateId(),
+        bytes: parseHexToBytes(p.bytes),
+        waitMs: p.waitMs ?? 1000,
+        label: '',
+      })));
+      setPresetKey('sequence');
+      setLabTab('sequence');
+    } else {
+      const arr = (e.bytes || '').match(/.{1,2}/g)?.map((h) => parseInt(h, 16)) || [];
+      if (arr.length) {
+        setByteArray(arr, e.presetKey || 'log');
+        setLabTab('bytes');
+      }
     }
     setTag(e.tag || 'unknown');
     setNote(e.note || '');
@@ -209,318 +253,275 @@ export function WandLabTab({ data, update }) {
   };
 
   return (
-    <ScrollArea h="100%" type="auto">
-      <Stack p="md" gap="md" maw={960}>
-        <Text size="xs" c="dimmed">
-          Byte-stepper for WandSimulator on your LAN. Flash WandSimulator, run{' '}
-          <Text span ff="monospace">wifi KyLan Ren password</Text> in Serial, then enter its IP below.
-        </Text>
+    <Box
+      h="100%"
+      style={{
+        display: 'flex',
+        flexDirection: isNarrow ? 'column' : 'row',
+        overflow: 'hidden',
+        minHeight: 0,
+      }}
+    >
+      <ScrollArea h="100%" type="auto" style={{ flex: 1, minWidth: 0 }}>
+        <Stack p="md" gap="md">
+          <Text size="xs" c="dimmed">
+            Byte-stepper for WandSimulator on your LAN. Flash WandSimulator, run{' '}
+            <Text span ff="monospace">wifi KyLan Ren password</Text> in Serial, then enter its IP below.
+          </Text>
 
-        <TextInput
-          label="Simulator IP"
-          value={lab.simIp || ''}
-          placeholder="192.168.1.x"
-          onChange={(e) => update({ wandLab: { ...lab, simIp: e.target.value.trim() } })}
-        />
+          <TextInput
+            label="Simulator IP"
+            value={lab.simIp || ''}
+            placeholder="192.168.1.x"
+            onChange={(e) => update({ wandLab: { ...lab, simIp: e.target.value.trim() } })}
+          />
 
-        {status && <Text size="xs" c="dimmed">{status}</Text>}
+          {status && <Text size="xs" c="dimmed">{status}</Text>}
 
-        <Tabs value={labTab} onChange={(v) => v && setLabTab(v)} keepMounted={false}>
-          <Tabs.List>
-            {LAB_TABS.map((t) => (
-              <Tabs.Tab key={t.path} value={t.path}>{t.label}</Tabs.Tab>
-            ))}
-          </Tabs.List>
+          <Tabs value={labTab} onChange={(v) => v && setLabTab(v)} keepMounted={false}>
+            <Tabs.List>
+              {LAB_TABS.map((t) => (
+                <Tabs.Tab key={t.path} value={t.path}>{t.label}</Tabs.Tab>
+              ))}
+            </Tabs.List>
 
-          <Tabs.Panel value="quick" pt="md">
-            <WandLabQuickCommands
-              simIp={lab.simIp}
-              onStatus={setStatus}
-              sending={sending}
-              setSending={setSending}
-            />
-          </Tabs.Panel>
+            <Tabs.Panel value="quick" pt="md">
+              <WandLabQuickCommands
+                simIp={lab.simIp}
+                onStatus={setStatus}
+                sending={sending}
+                setSending={setSending}
+              />
+            </Tabs.Panel>
 
-          <Tabs.Panel value="mb" pt="md">
-            <Stack gap="md">
-              <Text size="xs" c="dimmed">
-                Build standard MB packets (same builders as WandSimulator). Load into the byte editor or send directly.
-              </Text>
-              <Field label="Command">
-                <SearchableSelect
-                  value={mbCmd}
-                  allowEmpty={false}
-                  onChange={setMbCmd}
-                  options={WAND_LAB_MB_CMDS.map((c) => ({ value: c.id, label: c.label, searchText: c.label }))}
-                />
-              </Field>
-              {mbCmd === 'single' && (
-                <>
-                  <Field label="Palette">
-                    <SearchableSelect value={mbPal} allowEmpty={false} onChange={setMbPal} options={palOpts} />
-                  </Field>
-                  <Field label="LED mask (0 = all; bit N = band N)">
-                    <TextInput type="number" min={0} max={255} value={mbMask} onChange={(e) => setMbMask(e.target.value)} />
-                  </Field>
-                </>
-              )}
-              {mbCmd === 'dual' && (
-                <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                  <Field label="Inner ring">
-                    <SearchableSelect value={mbInner} allowEmpty={false} onChange={setMbInner} options={palOpts} />
-                  </Field>
-                  <Field label="Outer ring">
-                    <SearchableSelect value={mbOuter} allowEmpty={false} onChange={setMbOuter} options={palOpts} />
-                  </Field>
-                </SimpleGrid>
-              )}
-              {mbCmd === 'rgb' && (
-                <SimpleGrid cols={{ base: 1, xs: 3 }}>
-                  {['r', 'g', 'b'].map((ch) => (
-                    <Field key={ch} label={`${ch.toUpperCase()} (0–63)`}>
-                      <TextInput
-                        type="number"
-                        min={0}
-                        max={63}
-                        value={mbRgb[ch]}
-                        onChange={(e) => setMbRgb((prev) => ({
-                          ...prev,
-                          [ch]: Math.max(0, Math.min(63, parseInt(e.target.value, 10) || 0)),
-                        }))}
-                      />
+            <Tabs.Panel value="mb" pt="md">
+              <Stack gap="md">
+                <Text size="xs" c="dimmed">
+                  Build standard MB packets (same builders as WandSimulator). Load into the byte editor or send directly.
+                </Text>
+                <Field label="Command">
+                  <SearchableSelect
+                    value={mbCmd}
+                    allowEmpty={false}
+                    onChange={setMbCmd}
+                    options={WAND_LAB_MB_CMDS.map((c) => ({ value: c.id, label: c.label, searchText: c.label }))}
+                  />
+                </Field>
+                {mbCmd === 'single' && (
+                  <>
+                    <Field label="Palette">
+                      <SearchableSelect value={mbPal} allowEmpty={false} onChange={setMbPal} options={palOpts} />
                     </Field>
-                  ))}
-                </SimpleGrid>
-              )}
-              {mbCmd === 'five' && (
-                <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                  {[
-                    ['tl', 'Top-left'], ['bl', 'Bottom-left'], ['br', 'Bottom-right'],
-                    ['tr', 'Top-right'], ['c', 'Center'],
-                  ].map(([key, label]) => (
-                    <Field key={key} label={label}>
+                    <Field label="LED mask (0 = all; bit N = band N)">
+                      <TextInput type="number" min={0} max={255} value={mbMask} onChange={(e) => setMbMask(e.target.value)} />
+                    </Field>
+                  </>
+                )}
+                {mbCmd === 'dual' && (
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    <Field label="Inner ring">
+                      <SearchableSelect value={mbInner} allowEmpty={false} onChange={setMbInner} options={palOpts} />
+                    </Field>
+                    <Field label="Outer ring">
+                      <SearchableSelect value={mbOuter} allowEmpty={false} onChange={setMbOuter} options={palOpts} />
+                    </Field>
+                  </SimpleGrid>
+                )}
+                {mbCmd === 'rgb' && (
+                  <SimpleGrid cols={{ base: 1, xs: 3 }}>
+                    {['r', 'g', 'b'].map((ch) => (
+                      <Field key={ch} label={`${ch.toUpperCase()} (0–63)`}>
+                        <TextInput
+                          type="number"
+                          min={0}
+                          max={63}
+                          value={mbRgb[ch]}
+                          onChange={(e) => setMbRgb((prev) => ({
+                            ...prev,
+                            [ch]: Math.max(0, Math.min(63, parseInt(e.target.value, 10) || 0)),
+                          }))}
+                        />
+                      </Field>
+                    ))}
+                  </SimpleGrid>
+                )}
+                {mbCmd === 'five' && (
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    {[
+                      ['tl', 'Top-left'], ['bl', 'Bottom-left'], ['br', 'Bottom-right'],
+                      ['tr', 'Top-right'], ['c', 'Center'],
+                    ].map(([key, label]) => (
+                      <Field key={key} label={label}>
+                        <SearchableSelect
+                          value={mbFive[key]}
+                          allowEmpty={false}
+                          onChange={(v) => setMbFive((prev) => ({ ...prev, [key]: v }))}
+                          options={palOpts}
+                        />
+                      </Field>
+                    ))}
+                  </SimpleGrid>
+                )}
+                {mbCmd === 'pattern' && (
+                  <>
+                    <Field label="Pattern">
                       <SearchableSelect
-                        value={mbFive[key]}
+                        value={mbPattern}
                         allowEmpty={false}
-                        onChange={(v) => setMbFive((prev) => ({ ...prev, [key]: v }))}
-                        options={palOpts}
+                        onChange={setMbPattern}
+                        options={MB_PATTERN_MODES.map((m) => ({ value: m.id, label: m.label, searchText: m.label }))}
                       />
                     </Field>
-                  ))}
-                </SimpleGrid>
-              )}
-              {mbCmd === 'pattern' && (
-                <>
-                  <Field label="Pattern">
-                    <SearchableSelect
-                      value={mbPattern}
-                      allowEmpty={false}
-                      onChange={setMbPattern}
-                      options={MB_PATTERN_MODES.map((m) => ({ value: m.id, label: m.label, searchText: m.label }))}
-                    />
-                  </Field>
-                  <Field label="Color">
-                    <SearchableSelect value={mbPal} allowEmpty={false} onChange={setMbPal} options={palOpts} />
-                  </Field>
-                </>
-              )}
-              <Group gap="xs" wrap="wrap">
-                <Button variant="default" onClick={() => { loadMbCommand(); setLabTab('bytes'); }} style={{ flex: 1, minWidth: 120 }}>
-                  Load into editor
-                </Button>
-                <Button onClick={sendMbCommand} loading={sending} style={{ flex: 1, minWidth: 120 }}>
-                  Send MB command
-                </Button>
-              </Group>
-            </Stack>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="bytes" pt="md">
-            <Stack gap="md">
-              <Field label="Paste single hex / capture row">
-                <WandLabCapturePaste
-                  hexPaste={hexPaste}
-                  onHexPasteChange={setHexPaste}
-                  onLoadBytes={(arr) => setByteArray(arr, 'paste')}
-                  onStatus={setStatus}
-                  simIp={lab.simIp}
-                />
-              </Field>
-
-              <Text size="xs" ff="monospace" c="dimmed" style={{ wordBreak: 'break-all' }}>
-                {bytes.length ? bytesToHex(bytes).toUpperCase() : '(empty)'}
-              </Text>
-
-              <Group gap={6} wrap="wrap" align="flex-start">
-                {bytes.map((b, i) => (
-                  <label
-                    key={i}
-                    style={{
-                      fontSize: 10,
-                      fontFamily: 'monospace',
-                      position: 'relative',
-                      background: b !== origBytes[i] ? 'var(--primary-dim)' : 'var(--surface2)',
-                      border: `1px solid ${b !== origBytes[i] ? 'var(--primary)' : sweepIndex === i ? 'var(--mantine-color-yellow-5)' : 'var(--border)'}`,
-                      borderRadius: 4,
-                      padding: '4px 18px 4px 4px',
-                    }}
-                  >
-                    <SweepByteIndex
-                      index={i}
-                      isModified={b !== origBytes[i]}
-                      isSweepTarget={sweepIndex === i}
-                      onSelect={setSweepIndex}
-                    />
-                    <input
-                      style={{ width: 22, border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'monospace', fontSize: 11 }}
-                      value={b.toString(16).padStart(2, '0').toUpperCase()}
-                      onChange={(e) => patchByte(i, e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      title="Remove byte"
-                      onClick={() => removeByte(i)}
-                      style={{
-                        position: 'absolute', top: 2, right: 2, border: 'none', background: 'transparent',
-                        color: 'var(--text3)', cursor: 'pointer', fontSize: 10, lineHeight: 1, padding: 0,
-                      }}
-                    >
-                      ×
-                    </button>
-                  </label>
-                ))}
-                <Button size="compact-xs" variant="default" onClick={addByte}>+ byte</Button>
-                {bytes.some((b, i) => b !== origBytes[i]) && (
-                  <Button size="compact-xs" variant="default" onClick={resetBytes}>Reset</Button>
+                    <Field label="Color">
+                      <SearchableSelect value={mbPal} allowEmpty={false} onChange={setMbPal} options={palOpts} />
+                    </Field>
+                  </>
                 )}
-              </Group>
-
-              <WandLabSweepPanel
-                simIp={lab.simIp}
-                bytes={bytes}
-                sweepIndex={sweepIndex}
-                onSweepIndexChange={setSweepIndex}
-                onStatus={setStatus}
-                onSweepComplete={(payload) => addLogEntry(payload)}
-              />
-
-              <Field label="Starlight / show preset">
-                <SearchableSelect
-                  value={SW_FX_PRESET_BYTES[presetKey] ? presetKey : ''}
-                  allowEmpty
-                  onChange={loadPreset}
-                  placeholder={presetKey.startsWith('mb:') || presetKey === 'sequence' || presetKey === 'paste' ? presetKey : 'Load show preset…'}
-                  options={Object.keys(SW_FX_PRESET_BYTES).map((k) => ({ value: k, label: k, searchText: k }))}
-                />
-              </Field>
-
-              <Button onClick={() => sendBytes(bytes)} loading={sending} disabled={bytes.length === 0}>
-                Send raw bytes (/send)
-              </Button>
-
-              <WandLabShowPanel
-                simIp={lab.simIp}
-                bytes={bytes}
-                onStatus={setStatus}
-                onBurstComplete={(payload) => addLogEntry(payload)}
-              />
-            </Stack>
-          </Tabs.Panel>
-
-          <Tabs.Panel value="sequence" pt="md">
-            <WandLabPacketSequence
-              simIp={lab.simIp}
-              onStatus={setStatus}
-              onLoadToEditor={loadFromSequence}
-            />
-          </Tabs.Panel>
-
-          <Tabs.Panel value="log" pt="md">
-            <Stack gap="md">
-              <SectionHead>Observation log</SectionHead>
-              <Group gap="xs" wrap="wrap">
-                {WAND_LAB_TAGS.map((t) => (
-                  <Badge
-                    key={t}
-                    variant={tag === t ? 'filled' : 'outline'}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => setTag(t)}
-                  >
-                    {t}
-                  </Badge>
-                ))}
-              </Group>
-              <Textarea
-                placeholder="What happened on the strip?"
-                minRows={2}
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-              />
-              <Group gap="xs">
-                <Button variant="default" onClick={logEntry} style={{ flex: 1 }}>
-                  {editingLogId ? 'Save log entry' : 'Add log entry'}
-                </Button>
-                {editingLogId && (
-                  <Button variant="default" onClick={() => { setEditingLogId(null); setNote(''); }} style={{ flex: 1 }}>
-                    Cancel edit
+                <Group gap="xs" wrap="wrap">
+                  <Button variant="default" onClick={() => { loadMbCommand(); setLabTab('bytes'); }} style={{ flex: 1, minWidth: 120 }}>
+                    Load into editor
                   </Button>
-                )}
-              </Group>
-              <Group gap="xs" wrap="wrap" align="center">
-                <Text size="sm" fw={600}>Log ({(lab.log || []).length})</Text>
-                <SearchableSelect
-                  value={logFilter}
-                  allowEmpty
-                  onChange={setLogFilter}
-                  placeholder="Filter…"
-                  options={[
-                    ...Object.keys(SW_FX_PRESET_BYTES),
-                    ...WAND_LAB_MB_CMDS.map((c) => `mb:${c.id}`),
-                    ...WAND_LAB_TAGS,
-                    'paste',
-                    'sequence',
-                    'burst',
-                  ].map((v) => ({ value: v, label: v, searchText: v }))}
-                />
-                <Button size="xs" variant="default" onClick={exportLog}>Export JSON</Button>
-                {(lab.log || []).length > 0 && (
-                  <Button size="xs" color="red" variant="light" onClick={purgeLog}>Purge all</Button>
-                )}
-              </Group>
-              {filteredLog.length === 0 ? (
-                <Text size="sm" c="dimmed">No log entries yet.</Text>
-              ) : (
-                <Stack gap="xs">
-                  {filteredLog.map((e) => (
-                    <Stack
-                      key={e.id}
-                      gap={4}
-                      p="xs"
+                  <Button onClick={sendMbCommand} loading={sending} style={{ flex: 1, minWidth: 120 }}>
+                    Send MB command
+                  </Button>
+                </Group>
+              </Stack>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="bytes" pt="md">
+              <Stack gap="md">
+                <Field label="Paste single hex / capture row">
+                  <WandLabCapturePaste
+                    hexPaste={hexPaste}
+                    onHexPasteChange={setHexPaste}
+                    onLoadBytes={(arr) => setByteArray(arr, 'paste')}
+                    onStatus={setStatus}
+                    simIp={lab.simIp}
+                  />
+                </Field>
+
+                <Text size="xs" ff="monospace" c="dimmed" style={{ wordBreak: 'break-all' }}>
+                  {bytes.length ? bytesToHex(bytes).toUpperCase() : '(empty)'}
+                </Text>
+
+                <Group gap={6} wrap="wrap" align="flex-start">
+                  {bytes.map((b, i) => (
+                    <label
+                      key={i}
                       style={{
-                        background: 'var(--surface2)',
-                        borderRadius: 8,
-                        border: editingLogId === e.id ? '1px solid var(--primary)' : '1px solid transparent',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        position: 'relative',
+                        background: b !== origBytes[i] ? 'var(--primary-dim)' : 'var(--surface2)',
+                        border: `1px solid ${b !== origBytes[i] ? 'var(--primary)' : sweepIndex === i ? 'var(--mantine-color-yellow-5)' : 'var(--border)'}`,
+                        borderRadius: 4,
+                        padding: '4px 18px 4px 4px',
                       }}
                     >
-                      <Group justify="space-between" wrap="nowrap" align="flex-start">
-                        <Text size="xs" fw={600}>
-                          {e.presetKey} · {e.tag} · {new Date(e.ts).toLocaleString()}
-                        </Text>
-                        <Group gap={4} wrap="nowrap">
-                          <Button size="compact-xs" variant="default" onClick={() => loadLogEntry(e)}>Load</Button>
-                          <Button size="compact-xs" color="red" variant="light" onClick={() => deleteLogEntry(e.id)}>Delete</Button>
-                        </Group>
-                      </Group>
-                      {e.note && <Text size="xs" c="dimmed">{e.note}</Text>}
-                      <Text size="xs" ff="monospace" c="dimmed" style={{ wordBreak: 'break-all' }}>{e.bytes}</Text>
-                    </Stack>
+                      <SweepByteIndex
+                        index={i}
+                        isModified={b !== origBytes[i]}
+                        isSweepTarget={sweepIndex === i}
+                        onSelect={setSweepIndex}
+                      />
+                      <input
+                        style={{ width: 22, border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'monospace', fontSize: 11 }}
+                        value={b.toString(16).padStart(2, '0').toUpperCase()}
+                        onChange={(e) => patchByte(i, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        title="Remove byte"
+                        onClick={() => removeByte(i)}
+                        style={{
+                          position: 'absolute', top: 2, right: 2, border: 'none', background: 'transparent',
+                          color: 'var(--text3)', cursor: 'pointer', fontSize: 10, lineHeight: 1, padding: 0,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </label>
                   ))}
-                </Stack>
-              )}
-            </Stack>
-          </Tabs.Panel>
-        </Tabs>
-      </Stack>
-    </ScrollArea>
+                  <Button size="compact-xs" variant="default" onClick={addByte}>+ byte</Button>
+                  {bytes.some((b, i) => b !== origBytes[i]) && (
+                    <Button size="compact-xs" variant="default" onClick={resetBytes}>Reset</Button>
+                  )}
+                </Group>
+
+                <WandLabSweepPanel
+                  simIp={lab.simIp}
+                  bytes={bytes}
+                  sweepIndex={sweepIndex}
+                  onSweepIndexChange={setSweepIndex}
+                  onStatus={setStatus}
+                  onSweepComplete={(payload) => addLogEntry(payload)}
+                />
+
+                <Field label="Starlight / show preset">
+                  <SearchableSelect
+                    value={SW_FX_PRESET_BYTES[presetKey] ? presetKey : ''}
+                    allowEmpty
+                    onChange={loadPreset}
+                    placeholder={presetKey.startsWith('mb:') || presetKey === 'sequence' || presetKey === 'paste' ? presetKey : 'Load show preset…'}
+                    options={Object.keys(SW_FX_PRESET_BYTES).map((k) => ({ value: k, label: k, searchText: k }))}
+                  />
+                </Field>
+
+                <Button onClick={() => sendBytes(bytes)} loading={sending} disabled={bytes.length === 0}>
+                  Send raw bytes (/send)
+                </Button>
+
+                <WandLabShowPanel
+                  simIp={lab.simIp}
+                  bytes={bytes}
+                  onStatus={setStatus}
+                  onBurstComplete={(payload) => addLogEntry(payload)}
+                />
+              </Stack>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="sequence" pt="md">
+              <WandLabPacketSequence
+                simIp={lab.simIp}
+                packets={sequencePackets}
+                setPackets={setSequencePackets}
+                onStatus={setStatus}
+                onLoadToEditor={loadFromSequence}
+                onSequenceComplete={(payload) => addLogEntry(payload)}
+              />
+            </Tabs.Panel>
+          </Tabs>
+        </Stack>
+      </ScrollArea>
+
+      <Box
+        w={isNarrow ? '100%' : 300}
+        h={isNarrow ? 280 : '100%'}
+        style={{
+          flexShrink: 0,
+          borderLeft: isNarrow ? undefined : '1px solid var(--border)',
+          borderTop: isNarrow ? '1px solid var(--border)' : undefined,
+          minHeight: 0,
+        }}
+      >
+        <WandLabLogPanel
+          log={lab.log}
+          filteredLog={filteredLog}
+          tag={tag}
+          onTagChange={setTag}
+          note={note}
+          onNoteChange={setNote}
+          logFilter={logFilter}
+          onLogFilterChange={setLogFilter}
+          editingLogId={editingLogId}
+          onAddEntry={() => addLogEntry()}
+          onCancelEdit={() => { setEditingLogId(null); setNote(''); }}
+          onLoadEntry={loadLogEntry}
+          onDeleteEntry={deleteLogEntry}
+          onExport={exportLog}
+          onPurge={purgeLog}
+        />
+      </Box>
+    </Box>
   );
 }

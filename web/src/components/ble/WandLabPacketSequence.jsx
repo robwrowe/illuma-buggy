@@ -19,11 +19,17 @@ function emptyPacket() {
   return { id: generateId(), bytes: [], waitMs: 1000, label: '' };
 }
 
-export function WandLabPacketSequence({ simIp, onStatus, onLoadToEditor }) {
+export function WandLabPacketSequence({
+  simIp,
+  packets,
+  setPackets,
+  onStatus,
+  onLoadToEditor,
+  onSequenceComplete,
+}) {
   const [pasteText, setPasteText] = useState('');
   const [strip8301, setStrip8301] = useState(true);
   const [defaultWaitMs, setDefaultWaitMs] = useState(1000);
-  const [packets, setPackets] = useState([]);
   const { progress, startPolling, stop } = useShowProgress(simIp);
   const running = progress?.active;
 
@@ -72,7 +78,14 @@ export function WandLabPacketSequence({ simIp, onStatus, onLoadToEditor }) {
       onStatus?.(`Queued ${valid.length} packet${valid.length === 1 ? '' : 's'} via /show`);
       startPolling((st) => {
         if (st && !st.showActive) {
-          onStatus?.(st.showStep >= valid.length ? 'Sequence complete' : 'Sequence stopped');
+          const done = st.showStep >= valid.length;
+          onStatus?.(done ? 'Sequence complete' : 'Sequence stopped');
+          if (done) {
+            onSequenceComplete?.({
+              note: `Sequence via /show: ${valid.length} packets`,
+              presetKey: 'sequence',
+            });
+          }
         }
       });
     } catch (e) {

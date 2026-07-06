@@ -16,7 +16,6 @@ export const WAND_LAB_SECTIONS = [
   { path: 'mb', label: 'MagicBand+' },
   { path: 'bytes', label: 'Byte editor' },
   { path: 'sequence', label: 'Packet sequence' },
-  { path: 'log', label: 'Log' },
 ];
 
 /** Top-level tab id from react-router location pathname. */
