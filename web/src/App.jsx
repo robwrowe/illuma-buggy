@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import {
   AppShell,
   Box,
@@ -15,6 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks';
+import classes from './AppHeader.module.css';
 import { WandLabTab } from './components/ble/WandLabTab';
 import { BoardSyncModal } from './components/board/BoardSyncModal';
 import { BrightnessTab } from './components/brightness/BrightnessTab';
@@ -25,19 +27,12 @@ import { SettingsTab } from './components/settings/SettingsTab';
 import { ShowsTab } from './components/shows/ShowsTab';
 import { LS_KEY, LS_PROFILES, migrateConfig } from './lib/config';
 import { loadGoogleMaps } from './lib/googleMaps';
-
-const TABS = [
-  { id: 'map', label: 'Map & Zones', icon: '🗺' },
-  { id: 'presets', label: 'Presets', icon: '✨' },
-  { id: 'palettes', label: 'Palettes', icon: '🎨' },
-  { id: 'shows', label: 'Shows', icon: '🎆' },
-  { id: 'brightness', label: 'Brightness', icon: '💡' },
-  { id: 'wandlab', label: 'Wand Lab', icon: '🪄' },
-  { id: 'settings', label: 'Settings', icon: '⚙️' },
-];
+import { APP_TABS, tabFromPathname } from './lib/routes';
 
 export function App() {
-  const [tab, setTab] = useState('map');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const tab = tabFromPathname(location.pathname);
   const [mapsReady, setMapsReady] = useState(false);
   const isNarrow = useMediaQuery('(max-width: 48em)');
   const [data, setData] = useState(() => {
@@ -136,15 +131,15 @@ export function App() {
 
   return (
     <AppShell
-      header={{ height: isNarrow ? 100 : 56 }}
+      header={{ height: isNarrow ? 100 : 84 }}
       padding={0}
       styles={{ main: { height: 'calc(100vh - var(--app-shell-header-height))', overflow: 'hidden' } }}
     >
-      <AppShell.Header px="md">
-        <Stack gap="xs" h="100%" justify="center">
-          <Group justify="space-between" wrap="nowrap" gap="xs">
-            <Title order={5}>🔦 Illuma Buggy</Title>
-            <Group gap={4} wrap="nowrap">
+      <AppShell.Header px="md" className={classes.header}>
+        <Box className={classes.inner}>
+          <div className={classes.topRow}>
+            <Title order={5} className={classes.brand}>🔦 Illuma Buggy</Title>
+            <Group className={classes.actions} wrap="nowrap">
               <Button size="xs" variant="default" onClick={() => setShowBoardSync(true)}>📡 Board</Button>
               <Button size="xs" variant="default" onClick={openProfiles}>
                 🗂 {Object.keys(profiles).length > 0 ? `(${Object.keys(profiles).length})` : ''}
@@ -154,30 +149,39 @@ export function App() {
               </FileButton>
               <Button size="xs" onClick={exportJSON}>📤</Button>
             </Group>
-          </Group>
+          </div>
           <ScrollArea type="never" offsetScrollbars={false}>
-            <Tabs value={tab} onChange={(v) => v && setTab(v)} styles={{ list: { flexWrap: 'nowrap' } }}>
-              <Tabs.List grow={!isNarrow}>
-                {TABS.map((t) => (
-                  <Tabs.Tab key={t.id} value={t.id}>
+            <Tabs
+              value={tab}
+              onChange={(v) => v && navigate(`/${v}`)}
+              classNames={{ tab: classes.mainTab, list: classes.mainLinks }}
+            >
+              <Tabs.List grow={!isNarrow} wrap="nowrap">
+                {APP_TABS.map((t) => (
+                  <Tabs.Tab key={t.path} value={t.path}>
                     {isNarrow ? t.icon : `${t.icon} ${t.label}`}
                   </Tabs.Tab>
                 ))}
               </Tabs.List>
             </Tabs>
           </ScrollArea>
-        </Stack>
+        </Box>
       </AppShell.Header>
 
       <AppShell.Main>
         <Box h="100%">
-          {tab === 'map' && <MapZonesTab data={data} update={update} mapsReady={mapsReady} />}
-          {tab === 'presets' && <PresetsTab data={data} update={update} />}
-          {tab === 'palettes' && <PalettesTab data={data} update={update} />}
-          {tab === 'shows' && <ShowsTab data={data} update={update} />}
-          {tab === 'brightness' && <BrightnessTab data={data} update={update} />}
-          {tab === 'wandlab' && <WandLabTab data={data} update={update} />}
-          {tab === 'settings' && <SettingsTab data={data} update={update} />}
+          <Routes>
+            <Route path="/" element={<Navigate to="/map" replace />} />
+            <Route path="/map" element={<MapZonesTab data={data} update={update} mapsReady={mapsReady} />} />
+            <Route path="/presets" element={<PresetsTab data={data} update={update} />} />
+            <Route path="/palettes" element={<PalettesTab data={data} update={update} />} />
+            <Route path="/shows" element={<ShowsTab data={data} update={update} />} />
+            <Route path="/brightness" element={<BrightnessTab data={data} update={update} />} />
+            <Route path="/wandlab" element={<Navigate to="/wandlab/quick" replace />} />
+            <Route path="/wandlab/:section" element={<WandLabTab data={data} update={update} />} />
+            <Route path="/settings" element={<SettingsTab data={data} update={update} />} />
+            <Route path="*" element={<Navigate to="/map" replace />} />
+          </Routes>
         </Box>
       </AppShell.Main>
 

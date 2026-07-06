@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Checkbox, Group, Stack, Text, TextInput } from '@mantine/core';
-import { importHexForDestination } from '../../lib/ble/captureImport';
+import { importHexForDestination, parsePasteToPackets } from '../../lib/ble/captureImport';
 import { hasCompanyIdPrefix, startShow } from '../../lib/ble/wandSimClient';
 
 export function WandLabCapturePaste({
@@ -18,6 +18,14 @@ export function WandLabCapturePaste({
   const effectiveStrip = autoStrip ? strip8301 : false;
 
   const apply = async () => {
+    if (destination === 'editor') {
+      const multi = parsePasteToPackets(hexPaste, { strip8301: effectiveStrip });
+      if (multi.ok && multi.packets.length > 1) {
+        onStatus?.(`Found ${multi.packets.length} packets — use Packet sequence tab for multi-row paste with wait times`);
+        return;
+      }
+    }
+
     const result = importHexForDestination(hexPaste, destination, effectiveStrip);
     if (!result.ok) {
       onStatus?.(result.message);
@@ -79,7 +87,7 @@ export function WandLabCapturePaste({
         <TextInput
           style={{ flex: 1 }}
           size="xs"
-          placeholder="Hex, capture hex column, or tab-separated capture rows (multi-line OK)"
+          placeholder="Single hex or one capture row — use Packet sequence tab for multi-line capture"
           value={hexPaste}
           onChange={(e) => onHexPasteChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') apply(); }}

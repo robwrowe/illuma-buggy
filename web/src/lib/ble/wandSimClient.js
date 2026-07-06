@@ -94,6 +94,21 @@ export function buildShowBodyFromSweep(
 }
 
 /** Build /show body from capture rows: [{ ts_ms?, hex }]. */
+/** Build /show body from packet rows with per-step waitMs (payload bytes; 8301 added per step). */
+export function buildShowBodyFromPackets(packets, lastHoldMs = DEFAULT_LAST_HOLD_MS) {
+  if (!packets?.length) return '';
+  const lines = [];
+  for (let i = 0; i < packets.length; i++) {
+    const p = packets[i];
+    if (!p?.bytes?.length) continue;
+    const hold = i < packets.length - 1
+      ? Math.max(50, Number(p.waitMs) || DEFAULT_LAST_HOLD_MS)
+      : Math.max(50, Number(p.waitMs) || lastHoldMs);
+    lines.push(`${hold} ${payloadToShowHex(p.bytes)}`);
+  }
+  return lines.join('\n');
+}
+
 export function buildShowBodyFromCaptureRows(rows, fallbackHoldMs = DEFAULT_LAST_HOLD_MS) {
   const parsed = rows
     .map((r) => ({
