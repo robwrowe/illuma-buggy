@@ -289,6 +289,9 @@ interface AppState {
   setZonesEnabled:       (val: boolean) => void;
   syncMode:              'auto' | 'manual';
   setSyncMode:           (v: 'auto' | 'manual') => void;
+  /** When off, the app never scans for or connects to the IllumaBuggy board. */
+  boardConnectEnabled:   boolean;
+  setBoardConnectEnabled:(val: boolean) => void;
 
   // Persistence
   loadFromStorage: () => Promise<void>;
@@ -454,6 +457,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
   syncMode:            'auto',
+  boardConnectEnabled: true,
   brightnessConfig:    DEFAULT_BRIGHTNESS,
   bleCaptureActive:       false,
   bleCaptureDurationSec:  900,
@@ -662,6 +666,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   updateMbMapping:       (patch)       => set(s => ({ mbMapping: normalizeMbMapping({ ...s.mbMapping, ...patch }) })),
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
   setSyncMode:           (val)          => { set({ syncMode: val }); get().saveToStorage(); },
+  setBoardConnectEnabled:(val)          => { set({ boardConnectEnabled: val }); get().saveToStorage(); },
 
   setCaptureSource:         (val) => set({ captureSource: val }),
   setBleCaptureDurationSec: (sec) => set({ bleCaptureDurationSec: sec }),
@@ -756,7 +761,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs',
-                    'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','locationPollSec','mbMapping',
+                    'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','boardConnectEnabled','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','savedColors','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
@@ -813,6 +818,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         wledPort:           d.wledPort           ?? 80,
         zonesEnabled:       d.zonesEnabled       ?? true,
         syncMode:           d.syncMode           ?? 'auto',
+        boardConnectEnabled:d.boardConnectEnabled ?? true,
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
         mbMapping:          hydratedMbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
@@ -866,6 +872,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['wledPort',           JSON.stringify(s.wledPort)],
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
         ['syncMode',           JSON.stringify(s.syncMode)],
+        ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],
         ['locationPollSec',    JSON.stringify(s.locationPollSec)],
         ['mbMapping',          JSON.stringify(s.mbMapping)],
         ['recallState',        JSON.stringify(s.recallState)],

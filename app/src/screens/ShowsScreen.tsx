@@ -235,6 +235,46 @@ export default function ShowsScreen() {
           />
         </View>
 
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>Auto BLE capture</Text>
+          <Text style={s.hint}>
+            Phone-direct capture auto-starts around in-scope shows (no board needed). Configure
+            show bindings and active park in Settings → Shows.
+          </Text>
+          <View style={s.switchRow}>
+            <Text style={s.rowLabel}>Auto-capture at show time</Text>
+            <Switch
+              value={showSettings.autoCaptureEnabled}
+              onValueChange={(v) => {
+                setShowSettings({ autoCaptureEnabled: v });
+                saveToStorage();
+              }}
+              trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            />
+          </View>
+          {([
+            ['autoCaptureLeadSec', 'Start capture before show (sec)'],
+            ['autoCaptureTailSec', 'Stop capture after show (sec)'],
+          ] as const).map(([key, label]) => (
+            <View key={key} style={s.numRow}>
+              <Text style={s.rowLabel}>{label}</Text>
+              <TextInput
+                style={s.numInput}
+                keyboardType="number-pad"
+                editable={showSettings.autoCaptureEnabled}
+                value={String(showSettings[key])}
+                onChangeText={(v) => {
+                  const n = parseInt(v, 10);
+                  if (!isNaN(n)) {
+                    setShowSettings({ [key]: n });
+                    saveToStorage();
+                  }
+                }}
+              />
+            </View>
+          ))}
+        </View>
+
         {/* Park picker */}
         <View style={s.section}>
           <Text style={s.sectionTitle}>Park</Text>

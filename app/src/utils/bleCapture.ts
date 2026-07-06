@@ -16,6 +16,8 @@ export interface BleCapturePacket {
   func?: string;
   label?: string;
   note?: string;
+  /** BLE device address/UUID — only populated for phone-direct captures */
+  deviceId?: string;
 }
 
 export interface BleCaptureSession {
@@ -82,11 +84,11 @@ export function formatCaptureExport(session: BleCaptureSession): string {
     `# Ended:   ${new Date(session.endedAt).toISOString()}`,
     `# Packets: ${session.packets.length}`,
     `#`,
-    `# ts_ms\trssi\ttag\thint\tquality\tfunc\thex\tnote`,
+    `# ts_ms\trssi\tdevice_id\ttag\thint\tquality\tfunc\thex\tnote`,
   ];
   for (const p of session.packets) {
     lines.push(
-      `${p.boardTs}\t${p.rssi}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
+      `${p.boardTs}\t${p.rssi}\t${p.deviceId ?? ''}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
     );
   }
   return lines.join('\n');

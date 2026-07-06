@@ -55,6 +55,7 @@ export default function SettingsScreen() {
     brightnessConfig, setBrightnessConfig,
     recallState, setRecallState,
     syncMode, setSyncMode,
+    boardConnectEnabled, setBoardConnectEnabled,
     saveToStorage, exportData, importData,
   } = useAppStore();
 
@@ -487,11 +488,30 @@ export default function SettingsScreen() {
           </Text>
         )}
         <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Connect to IllumaBuggy board</Text>
+            <Text style={s.rowHint}>
+              Turn off when using your phone alone at the parks (e.g. for BLE capture) so the board
+              connection doesn't use the Bluetooth radio.
+            </Text>
+          </View>
+          <Switch
+            value={boardConnectEnabled}
+            onValueChange={setBoardConnectEnabled}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+        <View style={s.row}>
           {isConnected ? <IconBluetooth size={18} color={colors.success} /> : <IconBluetoothOff size={18} color={colors.danger} />}
           <Text style={s.rowLabel}>IllumaBuggy</Text>
           <Text style={[s.rowHint, { marginLeft: 0 }]}>{isConnected ? 'Connected' : 'Disconnected'}</Text>
         </View>
-        <TouchableOpacity style={s.reconnectBtn} onPress={() => bleService.connect()} disabled={isConnected}>
+        <TouchableOpacity
+          style={s.reconnectBtn}
+          onPress={() => bleService.connect()}
+          disabled={isConnected || !boardConnectEnabled}
+        >
           <IconRefresh size={16} color={colors.primary} />
           <Text style={s.reconnectBtnText}>Reconnect</Text>
         </TouchableOpacity>

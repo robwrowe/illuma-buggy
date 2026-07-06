@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   TextInput, Alert,
@@ -10,21 +10,24 @@ import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
-import { useBLE } from '../hooks/useBLE';
 import { useAppStore } from '../stores/store';
-import { bleService } from '../services/BLEService';
 import { useTheme } from '../utils/theme';
 import {
   CAPTURE_DURATION_OPTIONS, describeBlePacket, formatCaptureExport,
   BleCaptureSession,
 } from '../utils/bleCapture';
-import { startPhoneBleScan, stopPhoneBleScan } from '../utils/phoneBleScan';
+import { startPhoneBleScan } from '../utils/phoneBleScan';
 
 function formatElapsed(ms: number): string {
   const sec = Math.floor(ms / 1000);
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function deviceIdSuffix(deviceId?: string): string {
+  if (!deviceId) return '';
+  return deviceId.length > 8 ? deviceId.slice(-8) : deviceId;
 }
 
 async function shareSession(session: BleCaptureSession) {
@@ -43,14 +46,14 @@ const SESSION_LABEL_SUGGESTIONS = ['Parade', 'Fireworks', 'Show'];
 export default function BleCaptureScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
-  const { isConnected } = useBLE();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const scanUnsubRef = useRef<(() => void) | null>(null);
 
   const {
     bleCaptureActive, bleCaptureDurationSec, bleCaptureStartedAt, bleCaptureEndsAt,
     bleCaptureLiveCount, bleCaptureBuffer, bleCaptureSessions, bleCaptureDraftName,
-    captureSource, setCaptureSource,
+    showSettings,
     setBleCaptureDurationSec, setBleCaptureDraftName,
     startBleCapture, stopBleCapture, appendBleCapturePacket,
     deleteBleCaptureSession,
@@ -71,55 +74,41 @@ export default function BleCaptureScreen() {
     if (remaining <= 0) return;
     const timer = setTimeout(() => {
       stopBleCapture('timeout');
-      if (captureSource === 'firmware') {
-        bleService.sendBleCaptureConfig(false);
-      } else {
-        stopPhoneBleScan();
+      if (scanUnsubRef.current) {
+        scanUnsubRef.current();
+        scanUnsubRef.current = null;
       }
     }, remaining);
     return () => clearTimeout(timer);
-  }, [bleCaptureActive, bleCaptureEndsAt, captureSource]);
+  }, [bleCaptureActive, bleCaptureEndsAt]);
 
   useEffect(() => () => {
-    stopPhoneBleScan();
+    if (scanUnsubRef.current) {
+      scanUnsubRef.current();
+      scanUnsubRef.current = null;
+    }
   }, []);
 
-  const handleStart = async () => {
-    if (captureSource === 'firmware') {
-      if (!isConnected) {
-        Alert.alert('Not connected', 'Connect to IllumaBuggy first.');
-        return;
-      }
-      startBleCapture();
-      const ok = await bleService.sendBleCaptureConfig(
-        true,
-        bleCaptureDurationSec > 0 ? bleCaptureDurationSec * 1000 : 0,
-        bleCaptureDraftName.trim(),
-      );
-      if (!ok) {
-        stopBleCapture('error');
-        Alert.alert('Capture failed', 'Could not start recording on the board.');
-      }
-    } else {
-      startBleCapture();
-      startPhoneBleScan((pkt) => {
-        appendBleCapturePacket({
-          boardTs: Date.now(),
-          tag: pkt.tag,
-          rssi: pkt.rssi,
-          hex: pkt.hex,
-          len: pkt.len,
-        });
+  const handleStart = () => {
+    if (bleCaptureActive) return;
+    startBleCapture();
+    scanUnsubRef.current = startPhoneBleScan((pkt) => {
+      appendBleCapturePacket({
+        boardTs: Date.now(),
+        tag: pkt.tag,
+        rssi: pkt.rssi,
+        hex: pkt.hex,
+        len: pkt.len,
+        deviceId: pkt.deviceId,
       });
-    }
+    });
   };
 
-  const handleStop = async () => {
+  const handleStop = () => {
     stopBleCapture('manual');
-    if (captureSource === 'firmware') {
-      await bleService.sendBleCaptureConfig(false);
-    } else {
-      stopPhoneBleScan();
+    if (scanUnsubRef.current) {
+      scanUnsubRef.current();
+      scanUnsubRef.current = null;
     }
   };
 
@@ -128,8 +117,9 @@ export default function BleCaptureScreen() {
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
       <Text style={s.intro}>
-        Record unique Disney BLE packets during a parade or fireworks show. Only new packet
-        signatures are saved (repeated pings are deduplicated on the board).
+        Record Disney BLE packets during a parade or fireworks show, straight off your phone's
+        Bluetooth radio — the IllumaBuggy board is not involved and won't be interrupted or
+        interrupt this capture.
       </Text>
 
       {/* Recorder */}
@@ -144,31 +134,10 @@ export default function BleCaptureScreen() {
           )}
         </View>
 
-        <Text style={s.label}>Capture source</Text>
-        <View style={s.chipRow}>
-          <TouchableOpacity
-            style={[s.chip, captureSource === 'firmware' && s.chipActive]}
-            onPress={() => !bleCaptureActive && setCaptureSource('firmware')}
-            disabled={bleCaptureActive}
-          >
-            <Text style={[s.chipText, captureSource === 'firmware' && s.chipTextActive]}>
-              Via Board
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.chip, captureSource === 'phone' && s.chipActive]}
-            onPress={() => !bleCaptureActive && setCaptureSource('phone')}
-            disabled={bleCaptureActive}
-          >
-            <Text style={[s.chipText, captureSource === 'phone' && s.chipTextActive]}>
-              Phone Direct
-            </Text>
-          </TouchableOpacity>
-        </View>
-        {captureSource === 'phone' && (
+        {bleCaptureActive && showSettings.autoCaptureEnabled && (
           <Text style={s.sub}>
-            Scans directly with your phone's Bluetooth — no board needed. Useful for testing
-            at home or verifying packets independent of firmware.
+            A capture may have been auto-started for a nearby show — stopping here ends that
+            session too.
           </Text>
         )}
 
@@ -220,21 +189,13 @@ export default function BleCaptureScreen() {
           </View>
         )}
 
-        {captureSource === 'firmware' && !isConnected && (
-          <Text style={s.warn}>Connect to IllumaBuggy to record.</Text>
-        )}
-
         {bleCaptureActive ? (
           <TouchableOpacity style={s.stopBtn} onPress={handleStop}>
             <IconX size={18} color="#fff" />
             <Text style={s.stopBtnText}>Stop recording</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity
-            style={[s.startBtn, captureSource === 'firmware' && !isConnected && s.btnDisabled]}
-            onPress={handleStart}
-            disabled={captureSource === 'firmware' && !isConnected}
-          >
+          <TouchableOpacity style={s.startBtn} onPress={handleStart}>
             <IconBolt size={18} color="#fff" />
             <Text style={s.startBtnText}>Start recording</Text>
           </TouchableOpacity>
@@ -250,6 +211,10 @@ export default function BleCaptureScreen() {
               <Text style={s.packetTag}>{p.quality ? `UNK/${p.quality}` : p.tag}</Text>
               <Text style={s.packetHint} numberOfLines={1}>
                 {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
+              </Text>
+              <Text style={s.packetMeta}>
+                rssi {p.rssi}
+                {p.deviceId ? ` · …${deviceIdSuffix(p.deviceId)}` : ''}
               </Text>
               <Text style={s.packetHex} numberOfLines={1}>{p.hex}</Text>
             </View>
@@ -305,7 +270,11 @@ export default function BleCaptureScreen() {
                     <Text style={s.packetHint}>
                       {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
                     </Text>
-                    <Text style={s.packetMeta}>rssi {p.rssi} · +{(p.receivedAt - session.startedAt) / 1000}s</Text>
+                    <Text style={s.packetMeta}>
+                      rssi {p.rssi}
+                      {p.deviceId ? ` · …${deviceIdSuffix(p.deviceId)}` : ''}
+                      {' · '}+{(p.receivedAt - session.startedAt) / 1000}s
+                    </Text>
                     <Text style={s.packetHex}>{p.hex}</Text>
                     {(p.quality || p.note !== undefined) && (
                       <TextInput
@@ -344,12 +313,10 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
     chipTextActive: { color: c.primary },
     statsRow:  { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
     stat:      { color: c.textPrimary, fontSize: 13, fontWeight: '600' },
-    warn:      { color: c.warning, fontSize: 12 },
     startBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: c.primary, paddingVertical: 12, borderRadius: 10, marginTop: 4 },
     startBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
     stopBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: c.danger, paddingVertical: 12, borderRadius: 10, marginTop: 4 },
     stopBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-    btnDisabled: { opacity: 0.45 },
     recBadge:  { backgroundColor: c.danger, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
     recBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
     sub:       { color: c.textMuted, fontSize: 12 },
