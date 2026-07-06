@@ -1,0 +1,445 @@
+{
+  "generatedAt": "2026-07-06T13:40:42.970Z",
+  "files": [
+    {
+      "path": "App.jsx",
+      "lines": 205,
+      "symbols": [
+        "App"
+      ]
+    },
+    {
+      "path": "components/ble/BleMappingTabBar.jsx",
+      "lines": 25,
+      "symbols": [
+        "BleMappingTabBar"
+      ]
+    },
+    {
+      "path": "components/ble/DefaultPresetField.jsx",
+      "lines": 16,
+      "symbols": [
+        "DefaultPresetField"
+      ]
+    },
+    {
+      "path": "components/ble/MbEffectField.jsx",
+      "lines": 32,
+      "symbols": [
+        "MbEffectField"
+      ]
+    },
+    {
+      "path": "components/ble/RandomPoolEditor.jsx",
+      "lines": 109,
+      "symbols": [
+        "RandomPoolEditor"
+      ]
+    },
+    {
+      "path": "components/ble/WandLabTab.jsx",
+      "lines": 391,
+      "symbols": [
+        "WandLabTab"
+      ]
+    },
+    {
+      "path": "components/ble/WledSegEditor.jsx",
+      "lines": 179,
+      "symbols": [
+        "WledSegEditor"
+      ]
+    },
+    {
+      "path": "components/board/BoardSyncModal.jsx",
+      "lines": 112,
+      "symbols": [
+        "BoardSyncModal"
+      ]
+    },
+    {
+      "path": "components/brightness/BrightnessTab.jsx",
+      "lines": 25,
+      "symbols": [
+        "BrightnessTab"
+      ]
+    },
+    {
+      "path": "components/map/MapZonesTab.jsx",
+      "lines": 553,
+      "symbols": [
+        "MapZonesTab"
+      ]
+    },
+    {
+      "path": "components/map/ParksPanel.jsx",
+      "lines": 148,
+      "symbols": [
+        "ParksPanel"
+      ]
+    },
+    {
+      "path": "components/palettes/PalettesTab.jsx",
+      "lines": 280,
+      "symbols": [
+        "PalettesTab"
+      ]
+    },
+    {
+      "path": "components/presets/PresetsTab.jsx",
+      "lines": 534,
+      "symbols": [
+        "PresetsTab"
+      ]
+    },
+    {
+      "path": "components/settings/SettingsTab.jsx",
+      "lines": 434,
+      "symbols": [
+        "SettingsTab"
+      ]
+    },
+    {
+      "path": "components/shared/ColorCell.jsx",
+      "lines": 113,
+      "symbols": [
+        "ColorCell"
+      ]
+    },
+    {
+      "path": "components/shared/ColorInput.jsx",
+      "lines": 51,
+      "symbols": [
+        "PALETTE_SWATCHES",
+        "ColorInput"
+      ]
+    },
+    {
+      "path": "components/shared/ColorSwatch.jsx",
+      "lines": 6,
+      "symbols": [
+        "ColorSwatch"
+      ]
+    },
+    {
+      "path": "components/shared/Field.jsx",
+      "lines": 9,
+      "symbols": [
+        "Field"
+      ]
+    },
+    {
+      "path": "components/shared/Modal.jsx",
+      "lines": 21,
+      "symbols": [
+        "Modal",
+        "ModalBtns"
+      ]
+    },
+    {
+      "path": "components/shared/SearchableSelect.jsx",
+      "lines": 129,
+      "symbols": [
+        "SearchableSelect"
+      ]
+    },
+    {
+      "path": "components/shared/SectionHead.jsx",
+      "lines": 4,
+      "symbols": [
+        "SectionHead"
+      ]
+    },
+    {
+      "path": "components/shared/SegmentBar.jsx",
+      "lines": 15,
+      "symbols": [
+        "SegmentBar"
+      ]
+    },
+    {
+      "path": "components/shared/styles.js",
+      "lines": 16,
+      "symbols": [
+        "btn",
+        "inputStyle",
+        "labelStyle",
+        "cardStyle",
+        "selectStyle"
+      ]
+    },
+    {
+      "path": "components/shared/TagChipRow.jsx",
+      "lines": 13,
+      "symbols": [
+        "TagChipRow"
+      ]
+    },
+    {
+      "path": "components/shared/TagEditor.jsx",
+      "lines": 44,
+      "symbols": [
+        "TagEditor"
+      ]
+    },
+    {
+      "path": "components/shared/TagFilterBar.jsx",
+      "lines": 27,
+      "symbols": [
+        "TagFilterBar"
+      ]
+    },
+    {
+      "path": "components/shows/ShowsTab.jsx",
+      "lines": 319,
+      "symbols": [
+        "ShowsTab"
+      ]
+    },
+    {
+      "path": "index.css",
+      "lines": 70,
+      "symbols": []
+    },
+    {
+      "path": "lib/ble/chunking.js",
+      "lines": 204,
+      "symbols": [
+        "WLED_MAX_SEG",
+        "TEST_PRESET_RECALL",
+        "TEST_PRESET_MEMORY",
+        "finalizeWledSegmentPayload",
+        "buildTestPresetPayload",
+        "testPresetOnWled",
+        "BLE_DEVICE_NAME",
+        "BLE_SERVICE_UUID",
+        "BLE_CMD_CHAR_UUID",
+        "BLE_NOTIFY_CHAR_UUID",
+        "BLE_SEND_DELAY_MS",
+        "BLE_MAX_WRITE_BYTES",
+        "BLE_CHUNK_INTER_MS",
+        "splitCommandForBleChunks",
+        "WebBleBoard",
+        "webBleBoard"
+      ]
+    },
+    {
+      "path": "lib/ble/mbConstants.js",
+      "lines": 174,
+      "symbols": [
+        "SW_FX_PRESET_BYTES",
+        "WAND_LAB_TAGS",
+        "MB_PATTERN_MODES",
+        "WAND_LAB_MB_CMDS",
+        "MB_COLOR_NAMES",
+        "mbPaletteOptions",
+        "DEFAULT_MB_WLED_COLORS",
+        "MB_PAL_OFF",
+        "MB_PAL_UNIQUE",
+        "MB_PAL_RANDOM",
+        "mbPaletteEligibleForRandom",
+        "defaultRandomPaletteIndices",
+        "normalizeRandomPool",
+        "MB_EFFECT_CLASS_META",
+        "TIER2_OPCODE_OPTIONS",
+        "MB_SEGMENT_META",
+        "MB_ANIMATION_META",
+        "SW_ANIMATION_META",
+        "MB_PATTERN_META",
+        "STRIP_LED_COUNT",
+        "MB_SEGMENT_SIM_COMMAND",
+        "SIM_FIVE_CORNERS",
+        "FIVE_CORNER_IDS",
+        "FIVE_CORNER_RGB"
+      ]
+    },
+    {
+      "path": "lib/ble/mbMapping.js",
+      "lines": 304,
+      "symbols": [
+        "DEFAULT_MB_EFFECT_CLASSES",
+        "DEFAULT_MB_MAPPING",
+        "buildMbKeyedSegmentsFromMapping",
+        "mbLayoutSetBlePayload",
+        "findMbSegIdConflicts",
+        "normalizeEffectClassMapping",
+        "normalizeEffectClasses",
+        "mirrorEffectClassesToLegacy",
+        "normalizeMbMapping",
+        "mbMappingToBlePayload",
+        "presetWledForBoard",
+        "withSegRefDefaults",
+        "migrateWandLabDefaults"
+      ]
+    },
+    {
+      "path": "lib/ble/mbPayloads.js",
+      "lines": 64,
+      "symbols": [
+        "mbVibByte",
+        "mbFiveSlotByte",
+        "mbColorByte",
+        "buildMbSingle",
+        "buildMbDual",
+        "buildMbRgb",
+        "buildMbFive",
+        "buildMbPing"
+      ]
+    },
+    {
+      "path": "lib/boardSync.js",
+      "lines": 137,
+      "symbols": [
+        "BOARD_SYNC_LS_KEY",
+        "DEFAULT_BOARD_SYNC_OPTIONS",
+        "loadBoardSyncOptions",
+        "saveBoardSyncOptions",
+        "syncProfileToBoard",
+        "BOARD_SYNC_ITEMS"
+      ]
+    },
+    {
+      "path": "lib/config.js",
+      "lines": 107,
+      "symbols": [
+        "loadAppData",
+        "CURRENT_VERSION",
+        "migrateSegmentMetadata",
+        "migrateParksGrouping",
+        "migrateShowBindingsDefaults",
+        "migrateShowModeDefaults",
+        "migrateMbSegmentLayouts",
+        "migrateConfig",
+        "LS_KEY",
+        "LS_PROFILES"
+      ]
+    },
+    {
+      "path": "lib/googleMaps.js",
+      "lines": 43,
+      "symbols": [
+        "loadGoogleMaps"
+      ]
+    },
+    {
+      "path": "lib/map/themeParks.js",
+      "lines": 85,
+      "symbols": [
+        "THEME_PARKS_API",
+        "themeParkDestCache",
+        "fetchThemeParkDestinations",
+        "fetchParkShows",
+        "inferShowKind",
+        "normalizeShowBinding",
+        "buildLegacyShowModeConfig",
+        "parkSelectOptions",
+        "groupZonesByPark"
+      ]
+    },
+    {
+      "path": "lib/tags.js",
+      "lines": 55,
+      "symbols": [
+        "TAG_SUGGESTIONS",
+        "normalizeTags",
+        "parseTagsInput",
+        "tagsToInput",
+        "collectAllTags",
+        "itemMatchesTagFilter",
+        "duplicateTaggedName"
+      ]
+    },
+    {
+      "path": "lib/utils.js",
+      "lines": 259,
+      "symbols": [
+        "generateId",
+        "hexToRgb",
+        "rgbToHex",
+        "rgbToHsl",
+        "hslToRgb",
+        "normalizeHex",
+        "hexToRgbTriplet",
+        "rgbTripletToHex",
+        "wledColToHexList",
+        "hexListToWledCol",
+        "saveColorToLibrary",
+        "MAX_EFFECT_COLORS",
+        "ZONE_COLORS",
+        "PRESET_COLORS",
+        "DEFAULT_DATA",
+        "normalizePolygonPoint",
+        "normalizePolygon",
+        "normalizeZoneRecord",
+        "focusMapOnPolygon",
+        "presetSelectOptions",
+        "showModePresetOptions",
+        "paletteSelectValue",
+        "DEFAULT_PRESET_MEMORY",
+        "buildRecallPayload",
+        "buildPaletteSelectOptions",
+        "compareVersions",
+        "showPresetLabel"
+      ]
+    },
+    {
+      "path": "lib/wled/capture.js",
+      "lines": 342,
+      "symbols": [
+        "segRefToPreview",
+        "buildSegmentHighlightPreview",
+        "buildFiveCornerPreview",
+        "postWledState",
+        "SEGMENT_LAYOUT_FIELDS",
+        "WLED_BLEND_MODES",
+        "normalizeSegmentDef",
+        "formatSegRange",
+        "formatSegLabel",
+        "isActiveSegment",
+        "parseWledStateSegments",
+        "summarizeLayout",
+        "buildLayoutPayload",
+        "fetchWledFullStateFromIp",
+        "fetchWledSegmentsFromIp",
+        "resolvePaletteName",
+        "DEFAULT_WLED_CAPTURE_OPTS",
+        "wledCaptureLabels",
+        "captureSegmentFromRaw",
+        "mergeSegmentsById",
+        "activeSegmentsFromPreset",
+        "pickSegOrWled",
+        "buildRecalledSegment",
+        "applyWledStateCapture",
+        "formatWledSegLabel",
+        "formatWledSegSelectionSummary",
+        "isValidSegRef",
+        "parseSegRefFields",
+        "defaultNewSegRef",
+        "refsFromSnapshotIds",
+        "updateRefAt",
+        "removeRefAt",
+        "appendSegRef",
+        "toggleSnapshotSelection",
+        "pruneRefsToSnapshot",
+        "buildPresetLayoutPayload"
+      ]
+    },
+    {
+      "path": "lib/wled/catalog.js",
+      "lines": 31,
+      "symbols": [
+        "WLED_EFFECTS_CACHE_KEY",
+        "WLED_PALETTES_CACHE_KEY",
+        "loadCachedWledCatalog",
+        "fetchWledCatalog"
+      ]
+    },
+    {
+      "path": "main.jsx",
+      "lines": 11,
+      "symbols": []
+    }
+  ],
+  "unassigned": [],
+  "errors": []
+}

@@ -1,18 +1,14 @@
 #!/bin/bash
-# Launches Illuma Buggy web config tool on http://localhost:3000
-# Requires Python 3 (comes with macOS)
-
-PORT=3000
+# Launches Illuma Buggy web config tool (Vite dev server)
 DIR="$(cd "$(dirname "$0")" && pwd)"
+PORT="${PORT:-5173}"
 
 echo "🔦 Illuma Buggy Config Tool"
-echo "   Opening http://localhost:$PORT"
+echo "   Opening http://localhost:$PORT/illuma-buggy/"
 echo "   Press Ctrl+C to stop"
 echo ""
 
-# Open browser after 1 second
-(sleep 1 && open "http://localhost:$PORT") &
+(sleep 2 && open "http://localhost:$PORT/illuma-buggy/") &
 
-# Serve the directory
 cd "$DIR"
-python3 -m http.server $PORT
+npm run dev -- --host --port "$PORT"
