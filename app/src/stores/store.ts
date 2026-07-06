@@ -133,6 +133,10 @@ export interface DeviceStatus {
   showType?:            string;
   showPhase?:           string;
   boardPresetCount?:    number;
+  wledSsid?:            string;
+  wledIp?:              string;
+  wledPort?:            number;
+  mbMappingLoaded?:     boolean;
 }
 
 import {
@@ -267,6 +271,14 @@ interface AppState {
   setMagicBandTimeoutSec:(val: number) => void;
   bleEffectTransitionMs: number;
   setBleEffectTransitionMs:(val: number) => void;
+  wledSsid:              string;
+  setWledSsid:           (val: string) => void;
+  wledPass:              string;
+  setWledPass:           (val: string) => void;
+  wledIp:                string;
+  setWledIp:             (val: string) => void;
+  wledPort:              number;
+  setWledPort:           (val: number) => void;
   /** Background GPS poll interval (seconds) while zones are enabled. */
   locationPollSec:       number;
   setLocationPollSec:    (val: number) => void;
@@ -275,6 +287,8 @@ interface AppState {
   updateMbMapping:       (patch: Partial<MbMappingConfig>) => void;
   zonesEnabled:          boolean;
   setZonesEnabled:       (val: boolean) => void;
+  syncMode:              'auto' | 'manual';
+  setSyncMode:           (v: 'auto' | 'manual') => void;
 
   // Persistence
   loadFromStorage: () => Promise<void>;
@@ -329,6 +343,8 @@ interface AppState {
   bleCaptureBuffer:       BleCapturePacket[];
   bleCaptureSessions:     BleCaptureSession[];
   bleCaptureDraftName:    string;
+  captureSource:          'firmware' | 'phone';
+  setCaptureSource:       (v: 'firmware' | 'phone') => void;
   setBleCaptureDurationSec: (sec: BleCaptureDuration) => void;
   setBleCaptureDraftName:   (name: string) => void;
   startBleCapture:          () => void;
@@ -430,9 +446,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   magicBandFivePoint:  true,
   magicBandTimeoutSec: 15,
   bleEffectTransitionMs: 700,
+  wledSsid:            '',
+  wledPass:            '',
+  wledIp:              '',
+  wledPort:            80,
   locationPollSec:     DEFAULT_LOCATION_POLL_SEC,
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
+  syncMode:            'auto',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
   bleCaptureActive:       false,
   bleCaptureDurationSec:  900,
@@ -442,6 +463,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureBuffer:       [],
   bleCaptureSessions:     [],
   bleCaptureDraftName:    'Parade capture',
+  captureSource:          'firmware',
   parks:                  [],
   activePark:             null,
   showModeConfig:         DEFAULT_SHOW_MODE,
@@ -629,13 +651,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMagicBandFivePoint: (val)          => set({ magicBandFivePoint: val }),
   setMagicBandTimeoutSec:(val)          => set({ magicBandTimeoutSec: val }),
   setBleEffectTransitionMs:(val)        => set({ bleEffectTransitionMs: val }),
+  setWledSsid:           (val)          => set({ wledSsid: val }),
+  setWledPass:           (val)          => set({ wledPass: val }),
+  setWledIp:             (val)          => set({ wledIp: val }),
+  setWledPort:           (val)          => set({ wledPort: val }),
   setLocationPollSec:    (val)          => set({
     locationPollSec: Math.min(LOCATION_POLL_SEC_MAX, Math.max(LOCATION_POLL_SEC_MIN, val)),
   }),
   setMbMapping:          (mbMapping)   => set({ mbMapping: normalizeMbMapping(mbMapping) }),
   updateMbMapping:       (patch)       => set(s => ({ mbMapping: normalizeMbMapping({ ...s.mbMapping, ...patch }) })),
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
+  setSyncMode:           (val)          => { set({ syncMode: val }); get().saveToStorage(); },
 
+  setCaptureSource:         (val) => set({ captureSource: val }),
   setBleCaptureDurationSec: (sec) => set({ bleCaptureDurationSec: sec }),
   setBleCaptureDraftName:   (name) => set({ bleCaptureDraftName: name }),
 
@@ -727,7 +755,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
-                    'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs','locationPollSec','mbMapping',
+                    'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs',
+                    'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','savedColors','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
@@ -778,6 +807,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         magicBandFivePoint: d.magicBandFivePoint ?? true,
         magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
         bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
+        wledSsid:           d.wledSsid           ?? '',
+        wledPass:           d.wledPass           ?? '',
+        wledIp:             d.wledIp             ?? '',
+        wledPort:           d.wledPort           ?? 80,
+        zonesEnabled:       d.zonesEnabled       ?? true,
+        syncMode:           d.syncMode           ?? 'auto',
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
         mbMapping:          hydratedMbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
@@ -825,6 +860,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['magicBandFivePoint', JSON.stringify(s.magicBandFivePoint)],
         ['magicBandTimeoutSec',JSON.stringify(s.magicBandTimeoutSec)],
         ['bleEffectTransitionMs', JSON.stringify(s.bleEffectTransitionMs)],
+        ['wledSsid',           JSON.stringify(s.wledSsid)],
+        ['wledPass',           JSON.stringify(s.wledPass)],
+        ['wledIp',             JSON.stringify(s.wledIp)],
+        ['wledPort',           JSON.stringify(s.wledPort)],
+        ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
+        ['syncMode',           JSON.stringify(s.syncMode)],
         ['locationPollSec',    JSON.stringify(s.locationPollSec)],
         ['mbMapping',          JSON.stringify(s.mbMapping)],
         ['recallState',        JSON.stringify(s.recallState)],

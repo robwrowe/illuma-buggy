@@ -13,6 +13,7 @@ import IconDeviceDesktop from '@tabler/icons-react-native/dist/esm/icons/IconDev
 import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 import IconDownload from '@tabler/icons-react-native/dist/esm/icons/IconDownload';
 import IconUpload from '@tabler/icons-react-native/dist/esm/icons/IconUpload';
+import IconWifi from '@tabler/icons-react-native/dist/esm/icons/IconWifi';
 
 import {
   useAppStore,
@@ -26,6 +27,7 @@ import { MbMappingSections, PresetPickerModal } from './MbMappingSections';
 import ShowsScreen from './ShowsScreen';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
+import { requestFullBoardSync } from '../utils/connectBootstrap';
 import { useTheme, ThemeMode } from '../utils/theme';
 
 const RECALL_OPTIONS: RecallValue[] = ['always', 'never', 'memory'];
@@ -43,10 +45,16 @@ export default function SettingsScreen() {
     magicBandFivePoint, setMagicBandFivePoint,
     magicBandTimeoutSec, setMagicBandTimeoutSec,
     bleEffectTransitionMs, setBleEffectTransitionMs,
+    wledSsid, setWledSsid,
+    wledPass, setWledPass,
+    wledIp, setWledIp,
+    wledPort, setWledPort,
+    deviceStatus,
     locationPollSec, setLocationPollSec,
     ftbPresetId, setFtbPresetId, presets,
     brightnessConfig, setBrightnessConfig,
     recallState, setRecallState,
+    syncMode, setSyncMode,
     saveToStorage, exportData, importData,
   } = useAppStore();
 
@@ -72,6 +80,25 @@ export default function SettingsScreen() {
 
   const pushBleEffectConfig = (transitionMs = bleEffectTransitionMs) => {
     if (isConnected) bleService.sendBleEffectConfig(transitionMs);
+  };
+
+  const saveWledNetConfig = () => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy before saving WLED network settings.');
+      return;
+    }
+    const payload: { ssid?: string; pass?: string; ip?: string; port?: number } = {};
+    if (wledSsid.trim()) payload.ssid = wledSsid.trim();
+    if (wledPass) payload.pass = wledPass;
+    if (wledIp.trim()) payload.ip = wledIp.trim();
+    if (wledPort > 0) payload.port = wledPort;
+    if (!payload.ssid && !payload.pass && !payload.ip && payload.port === undefined) {
+      Alert.alert('Nothing to save', 'Enter at least one WLED network field.');
+      return;
+    }
+    bleService.sendWledNetConfig(payload.ssid, payload.pass, payload.ip, payload.port);
+    saveToStorage();
+    Alert.alert('Saved', 'WLED network settings sent to board. WiFi will reconnect.');
   };
 
   const updateStarlightEnabled = (val: boolean) => {
@@ -200,6 +227,69 @@ export default function SettingsScreen() {
           <Switch value={overrideKillOnZone} onValueChange={updateOverrideMode}
             trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
         </View>
+      </View>
+
+      {/* WLED Network */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>WLED Network</Text>
+        <Text style={s.sectionHint}>
+          WiFi credentials and HTTP target for the GLEDOPTO controller. Saved to board NVS — tap Save to apply.
+          {deviceStatus?.wledIp ? ` Board: ${deviceStatus.wledSsid ?? '?'} @ ${deviceStatus.wledIp}:${deviceStatus.wledPort ?? 80}` : ''}
+        </Text>
+        <View style={s.wledField}>
+          <Text style={s.rowLabel}>SSID</Text>
+          <TextInput
+            style={s.wledInput}
+            value={wledSsid}
+            onChangeText={setWledSsid}
+            placeholder={deviceStatus?.wledSsid ?? 'KyLan Ren'}
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <View style={s.wledField}>
+          <Text style={s.rowLabel}>Password</Text>
+          <TextInput
+            style={s.wledInput}
+            value={wledPass}
+            onChangeText={setWledPass}
+            placeholder="(unchanged if empty)"
+            placeholderTextColor={colors.textMuted}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <View style={s.wledField}>
+          <Text style={s.rowLabel}>IP / hostname</Text>
+          <TextInput
+            style={s.wledInput}
+            value={wledIp}
+            onChangeText={setWledIp}
+            placeholder={deviceStatus?.wledIp ?? '4.3.2.1'}
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Port</Text>
+            <Text style={s.rowHint}>HTTP port (usually 80).</Text>
+          </View>
+          <TextInput
+            style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
+            value={String(wledPort)}
+            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setWledPort(n); }}
+            keyboardType="number-pad"
+            selectTextOnFocus
+          />
+        </View>
+        <TouchableOpacity style={s.dataBtn} onPress={saveWledNetConfig}>
+          <IconWifi size={16} color={colors.primary} />
+          <Text style={s.dataBtnText}>Save WLED network</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Starlight Wand */}
@@ -380,6 +470,23 @@ export default function SettingsScreen() {
       <View style={s.section}>
         <Text style={s.sectionTitle}>Device</Text>
         <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Auto-sync on connect</Text>
+            <Text style={s.rowHint}>Off: board keeps its saved config until you tap Sync board config.</Text>
+          </View>
+          <Switch
+            value={syncMode === 'auto'}
+            onValueChange={(v) => setSyncMode(v ? 'auto' : 'manual')}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+        {syncMode === 'manual' && (
+          <Text style={s.sectionHint}>
+            Board will run off its last-known config. Use Sync board config on Home to push changes.
+          </Text>
+        )}
+        <View style={s.row}>
           {isConnected ? <IconBluetooth size={18} color={colors.success} /> : <IconBluetoothOff size={18} color={colors.danger} />}
           <Text style={s.rowLabel}>IllumaBuggy</Text>
           <Text style={[s.rowHint, { marginLeft: 0 }]}>{isConnected ? 'Connected' : 'Disconnected'}</Text>
@@ -387,6 +494,17 @@ export default function SettingsScreen() {
         <TouchableOpacity style={s.reconnectBtn} onPress={() => bleService.connect()} disabled={isConnected}>
           <IconRefresh size={16} color={colors.primary} />
           <Text style={s.reconnectBtnText}>Reconnect</Text>
+        </TouchableOpacity>
+        <Text style={s.sectionHint}>
+          If MB+ or wand effects look wrong after a board reboot, tap Sync board config while connected.
+        </Text>
+        <TouchableOpacity
+          style={s.dataBtn}
+          onPress={() => requestFullBoardSync()}
+          disabled={!isConnected}
+        >
+          <IconRefresh size={16} color={colors.primary} />
+          <Text style={s.dataBtnText}>Sync board config</Text>
         </TouchableOpacity>
       </View>
 
@@ -443,4 +561,6 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   dataBtnText:     { color: c.primary, fontWeight: '600' },
   reconnectBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: c.surfaceAlt, padding: 12, borderRadius: 8 },
   reconnectBtnText: { color: c.primary, fontWeight: '600' },
+  wledField:       { gap: 6 },
+  wledInput:       { backgroundColor: c.background, borderRadius: 8, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 10, fontSize: 14 },
 });

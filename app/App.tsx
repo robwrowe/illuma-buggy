@@ -285,6 +285,10 @@ export default function App() {
           showType: msg.show_type as string | undefined,
           showPhase: msg.show_phase as string | undefined,
           boardPresetCount: msg.preset_count as number | undefined,
+          wledSsid: msg.wled_ssid as string | undefined,
+          wledIp: msg.wled_ip as string | undefined,
+          wledPort: msg.wled_port as number | undefined,
+          mbMappingLoaded: msg.mb_mapping_loaded as boolean | undefined,
         });
         if (override === 0) setOverrideDetail(null);
       }

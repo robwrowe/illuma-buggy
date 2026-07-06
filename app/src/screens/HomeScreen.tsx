@@ -83,6 +83,7 @@ export default function HomeScreen() {
     setShowInstanceOverride,
     wledEffects,
     wledPalettes,
+    syncMode,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
@@ -278,7 +279,7 @@ export default function HomeScreen() {
     if (!isSessionReady) {
       Alert.alert(
         "Board syncing",
-        formatSyncStatusLabel(boardSync, connectionState) +
+        formatSyncStatusLabel(boardSync, connectionState, bleService.hasScanTimedOut()) +
           "\n\nWait until the status shows Ready, then try again. Use Sync Board if it stays stuck.",
       );
       return;
@@ -301,7 +302,11 @@ export default function HomeScreen() {
     }
   };
 
-  const syncStatusLabel = formatSyncStatusLabel(boardSync, connectionState);
+  const syncStatusLabel = formatSyncStatusLabel(
+    boardSync,
+    connectionState,
+    bleService.hasScanTimedOut(),
+  );
   const commandsBlocked = isConnected && !isSessionReady;
 
   return (
@@ -601,6 +606,11 @@ export default function HomeScreen() {
               ? ` · ${deviceStatus.boardPresetCount} preset(s) on board`
               : ""}
             {presets.length > 0 ? ` · ${presets.length} in app` : ""}
+          </Text>
+        )}
+        {isConnected && syncMode === 'manual' && (
+          <Text style={[s.subText, { color: colors.warning }]}>
+            Manual sync — board is running its own saved config
           </Text>
         )}
         {isConnected && (

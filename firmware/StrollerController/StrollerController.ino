@@ -18,12 +18,11 @@
 // ─────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────
-// const char* WLED_SSID   = "StrollerNet";
-// const char* WLED_PASS   = "stroller1234";
-const char* WLED_SSID   = "KyLan Ren";
-const char* WLED_PASS   = "tigers2016";
-const char* WLED_IP     = "wled.local";
-const int   WLED_PORT   = 80;
+// const char* default WLED SSID/pass: "StrollerNet" / "stroller1234"
+String wledSsid = "KyLan Ren";
+String wledPass = "tigers2016";
+String wledIp   = "wled.local";
+int    wledPort = 80;
 const char* BLE_NAME    = "IllumaBuggy";
 
 #define SERVICE_UUID     "12345678-1234-1234-1234-123456789abc"
@@ -102,6 +101,7 @@ bool mbPaletteEligibleForRandom(uint8_t idx);
 void loadMbMappingDefaults();
 void loadMbMappingFromJson();
 void applyMbMappingJson(JsonObject root);
+void connectToWLED(bool force = false);
 String mfrToHex(const uint8_t* data, size_t len);
 String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen);
 void handleDisneyPayload(const uint8_t* payload, size_t plen);
@@ -246,6 +246,7 @@ unsigned long lastLiveStatePollMs = 0;
 const unsigned long LIVE_STATE_POLL_MS = 12000;
 String baselineWledState  = "";   // snapshot at connect — full /json/state
 String mbMappingJson = "";  // unified MB→WLED mapping (colors, animations, patterns, segments)
+bool   mbMappingLoadedFromNvs = false;
 String bleDefaultPresetId = "";  // fallback — same presets as GPS zones
 bool   wledWasConnected   = false;
 
@@ -359,6 +360,7 @@ MbEffectMap mbPatMap[5];    // 3,4,5,8,B
 // WiFi reconnect
 unsigned long lastWifiRetry = 0;
 const int     WIFI_RETRY_MS = 5000;
+volatile bool wifiConnectInProgress = false;
 
 // Pending command queue — BLE callbacks queue work here, loop() processes it
 // IMPORTANT: use char arrays not String — FreeRTOS queues copy by value
@@ -528,7 +530,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs = 2000, int retries = 0) {
     return false;
   }
   HTTPClient http;
-  http.begin("http://" + String(WLED_IP) + ":" + String(WLED_PORT) + "/json/state");
+  http.begin("http://" + wledIp + ":" + String(wledPort) + "/json/state");
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(timeoutMs);
   int code = -1;
@@ -584,7 +586,7 @@ void applyMbFullStripOff(OverrideSource src) {
 String getFromWLED(const String& path) {
   if (WiFi.status() != WL_CONNECTED) return "";
   HTTPClient http;
-  http.begin("http://" + String(WLED_IP) + ":" + String(WLED_PORT) + path);
+  http.begin("http://" + wledIp + ":" + String(wledPort) + path);
   http.setTimeout(5000);
   int code = http.GET();
   String body = "";
@@ -616,7 +618,7 @@ String compactWledStateForSave(const String& full) {
     static const char* segKeys[] = {
       "id", "start", "stop", "len", "grp", "spc", "of", "on", "bri",
       "fx", "pal", "sx", "ix", "c1", "c2", "c3", "o1", "o2", "o3",
-      "col", "mi", "rev", "sel",
+      "col", "mi", "rev", "sel", "bm",
     };
     for (JsonObject segIn : inSegs) {
       int stop = segIn["stop"] | 0;
@@ -890,10 +892,13 @@ void enqueueBleCommand(const String& msg) {
 void processBleCmdQueue() {
   if (bleCmdQueue == nullptr) return;
   PendingBleCmd item;
-  if (xQueueReceive(bleCmdQueue, &item, 0) != pdTRUE) return;
-  if (item.data) {
-    handleBLECommand(String(item.data));
-    free(item.data);
+  int drained = 0;
+  while (drained < 4 && xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
+    if (item.data) {
+      handleBLECommand(String(item.data));
+      free(item.data);
+    }
+    drained++;
   }
 }
 
@@ -2192,6 +2197,27 @@ void handleBLECommand(const String& msg) {
               "\"transition_ms\":" + String(bleEffectTransitionMs) + "}");
   }
 
+  // ── WLED WiFi / HTTP target ──
+  else if (type == "wled_net_config") {
+    if (doc.containsKey("ssid")) wledSsid = doc["ssid"].as<String>();
+    if (doc.containsKey("pass")) wledPass = doc["pass"].as<String>();
+    if (doc.containsKey("ip"))   wledIp   = doc["ip"].as<String>();
+    if (doc.containsKey("port")) wledPort = doc["port"].as<int>();
+    prefs.begin("config", false);
+    prefs.putString("wledSsid", wledSsid);
+    prefs.putString("wledPass", wledPass);
+    prefs.putString("wledIp", wledIp);
+    prefs.putInt("wledPort", wledPort);
+    prefs.end();
+    String ack = "{\"type\":\"ack\",\"action\":\"wled_net_config\","
+                 "\"ssid\":\"" + wledSsid + "\",\"ip\":\"" + wledIp + "\","
+                 "\"port\":" + String(wledPort) + "}";
+    bleNotify(ack);
+
+    wifiConnectInProgress = false;
+    connectToWLED(true);
+  }
+
   // ── Starlight Wand config ──
   else if (type == "sw_config") {
     if (doc.containsKey("enabled"))    starlightEnabled   = doc["enabled"].as<bool>();
@@ -2228,6 +2254,7 @@ void handleBLECommand(const String& msg) {
       prefs.begin("config", false);
       prefs.putString("mbMapping", mbMappingJson);
       prefs.end();
+      mbMappingLoadedFromNvs = true;
       applyMbMappingJson(doc["mapping"]);
       Serial.printf("[MB] Mapping updated (%u bytes)\n", (unsigned)mbMappingJson.length());
     }
@@ -2307,6 +2334,9 @@ void handleBLECommand(const String& msg) {
       "\"brightness\":" + String(currentBrightness) + ","
       "\"preset\":\"" + currentPresetId + "\","
       "\"wifi\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ","
+      "\"wled_ssid\":\"" + wledSsid + "\","
+      "\"wled_ip\":\"" + wledIp + "\","
+      "\"wled_port\":" + String(wledPort) + ","
       "\"sw_enabled\":" + String(starlightEnabled ? "true" : "false") + ","
       "\"sw_timeout_ms\":" + String(starlightTimeoutMs) + ","
       "\"mb_enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
@@ -2315,6 +2345,7 @@ void handleBLECommand(const String& msg) {
       "\"ble_transition_ms\":" + String(bleEffectTransitionMs) + ","
       "\"mb_chase_speed\":" + String(mbChaseSpeed) + ","
       "\"mb_chase_thickness\":" + String(mbChaseThickness) + ","
+      "\"mb_mapping_loaded\":" + String(mbMappingLoadedFromNvs ? "true" : "false") + ","
       "\"mb_layout_active\":" + String((int)mbActiveLayoutIdx) + ","
       "\"mb_layout_name\":\"" + String(mbLayoutCount > 0 ? mbLayouts[mbActiveLayoutIdx].name : "Default") + "\","
       "\"mb_layout_count\":" + String((int)mbLayoutCount) + ","
@@ -2966,6 +2997,7 @@ void processSerialCommands() {
     Serial.println("  mb five <tl bl br tr c>  — E909 five corners (palette 0-31)");
     Serial.println("  mb <palette> [mask]      — E905 single color (mask 0 = all)");
     Serial.println("  mb defer on|off          — forward E9 to app vs firmware apply");
+    Serial.println("  nvs wifi                 — dump stored vs in-memory WiFi config");
   } else if (line == "status") {
     Serial.printf("[Status] WiFi=%s override=%d preset=%s bri=%d queue=%u\n",
                   WiFi.status() == WL_CONNECTED ? "up" : "down",
@@ -2973,12 +3005,38 @@ void processSerialCommands() {
                   currentPresetId.length() ? currentPresetId.c_str() : "(none)",
                   currentBrightness,
                   (unsigned)uxQueueMessagesWaiting(cmdQueue));
+  } else if (line == "nvs wifi") {
+    Preferences dbgPrefs;
+    dbgPrefs.begin("config", true);
+    String nvsSsid = dbgPrefs.getString("wledSsid", "<not set>");
+    String nvsPass = dbgPrefs.getString("wledPass", "<not set>");
+    String nvsIp   = dbgPrefs.getString("wledIp", "<not set>");
+    int    nvsPort = dbgPrefs.getInt("wledPort", -1);
+    dbgPrefs.end();
+
+    Serial.println("[NVS] --- Stored in flash (config namespace) ---");
+    Serial.printf("[NVS] wledSsid = \"%s\"\n", nvsSsid.c_str());
+    Serial.printf("[NVS] wledPass = \"%s\"\n", nvsPass.c_str());
+    Serial.printf("[NVS] wledIp   = \"%s\"\n", nvsIp.c_str());
+    Serial.printf("[NVS] wledPort = %d\n", nvsPort);
+    Serial.println("[NVS] --- Current in-memory values ---");
+    Serial.printf("[NVS] wledSsid = \"%s\"\n", wledSsid.c_str());
+    Serial.printf("[NVS] wledPass = \"%s\"\n", wledPass.c_str());
+    Serial.printf("[NVS] wledIp   = \"%s\"\n", wledIp.c_str());
+    Serial.printf("[NVS] wledPort = %d\n", wledPort);
+    Serial.printf("[NVS] WiFi.status() = %d (%s)\n", (int)WiFi.status(),
+                  WiFi.status() == WL_CONNECTED ? "CONNECTED" :
+                  WiFi.status() == WL_IDLE_STATUS ? "IDLE" :
+                  WiFi.status() == WL_NO_SSID_AVAIL ? "NO_SSID_AVAIL" :
+                  WiFi.status() == WL_CONNECT_FAILED ? "CONNECT_FAILED" :
+                  WiFi.status() == WL_CONNECTION_LOST ? "CONNECTION_LOST" :
+                  WiFi.status() == WL_DISCONNECTED ? "DISCONNECTED" : "OTHER");
   } else if (line == "wled si") {
     if (WiFi.status() != WL_CONNECTED) {
       Serial.println("[WLED] WiFi not connected");
     } else {
       HTTPClient http;
-      http.begin("http://" + String(WLED_IP) + ":" + String(WLED_PORT) + "/json/si");
+      http.begin("http://" + wledIp + ":" + String(wledPort) + "/json/si");
       http.setTimeout(5000);
       int code = http.GET();
       if (code == 200) {
@@ -3101,12 +3159,26 @@ void startBLEScan() {
 // WIFI
 // ─────────────────────────────────────────────
 
-void connectToWLED() {
-  if (WiFi.status() == WL_CONNECTED) { Serial.println("[WiFi] Already connected"); return; }
-  WiFi.disconnect(false); delay(100);
-  Serial.printf("[WiFi] Connecting to GLEDOPTO: %s\n", WLED_SSID);
+void connectToWLED(bool force) {
+  if (!force && WiFi.status() == WL_CONNECTED) {
+    Serial.println("[WiFi] Already connected");
+    return;
+  }
+  if (wifiConnectInProgress) {
+    Serial.println("[WiFi] Connect already in progress — skipping");
+    return;
+  }
+  wifiConnectInProgress = true;
+  WiFi.disconnect(true);
+  int waitAttempts = 0;
+  while (WiFi.status() == WL_CONNECTED && waitAttempts < 20) {
+    delay(50);
+    waitAttempts++;
+  }
+  delay(100);
+  Serial.printf("[WiFi] Connecting to GLEDOPTO: %s\n", wledSsid.c_str());
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WLED_SSID, WLED_PASS);
+  WiFi.begin(wledSsid.c_str(), wledPass.c_str());
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
@@ -3122,6 +3194,7 @@ void connectToWLED() {
   } else {
     Serial.println("\n[WiFi] Failed — will retry");
   }
+  wifiConnectInProgress = false;
 }
 
 // ─────────────────────────────────────────────
@@ -3156,10 +3229,15 @@ void setup() {
   showLookFireworksPre  = prefs.getString("showFwPre", "");
   showLookFireworksLive = prefs.getString("showFwLive", "__BLACK__");
   showLookFireworksPost = prefs.getString("showFwPost", "");
+  wledSsid = prefs.getString("wledSsid", "KyLan Ren");
+  wledPass = prefs.getString("wledPass", "tigers2016");
+  wledIp   = prefs.getString("wledIp", "wled.local");
+  wledPort = prefs.getInt("wledPort", 80);
   prefs.end();
   loadMbMappingDefaults();
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
   loadMbMappingFromJson();
+  mbMappingLoadedFromNvs = mbMappingJson.length() > 0;
   loadWledBaselineFromNvs();
   Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
