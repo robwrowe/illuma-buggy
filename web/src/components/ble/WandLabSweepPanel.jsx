@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Checkbox,
@@ -12,8 +12,11 @@ import { useDisclosure } from '@mantine/hooks';
 import {
   buildShowBodyFromSweep,
   bytesToHex,
+  getSweepStepPayload,
   payloadToShowHex,
+  sendHex,
   startShow,
+  sweepTotalSteps,
 } from '../../lib/ble/wandSimClient';
 import { MB_PAL_OFF } from '../../lib/ble/mbConstants';
 import { buildMbSingle } from '../../lib/ble/mbPayloads';
@@ -26,6 +29,13 @@ function parseHexByte(s) {
   return Number.isNaN(n) ? 0 : n & 0xff;
 }
 
+function sweepStepLabel(stepIdx, values, offBetween) {
+  if (offBetween && stepIdx % 2 === 1) return 'off';
+  const valIdx = offBetween ? Math.floor(stepIdx / 2) : stepIdx;
+  const val = values[valIdx];
+  return val != null ? `0x${val.toString(16).padStart(2, '0').toUpperCase()}` : '';
+}
+
 export function WandLabSweepPanel({
   simIp,
   bytes,
@@ -33,6 +43,7 @@ export function WandLabSweepPanel({
   onSweepIndexChange,
   onStatus,
   onSweepComplete,
+  onLivePayloadChange,
 }) {
   const [opened, { toggle }] = useDisclosure(false);
   const [startHex, setStartHex] = useState('00');
@@ -41,62 +52,238 @@ export function WandLabSweepPanel({
   const [dwellMs, setDwellMs] = useState(3000);
   const [offBetween, setOffBetween] = useState(false);
   const [offWaitMs, setOffWaitMs] = useState(1000);
+  const [manualAdvance, setManualAdvance] = useState(false);
   const [sweepValues, setSweepValues] = useState([]);
   const [sweepOffBetween, setSweepOffBetween] = useState(false);
+  const [manualStepIdx, setManualStepIdx] = useState(-1);
   const [sweepNote, setSweepNote] = useState('');
   const [showSweepLog, setShowSweepLog] = useState(false);
+  const [lastSentPayload, setLastSentPayload] = useState(null);
+  const [pending, setPending] = useState(null);
   const { progress, startPolling, stop } = useShowProgress(simIp);
 
-  const running = progress?.active;
-  const step = progress?.step ?? 0;
+  const busy = pending != null;
+
+  const manualActive = manualStepIdx >= 0;
+  const running = manualActive || progress?.active;
+  const step = manualActive ? manualStepIdx + 1 : (progress?.step ?? 0);
+  const totalSteps = sweepValues.length
+    ? sweepTotalSteps(sweepValues, sweepOffBetween)
+    : (progress?.total ?? 0);
+
   const isOffStep = running && sweepOffBetween && step > 0 && step % 2 === 0;
   const currentVal = running && sweepValues.length && step > 0 && !isOffStep
     ? sweepValues[Math.min(Math.floor((step - 1) / (sweepOffBetween ? 2 : 1)), sweepValues.length - 1)]
     : null;
 
-  const liveHex = isOffStep
-    ? payloadToShowHex(MB_OFF_BYTES)
-    : currentVal != null && sweepIndex != null && bytes?.length
-      ? payloadToShowHex(bytes.map((b, i) => (i === sweepIndex ? currentVal : b)))
-      : bytes?.length
-        ? payloadToShowHex(bytes)
-        : '';
+  const livePayload = useMemo(() => {
+    if (!running || !sweepValues.length || step <= 0) return null;
+    return getSweepStepPayload(
+      bytes,
+      sweepIndex,
+      sweepValues,
+      step - 1,
+      sweepOffBetween,
+      MB_OFF_BYTES,
+    );
+  }, [running, sweepValues, step, sweepOffBetween, bytes, sweepIndex]);
 
-  const handleRun = async () => {
-    const ip = (simIp || '').trim();
-    if (ip === '') { onStatus?.('Set simulator IP first'); return; }
-    if (sweepIndex == null) { onStatus?.('Click a byte index to set sweep target'); return; }
-    if (!bytes?.length) { onStatus?.('No bytes to sweep'); return; }
+  const liveHex = livePayload?.length
+    ? payloadToShowHex(livePayload)
+    : bytes?.length
+      ? payloadToShowHex(bytes)
+      : '';
 
+  useEffect(() => {
+    if (!livePayload?.length) {
+      if (!manualActive && !progress?.active) onLivePayloadChange?.(null);
+      return;
+    }
+    onLivePayloadChange?.(livePayload);
+    setLastSentPayload(livePayload);
+  }, [livePayload, manualActive, progress?.active, onLivePayloadChange]);
+
+  useEffect(() => () => onLivePayloadChange?.(null), [onLivePayloadChange]);
+
+  const buildSweepPlan = () => {
     const start = parseHexByte(startHex);
     const end = parseHexByte(endHex);
     const step = Math.max(1, parseHexByte(stepHex) || 1);
-
     const offOpts = offBetween
       ? { offBytes: MB_OFF_BYTES, offWaitMs }
       : null;
-    const { body, values } = buildShowBodyFromSweep(
+    return buildShowBodyFromSweep(
       bytes, sweepIndex, start, end, step, dwellMs, undefined, offOpts,
     );
-    if (!values.length) { onStatus?.('Empty sweep range'); return; }
+  };
 
-    setSweepValues(values);
-    setSweepOffBetween(!!offOpts);
+  const validateSweep = () => {
+    const ip = (simIp || '').trim();
+    if (ip === '') { onStatus?.('Set simulator IP first'); return null; }
+    if (sweepIndex == null) { onStatus?.('Click a byte index to set sweep target'); return null; }
+    if (!bytes?.length) { onStatus?.('No bytes to sweep'); return null; }
+    const { body, values } = buildSweepPlan();
+    if (!values.length) { onStatus?.('Empty sweep range'); return null; }
+    return { ip, body, values, offOpts: offBetween ? { offBytes: MB_OFF_BYTES, offWaitMs } : null };
+  };
+
+  const sendManualStep = async (stepIdx, plan, { updateIndex = true, actionLabel } = {}) => {
+    const payload = getSweepStepPayload(
+      bytes,
+      sweepIndex,
+      plan.values,
+      stepIdx,
+      !!plan.offOpts,
+      MB_OFF_BYTES,
+    );
+    if (!payload.length) return;
+    await sendHex(plan.ip, payload);
+    if (updateIndex) setManualStepIdx(stepIdx);
+    setLastSentPayload(payload);
+    onLivePayloadChange?.(payload);
+    const label = sweepStepLabel(stepIdx, plan.values, !!plan.offOpts);
+    const total = sweepTotalSteps(plan.values, !!plan.offOpts);
+    const action = actionLabel || 'sent';
+    onStatus?.(`Manual sweep ${stepIdx + 1}/${total} ${action} (${label})`);
+  };
+
+  const getManualPlan = () => {
+    const ip = (simIp || '').trim();
+    if (ip === '' || sweepIndex == null || !bytes?.length || !sweepValues.length) return null;
+    return {
+      ip,
+      values: sweepValues,
+      offOpts: sweepOffBetween ? { offBytes: MB_OFF_BYTES, offWaitMs } : null,
+    };
+  };
+
+  const handleRunManual = async () => {
+    if (busy) return;
+    const plan = validateSweep();
+    if (!plan) return;
+    setSweepValues(plan.values);
+    setSweepOffBetween(!!plan.offOpts);
+    setShowSweepLog(false);
+    setPending('start-manual');
+    onStatus?.('Sending first sweep value…');
     try {
-      await startShow(ip, body);
-      const stepCount = offOpts ? values.length * 2 - 1 : values.length;
+      await sendManualStep(0, plan);
+    } catch (e) {
+      setManualStepIdx(-1);
+      onLivePayloadChange?.(null);
+      onStatus?.(e.message || 'Manual sweep send failed');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleManualPrevious = async () => {
+    if (busy) return;
+    const plan = getManualPlan();
+    if (!plan || manualStepIdx <= 0) return;
+    setPending('prev');
+    onStatus?.('Sending previous value…');
+    try {
+      await sendManualStep(manualStepIdx - 1, plan, { actionLabel: 'previous' });
+      setShowSweepLog(false);
+    } catch (e) {
+      onStatus?.(e.message || 'Send failed');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleManualRepeat = async () => {
+    if (busy) return;
+    const plan = getManualPlan();
+    if (!plan || manualStepIdx < 0) return;
+    setPending('repeat');
+    onStatus?.('Re-sending current value…');
+    try {
+      await sendManualStep(manualStepIdx, plan, { updateIndex: false, actionLabel: 'repeated' });
+    } catch (e) {
+      onStatus?.(e.message || 'Send failed');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleManualNext = async () => {
+    if (busy) return;
+    const plan = getManualPlan();
+    if (!plan || manualStepIdx < 0) return;
+    const total = sweepTotalSteps(plan.values, !!plan.offOpts);
+    const next = manualStepIdx + 1;
+    if (next >= total) {
+      setShowSweepLog(true);
+      onStatus?.('Manual sweep complete');
+      return;
+    }
+    setPending('next');
+    onStatus?.('Sending next value…');
+    try {
+      await sendManualStep(next, plan);
+      setShowSweepLog(false);
+      if (next >= total - 1) setShowSweepLog(true);
+    } catch (e) {
+      onStatus?.(e.message || 'Send failed');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleStopManual = () => {
+    setManualStepIdx(-1);
+    setShowSweepLog(false);
+    onLivePayloadChange?.(null);
+    onStatus?.('Manual sweep stopped');
+  };
+
+  const handleRunAuto = async () => {
+    if (busy) return;
+    const plan = validateSweep();
+    if (!plan) return;
+
+    setSweepValues(plan.values);
+    setSweepOffBetween(!!plan.offOpts);
+    setManualStepIdx(-1);
+    setPending('run-auto');
+    onStatus?.('Starting auto sweep…');
+    try {
+      await startShow(plan.ip, plan.body);
+      const stepCount = plan.offOpts ? plan.values.length * 2 - 1 : plan.values.length;
       onStatus?.(
-        `Sweep started: ${values.length} values${offOpts ? ` + off between (${stepCount} steps)` : ''} at byte ${sweepIndex}`,
+        `Sweep started: ${plan.values.length} values${plan.offOpts ? ` + off between (${stepCount} steps)` : ''} at byte ${sweepIndex}`,
       );
       startPolling(() => {
         setShowSweepLog(true);
         setSweepNote('');
+        onLivePayloadChange?.(null);
         onStatus?.('Sweep finished or stopped');
       });
     } catch (e) {
       onStatus?.(e.message || 'Sweep failed');
+    } finally {
+      setPending(null);
     }
   };
+
+  const handleStopAuto = async () => {
+    if (busy && pending !== 'stop-auto') return;
+    setPending('stop-auto');
+    try {
+      await stop();
+      onLivePayloadChange?.(null);
+      onStatus?.('Sweep stopped');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const manualTotal = sweepValues.length ? sweepTotalSteps(sweepValues, sweepOffBetween) : 0;
+  const canManualPrevious = manualActive && manualStepIdx > 0;
+  const canManualRepeat = manualActive && manualStepIdx >= 0;
+  const canManualNext = manualActive && manualStepIdx < manualTotal - 1;
 
   return (
     <Stack gap="xs" mt="sm">
@@ -122,18 +309,31 @@ export function WandLabSweepPanel({
             onChange={(v) => setDwellMs(Number(v) || 3000)}
             min={100}
             size="xs"
+            disabled={manualAdvance}
+            description={manualAdvance ? 'Auto timing disabled in manual mode' : undefined}
           />
         </Group>
       )}
       {opened && (
         <Stack gap={4}>
           <Checkbox
+            label="Manual advance (send each value with Next)"
+            checked={manualAdvance}
+            onChange={(e) => {
+              setManualAdvance(e.currentTarget.checked);
+              if (manualActive) handleStopManual();
+            }}
+            size="xs"
+            disabled={progress?.active}
+          />
+          <Checkbox
             label="All-off (E905 palette 29) between values"
             checked={offBetween}
             onChange={(e) => setOffBetween(e.currentTarget.checked)}
             size="xs"
+            disabled={running}
           />
-          {offBetween && (
+          {offBetween && !manualAdvance && (
             <NumberInput
               label="Off wait (ms)"
               description="Hold after off command before next sweep value"
@@ -150,30 +350,81 @@ export function WandLabSweepPanel({
         <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
           Live: {liveHex.toUpperCase()}
           {isOffStep
-            ? ` (off, ${step} / ${progress?.total ?? 0})`
+            ? ` (off, ${step} / ${totalSteps})`
             : currentVal != null
-              && ` (0x${currentVal.toString(16).padStart(2, '0').toUpperCase()}, ${step} / ${progress?.total ?? 0})`}
+              && ` (${sweepStepLabel(step - 1, sweepValues, sweepOffBetween)}, ${step} / ${totalSteps})`}
+          {busy && pending !== 'run-auto' && pending !== 'stop-auto' ? ' · sending…' : ''}
         </Text>
       )}
       {opened && (
         <Group gap="xs">
           {!running ? (
-            <Button size="xs" onClick={handleRun} disabled={sweepIndex == null}>
-              Run sweep
+            <Button
+              size="xs"
+              onClick={manualAdvance ? handleRunManual : handleRunAuto}
+              disabled={sweepIndex == null || busy}
+              loading={pending === 'start-manual' || pending === 'run-auto'}
+            >
+              {manualAdvance ? 'Start manual sweep' : 'Run sweep'}
             </Button>
+          ) : manualActive ? (
+            <>
+              <Button
+                size="xs"
+                variant="default"
+                onClick={handleManualPrevious}
+                disabled={!canManualPrevious || (busy && pending !== 'prev')}
+                loading={pending === 'prev'}
+              >
+                Previous
+              </Button>
+              <Button
+                size="xs"
+                variant="default"
+                onClick={handleManualRepeat}
+                disabled={!canManualRepeat || (busy && pending !== 'repeat')}
+                loading={pending === 'repeat'}
+              >
+                Repeat
+              </Button>
+              <Button
+                size="xs"
+                onClick={handleManualNext}
+                disabled={!canManualNext || (busy && pending !== 'next')}
+                loading={pending === 'next'}
+              >
+                Next value
+              </Button>
+              <Button
+                size="xs"
+                color="red"
+                variant="light"
+                onClick={handleStopManual}
+                disabled={busy}
+              >
+                Stop
+              </Button>
+            </>
           ) : (
-            <Button size="xs" color="red" variant="light" onClick={() => stop()}>
+            <Button
+              size="xs"
+              color="red"
+              variant="light"
+              onClick={handleStopAuto}
+              loading={pending === 'stop-auto'}
+              disabled={busy && pending !== 'stop-auto'}
+            >
               Stop sweep
             </Button>
           )}
-          {sweepIndex != null && (
+          {sweepIndex != null && !running && (
             <Button size="xs" variant="subtle" onClick={() => onSweepIndexChange?.(null)}>
               Clear target
             </Button>
           )}
         </Group>
       )}
-      {showSweepLog && !running && sweepValues.length > 0 && (
+      {showSweepLog && sweepValues.length > 0 && (
         <Stack gap={4}>
           <TextInput
             size="xs"
@@ -186,15 +437,19 @@ export function WandLabSweepPanel({
             variant="light"
             onClick={() => {
               const offPart = offBetween ? `, off between (${offWaitMs}ms)` : '';
+              const modePart = manualAdvance ? ', manual advance' : '';
               const note = sweepNote.trim()
-                || `Sweep byte ${sweepIndex}: 0x${startHex}–0x${endHex} step 0x${stepHex}, ${dwellMs}ms dwell${offPart}`;
+                || `Sweep byte ${sweepIndex}: 0x${startHex}–0x${endHex} step 0x${stepHex}, ${dwellMs}ms dwell${offPart}${modePart}`;
               onSweepComplete?.({
                 note,
                 presetKey: `sweep:b${sweepIndex}`,
-                bytes: bytesToHex(bytes),
+                bytes: lastSentPayload?.length ? bytesToHex(lastSentPayload) : bytesToHex(bytes),
               });
               setShowSweepLog(false);
               setSweepNote('');
+              setManualStepIdx(-1);
+              setLastSentPayload(null);
+              onLivePayloadChange?.(null);
             }}
           >
             Save sweep summary log

@@ -104,6 +104,35 @@ export function buildShowBodyFromSweep(
   return { body: lines.join('\n'), values: uniq, offBetween: !!offBytes };
 }
 
+/** 0-based index into the /show step sequence (value + optional off-between steps). */
+export function sweepTotalSteps(values, offBetween) {
+  if (!values?.length) return 0;
+  return offBetween ? values.length * 2 - 1 : values.length;
+}
+
+/** Payload bytes for one sweep step (before 8301 envelope). */
+export function getSweepStepPayload(
+  baseBytes,
+  sweepByteIndex,
+  values,
+  stepIdx,
+  offBetween,
+  offBytes,
+) {
+  const base = baseBytes || [];
+  if (!values?.length || stepIdx < 0) return [];
+  if (offBetween && stepIdx % 2 === 1) {
+    return offBytes?.length ? [...offBytes] : [];
+  }
+  const valIdx = offBetween ? Math.floor(stepIdx / 2) : stepIdx;
+  if (valIdx < 0 || valIdx >= values.length) return [];
+  const out = [...base];
+  if (sweepByteIndex >= 0 && sweepByteIndex < out.length) {
+    out[sweepByteIndex] = values[valIdx];
+  }
+  return out;
+}
+
 /** Build /show body from capture rows: [{ ts_ms?, hex }]. */
 /** Build /show body from packet rows with per-step waitMs (payload bytes; 8301 added per step). */
 export function buildShowBodyFromPackets(packets, lastHoldMs = DEFAULT_LAST_HOLD_MS) {
