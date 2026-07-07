@@ -13,7 +13,8 @@ import * as Sharing from 'expo-sharing';
 import { useAppStore } from '../stores/store';
 import { useTheme } from '../utils/theme';
 import {
-  CAPTURE_DURATION_OPTIONS, describeBlePacket, formatCaptureExport,
+  CAPTURE_DURATION_MANUAL, CAPTURE_DURATION_PRESETS, MAX_PACKETS_PER_SESSION,
+  describeBlePacket, formatCaptureExport, isCaptureDurationPreset,
   BleCaptureSession,
 } from '../utils/bleCapture';
 import { startPhoneBleScan } from '../utils/phoneBleScan';
@@ -61,11 +62,12 @@ export default function BleCaptureScreen() {
   const s = styles(colors);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [customMinutes, setCustomMinutes] = useState('');
   const scanUnsubRef = useRef<(() => void) | null>(null);
 
   const {
     bleCaptureActive, bleCaptureDurationSec, bleCaptureStartedAt, bleCaptureEndsAt,
-    bleCaptureLiveCount, bleCaptureBuffer, bleCaptureSessions, bleCaptureDraftName,
+    bleCaptureSegment, bleCaptureLiveCount, bleCaptureBuffer, bleCaptureSessions, bleCaptureDraftName,
     showSettings,
     setBleCaptureDurationSec, setBleCaptureDraftName,
     startBleCapture, stopBleCapture, appendBleCapturePacket,
@@ -104,6 +106,14 @@ export default function BleCaptureScreen() {
 
   const handleStart = () => {
     if (bleCaptureActive) return;
+    if (
+      bleCaptureDurationSec > 0
+      && !isCaptureDurationPreset(bleCaptureDurationSec)
+      && bleCaptureDurationSec < 60
+    ) {
+      Alert.alert('Duration', 'Enter at least 1 minute for a custom auto-stop duration.');
+      return;
+    }
     startBleCapture();
     scanUnsubRef.current = startPhoneBleScan((pkt) => {
       appendBleCapturePacket({
@@ -126,6 +136,14 @@ export default function BleCaptureScreen() {
   };
 
   const remainingMs = bleCaptureEndsAt ? Math.max(0, bleCaptureEndsAt - Date.now()) : null;
+  const usingCustomDuration = bleCaptureDurationSec > 0 && !isCaptureDurationPreset(bleCaptureDurationSec);
+
+  const applyCustomMinutes = (raw: string) => {
+    setCustomMinutes(raw);
+    const n = parseInt(raw, 10);
+    if (!raw.trim() || Number.isNaN(n) || n <= 0) return;
+    setBleCaptureDurationSec(n * 60);
+  };
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
@@ -178,11 +196,28 @@ export default function BleCaptureScreen() {
 
         <Text style={s.label}>Duration</Text>
         <View style={s.chipRow}>
-          {CAPTURE_DURATION_OPTIONS.map(({ label, sec }) => (
+          <TouchableOpacity
+            style={[s.chip, bleCaptureDurationSec === CAPTURE_DURATION_MANUAL && s.chipActive]}
+            onPress={() => {
+              if (bleCaptureActive) return;
+              setCustomMinutes('');
+              setBleCaptureDurationSec(CAPTURE_DURATION_MANUAL);
+            }}
+            disabled={bleCaptureActive}
+          >
+            <Text style={[s.chipText, bleCaptureDurationSec === CAPTURE_DURATION_MANUAL && s.chipTextActive]}>
+              Manual stop
+            </Text>
+          </TouchableOpacity>
+          {CAPTURE_DURATION_PRESETS.map(({ label, sec }) => (
             <TouchableOpacity
               key={sec}
               style={[s.chip, bleCaptureDurationSec === sec && s.chipActive]}
-              onPress={() => !bleCaptureActive && setBleCaptureDurationSec(sec)}
+              onPress={() => {
+                if (bleCaptureActive) return;
+                setCustomMinutes('');
+                setBleCaptureDurationSec(sec);
+              }}
               disabled={bleCaptureActive}
             >
               <Text style={[s.chipText, bleCaptureDurationSec === sec && s.chipTextActive]}>
@@ -191,10 +226,34 @@ export default function BleCaptureScreen() {
             </TouchableOpacity>
           ))}
         </View>
+        <View style={s.customDurationRow}>
+          <Text style={s.customDurationLabel}>Custom</Text>
+          <TextInput
+            style={[s.input, s.customDurationInput, usingCustomDuration && s.inputActive]}
+            value={
+              customMinutes
+              || (usingCustomDuration ? String(Math.round(bleCaptureDurationSec / 60)) : '')
+            }
+            onChangeText={applyCustomMinutes}
+            editable={!bleCaptureActive}
+            placeholder="min"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="number-pad"
+            maxLength={4}
+          />
+          <Text style={s.customDurationSuffix}>min auto-stop</Text>
+        </View>
+        <Text style={s.sub}>
+          Files roll over automatically at {MAX_PACKETS_PER_SESSION.toLocaleString()} packets
+          (recording continues in a new part).
+        </Text>
 
         {bleCaptureActive && (
           <View style={s.statsRow}>
-            <Text style={s.stat}>{bleCaptureLiveCount} packets</Text>
+            <Text style={s.stat}>
+              {bleCaptureSegment > 1 ? `Part ${bleCaptureSegment} · ` : ''}
+              {bleCaptureLiveCount} packets
+            </Text>
             <Text style={s.stat}>{formatElapsed(elapsedMs)} elapsed</Text>
             {remainingMs !== null && (
               <Text style={s.stat}>{formatElapsed(remainingMs)} left</Text>
@@ -320,6 +379,11 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
     chipActive:{ borderColor: c.primary, backgroundColor: c.primaryDim },
     chipText:  { color: c.textMuted, fontSize: 12, fontWeight: '500' },
     chipTextActive: { color: c.primary },
+    customDurationRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    customDurationLabel: { color: c.textSecondary, fontSize: 12, fontWeight: '600' },
+    customDurationInput: { flex: 0, width: 72, paddingVertical: 8, textAlign: 'center' },
+    inputActive: { borderColor: c.primary },
+    customDurationSuffix: { color: c.textMuted, fontSize: 12, flex: 1 },
     statsRow:  { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
     stat:      { color: c.textPrimary, fontSize: 13, fontWeight: '600' },
     startBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: c.primary, paddingVertical: 12, borderRadius: 10, marginTop: 4 },

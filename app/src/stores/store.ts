@@ -147,7 +147,7 @@ import {
   MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
 import {
-  BleCapturePacket, BleCaptureSession, BleCaptureDuration,
+  BleCapturePacket, BleCaptureSession,
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
 } from '../utils/bleCapture';
 import {
@@ -344,16 +344,18 @@ interface AppState {
 
   // BLE packet capture (parade / show recording)
   bleCaptureActive:       boolean;
-  bleCaptureDurationSec:  BleCaptureDuration;
+  bleCaptureDurationSec:  number;
   bleCaptureStartedAt:    number | null;
   bleCaptureEndsAt:       number | null;
+  /** 1-based segment index while recording; increments on packet-limit rollover */
+  bleCaptureSegment:      number;
   bleCaptureLiveCount:    number;
   bleCaptureBuffer:       BleCapturePacket[];
   bleCaptureSessions:     BleCaptureSession[];
   bleCaptureDraftName:    string;
   captureSource:          'firmware' | 'phone';
   setCaptureSource:       (v: 'firmware' | 'phone') => void;
-  setBleCaptureDurationSec: (sec: BleCaptureDuration) => void;
+  setBleCaptureDurationSec: (sec: number) => void;
   setBleCaptureDraftName:   (name: string) => void;
   startBleCapture:          () => void;
   stopBleCapture:           (reason?: string) => void;
@@ -430,6 +432,37 @@ function parseWledJsonArray(raw: string | undefined): string[] | null {
   }
 }
 
+function buildCaptureSession(
+  s: {
+    bleCaptureBuffer: BleCapturePacket[];
+    bleCaptureDraftName: string;
+    bleCaptureStartedAt: number | null;
+  },
+  endedAt: number,
+  segment: number,
+  forcePartSuffix: boolean,
+): BleCaptureSession {
+  const startedAt = s.bleCaptureStartedAt ?? endedAt;
+  const baseName = s.bleCaptureDraftName.trim() || `Capture ${new Date(startedAt).toLocaleString()}`;
+  const name = forcePartSuffix || segment > 1 ? `${baseName} · ${segment}` : baseName;
+  return {
+    id: `cap_${endedAt}_p${segment}`,
+    name,
+    startedAt,
+    endedAt,
+    durationSec: Math.round((endedAt - startedAt) / 1000),
+    packets: s.bleCaptureBuffer,
+  };
+}
+
+function prependCaptureSession(
+  sessions: BleCaptureSession[],
+  session: BleCaptureSession,
+): BleCaptureSession[] {
+  const next = [session, ...sessions];
+  return next.length > MAX_CAPTURE_SESSIONS ? next.slice(0, MAX_CAPTURE_SESSIONS) : next;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   presets:             [],
   wledEffects:         [],
@@ -468,6 +501,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureDurationSec:  900,
   bleCaptureStartedAt:    null,
   bleCaptureEndsAt:       null,
+  bleCaptureSegment:      1,
   bleCaptureLiveCount:    0,
   bleCaptureBuffer:       [],
   bleCaptureSessions:     [],
@@ -686,6 +720,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureActive: true,
       bleCaptureStartedAt: startedAt,
       bleCaptureEndsAt: durationSec > 0 ? startedAt + durationSec * 1000 : null,
+      bleCaptureSegment: 1,
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
     });
@@ -696,42 +731,58 @@ export const useAppStore = create<AppState>((set, get) => ({
     stopCaptureLocation();
     const s = get();
     if (!s.bleCaptureActive && s.bleCaptureBuffer.length === 0) {
-      set({ bleCaptureActive: false, bleCaptureStartedAt: null, bleCaptureEndsAt: null });
+      set({
+        bleCaptureActive: false,
+        bleCaptureStartedAt: null,
+        bleCaptureEndsAt: null,
+        bleCaptureSegment: 1,
+      });
       return;
     }
     const endedAt = Date.now();
-    const startedAt = s.bleCaptureStartedAt ?? endedAt;
-    const packets = s.bleCaptureBuffer;
-    const session: BleCaptureSession = {
-      id: `cap_${endedAt}`,
-      name: s.bleCaptureDraftName.trim() || `Capture ${new Date(startedAt).toLocaleString()}`,
-      startedAt,
-      endedAt,
-      durationSec: Math.round((endedAt - startedAt) / 1000),
-      packets,
-    };
-    let sessions = [session, ...s.bleCaptureSessions];
-    if (sessions.length > MAX_CAPTURE_SESSIONS) sessions = sessions.slice(0, MAX_CAPTURE_SESSIONS);
+    const session = buildCaptureSession(s, endedAt, s.bleCaptureSegment, false);
+    const packets = session.packets;
     set({
       bleCaptureActive: false,
       bleCaptureStartedAt: null,
       bleCaptureEndsAt: null,
+      bleCaptureSegment: 1,
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
-      bleCaptureSessions: sessions,
+      bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
     });
     get().saveToStorage();
     console.log(`[Capture] Stopped (${reason}): ${packets.length} packets`);
+  },
+
+  rolloverBleCapture: () => {
+    const s = get();
+    if (!s.bleCaptureActive || s.bleCaptureBuffer.length === 0) return;
+    const endedAt = Date.now();
+    const session = buildCaptureSession(s, endedAt, s.bleCaptureSegment, true);
+    const nextSegment = s.bleCaptureSegment + 1;
+    set({
+      bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
+      bleCaptureBuffer: [],
+      bleCaptureLiveCount: 0,
+      bleCaptureStartedAt: endedAt,
+      bleCaptureSegment: nextSegment,
+    });
+    get().saveToStorage();
+    console.log(
+      `[Capture] Rolled over part ${s.bleCaptureSegment} (${session.packets.length} packets) → part ${nextSegment}`,
+    );
   },
 
   appendBleCapturePacket: (pkt) => {
     const s = get();
     if (!s.bleCaptureActive) return;
     if (s.bleCaptureBuffer.length >= MAX_PACKETS_PER_SESSION) {
-      get().stopBleCapture('limit');
-      return;
+      get().rolloverBleCapture();
     }
-    const gps = getCaptureLocation() ?? s.userLocation;
+    const active = get();
+    if (!active.bleCaptureActive) return;
+    const gps = getCaptureLocation() ?? active.userLocation;
     const entry: BleCapturePacket = {
       ...pkt,
       receivedAt: Date.now(),
@@ -741,7 +792,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...('accuracyM' in gps && gps.accuracyM != null ? { accuracyM: gps.accuracyM } : {}),
       } : {}),
     };
-    const buf = [...s.bleCaptureBuffer, entry];
+    const buf = [...active.bleCaptureBuffer, entry];
     set({ bleCaptureBuffer: buf, bleCaptureLiveCount: buf.length });
   },
 
