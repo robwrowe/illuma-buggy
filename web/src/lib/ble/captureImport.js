@@ -12,8 +12,9 @@ const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/i;
 
 /** Column indices for tab-delimited Illuma capture exports. */
 const CAPTURE_LAYOUTS = {
-  legacy: { hex: 6, tag: 2, deviceId: null },
-  new: { hex: 7, tag: 3, deviceId: 2 },
+  legacy: { hex: 6, tag: 2, deviceId: null, lat: null, lng: null, accuracyM: null },
+  device: { hex: 7, tag: 3, deviceId: 2, lat: null, lng: null, accuracyM: null },
+  gps: { hex: 10, tag: 6, deviceId: 2, lat: 3, lng: 4, accuracyM: 5 },
 };
 
 function hexAtField(fields, idx) {
@@ -46,6 +47,22 @@ function contentLines(raw) {
     .filter((l) => l && !l.startsWith('#'));
 }
 
+function isCoordLat(s) {
+  const n = parseFloat(s);
+  return Number.isFinite(n) && n >= -90 && n <= 90;
+}
+
+function isCoordLng(s) {
+  const n = parseFloat(s);
+  return Number.isFinite(n) && n >= -180 && n <= 180;
+}
+
+function parseOptionalFloat(s) {
+  if (s == null || s === '') return undefined;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /** Read `# ts_ms …` header comment from a capture export. */
 export function detectCaptureFormatFromHeader(raw) {
   for (const line of (raw || '').split(/\r?\n/)) {
@@ -53,7 +70,10 @@ export function detectCaptureFormatFromHeader(raw) {
     if (!t.startsWith('#')) continue;
     const hdr = t.replace(/^#\s*/, '').toLowerCase();
     if (!hdr.includes('ts_ms')) continue;
-    if (hdr.includes('device_id')) return 'new';
+    if (hdr.includes('device_id') && (hdr.includes('\tlat') || hdr.includes(' lat') || hdr.includes('lng'))) {
+      return 'gps';
+    }
+    if (hdr.includes('device_id')) return 'device';
     return 'legacy';
   }
   return null;
@@ -62,15 +82,21 @@ export function detectCaptureFormatFromHeader(raw) {
 /** Infer layout from a single tab-separated data row. */
 export function detectCaptureFormatFromFields(fields) {
   if (!fields?.length) return 'legacy';
+
+  if (hexAtField(fields, CAPTURE_LAYOUTS.gps.hex)) return 'gps';
+
   const at6 = hexAtField(fields, CAPTURE_LAYOUTS.legacy.hex);
-  const at7 = hexAtField(fields, CAPTURE_LAYOUTS.new.hex);
-  if (at7 && !at6) return 'new';
+  const at7 = hexAtField(fields, CAPTURE_LAYOUTS.device.hex);
+  if (at7 && !at6) return 'device';
   if (at6 && !at7) return 'legacy';
   if (at7 && at6) {
-    if (MAC_RE.test((fields[2] || '').trim())) return 'new';
+    if (MAC_RE.test((fields[2] || '').trim())) return 'device';
     return 'legacy';
   }
-  if (MAC_RE.test((fields[2] || '').trim()) && fields.length >= 9) return 'new';
+  if (MAC_RE.test((fields[2] || '').trim()) && fields.length >= 9) {
+    if (isCoordLat(fields[3]) && isCoordLng(fields[4])) return 'gps';
+    return 'device';
+  }
   return 'legacy';
 }
 
@@ -227,7 +253,18 @@ function parseCaptureLine(line, format = 'legacy') {
     const ts = fields[0] && /^\d+$/.test(fields[0]) ? Number(fields[0]) : null;
     const tag = fields[layout.tag] || '';
     const deviceId = layout.deviceId != null ? (fields[layout.deviceId] || '').trim() : undefined;
-    return { ts_ms: ts, hex, tag, deviceId: deviceId || undefined };
+    const lat = layout.lat != null ? parseOptionalFloat(fields[layout.lat]) : undefined;
+    const lng = layout.lng != null ? parseOptionalFloat(fields[layout.lng]) : undefined;
+    const accuracyM = layout.accuracyM != null ? parseOptionalFloat(fields[layout.accuracyM]) : undefined;
+    return {
+      ts_ms: ts,
+      hex,
+      tag,
+      deviceId: deviceId || undefined,
+      lat,
+      lng,
+      accuracyM,
+    };
   }
 
   const hexTail = trimmed.match(CAPTURE_HEX_TAIL_RE);

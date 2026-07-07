@@ -18,6 +18,10 @@ export interface BleCapturePacket {
   note?: string;
   /** BLE device address/UUID — only populated for phone-direct captures */
   deviceId?: string;
+  /** Phone GPS at packet receive time (phone-direct captures) */
+  lat?: number;
+  lng?: number;
+  accuracyM?: number;
 }
 
 export interface BleCaptureSession {
@@ -76,6 +80,10 @@ export function describeBlePacket(tag: string, hex: string): string {
   return tag;
 }
 
+function fmtCoord(n?: number): string {
+  return n != null && Number.isFinite(n) ? n.toFixed(6) : '';
+}
+
 export function formatCaptureExport(session: BleCaptureSession): string {
   const lines = [
     `# Illuma Buggy BLE Capture`,
@@ -84,11 +92,11 @@ export function formatCaptureExport(session: BleCaptureSession): string {
     `# Ended:   ${new Date(session.endedAt).toISOString()}`,
     `# Packets: ${session.packets.length}`,
     `#`,
-    `# ts_ms\trssi\tdevice_id\ttag\thint\tquality\tfunc\thex\tnote`,
+    `# ts_ms\trssi\tdevice_id\tlat\tlng\taccuracy_m\ttag\thint\tquality\tfunc\thex\tnote`,
   ];
   for (const p of session.packets) {
     lines.push(
-      `${p.boardTs}\t${p.rssi}\t${p.deviceId ?? ''}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
+      `${p.boardTs}\t${p.rssi}\t${p.deviceId ?? ''}\t${fmtCoord(p.lat)}\t${fmtCoord(p.lng)}\t${p.accuracyM != null && Number.isFinite(p.accuracyM) ? Math.round(p.accuracyM) : ''}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
     );
   }
   return lines.join('\n');

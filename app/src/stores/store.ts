@@ -151,6 +151,11 @@ import {
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
 } from '../utils/bleCapture';
 import {
+  getCaptureLocation,
+  startCaptureLocation,
+  stopCaptureLocation,
+} from '../utils/captureLocation';
+import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
   finalizeWledSegmentPayload,
 } from '../utils/segmentLayouts';
@@ -684,9 +689,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
     });
+    void startCaptureLocation();
   },
 
   stopBleCapture: (reason = 'manual') => {
+    stopCaptureLocation();
     const s = get();
     if (!s.bleCaptureActive && s.bleCaptureBuffer.length === 0) {
       set({ bleCaptureActive: false, bleCaptureStartedAt: null, bleCaptureEndsAt: null });
@@ -724,7 +731,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().stopBleCapture('limit');
       return;
     }
-    const entry: BleCapturePacket = { ...pkt, receivedAt: Date.now() };
+    const gps = getCaptureLocation() ?? s.userLocation;
+    const entry: BleCapturePacket = {
+      ...pkt,
+      receivedAt: Date.now(),
+      ...(gps ? {
+        lat: gps.latitude,
+        lng: gps.longitude,
+        ...('accuracyM' in gps && gps.accuracyM != null ? { accuracyM: gps.accuracyM } : {}),
+      } : {}),
+    };
     const buf = [...s.bleCaptureBuffer, entry];
     set({ bleCaptureBuffer: buf, bleCaptureLiveCount: buf.length });
   },

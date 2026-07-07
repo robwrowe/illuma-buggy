@@ -30,6 +30,19 @@ function deviceIdSuffix(deviceId?: string): string {
   return deviceId.length > 8 ? deviceId.slice(-8) : deviceId;
 }
 
+function gpsShort(lat?: number, lng?: number): string {
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return '';
+  return `${lat.toFixed(4)},${lng.toFixed(4)}`;
+}
+
+function packetMetaParts(p: { rssi: number; deviceId?: string; lat?: number; lng?: number }): string {
+  const parts = [`rssi ${p.rssi}`];
+  if (p.deviceId) parts.push(`…${deviceIdSuffix(p.deviceId)}`);
+  const gps = gpsShort(p.lat, p.lng);
+  if (gps) parts.push(gps);
+  return parts.join(' · ');
+}
+
 async function shareSession(session: BleCaptureSession) {
   const body = formatCaptureExport(session);
   const path = `${FileSystem.cacheDirectory}ble-capture-${session.id}.txt`;
@@ -212,10 +225,7 @@ export default function BleCaptureScreen() {
               <Text style={s.packetHint} numberOfLines={1}>
                 {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
               </Text>
-              <Text style={s.packetMeta}>
-                rssi {p.rssi}
-                {p.deviceId ? ` · …${deviceIdSuffix(p.deviceId)}` : ''}
-              </Text>
+              <Text style={s.packetMeta}>{packetMetaParts(p)}</Text>
               <Text style={s.packetHex} numberOfLines={1}>{p.hex}</Text>
             </View>
           ))}
@@ -271,8 +281,7 @@ export default function BleCaptureScreen() {
                       {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
                     </Text>
                     <Text style={s.packetMeta}>
-                      rssi {p.rssi}
-                      {p.deviceId ? ` · …${deviceIdSuffix(p.deviceId)}` : ''}
+                      {packetMetaParts(p)}
                       {' · '}+{(p.receivedAt - session.startedAt) / 1000}s
                     </Text>
                     <Text style={s.packetHex}>{p.hex}</Text>

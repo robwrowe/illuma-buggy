@@ -107,7 +107,7 @@ export function WandLabPacketSequence({
 
       <Textarea
         label="Paste capture or hex"
-        placeholder={'# ts_ms\trssi\tdevice_id\ttag\thint\tquality\tfunc\thex\tnote\n1783304853204\t-86\tAA:BB:CC:DD:EE:FF\tPING\t…\t\t\t8301cc03000100\t'}
+        placeholder={'# ts_ms\trssi\tdevice_id\tlat\tlng\taccuracy_m\ttag\thint\tquality\tfunc\thex\tnote\n1783304853204\t-86\tAA:BB:CC:DD:EE:FF\t28.4170\t-81.5810\t12\tPING\t…\t\t\t8301cc03000100\t'}
         minRows={4}
         value={pasteText}
         onChange={(e) => setPasteText(e.target.value)}
