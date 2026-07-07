@@ -5,19 +5,31 @@ import {
   stripCompanyId,
 } from './wandSimClient';
 
-const CAPTURE_HEX_FIELD = 6;
 const SHOW_LINE_RE = /^(\d+)\s+([0-9a-fA-F]+)$/i;
 const CAPTURE_HEX_TAIL_RE = /(8301[0-9a-fA-F]{8,})\s*$/i;
 const CAPTURE_HEAD_RE = /^(\d{10,})\s+(-?\d+)\s+(\S+)/;
+const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/i;
 
-function extractCaptureHexFromFields(fields) {
-  const fromCol = (fields[CAPTURE_HEX_FIELD] || '').replace(/[^0-9a-fA-F]/g, '');
-  if (fromCol.length >= 12 && fromCol.toLowerCase().startsWith('8301')) return fromCol;
+/** Column indices for tab-delimited Illuma capture exports. */
+const CAPTURE_LAYOUTS = {
+  legacy: { hex: 6, tag: 2, deviceId: null },
+  new: { hex: 7, tag: 3, deviceId: 2 },
+};
+
+function hexAtField(fields, idx) {
+  const h = (fields[idx] || '').replace(/[^0-9a-fA-F]/g, '');
+  return h.length >= 12 && h.toLowerCase().startsWith('8301') ? h : '';
+}
+
+function extractCaptureHexFromFields(fields, format) {
+  const layout = CAPTURE_LAYOUTS[format] || CAPTURE_LAYOUTS.legacy;
+  const fromCol = hexAtField(fields, layout.hex);
+  if (fromCol) return fromCol;
   for (let i = fields.length - 1; i >= 0; i--) {
-    const h = (fields[i] || '').replace(/[^0-9a-fA-F]/g, '');
-    if (h.length >= 12 && h.toLowerCase().startsWith('8301')) return h;
+    const h = hexAtField(fields, i);
+    if (h) return h;
   }
-  return fromCol;
+  return (fields[layout.hex] || '').replace(/[^0-9a-fA-F]/g, '');
 }
 
 function isCaptureLine(line) {
@@ -32,6 +44,42 @@ function contentLines(raw) {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith('#'));
+}
+
+/** Read `# ts_ms …` header comment from a capture export. */
+export function detectCaptureFormatFromHeader(raw) {
+  for (const line of (raw || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t.startsWith('#')) continue;
+    const hdr = t.replace(/^#\s*/, '').toLowerCase();
+    if (!hdr.includes('ts_ms')) continue;
+    if (hdr.includes('device_id')) return 'new';
+    return 'legacy';
+  }
+  return null;
+}
+
+/** Infer layout from a single tab-separated data row. */
+export function detectCaptureFormatFromFields(fields) {
+  if (!fields?.length) return 'legacy';
+  const at6 = hexAtField(fields, CAPTURE_LAYOUTS.legacy.hex);
+  const at7 = hexAtField(fields, CAPTURE_LAYOUTS.new.hex);
+  if (at7 && !at6) return 'new';
+  if (at6 && !at7) return 'legacy';
+  if (at7 && at6) {
+    if (MAC_RE.test((fields[2] || '').trim())) return 'new';
+    return 'legacy';
+  }
+  if (MAC_RE.test((fields[2] || '').trim()) && fields.length >= 9) return 'new';
+  return 'legacy';
+}
+
+function captureFormatForRaw(raw) {
+  const fromHeader = detectCaptureFormatFromHeader(raw);
+  if (fromHeader) return fromHeader;
+  const first = contentLines(raw).find((l) => l.includes('\t'));
+  if (first) return detectCaptureFormatFromFields(first.split('\t'));
+  return 'legacy';
 }
 
 function dedupeCaptureRows(rows) {
@@ -104,9 +152,10 @@ export function parsePasteToPackets(raw, options = {}) {
   }
 
   if (lines.some(isCaptureLine)) {
+    const format = captureFormatForRaw(raw);
     const rows = lines
       .filter(isCaptureLine)
-      .map(parseCaptureLine)
+      .map((line) => parseCaptureLine(line, format))
       .filter((r) => r.hex.length >= 12);
     const packets = captureRowsToPackets(rows, { defaultWaitMs, lastHoldMs, strip8301 });
     return {
@@ -149,28 +198,36 @@ export function parseCapturePaste(raw) {
   if (!lines.length) return { mode: 'empty' };
 
   if (lines.length > 1 || lines[0].includes('\t') || isCaptureLine(lines[0])) {
-    const rows = lines.filter(isCaptureLine).map(parseCaptureLine).filter((r) => r.hex.length >= 12);
-    if (rows.length) return { mode: 'capture', rows };
+    const format = captureFormatForRaw(raw);
+    const rows = lines
+      .filter(isCaptureLine)
+      .map((line) => parseCaptureLine(line, format))
+      .filter((r) => r.hex.length >= 12);
+    if (rows.length) return { mode: 'capture', rows, format };
   }
 
   if (lines[0].includes('\t') || isCaptureLine(lines[0])) {
-    const row = parseCaptureLine(lines[0]);
-    if (row.hex.length >= 12) return { mode: 'capture', rows: [row] };
+    const format = captureFormatForRaw(raw);
+    const row = parseCaptureLine(lines[0], format);
+    if (row.hex.length >= 12) return { mode: 'capture', rows: [row], format };
   }
 
   return { mode: 'hex', hex: lines[0].replace(/[^0-9a-fA-F]/g, '') };
 }
 
-function parseCaptureLine(line) {
+function parseCaptureLine(line, format = 'legacy') {
   const trimmed = (line || '').trim();
   if (!trimmed) return { ts_ms: null, hex: '', tag: '' };
 
   if (trimmed.includes('\t')) {
     const fields = trimmed.split('\t');
-    const hex = extractCaptureHexFromFields(fields);
+    const fmt = format || detectCaptureFormatFromFields(fields);
+    const layout = CAPTURE_LAYOUTS[fmt] || CAPTURE_LAYOUTS.legacy;
+    const hex = extractCaptureHexFromFields(fields, fmt);
     const ts = fields[0] && /^\d+$/.test(fields[0]) ? Number(fields[0]) : null;
-    const tag = fields[2] || '';
-    return { ts_ms: ts, hex, tag };
+    const tag = fields[layout.tag] || '';
+    const deviceId = layout.deviceId != null ? (fields[layout.deviceId] || '').trim() : undefined;
+    return { ts_ms: ts, hex, tag, deviceId: deviceId || undefined };
   }
 
   const hexTail = trimmed.match(CAPTURE_HEX_TAIL_RE);
