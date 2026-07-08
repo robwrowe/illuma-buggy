@@ -30,6 +30,7 @@ import { WandLabPacketSequence } from './WandLabPacketSequence';
 import { WandLabQuickCommands } from './WandLabQuickCommands';
 import { WandLabShowPanel } from './WandLabShowPanel';
 import { SweepByteIndex, WandLabSweepPanel } from './WandLabSweepPanel';
+import { WandLabByteBitsEditor } from './WandLabByteBitsEditor';
 
 const LAB_TABS = WAND_LAB_SECTIONS;
 
@@ -109,7 +110,7 @@ export function WandLabTab({ data, update }) {
   };
 
   const patchByte = (idx, val) => {
-    const n = parseInt(val, 16);
+    const n = typeof val === 'number' ? val : parseInt(val, 16);
     if (isNaN(n) || n < 0 || n > 255) return;
     setBytes((prev) => prev.map((b, i) => (i === idx ? n : b)));
   };
@@ -432,6 +433,7 @@ export function WandLabTab({ data, update }) {
                       <input
                         style={{ width: 22, border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'monospace', fontSize: 11 }}
                         value={b.toString(16).padStart(2, '0').toUpperCase()}
+                        onFocus={() => setSweepIndex(i)}
                         onChange={(e) => patchByte(i, e.target.value)}
                       />
                       <button
@@ -452,6 +454,12 @@ export function WandLabTab({ data, update }) {
                     <Button size="compact-xs" variant="default" onClick={resetBytes}>Reset</Button>
                   )}
                 </Group>
+
+                <WandLabByteBitsEditor
+                  byteIndex={sweepIndex}
+                  byteValue={sweepIndex != null ? bytes[sweepIndex] : null}
+                  onChange={patchByte}
+                />
 
                 <WandLabSweepPanel
                   simIp={lab.simIp}
