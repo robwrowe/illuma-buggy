@@ -49,6 +49,12 @@ export interface ShowSettings {
   showNightBrightness: number;
   /** When on, live start (manual or auto) sets showNightBrightness at night */
   showAutoBrightness: boolean;
+  /** When on, phone-direct BLE capture auto-starts/stops around in-scope shows */
+  autoCaptureEnabled: boolean;
+  /** Seconds before scheduled show start to auto-start capture */
+  autoCaptureLeadSec: number;
+  /** Seconds after scheduled show end to auto-stop capture */
+  autoCaptureTailSec: number;
 }
 
 export interface ShowInstanceOverride {
@@ -69,6 +75,9 @@ export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
   defaultFireworksDurationMin: 20,
   showNightBrightness: 5,
   showAutoBrightness: true,
+  autoCaptureEnabled: false,
+  autoCaptureLeadSec: 60,
+  autoCaptureTailSec: 60,
 };
 
 export function inferShowKind(name: string): ShowKind {

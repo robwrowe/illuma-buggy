@@ -51,39 +51,55 @@ export type PhoneScanPacketHandler = (pkt: {
   rssi: number;
   hex: string;
   len: number;
+  /** BLE device address (Android) / session-scoped UUID (iOS) */
+  deviceId: string;
 }) => void;
 
 let scanManager: BleManager | null = null;
 let scanActive = false;
+const listeners = new Set<PhoneScanPacketHandler>();
 
 /**
  * Starts a phone-native passive scan for Disney BLE manufacturer data.
  * Independent of any IllumaBuggy board connection — raw OS-level BLE scan.
+ * Returns an unsubscribe function — call it to stop receiving packets without
+ * stopping other listeners' scans.
  */
-export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): void {
-  if (scanActive) return;
-  if (!scanManager) scanManager = new BleManager();
-  scanActive = true;
+export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void {
+  listeners.add(onPacket);
 
-  scanManager.startDeviceScan(null, { allowDuplicates: true }, (error, device: Device | null) => {
-    if (error) {
-      console.warn('[PhoneBleScan] Scan error:', error);
-      return;
-    }
-    if (!device?.manufacturerData) return;
-    const raw = decodeManufacturerData(device.manufacturerData);
-    if (raw.length === 0 || !isDisneyMfr(raw)) return;
+  if (!scanActive) {
+    if (!scanManager) scanManager = new BleManager();
+    scanActive = true;
 
-    const tag = classifyScanPacket(raw);
-    const hex = raw.map(b => b.toString(16).padStart(2, '0')).join('');
-    onPacket({ tag, rssi: device.rssi ?? 0, hex, len: raw.length });
-  });
+    scanManager.startDeviceScan(null, { allowDuplicates: true }, (error, device: Device | null) => {
+      if (error) {
+        console.warn('[PhoneBleScan] Scan error:', error);
+        return;
+      }
+      if (!device?.manufacturerData) return;
+      const raw = decodeManufacturerData(device.manufacturerData);
+      if (raw.length === 0 || !isDisneyMfr(raw)) return;
+
+      const tag = classifyScanPacket(raw);
+      const hex = raw.map(b => b.toString(16).padStart(2, '0')).join('');
+      const pkt = { tag, rssi: device.rssi ?? 0, hex, len: raw.length, deviceId: device.id };
+      for (const handler of listeners) handler(pkt);
+    });
+  }
+
+  return () => {
+    listeners.delete(onPacket);
+    if (listeners.size === 0) stopPhoneBleScan();
+  };
 }
 
+/** Force-stops the scan immediately regardless of remaining listeners. */
 export function stopPhoneBleScan(): void {
   if (!scanActive) return;
   scanManager?.stopDeviceScan();
   scanActive = false;
+  listeners.clear();
 }
 
 export function isPhoneBleScanActive(): boolean {

@@ -91,6 +91,7 @@ export function WandLabTab({ data, update }) {
   const [hexPaste, setHexPaste] = useState('');
   const [editingLogId, setEditingLogId] = useState(null);
   const [sweepIndex, setSweepIndex] = useState(null);
+  const [sweepLivePayload, setSweepLivePayload] = useState(null);
 
   const palOpts = mbPaletteOptions();
 
@@ -176,8 +177,12 @@ export function WandLabTab({ data, update }) {
     await sendBytes(b);
   };
 
-  const addLogEntry = ({ note: logNote, presetKey: pk, snapshot: snapOverride } = {}) => {
-    const snap = snapOverride || buildLogSnapshot(labTab, bytes, origBytes, presetKey, sequencePackets);
+  const addLogEntry = ({ note: logNote, presetKey: pk, snapshot: snapOverride, bytes: bytesOverride } = {}) => {
+    const logBytes = bytesOverride
+      ? parseHexToBytes(bytesOverride)
+      : (sweepLivePayload ?? bytes);
+    const logOrig = sweepLivePayload ?? origBytes;
+    const snap = snapOverride || buildLogSnapshot(labTab, logBytes, logOrig, presetKey, sequencePackets);
     const entry = {
       id: editingLogId || generateId(),
       ts: editingLogId
@@ -455,6 +460,7 @@ export function WandLabTab({ data, update }) {
                   onSweepIndexChange={setSweepIndex}
                   onStatus={setStatus}
                   onSweepComplete={(payload) => addLogEntry(payload)}
+                  onLivePayloadChange={setSweepLivePayload}
                 />
 
                 <Field label="Starlight / show preset">

@@ -16,6 +16,12 @@ export interface BleCapturePacket {
   func?: string;
   label?: string;
   note?: string;
+  /** BLE device address/UUID — only populated for phone-direct captures */
+  deviceId?: string;
+  /** Phone GPS at packet receive time (phone-direct captures) */
+  lat?: number;
+  lng?: number;
+  accuracyM?: number;
 }
 
 export interface BleCaptureSession {
@@ -27,15 +33,22 @@ export interface BleCaptureSession {
   packets: BleCapturePacket[];
 }
 
-export type BleCaptureDuration = 0 | 300 | 900 | 1800 | 3600;
+export type BleCaptureDurationSec = number;
 
-export const CAPTURE_DURATION_OPTIONS: { label: string; sec: BleCaptureDuration }[] = [
-  { label: 'Manual stop', sec: 0 },
+export const CAPTURE_DURATION_MANUAL = 0;
+
+/** Preset auto-stop durations (seconds). */
+export const CAPTURE_DURATION_PRESETS: { label: string; sec: number }[] = [
   { label: '5 min', sec: 300 },
+  { label: '10 min', sec: 600 },
   { label: '15 min', sec: 900 },
+  { label: '20 min', sec: 1200 },
   { label: '30 min', sec: 1800 },
-  { label: '60 min', sec: 3600 },
 ];
+
+export function isCaptureDurationPreset(sec: number): boolean {
+  return CAPTURE_DURATION_PRESETS.some((p) => p.sec === sec);
+}
 
 export const MAX_CAPTURE_SESSIONS = 20;
 export const MAX_PACKETS_PER_SESSION = 3000;
@@ -74,6 +87,10 @@ export function describeBlePacket(tag: string, hex: string): string {
   return tag;
 }
 
+function fmtCoord(n?: number): string {
+  return n != null && Number.isFinite(n) ? n.toFixed(6) : '';
+}
+
 export function formatCaptureExport(session: BleCaptureSession): string {
   const lines = [
     `# Illuma Buggy BLE Capture`,
@@ -82,11 +99,11 @@ export function formatCaptureExport(session: BleCaptureSession): string {
     `# Ended:   ${new Date(session.endedAt).toISOString()}`,
     `# Packets: ${session.packets.length}`,
     `#`,
-    `# ts_ms\trssi\ttag\thint\tquality\tfunc\thex\tnote`,
+    `# ts_ms\trssi\tdevice_id\tlat\tlng\taccuracy_m\ttag\thint\tquality\tfunc\thex\tnote`,
   ];
   for (const p of session.packets) {
     lines.push(
-      `${p.boardTs}\t${p.rssi}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
+      `${p.boardTs}\t${p.rssi}\t${p.deviceId ?? ''}\t${fmtCoord(p.lat)}\t${fmtCoord(p.lng)}\t${p.accuracyM != null && Number.isFinite(p.accuracyM) ? Math.round(p.accuracyM) : ''}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
     );
   }
   return lines.join('\n');

@@ -26,6 +26,7 @@ import { useAppStore } from "./src/stores/store";
 import { applyParsedE9Mapping } from "./src/utils/e9MbEffect";
 import { runConnectBootstrap, cancelConnectBootstrap } from "./src/utils/connectBootstrap";
 import { useZoneManager } from "./src/hooks/useZoneManager";
+import { useCaptureAutomation } from "./src/hooks/useCaptureAutomation";
 import { useTheme, useThemeStore } from "./src/utils/theme";
 import * as Notifications from "expo-notifications";
 import { initStrollerNotifications } from "./src/services/strollerNotification";
@@ -58,6 +59,7 @@ function ZonesWrapper() {
 
 function AppNavigator() {
   useZoneManager();
+  useCaptureAutomation();
   const { colors, isDark } = useTheme();
 
   const navTheme = {
@@ -155,7 +157,15 @@ export default function App() {
   const { isDark } = useTheme();
 
   useEffect(() => {
-    loadFromStorage();
+    let cancelled = false;
+    (async () => {
+      await loadFromStorage();
+      if (cancelled) return;
+      if (useAppStore.getState().boardConnectEnabled) {
+        bleService.connect();
+      }
+    })();
+
     loadMode();
 
     void initStrollerNotifications();
@@ -304,13 +314,25 @@ export default function App() {
       );
     });
 
-    bleService.connect();
     return () => {
+      cancelled = true;
       cancelConnectBootstrap();
       unsub();
       unsubState();
       notifSub.remove();
     };
+  }, []);
+
+  useEffect(() => {
+    const unsub = useAppStore.subscribe((state, prev) => {
+      if (state.boardConnectEnabled === prev.boardConnectEnabled) return;
+      if (state.boardConnectEnabled) {
+        bleService.connect();
+      } else {
+        void bleService.disconnect();
+      }
+    });
+    return unsub;
   }, []);
 
   return (

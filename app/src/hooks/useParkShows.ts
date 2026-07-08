@@ -45,7 +45,7 @@ function parseShowStart(iso: string): number {
   return Number.isFinite(t) ? t : NaN;
 }
 
-function buildUpcomingShows(
+export function buildUpcomingShows(
   raw: { id: string; name: string; showtimes: string[] }[],
   bindings: ParkShowBinding[],
   parkId: string,
