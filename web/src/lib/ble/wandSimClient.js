@@ -24,6 +24,18 @@ export function parseHexToBytes(raw) {
   return arr;
 }
 
+/** 8-char MSB-first bit string for a byte (e.g. 0xA0 → "10100000"). */
+export function byteToBitString(n) {
+  return (Number(n) & 0xff).toString(2).padStart(8, '0');
+}
+
+/** Parse up to 8 bits; shorter strings are zero-padded on the left. Returns null if empty. */
+export function parseBitStringToByte(s) {
+  const clean = String(s || '').replace(/[^01]/g, '').slice(0, 8);
+  if (!clean.length) return null;
+  return parseInt(clean.padStart(8, '0'), 2) & 0xff;
+}
+
 /** Payload-only hex for POST /send {"hex":...} — firmware prepends 8301. */
 export function payloadToSendHex(byteArray) {
   return bytesToHex(byteArray);
