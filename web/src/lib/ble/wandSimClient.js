@@ -75,7 +75,23 @@ export function buildShowBodyFromPayloadRepeats(
   return lines.join('\n');
 }
 
+/** Normalize sweep target(s) to a sorted, unique index list. */
+export function normalizeSweepIndices(sweepByteIndex) {
+  if (sweepByteIndex == null) return [];
+  const raw = Array.isArray(sweepByteIndex) ? sweepByteIndex : [sweepByteIndex];
+  return [...new Set(raw.filter((i) => Number.isInteger(i) && i >= 0))].sort((a, b) => a - b);
+}
+
+function applySweepValue(baseBytes, sweepIndices, val) {
+  const out = [...(baseBytes || [])];
+  for (const idx of sweepIndices) {
+    if (idx >= 0 && idx < out.length) out[idx] = val & 0xff;
+  }
+  return out;
+}
+
 /**
+ * @param {number | number[] | null} sweepByteIndex — one or more byte positions to sweep
  * @param {number[] | null} [offBetween.offBytes] — payload sent between sweep values
  * @param {number} [offBetween.offWaitMs] — hold time after off before next sweep value
  */
@@ -91,6 +107,7 @@ export function buildShowBodyFromSweep(
 ) {
   const lines = [];
   const values = [];
+  const sweepIndices = normalizeSweepIndices(sweepByteIndex);
   const step = Math.max(1, stepVal | 0);
   const forward = startVal <= endVal;
   const offBytes = offBetween?.offBytes?.length ? offBetween.offBytes : null;
@@ -102,10 +119,7 @@ export function buildShowBodyFromSweep(
   const uniq = [...new Set(values)];
 
   uniq.forEach((val, i) => {
-    const bytes = [...baseBytes];
-    if (sweepByteIndex >= 0 && sweepByteIndex < bytes.length) {
-      bytes[sweepByteIndex] = val;
-    }
+    const bytes = applySweepValue(baseBytes, sweepIndices, val);
     const isLast = i >= uniq.length - 1;
     const hold = isLast ? lastHoldMs : dwellMs;
     lines.push(`${hold} ${payloadToShowHex(bytes)}`);
@@ -138,11 +152,7 @@ export function getSweepStepPayload(
   }
   const valIdx = offBetween ? Math.floor(stepIdx / 2) : stepIdx;
   if (valIdx < 0 || valIdx >= values.length) return [];
-  const out = [...base];
-  if (sweepByteIndex >= 0 && sweepByteIndex < out.length) {
-    out[sweepByteIndex] = values[valIdx];
-  }
-  return out;
+  return applySweepValue(base, normalizeSweepIndices(sweepByteIndex), values[valIdx]);
 }
 
 /** Build /show body from capture rows: [{ ts_ms?, hex }]. */

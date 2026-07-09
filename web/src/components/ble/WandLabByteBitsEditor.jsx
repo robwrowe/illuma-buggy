@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Group, Stack, Text, TextInput } from '@mantine/core';
 import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
 
-export function WandLabByteBitsEditor({ byteIndex, byteValue, onChange }) {
+function ByteBitsRow({ byteIndex, byteValue, onChange }) {
   const [draft, setDraft] = useState('');
 
   useEffect(() => {
@@ -31,31 +31,45 @@ export function WandLabByteBitsEditor({ byteIndex, byteValue, onChange }) {
     commit(padded);
   };
 
-  if (byteIndex == null) return null;
-
   const hex = (byteValue & 0xff).toString(16).padStart(2, '0').toUpperCase();
 
   return (
-    <Stack gap={4}>
-      <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-        Byte {byteIndex} bits
+    <Group gap="sm" align="flex-end" wrap="wrap">
+      <TextInput
+        label={`Byte ${byteIndex} — binary (MSB → LSB)`}
+        description="Type 0/1 — hex updates when 8 bits are entered (or on blur)"
+        value={draft}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        size="xs"
+        ff="monospace"
+        placeholder="10100000"
+        maw={200}
+        style={{ flex: '1 1 200px' }}
+      />
+      <Text size="xs" ff="monospace" c="dimmed" pb={6}>
+        = 0x{hex} ({byteValue & 0xff})
       </Text>
-      <Group gap="sm" align="flex-end" wrap="wrap">
-        <TextInput
-          label="Binary (MSB → LSB)"
-          description="Type 0/1 — hex updates when 8 bits are entered (or on blur)"
-          value={draft}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          size="xs"
-          ff="monospace"
-          placeholder="10100000"
-          maw={160}
+    </Group>
+  );
+}
+
+export function WandLabByteBitsEditor({ selections, onChange }) {
+  if (!selections?.length) return null;
+
+  return (
+    <Stack gap="sm">
+      <Text size="xs" c="dimmed" fw={600} tt="uppercase">
+        {selections.length === 1 ? 'Byte bits' : 'Selected byte bits'}
+      </Text>
+      {selections.map(({ index, value }) => (
+        <ByteBitsRow
+          key={index}
+          byteIndex={index}
+          byteValue={value}
+          onChange={onChange}
         />
-        <Text size="xs" ff="monospace" c="dimmed" pb={6}>
-          = 0x{hex} ({byteValue & 0xff})
-        </Text>
-      </Group>
+      ))}
     </Stack>
   );
 }

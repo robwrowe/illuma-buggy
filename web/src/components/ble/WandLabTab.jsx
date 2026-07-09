@@ -91,7 +91,7 @@ export function WandLabTab({ data, update }) {
   const [mbPattern, setMbPattern] = useState('solid');
   const [hexPaste, setHexPaste] = useState('');
   const [editingLogId, setEditingLogId] = useState(null);
-  const [sweepIndex, setSweepIndex] = useState(null);
+  const [sweepIndices, setSweepIndices] = useState([]);
   const [sweepLivePayload, setSweepLivePayload] = useState(null);
 
   const palOpts = mbPaletteOptions();
@@ -120,11 +120,20 @@ export function WandLabTab({ data, update }) {
     setOrigBytes((prev) => [...prev, 0]);
   };
 
+  const toggleSweepIndex = (idx) => {
+    setSweepIndices((prev) => (
+      prev.includes(idx)
+        ? prev.filter((i) => i !== idx)
+        : [...prev, idx].sort((a, b) => a - b)
+    ));
+  };
+
   const removeByte = (idx) => {
     setBytes((prev) => prev.filter((_, i) => i !== idx));
     setOrigBytes((prev) => prev.filter((_, i) => i !== idx));
-    if (sweepIndex === idx) setSweepIndex(null);
-    else if (sweepIndex != null && sweepIndex > idx) setSweepIndex(sweepIndex - 1);
+    setSweepIndices((prev) => prev
+      .filter((i) => i !== idx)
+      .map((i) => (i > idx ? i - 1 : i)));
   };
 
   const resetBytes = () => setBytes([...origBytes]);
@@ -419,7 +428,7 @@ export function WandLabTab({ data, update }) {
                         fontFamily: 'monospace',
                         position: 'relative',
                         background: b !== origBytes[i] ? 'var(--primary-dim)' : 'var(--surface2)',
-                        border: `1px solid ${b !== origBytes[i] ? 'var(--primary)' : sweepIndex === i ? 'var(--mantine-color-yellow-5)' : 'var(--border)'}`,
+                        border: `1px solid ${b !== origBytes[i] ? 'var(--primary)' : sweepIndices.includes(i) ? 'var(--mantine-color-yellow-5)' : 'var(--border)'}`,
                         borderRadius: 4,
                         padding: '4px 18px 4px 4px',
                       }}
@@ -427,13 +436,12 @@ export function WandLabTab({ data, update }) {
                       <SweepByteIndex
                         index={i}
                         isModified={b !== origBytes[i]}
-                        isSweepTarget={sweepIndex === i}
-                        onSelect={setSweepIndex}
+                        isSweepTarget={sweepIndices.includes(i)}
+                        onToggle={toggleSweepIndex}
                       />
                       <input
                         style={{ width: 22, border: 'none', background: 'transparent', color: 'var(--text)', fontFamily: 'monospace', fontSize: 11 }}
                         value={b.toString(16).padStart(2, '0').toUpperCase()}
-                        onFocus={() => setSweepIndex(i)}
                         onChange={(e) => patchByte(i, e.target.value)}
                       />
                       <button
@@ -456,16 +464,15 @@ export function WandLabTab({ data, update }) {
                 </Group>
 
                 <WandLabByteBitsEditor
-                  byteIndex={sweepIndex}
-                  byteValue={sweepIndex != null ? bytes[sweepIndex] : null}
+                  selections={sweepIndices.map((idx) => ({ index: idx, value: bytes[idx] }))}
                   onChange={patchByte}
                 />
 
                 <WandLabSweepPanel
                   simIp={lab.simIp}
                   bytes={bytes}
-                  sweepIndex={sweepIndex}
-                  onSweepIndexChange={setSweepIndex}
+                  sweepIndices={sweepIndices}
+                  onSweepIndicesChange={setSweepIndices}
                   onStatus={setStatus}
                   onSweepComplete={(payload) => addLogEntry(payload)}
                   onLivePayloadChange={setSweepLivePayload}

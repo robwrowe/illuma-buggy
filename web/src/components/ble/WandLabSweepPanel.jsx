@@ -36,11 +36,16 @@ function sweepStepLabel(stepIdx, values, offBetween) {
   return val != null ? `0x${val.toString(16).padStart(2, '0').toUpperCase()}` : '';
 }
 
+function formatSweepTargets(indices) {
+  if (!indices?.length) return '';
+  return indices.join(', ');
+}
+
 export function WandLabSweepPanel({
   simIp,
   bytes,
-  sweepIndex,
-  onSweepIndexChange,
+  sweepIndices,
+  onSweepIndicesChange,
   onStatus,
   onSweepComplete,
   onLivePayloadChange,
@@ -80,13 +85,13 @@ export function WandLabSweepPanel({
     if (!running || !sweepValues.length || step <= 0) return null;
     return getSweepStepPayload(
       bytes,
-      sweepIndex,
+      sweepIndices,
       sweepValues,
       step - 1,
       sweepOffBetween,
       MB_OFF_BYTES,
     );
-  }, [running, sweepValues, step, sweepOffBetween, bytes, sweepIndex]);
+  }, [running, sweepValues, step, sweepOffBetween, bytes, sweepIndices]);
 
   const liveHex = livePayload?.length
     ? payloadToShowHex(livePayload)
@@ -113,14 +118,14 @@ export function WandLabSweepPanel({
       ? { offBytes: MB_OFF_BYTES, offWaitMs }
       : null;
     return buildShowBodyFromSweep(
-      bytes, sweepIndex, start, end, step, dwellMs, undefined, offOpts,
+      bytes, sweepIndices, start, end, step, dwellMs, undefined, offOpts,
     );
   };
 
   const validateSweep = () => {
     const ip = (simIp || '').trim();
     if (ip === '') { onStatus?.('Set simulator IP first'); return null; }
-    if (sweepIndex == null) { onStatus?.('Click a byte index to set sweep target'); return null; }
+    if (!sweepIndices?.length) { onStatus?.('Click byte index labels to set sweep targets'); return null; }
     if (!bytes?.length) { onStatus?.('No bytes to sweep'); return null; }
     const { body, values } = buildSweepPlan();
     if (!values.length) { onStatus?.('Empty sweep range'); return null; }
@@ -130,7 +135,7 @@ export function WandLabSweepPanel({
   const sendManualStep = async (stepIdx, plan, { updateIndex = true, actionLabel } = {}) => {
     const payload = getSweepStepPayload(
       bytes,
-      sweepIndex,
+      sweepIndices,
       plan.values,
       stepIdx,
       !!plan.offOpts,
@@ -149,7 +154,7 @@ export function WandLabSweepPanel({
 
   const getManualPlan = () => {
     const ip = (simIp || '').trim();
-    if (ip === '' || sweepIndex == null || !bytes?.length || !sweepValues.length) return null;
+    if (ip === '' || !sweepIndices?.length || !bytes?.length || !sweepValues.length) return null;
     return {
       ip,
       values: sweepValues,
@@ -253,7 +258,7 @@ export function WandLabSweepPanel({
       await startShow(plan.ip, plan.body);
       const stepCount = plan.offOpts ? plan.values.length * 2 - 1 : plan.values.length;
       onStatus?.(
-        `Sweep started: ${plan.values.length} values${plan.offOpts ? ` + off between (${stepCount} steps)` : ''} at byte ${sweepIndex}`,
+        `Sweep started: ${plan.values.length} values${plan.offOpts ? ` + off between (${stepCount} steps)` : ''} at byte${plan.values.length === 1 ? '' : 's'} ${formatSweepTargets(sweepIndices)}`,
       );
       startPolling(() => {
         setShowSweepLog(true);
@@ -290,12 +295,13 @@ export function WandLabSweepPanel({
       <Group justify="space-between">
         <Text size="xs" c="dimmed" fw={600} tt="uppercase">Byte sweep</Text>
         <Button size="compact-xs" variant="subtle" onClick={toggle}>
-          {opened ? 'Hide' : sweepIndex != null ? `Target: byte ${sweepIndex}` : 'Set target'}
+          {opened ? 'Hide' : sweepIndices?.length ? `Targets: ${formatSweepTargets(sweepIndices)}` : 'Set targets'}
         </Button>
       </Group>
-      {sweepIndex != null && (
+      {sweepIndices?.length > 0 && (
         <Text size="xs" c="violet">
-          Sweep target: byte {sweepIndex} — click another index label to change
+          Sweep target{sweepIndices.length === 1 ? '' : 's'}: byte {formatSweepTargets(sweepIndices)}
+          {' '}— click index labels to toggle
         </Text>
       )}
       {opened && (
@@ -362,7 +368,7 @@ export function WandLabSweepPanel({
             <Button
               size="xs"
               onClick={manualAdvance ? handleRunManual : handleRunAuto}
-              disabled={sweepIndex == null || busy}
+              disabled={!sweepIndices?.length || busy}
               loading={pending === 'start-manual' || pending === 'run-auto'}
             >
               {manualAdvance ? 'Start manual sweep' : 'Run sweep'}
@@ -417,9 +423,9 @@ export function WandLabSweepPanel({
               Stop sweep
             </Button>
           )}
-          {sweepIndex != null && !running && (
-            <Button size="xs" variant="subtle" onClick={() => onSweepIndexChange?.(null)}>
-              Clear target
+          {sweepIndices?.length > 0 && !running && (
+            <Button size="xs" variant="subtle" onClick={() => onSweepIndicesChange?.([])}>
+              Clear targets
             </Button>
           )}
         </Group>
@@ -438,11 +444,12 @@ export function WandLabSweepPanel({
             onClick={() => {
               const offPart = offBetween ? `, off between (${offWaitMs}ms)` : '';
               const modePart = manualAdvance ? ', manual advance' : '';
+              const targetLabel = formatSweepTargets(sweepIndices);
               const note = sweepNote.trim()
-                || `Sweep byte ${sweepIndex}: 0x${startHex}–0x${endHex} step 0x${stepHex}, ${dwellMs}ms dwell${offPart}${modePart}`;
+                || `Sweep byte${sweepIndices.length === 1 ? '' : 's'} ${targetLabel}: 0x${startHex}–0x${endHex} step 0x${stepHex}, ${dwellMs}ms dwell${offPart}${modePart}`;
               onSweepComplete?.({
                 note,
-                presetKey: `sweep:b${sweepIndex}`,
+                presetKey: `sweep:b${targetLabel.replace(/, /g, ',')}`,
                 bytes: lastSentPayload?.length ? bytesToHex(lastSentPayload) : bytesToHex(bytes),
               });
               setShowSweepLog(false);
@@ -460,15 +467,15 @@ export function WandLabSweepPanel({
   );
 }
 
-/** Clickable byte index for sweep target selection. */
-export function SweepByteIndex({ index, isModified, isSweepTarget, onSelect }) {
+/** Clickable byte index for sweep target selection (toggle). */
+export function SweepByteIndex({ index, isModified, isSweepTarget, onToggle }) {
   const borderColor = isSweepTarget ? 'var(--mantine-color-yellow-5)' : isModified ? 'var(--primary)' : 'var(--border)';
   const bg = isSweepTarget ? '#f59e0b22' : isModified ? 'var(--primary-dim)' : 'var(--surface2)';
 
   return (
     <button
       type="button"
-      onClick={() => onSelect(index)}
+      onClick={() => onToggle(index)}
       style={{
         fontSize: 10,
         color: 'var(--text3)',
@@ -478,7 +485,7 @@ export function SweepByteIndex({ index, isModified, isSweepTarget, onSelect }) {
         cursor: 'pointer',
         textDecoration: isSweepTarget ? 'underline' : 'none',
       }}
-      title="Set as sweep target"
+      title={isSweepTarget ? 'Remove from sweep targets' : 'Add to sweep targets'}
     >
       <span style={{
         display: 'inline-block',
