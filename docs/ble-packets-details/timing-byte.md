@@ -40,7 +40,7 @@ The total time for the light to fade off.
 
 ### Bits [3-0] - Time Value
 
-`00b` - `15b`, feeds the `on_time` formula above
+`0000b` - `1111b`, feeds the `on_time` formula above (0-15)
 
 **CAUTION**
 t=0 does NOT mean "0 seconds on."
