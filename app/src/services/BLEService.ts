@@ -376,6 +376,12 @@ class BLEService {
     if (active && label) msg.label = label;
     return this.send(msg);
   }
+  sendBoardRole(role: 'standalone' | 'logic_board') {
+    return this.send({ type: 'set_board_role', role });
+  }
+  sendScannerMac(mac: string) {
+    return this.send({ type: 'set_scanner_mac', mac });
+  }
 
   private async requestPermissions(): Promise<void> {
     if (Platform.OS !== 'android') return;

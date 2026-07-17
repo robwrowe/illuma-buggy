@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, Switch,
   ScrollView, TouchableOpacity, TextInput, Alert, Share,
+  Modal, ActivityIndicator, FlatList,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
 import IconBluetooth from '@tabler/icons-react-native/dist/esm/icons/IconBluetooth';
@@ -14,11 +16,14 @@ import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 import IconDownload from '@tabler/icons-react-native/dist/esm/icons/IconDownload';
 import IconUpload from '@tabler/icons-react-native/dist/esm/icons/IconUpload';
 import IconWifi from '@tabler/icons-react-native/dist/esm/icons/IconWifi';
+import IconPlus from '@tabler/icons-react-native/dist/esm/icons/IconPlus';
+import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 
 import {
   useAppStore,
   RecallState,
   RecallValue,
+  BoardRoleMode,
   DEFAULT_LOCATION_POLL_SEC,
   LOCATION_POLL_SEC_MIN,
   LOCATION_POLL_SEC_MAX,
@@ -29,6 +34,13 @@ import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
 import { requestFullBoardSync } from '../utils/connectBootstrap';
 import { useTheme, ThemeMode } from '../utils/theme';
+import {
+  scanForScanners,
+  DiscoveredScanner,
+  normalizeScannerMacInput,
+} from '../utils/scannerDiscovery';
+
+const SCANNER_DISCOVERY_SEC = 10;
 
 const RECALL_OPTIONS: RecallValue[] = ['always', 'never', 'memory'];
 const RECALL_LABELS: Record<RecallValue, string> = { always: 'Always', never: 'Never', memory: 'Memory' };
@@ -56,10 +68,127 @@ export default function SettingsScreen() {
     recallState, setRecallState,
     syncMode, setSyncMode,
     boardConnectEnabled, setBoardConnectEnabled,
+    boardRole, setBoardRole,
+    scannerMac, setScannerMac,
     saveToStorage, exportData, importData,
   } = useAppStore();
 
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
+  const [scannerModalOpen, setScannerModalOpen] = useState(false);
+  const [scannerScanning, setScannerScanning] = useState(false);
+  const [scannerResults, setScannerResults] = useState<DiscoveredScanner[]>([]);
+  const [scannerSecLeft, setScannerSecLeft] = useState(SCANNER_DISCOVERY_SEC);
+  const scannerStopRef = useRef<(() => void) | null>(null);
+
+  const isDualBoard = boardRole === 'logic_board';
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isConnected || !isDualBoard) return;
+      void bleService.sendStatus();
+      const id = setInterval(() => {
+        if (bleService.isConnected()) void bleService.sendStatus();
+      }, 5000);
+      return () => clearInterval(id);
+    }, [isConnected, isDualBoard]),
+  );
+
+  useEffect(() => () => {
+    scannerStopRef.current?.();
+    scannerStopRef.current = null;
+  }, []);
+
+  const pushBoardRole = (role: BoardRoleMode) => {
+    if (isConnected) void bleService.sendBoardRole(role);
+  };
+
+  const pushScannerMacToBoard = (mac: string) => {
+    const normalized = normalizeScannerMacInput(mac);
+    if (!normalized) {
+      Alert.alert('Invalid MAC', 'Enter a MAC like AA:BB:CC:DD:EE:FF');
+      return false;
+    }
+    setScannerMac(normalized);
+    if (isConnected) void bleService.sendScannerMac(normalized);
+    saveToStorage();
+    return true;
+  };
+
+  const updateBoardRole = (role: BoardRoleMode) => {
+    setBoardRole(role);
+    pushBoardRole(role);
+    saveToStorage();
+  };
+
+  const startScannerDiscovery = () => {
+    if (scannerScanning) return;
+    setScannerResults([]);
+    setScannerSecLeft(SCANNER_DISCOVERY_SEC);
+    setScannerScanning(true);
+    setScannerModalOpen(true);
+
+    const tick = setInterval(() => {
+      setScannerSecLeft(prev => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+
+    const { stop, done } = scanForScanners(SCANNER_DISCOVERY_SEC * 1000, (found) => {
+      setScannerResults(prev => {
+        if (prev.some(s => s.mac === found.mac)) return prev;
+        return [...prev, found].sort((a, b) => b.rssi - a.rssi);
+      });
+    });
+    scannerStopRef.current = stop;
+
+    void done.finally(() => {
+      clearInterval(tick);
+      setScannerScanning(false);
+      scannerStopRef.current = null;
+    });
+  };
+
+  const selectDiscoveredScanner = (item: DiscoveredScanner) => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy before pairing a scanner.');
+      return;
+    }
+    if (pushScannerMacToBoard(item.mac)) {
+      setScannerModalOpen(false);
+      scannerStopRef.current?.();
+      Alert.alert('Scanner selected', `${item.mac} sent to logic board. Reboot logic board if scan radio was already running.`);
+    }
+  };
+
+  const saveScannerMacManual = () => {
+    if (!isConnected) {
+      Alert.alert('Not connected', 'Connect to IllumaBuggy before saving scanner MAC.');
+      return;
+    }
+    if (pushScannerMacToBoard(scannerMac)) {
+      Alert.alert('Saved', 'Scanner MAC sent to logic board.');
+    }
+  };
+
+  const scannerLinkLabel = (): { text: string; color: string } => {
+    if (!isDualBoard) {
+      return { text: 'Standalone — local BLE scan on logic board', color: colors.textMuted };
+    }
+    if (!deviceStatus?.scannerMac && !scannerMac) {
+      return { text: 'Dual-board — no scanner MAC configured', color: colors.warning };
+    }
+    if (!deviceStatus?.scannerSeen) {
+      return { text: 'Scanner: no signal', color: colors.danger };
+    }
+    const ageSec = Math.round((deviceStatus.scannerAgeMs ?? 0) / 1000);
+    if (ageSec <= 15) {
+      return { text: `Scanner: last seen ${ageSec}s ago`, color: colors.success };
+    }
+    if (ageSec <= 60) {
+      return { text: `Scanner: last seen ${ageSec}s ago`, color: colors.warning };
+    }
+    return { text: `Scanner: last seen ${ageSec}s ago (stale)`, color: colors.danger };
+  };
+
+  const linkStatus = scannerLinkLabel();
 
   const updateOverrideMode = (val: boolean) => {
     setOverrideKillOnZone(val);
@@ -467,6 +596,125 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* BLE Scanner Board (dual-board ESP-NOW) */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>BLE Scanner Board</Text>
+        <Text style={s.sectionHint}>
+          Optional second ESP32 scans Disney packets and forwards them over ESP-NOW.
+          Reboot the logic board after switching modes.
+        </Text>
+        <View style={s.recallRow}>
+          <Text style={s.rowLabel}>Board mode</Text>
+          <View style={s.recallBtns}>
+            {(['standalone', 'logic_board'] as BoardRoleMode[]).map(role => (
+              <TouchableOpacity
+                key={role}
+                style={[s.recallBtn, boardRole === role && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+                onPress={() => updateBoardRole(role)}
+              >
+                <Text style={[s.recallBtnText, boardRole === role && { color: '#fff' }]}>
+                  {role === 'standalone' ? 'Standalone' : 'Dual-Board'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+        <View style={s.row}>
+          <Text style={[s.rowHint, { color: linkStatus.color, flex: 1 }]}>
+            {linkStatus.text}
+          </Text>
+        </View>
+        {isDualBoard && (
+          <>
+            <TouchableOpacity
+              style={s.dataBtn}
+              onPress={startScannerDiscovery}
+              disabled={scannerScanning}
+            >
+              {scannerScanning ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <IconPlus size={16} color={colors.primary} />
+              )}
+              <Text style={s.dataBtnText}>
+                {scannerScanning ? `Scanning… ${scannerSecLeft}s` : 'Add Scanner'}
+              </Text>
+            </TouchableOpacity>
+            <View style={s.wledField}>
+              <Text style={s.rowLabel}>Scanner MAC</Text>
+              <Text style={s.rowHint}>Manual fallback — usually filled by Add Scanner.</Text>
+              <TextInput
+                style={s.wledInput}
+                value={scannerMac}
+                onChangeText={setScannerMac}
+                placeholder="AA:BB:CC:DD:EE:FF"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+            </View>
+            <TouchableOpacity
+              style={s.dataBtn}
+              onPress={saveScannerMacManual}
+              disabled={!isConnected || !scannerMac.trim()}
+            >
+              <IconBluetooth size={16} color={colors.primary} />
+              <Text style={s.dataBtnText}>Save scanner MAC to board</Text>
+            </TouchableOpacity>
+            {deviceStatus?.logicMac ? (
+              <Text style={s.rowHint}>Logic board MAC: {deviceStatus.logicMac}</Text>
+            ) : null}
+          </>
+        )}
+      </View>
+
+      <Modal visible={scannerModalOpen} transparent animationType="slide">
+        <View style={s.modalBackdrop}>
+          <View style={[s.modalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={s.row}>
+              <Text style={[s.sectionTitle, { flex: 1, textTransform: 'none', letterSpacing: 0 }]}>
+                Unpaired scanners
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  scannerStopRef.current?.();
+                  setScannerModalOpen(false);
+                  setScannerScanning(false);
+                }}
+              >
+                <IconX size={22} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={s.sectionHint}>
+              {scannerScanning
+                ? `Scanning ${scannerSecLeft}s — tap a board to pair`
+                : 'Scan complete — tap a result or close'}
+            </Text>
+            <FlatList
+              data={scannerResults}
+              keyExtractor={item => item.mac}
+              style={{ maxHeight: 280 }}
+              ListEmptyComponent={
+                <Text style={[s.rowHint, { paddingVertical: 16, textAlign: 'center' }]}>
+                  {scannerScanning ? 'Listening for IllumaScanner-unpaired…' : 'No scanners found'}
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[s.mapRow, { borderBottomColor: colors.border }]}
+                  onPress={() => selectDiscoveredScanner(item)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.rowLabel}>{item.mac}</Text>
+                    <Text style={s.rowHint}>{item.name} · rssi {item.rssi}</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
       {/* Device */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>Device</Text>
@@ -583,4 +831,6 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   reconnectBtnText: { color: c.primary, fontWeight: '600' },
   wledField:       { gap: 6 },
   wledInput:       { backgroundColor: c.background, borderRadius: 8, borderWidth: 1, borderColor: c.borderFocus, color: c.textPrimary, padding: 10, fontSize: 14 },
+  modalBackdrop:   { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+  modalCard:       { borderTopLeftRadius: 16, borderTopRightRadius: 16, borderWidth: 1, padding: 16, gap: 12, maxHeight: '70%' },
 });
