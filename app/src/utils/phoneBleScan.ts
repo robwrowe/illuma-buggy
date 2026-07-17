@@ -57,6 +57,7 @@ export type PhoneScanPacketHandler = (pkt: {
 
 let scanManager: BleManager | null = null;
 let scanActive = false;
+let lastPacketAt: number | null = null;
 const listeners = new Set<PhoneScanPacketHandler>();
 
 /**
@@ -71,10 +72,12 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
   if (!scanActive) {
     if (!scanManager) scanManager = new BleManager();
     scanActive = true;
+    lastPacketAt = null;
 
     scanManager.startDeviceScan(null, { allowDuplicates: true }, (error, device: Device | null) => {
       if (error) {
         console.warn('[PhoneBleScan] Scan error:', error);
+        scanActive = false;
         return;
       }
       if (!device?.manufacturerData) return;
@@ -84,6 +87,7 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
       const tag = classifyScanPacket(raw);
       const hex = raw.map(b => b.toString(16).padStart(2, '0')).join('');
       const pkt = { tag, rssi: device.rssi ?? 0, hex, len: raw.length, deviceId: device.id };
+      lastPacketAt = Date.now();
       for (const handler of listeners) handler(pkt);
     });
   }
@@ -96,12 +100,15 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
 
 /** Force-stops the scan immediately regardless of remaining listeners. */
 export function stopPhoneBleScan(): void {
-  if (!scanActive) return;
-  scanManager?.stopDeviceScan();
+  if (scanActive) scanManager?.stopDeviceScan();
   scanActive = false;
   listeners.clear();
 }
 
 export function isPhoneBleScanActive(): boolean {
   return scanActive;
+}
+
+export function getPhoneBleScanStatus(): { active: boolean; lastPacketAt: number | null } {
+  return { active: scanActive, lastPacketAt };
 }

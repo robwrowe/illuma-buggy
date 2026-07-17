@@ -17,7 +17,9 @@ import {
   describeBlePacket, formatCaptureExport, isCaptureDurationPreset,
   BleCaptureSession,
 } from '../utils/bleCapture';
-import { startPhoneBleScan } from '../utils/phoneBleScan';
+import { analyzeBeaconTracks, type BeaconTrack } from '../utils/beaconTrackAnalysis';
+import { getBestAvailableFixSync } from '../utils/locationRuntimeBridge';
+import { getPhoneBleScanStatus, startPhoneBleScan } from '../utils/phoneBleScan';
 
 function formatElapsed(ms: number): string {
   const sec = Math.floor(ms / 1000);
@@ -36,13 +38,41 @@ function gpsShort(lat?: number, lng?: number): string {
   return `${lat.toFixed(4)},${lng.toFixed(4)}`;
 }
 
-function packetMetaParts(p: { rssi: number; deviceId?: string; lat?: number; lng?: number }): string {
+function packetMetaParts(p: {
+  rssi: number;
+  deviceId?: string;
+  lat?: number;
+  lng?: number;
+  gpsUpdatedAt?: number;
+  receivedAt?: number;
+}): string {
   const parts = [`rssi ${p.rssi}`];
   if (p.deviceId) parts.push(`…${deviceIdSuffix(p.deviceId)}`);
   const gps = gpsShort(p.lat, p.lng);
-  if (gps) parts.push(gps);
+  if (gps) {
+    const ageMs = p.gpsUpdatedAt != null && p.receivedAt != null
+      ? Math.max(0, p.receivedAt - p.gpsUpdatedAt)
+      : null;
+    parts.push(`${gps}${ageMs != null ? ` (gps ${Math.round(ageMs / 1000)}s old)` : ''}`);
+  } else {
+    parts.push('no gps');
+  }
   return parts.join(' · ');
 }
+
+const TRACK_SORT: Record<BeaconTrack['classification'], number> = {
+  moving_independent: 0,
+  moving_correlated: 1,
+  fixed: 2,
+  insufficient_gps: 3,
+};
+
+const TRACK_LABEL: Record<BeaconTrack['classification'], string> = {
+  moving_independent: 'moving · independent',
+  moving_correlated: 'moving · with you',
+  fixed: 'likely fixed',
+  insufficient_gps: 'insufficient',
+};
 
 async function shareSession(session: BleCaptureSession) {
   const body = formatCaptureExport(session);
@@ -61,14 +91,16 @@ export default function BleCaptureScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [tracksExpandedId, setTracksExpandedId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [healthNow, setHealthNow] = useState(Date.now());
   const [customMinutes, setCustomMinutes] = useState('');
   const scanUnsubRef = useRef<(() => void) | null>(null);
 
   const {
     bleCaptureActive, bleCaptureDurationSec, bleCaptureStartedAt, bleCaptureEndsAt,
     bleCaptureSegment, bleCaptureLiveCount, bleCaptureBuffer, bleCaptureSessions, bleCaptureDraftName,
-    showSettings,
+    showSettings, userLocation,
     setBleCaptureDurationSec, setBleCaptureDraftName,
     startBleCapture, stopBleCapture, appendBleCapturePacket,
     deleteBleCaptureSession,
@@ -77,7 +109,11 @@ export default function BleCaptureScreen() {
 
   useEffect(() => {
     if (!bleCaptureActive || !bleCaptureStartedAt) return;
-    const tick = () => setElapsedMs(Date.now() - bleCaptureStartedAt);
+    const tick = () => {
+      const now = Date.now();
+      setElapsedMs(now - bleCaptureStartedAt);
+      setHealthNow(now);
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -137,6 +173,17 @@ export default function BleCaptureScreen() {
 
   const remainingMs = bleCaptureEndsAt ? Math.max(0, bleCaptureEndsAt - Date.now()) : null;
   const usingCustomDuration = bleCaptureDurationSec > 0 && !isCaptureDurationPreset(bleCaptureDurationSec);
+  const gpsFix = bleCaptureActive ? getBestAvailableFixSync(userLocation, healthNow) : null;
+  const gpsAgeSec = gpsFix ? Math.max(0, Math.round((healthNow - gpsFix.updatedAt) / 1000)) : null;
+  const scanStatus = getPhoneBleScanStatus();
+  const scanAgeSec = scanStatus.lastPacketAt != null
+    ? Math.max(0, Math.round((healthNow - scanStatus.lastPacketAt) / 1000))
+    : null;
+  const freshnessColor = (ageSec: number | null) => {
+    if (ageSec == null || ageSec >= 120) return colors.danger;
+    if (ageSec >= 30) return colors.warning;
+    return colors.success;
+  };
 
   const applyCustomMinutes = (raw: string) => {
     setCustomMinutes(raw);
@@ -164,6 +211,27 @@ export default function BleCaptureScreen() {
             </View>
           )}
         </View>
+        {bleCaptureActive && (
+          <View style={s.healthRow}>
+            <Text style={[s.healthText, { color: freshnessColor(gpsAgeSec) }]}>
+              GPS · {gpsAgeSec == null ? 'no fresh fix' : `${gpsAgeSec}s since fix`}
+            </Text>
+            <Text style={[
+              s.healthText,
+              {
+                color: !scanStatus.active
+                  ? colors.danger
+                  : freshnessColor(scanAgeSec),
+              },
+            ]}>
+              BLE · {!scanStatus.active
+                ? 'scan stopped'
+                : scanAgeSec == null
+                  ? 'active · waiting for packet'
+                  : `${scanAgeSec}s since packet`}
+            </Text>
+          </View>
+        )}
 
         {bleCaptureActive && showSettings.autoCaptureEnabled && (
           <Text style={s.sub}>
@@ -299,6 +367,15 @@ export default function BleCaptureScreen() {
         ) : (
           bleCaptureSessions.map(session => {
             const open = expandedId === session.id;
+            const trackOpen = tracksExpandedId === session.id;
+            const trackCount = new Set(
+              session.packets.map(packet => packet.deviceId).filter(Boolean),
+            ).size;
+            const tracks = open && trackOpen
+              ? analyzeBeaconTracks(session).sort(
+                (a, b) => TRACK_SORT[a.classification] - TRACK_SORT[b.classification],
+              )
+              : [];
             return (
               <View key={session.id} style={s.sessionBlock}>
                 <TouchableOpacity
@@ -333,28 +410,73 @@ export default function BleCaptureScreen() {
                     <IconTrash size={14} color={colors.danger} />
                   </TouchableOpacity>
                 </View>
-                {open && session.packets.map((p, i) => (
-                  <View key={`${p.boardTs}-${i}`} style={s.packetRow}>
-                    <Text style={s.packetTag}>{p.quality ? `UNK/${p.quality}` : p.tag}</Text>
-                    <Text style={s.packetHint}>
-                      {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
-                    </Text>
-                    <Text style={s.packetMeta}>
-                      {packetMetaParts(p)}
-                      {' · '}+{(p.receivedAt - session.startedAt) / 1000}s
-                    </Text>
-                    <Text style={s.packetHex}>{p.hex}</Text>
-                    {(p.quality || p.note !== undefined) && (
-                      <TextInput
-                        style={[s.input, { marginTop: 4 }]}
-                        placeholder="Note…"
-                        placeholderTextColor={colors.textMuted}
-                        value={p.note ?? ''}
-                        onChangeText={v => updateBleCapturePacketNote(p.boardTs, p.hex, v)}
-                      />
+                {open && (
+                  <>
+                    <TouchableOpacity
+                      style={s.trackHeader}
+                      onPress={() => setTracksExpandedId(trackOpen ? null : session.id)}
+                    >
+                      <Text style={s.trackHeaderText}>Beacon tracks ({trackCount})</Text>
+                      <Text style={s.expand}>{trackOpen ? '▼' : '▶'}</Text>
+                    </TouchableOpacity>
+                    {trackOpen && (
+                      <>
+                        <Text style={s.trackCaveat}>
+                          Movement is inferred from phone GPS and RSSI. Phone-only capture cannot
+                          measure a beacon's actual position, so ambiguous tracks stay insufficient.
+                        </Text>
+                        {tracks.map(track => (
+                          <View key={track.deviceId} style={s.trackRow}>
+                            <View style={s.trackTopRow}>
+                              <Text style={s.trackDevice}>…{deviceIdSuffix(track.deviceId)}</Text>
+                              <View style={[
+                                s.trackBadge,
+                                track.classification === 'moving_independent'
+                                  ? { borderColor: colors.warning }
+                                  : undefined,
+                              ]}>
+                                <Text style={s.trackBadgeText}>
+                                  {TRACK_LABEL[track.classification]}
+                                </Text>
+                              </View>
+                            </View>
+                            <Text style={s.packetMeta}>
+                              {track.tag} · {track.packetCount} packets · {track.freshGpsFixCount} fresh
+                              GPS · receiver span {track.userDisplacementM == null
+                                ? '—'
+                                : `${Math.round(track.userDisplacementM)}m`} · RSSI {track.rssiTrend}
+                            </Text>
+                          </View>
+                        ))}
+                        {tracks.length === 0 && (
+                          <Text style={s.sub}>No packets with device IDs in this session.</Text>
+                        )}
+                      </>
                     )}
-                  </View>
-                ))}
+                    {session.packets.map((p, i) => (
+                      <View key={`${p.boardTs}-${i}`} style={s.packetRow}>
+                        <Text style={s.packetTag}>{p.quality ? `UNK/${p.quality}` : p.tag}</Text>
+                        <Text style={s.packetHint}>
+                          {p.func ? `${p.func} · ` : ''}{describeBlePacket(p.tag, p.hex)}
+                        </Text>
+                        <Text style={s.packetMeta}>
+                          {packetMetaParts(p)}
+                          {' · '}+{(p.receivedAt - session.startedAt) / 1000}s
+                        </Text>
+                        <Text style={s.packetHex}>{p.hex}</Text>
+                        {(p.quality || p.note !== undefined) && (
+                          <TextInput
+                            style={[s.input, { marginTop: 4 }]}
+                            placeholder="Note…"
+                            placeholderTextColor={colors.textMuted}
+                            value={p.note ?? ''}
+                            onChangeText={v => updateBleCapturePacketNote(p.boardTs, p.hex, v)}
+                          />
+                        )}
+                      </View>
+                    ))}
+                  </>
+                )}
               </View>
             );
           })
@@ -386,6 +508,8 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
     customDurationSuffix: { color: c.textMuted, fontSize: 12, flex: 1 },
     statsRow:  { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
     stat:      { color: c.textPrimary, fontSize: 13, fontWeight: '600' },
+    healthRow: { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },
+    healthText:{ fontSize: 11, fontWeight: '700' },
     startBtn:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: c.primary, paddingVertical: 12, borderRadius: 10, marginTop: 4 },
     startBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
     stopBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: c.danger, paddingVertical: 12, borderRadius: 10, marginTop: 4 },
@@ -400,6 +524,14 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
     actionBtn:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
     actionText:   { color: c.primary, fontSize: 12, fontWeight: '600' },
     expand:       { color: c.textMuted, fontSize: 12 },
+    trackHeader:  { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, marginTop: 2 },
+    trackHeaderText: { color: c.textPrimary, fontSize: 13, fontWeight: '700', flex: 1 },
+    trackCaveat:  { color: c.textMuted, fontSize: 10, lineHeight: 14 },
+    trackRow:     { backgroundColor: c.surfaceAlt, borderRadius: 8, padding: 8, gap: 4 },
+    trackTopRow:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    trackDevice:  { color: c.textPrimary, fontSize: 12, fontWeight: '700', flex: 1 },
+    trackBadge:   { borderWidth: 1, borderColor: c.border, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+    trackBadgeText: { color: c.textSecondary, fontSize: 9, fontWeight: '700' },
     packetRow:    { backgroundColor: c.background, borderRadius: 8, padding: 8, marginTop: 4, gap: 2 },
     packetTag:    { color: c.primary, fontSize: 11, fontWeight: '700' },
     packetHint:   { color: c.textPrimary, fontSize: 13, fontWeight: '500' },

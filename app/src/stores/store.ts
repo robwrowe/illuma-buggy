@@ -158,10 +158,9 @@ import {
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
 } from '../utils/bleCapture';
 import {
-  getCaptureLocation,
-  startCaptureLocation,
-  stopCaptureLocation,
-} from '../utils/captureLocation';
+  getBestAvailableFixSync,
+  primeLocationRuntimeCache,
+} from '../utils/locationRuntimeBridge';
 import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
   finalizeWledSegmentPayload,
@@ -364,12 +363,15 @@ interface AppState {
   bleCaptureBuffer:       BleCapturePacket[];
   bleCaptureSessions:     BleCaptureSession[];
   bleCaptureDraftName:    string;
+  /** Runtime-only: capture is borrowing the background location pipeline. */
+  captureForcedLocationTracking: boolean;
   captureSource:          'firmware' | 'phone';
   setCaptureSource:       (v: 'firmware' | 'phone') => void;
   setBleCaptureDurationSec: (sec: number) => void;
   setBleCaptureDraftName:   (name: string) => void;
   startBleCapture:          () => void;
   stopBleCapture:           (reason?: string) => void;
+  rolloverBleCapture:       () => void;
   appendBleCapturePacket:   (pkt: Omit<BleCapturePacket, 'receivedAt'>) => void;
   updateBleCapturePacketNote: (boardTs: number, hex: string, note: string) => void;
   deleteBleCaptureSession:  (id: string) => void;
@@ -519,6 +521,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureBuffer:       [],
   bleCaptureSessions:     [],
   bleCaptureDraftName:    'Parade capture',
+  captureForcedLocationTracking: false,
   captureSource:          'firmware',
   parks:                  [],
   activePark:             null,
@@ -738,12 +741,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureSegment: 1,
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
+      captureForcedLocationTracking: true,
     });
-    void startCaptureLocation();
+    void primeLocationRuntimeCache();
   },
 
   stopBleCapture: (reason = 'manual') => {
-    stopCaptureLocation();
     const s = get();
     if (!s.bleCaptureActive && s.bleCaptureBuffer.length === 0) {
       set({
@@ -751,6 +754,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         bleCaptureStartedAt: null,
         bleCaptureEndsAt: null,
         bleCaptureSegment: 1,
+        captureForcedLocationTracking: false,
       });
       return;
     }
@@ -764,6 +768,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureSegment: 1,
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
+      captureForcedLocationTracking: false,
       bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
     });
     get().saveToStorage();
@@ -797,14 +802,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const active = get();
     if (!active.bleCaptureActive) return;
-    const gps = getCaptureLocation() ?? active.userLocation;
+    const gps = getBestAvailableFixSync(active.userLocation);
     const entry: BleCapturePacket = {
       ...pkt,
       receivedAt: Date.now(),
       ...(gps ? {
         lat: gps.latitude,
         lng: gps.longitude,
-        ...('accuracyM' in gps && gps.accuracyM != null ? { accuracyM: gps.accuracyM } : {}),
+        ...(gps.accuracyM != null ? { accuracyM: gps.accuracyM } : {}),
+        gpsUpdatedAt: gps.updatedAt,
       } : {}),
     };
     const buf = [...active.bleCaptureBuffer, entry];
