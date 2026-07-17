@@ -79,6 +79,12 @@ const TRACK_LABEL: Record<BeaconTrack['classification'], string> = {
   insufficient_gps: 'insufficient',
 };
 
+const MERGE_LABEL: Record<BeaconTrack['mergeConfidence'], string> = {
+  single: 'single MAC',
+  high: 'merged · high',
+  low: 'merged · low',
+};
+
 async function shareSession(session: BleCaptureSession) {
   const body = formatCaptureExport(session);
   const path = `${FileSystem.cacheDirectory}ble-capture-${session.id}.txt`;
@@ -395,14 +401,14 @@ export default function BleCaptureScreen() {
           bleCaptureSessions.map(session => {
             const open = expandedId === session.id;
             const trackOpen = tracksExpandedId === session.id;
-            const trackCount = new Set(
-              session.packets.map(packet => packet.deviceId).filter(Boolean),
-            ).size;
             const tracks = open && trackOpen
               ? analyzeBeaconTracks(session).sort(
                 (a, b) => TRACK_SORT[a.classification] - TRACK_SORT[b.classification],
               )
               : [];
+            const trackCount = open && trackOpen
+              ? tracks.length
+              : new Set(session.packets.map(packet => packet.deviceId).filter(Boolean)).size;
             return (
               <View key={session.id} style={s.sessionBlock}>
                 <TouchableOpacity
@@ -449,18 +455,27 @@ export default function BleCaptureScreen() {
                     {trackOpen && (
                       <>
                         <Text style={s.trackCaveat}>
-                          Movement is inferred from phone GPS and RSSI. Phone-only capture cannot
-                          measure a beacon's actual position, so ambiguous tracks stay insufficient.
+                          Movement is inferred from phone GPS and RSSI. Rotating BLE random MACs may
+                          be merged when tag/fingerprint, timing, and GPS continuity agree —
+                          low-confidence merges are labeled separately. Phone-only capture cannot
+                          measure a beacon's actual position.
                         </Text>
                         {tracks.map(track => (
-                          <View key={track.deviceId} style={s.trackRow}>
+                          <View key={track.mergedId} style={s.trackRow}>
                             <View style={s.trackTopRow}>
-                              <Text style={s.trackDevice}>…{deviceIdSuffix(track.deviceId)}</Text>
+                              <Text style={s.trackDevice}>
+                                …{deviceIdSuffix(track.deviceId)}
+                                {track.memberDeviceIds.length > 1
+                                  ? ` +${track.memberDeviceIds.length - 1}`
+                                  : ''}
+                              </Text>
                               <View style={[
                                 s.trackBadge,
                                 track.classification === 'moving_independent'
                                   ? { borderColor: colors.warning }
-                                  : undefined,
+                                  : track.mergeConfidence === 'low'
+                                    ? { borderColor: colors.danger }
+                                    : undefined,
                               ]}>
                                 <Text style={s.trackBadgeText}>
                                   {TRACK_LABEL[track.classification]}
@@ -468,11 +483,17 @@ export default function BleCaptureScreen() {
                               </View>
                             </View>
                             <Text style={s.packetMeta}>
-                              {track.tag} · {track.packetCount} packets · {track.freshGpsFixCount} fresh
-                              GPS · receiver span {track.userDisplacementM == null
+                              {track.tag} · {MERGE_LABEL[track.mergeConfidence]} ·{' '}
+                              {track.packetCount} packets · {track.freshGpsFixCount} fresh GPS ·
+                              receiver span {track.userDisplacementM == null
                                 ? '—'
                                 : `${Math.round(track.userDisplacementM)}m`} · RSSI {track.rssiTrend}
                             </Text>
+                            {track.memberDeviceIds.length > 1 && (
+                              <Text style={s.packetMeta}>
+                                MACs {track.memberDeviceIds.map(id => `…${deviceIdSuffix(id)}`).join(' → ')}
+                              </Text>
+                            )}
                           </View>
                         ))}
                         {tracks.length === 0 && (
