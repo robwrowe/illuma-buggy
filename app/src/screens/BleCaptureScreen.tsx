@@ -19,7 +19,12 @@ import {
 } from '../utils/bleCapture';
 import { analyzeBeaconTracks, type BeaconTrack } from '../utils/beaconTrackAnalysis';
 import { getBestAvailableFixSync } from '../utils/locationRuntimeBridge';
-import { getPhoneBleScanStatus, startPhoneBleScan } from '../utils/phoneBleScan';
+import {
+  getPhoneBleScanHealth,
+  getPhoneBleScanStatus,
+  startPhoneBleScan,
+} from '../utils/phoneBleScan';
+import { getGattActivitySince } from '../services/BLEService';
 
 function formatElapsed(ms: number): string {
   const sec = Math.floor(ms / 1000);
@@ -179,6 +184,15 @@ export default function BleCaptureScreen() {
   const scanAgeSec = scanStatus.lastPacketAt != null
     ? Math.max(0, Math.round((healthNow - scanStatus.lastPacketAt) / 1000))
     : null;
+  const scanHealth = getPhoneBleScanHealth();
+  const callbackAgeSec = scanHealth.lastCallbackAt != null
+    ? Math.max(0, Math.round((healthNow - scanHealth.lastCallbackAt) / 1000))
+    : null;
+  const gattActivity = getGattActivitySince(bleCaptureStartedAt ?? healthNow);
+  const lastGattActivity = gattActivity[gattActivity.length - 1] ?? null;
+  const gattAgeSec = lastGattActivity
+    ? Math.max(0, Math.round((healthNow - lastGattActivity.end) / 1000))
+    : null;
   const freshnessColor = (ageSec: number | null) => {
     if (ageSec == null || ageSec >= 120) return colors.danger;
     if (ageSec >= 30) return colors.warning;
@@ -196,8 +210,8 @@ export default function BleCaptureScreen() {
     <ScrollView style={s.container} contentContainerStyle={s.content}>
       <Text style={s.intro}>
         Record Disney BLE packets during a parade or fireworks show, straight off your phone's
-        Bluetooth radio — the IllumaBuggy board is not involved and won't be interrupted or
-        interrupt this capture.
+        Bluetooth radio. The board is not part of the capture path, but an active board connection
+        still shares the phone's Bluetooth radio.
       </Text>
 
       {/* Recorder */}
@@ -229,6 +243,19 @@ export default function BleCaptureScreen() {
                 : scanAgeSec == null
                   ? 'active · waiting for packet'
                   : `${scanAgeSec}s since packet`}
+            </Text>
+            <Text style={[s.healthText, { color: freshnessColor(callbackAgeSec) }]}>
+              Radio · {scanHealth.callbacksLast10s}/10s · {scanHealth.totalCallbackCount} total
+              {callbackAgeSec == null ? ' · no callbacks' : ` · last ${callbackAgeSec}s`}
+            </Text>
+            <Text style={[
+              s.healthText,
+              { color: gattAgeSec != null && gattAgeSec < 5 ? colors.warning : colors.textMuted },
+            ]}>
+              GATT · {gattActivity.length} events
+              {lastGattActivity
+                ? ` · last ${lastGattActivity.kind} ${gattAgeSec}s ago`
+                : ' · quiet'}
             </Text>
           </View>
         )}

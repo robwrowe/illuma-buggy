@@ -58,6 +58,9 @@ export type PhoneScanPacketHandler = (pkt: {
 let scanManager: BleManager | null = null;
 let scanActive = false;
 let lastPacketAt: number | null = null;
+let lastCallbackAt: number | null = null;
+let totalCallbackCount = 0;
+let callbackTimes: number[] = [];
 const listeners = new Set<PhoneScanPacketHandler>();
 
 /**
@@ -73,6 +76,9 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
     if (!scanManager) scanManager = new BleManager();
     scanActive = true;
     lastPacketAt = null;
+    lastCallbackAt = null;
+    totalCallbackCount = 0;
+    callbackTimes = [];
 
     scanManager.startDeviceScan(null, { allowDuplicates: true }, (error, device: Device | null) => {
       if (error) {
@@ -80,6 +86,12 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
         scanActive = false;
         return;
       }
+      const callbackAt = Date.now();
+      lastCallbackAt = callbackAt;
+      totalCallbackCount++;
+      callbackTimes.push(callbackAt);
+      callbackTimes = callbackTimes.filter(at => callbackAt - at <= 10_000);
+
       if (!device?.manufacturerData) return;
       const raw = decodeManufacturerData(device.manufacturerData);
       if (raw.length === 0 || !isDisneyMfr(raw)) return;
@@ -111,4 +123,20 @@ export function isPhoneBleScanActive(): boolean {
 
 export function getPhoneBleScanStatus(): { active: boolean; lastPacketAt: number | null } {
   return { active: scanActive, lastPacketAt };
+}
+
+/** OS scan-callback health, including advertisements rejected by the Disney filter. */
+export function getPhoneBleScanHealth(): {
+  active: boolean;
+  lastCallbackAt: number | null;
+  totalCallbackCount: number;
+  callbacksLast10s: number;
+} {
+  const cutoff = Date.now() - 10_000;
+  return {
+    active: scanActive,
+    lastCallbackAt,
+    totalCallbackCount,
+    callbacksLast10s: callbackTimes.filter(at => at >= cutoff).length,
+  };
 }
