@@ -4,6 +4,8 @@
 #include "MbPacketDecode.h"
 #include "ScannerPayloadTransport.h"
 #include "DebugLog.h"
+#include <NimBLEDevice.h>
+#include <string>
 
 class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* device) {
