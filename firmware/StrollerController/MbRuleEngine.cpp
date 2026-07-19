@@ -179,61 +179,285 @@ static bool looksLikeWand(const uint8_t* payload, size_t plen) {
   return false;
 }
 
-static void setWledNumericField(JsonObject wled, const char* field, float value) {
-  if (!field || !field[0]) return;
-  int iv = (int)lroundf(value);
-  if (iv < 0) iv = 0;
-  if (iv > 255 && (strcmp(field, "fx") != 0 && strcmp(field, "pal") != 0 &&
-                   strcmp(field, "transition") != 0)) {
-    iv = 255;
+// Lab-confirmed timing-byte decode (docs/ble-packets-details/timing-byte.md).
+// bit7 is a misnamed "always-on" — it is extended timeout (7.6×t), not indefinite hold.
+struct TimingDecode {
+  unsigned long onTimeMs;
+  unsigned long fadeMs;
+  bool extended;
+};
+
+static TimingDecode decodeTimingByte(uint8_t b) {
+  uint8_t t = b & 0x0F;
+  bool scaler = (b >> 6) & 1;
+  bool extended = (b >> 7) & 1;
+  uint8_t fadeBits = (b >> 4) & 0x03;
+  float onSec;
+  if (extended) {
+    // Unconfirmed for t=0 under extended; use same 3s fallback as scaler=0.
+    onSec = (t == 0) ? MB_TIMING_T0_FALLBACK_SEC : (MB_TIMING_MULT_EXTENDED * (float)t);
+  } else if (scaler) {
+    onSec = (t == 0) ? MB_TIMING_T0_FALLBACK_SEC : (MB_TIMING_MULT_SCALER * (float)t);
+  } else {
+    onSec = (t == 0) ? MB_TIMING_T0_FALLBACK_SEC : (MB_TIMING_MULT_NORMAL * (float)t);
   }
-  // Prefer writing onto every live segment; also set top-level for convenience.
-  wled[field] = iv;
+  TimingDecode out;
+  out.onTimeMs = (unsigned long)(onSec * 1000.0f + 0.5f);
+  out.fadeMs = (unsigned long)fadeBits * MB_TIMING_FADE_STEP_MS;
+  out.extended = extended;
+  return out;
+}
+
+static JsonObject findSegmentMapById(const char* mapId) {
+  JsonObject empty;
+  if (!mapId || !mapId[0]) return empty;
+  JsonArray maps = gRulesDoc["segmentMaps"].as<JsonArray>();
+  if (maps.isNull()) return empty;
+  for (JsonVariant v : maps) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject m = v.as<JsonObject>();
+    if (strcmp(m["id"] | "", mapId) == 0) return m;
+  }
+  return empty;
+}
+
+static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
+  JsonObject empty;
+  if (segMap.isNull() || !segmentId) return empty;
+  JsonArray segs = segMap["segments"].as<JsonArray>();
+  if (segs.isNull()) return empty;
+  for (JsonVariant v : segs) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject s = v.as<JsonObject>();
+    if (strcmp(s["id"] | "", segmentId) == 0) return s;
+  }
+  return empty;
+}
+
+static JsonObject ensureWledSegByLocalId(JsonObject wled, JsonObject segDef) {
   JsonArray segs = wled["seg"].as<JsonArray>();
-  if (!segs.isNull()) {
-    for (JsonObject seg : segs) {
-      int stop = seg["stop"] | 0;
-      if (stop <= 0) continue;
-      seg[field] = iv;
-    }
+  if (segs.isNull()) segs = wled.createNestedArray("seg");
+  int wledId = segDef["wledSegId"] | segDef["id"] | 0;
+  for (JsonObject seg : segs) {
+    if ((int)(seg["id"] | -1) == wledId) return seg;
+  }
+  JsonObject seg = segs.createNestedObject();
+  seg["id"] = wledId;
+  seg["start"] = segDef["start"] | 0;
+  seg["stop"] = segDef["stop"] | STRIP_LED_COUNT;
+  seg["grp"] = segDef["grp"] | 1;
+  seg["spc"] = segDef["spc"] | 0;
+  seg["of"] = segDef["of"] | 0;
+  seg["rev"] = segDef["rev"] | false;
+  seg["mi"] = segDef["mi"] | false;
+  seg["on"] = true;
+  int fx = segDef["fx"] | -1;
+  if (fx >= 0) seg["fx"] = fx;
+  else seg["fx"] = 0;
+  if (segDef.containsKey("sx")) seg["sx"] = segDef["sx"];
+  if (segDef.containsKey("ix")) seg["ix"] = segDef["ix"];
+  int pal = segDef["pal"] | -1;
+  if (pal >= 0) seg["pal"] = pal;
+  return seg;
+}
+
+static void applyPresetVariables(JsonObject segObj, JsonObject presetVariables) {
+  if (presetVariables.isNull()) return;
+  for (JsonPair kv : presetVariables) {
+    const char* key = kv.key().c_str();
+    if (!key || !key[0]) continue;
+    JsonVariant val = kv.value();
+    if (val.is<bool>()) segObj[key] = val.as<bool>();
+    else if (val.is<float>() || val.is<double>()) segObj[key] = val.as<float>();
+    else if (val.is<int>() || val.is<long>()) segObj[key] = val.as<long>();
+    else if (val.is<const char*>()) segObj[key] = val.as<const char*>();
+    else segObj[key] = val;
   }
 }
 
-static void setSegmentColor(JsonObject wled, const char* segKey, uint8_t r, uint8_t g, uint8_t b) {
-  int si = mbSegKeyIndex(segKey);
-  if (si < 0) return;
-  MbSegMap& map = activeMbSegMap(si);
-  if (map.count == 0) return;
-
-  JsonArray segs = wled["seg"].as<JsonArray>();
-  if (segs.isNull()) segs = wled.createNestedArray("seg");
-
-  for (uint8_t i = 0; i < map.count; i++) {
-    const WledSegRef& ref = map.refs[i];
-    JsonObject target;
-    bool found = false;
-    for (JsonObject seg : segs) {
-      if ((int)(seg["id"] | -1) == (int)ref.id) {
-        target = seg;
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      target = segs.createNestedObject();
-      target["id"] = ref.id;
-      target["start"] = ref.start;
-      target["stop"] = ref.stop;
-      target["grp"] = ref.grp;
-      target["fx"] = 0;
-    }
-    target["on"] = true;
-    target["pal"] = WLED_PAL_COLORS_ONLY;
-    JsonArray col = target["col"].to<JsonArray>();
-    col.clear();
+static void setSegColorSlot(JsonObject segObj, int colorSlot, uint8_t r, uint8_t g, uint8_t b) {
+  if (colorSlot < 0) colorSlot = 0;
+  if (colorSlot > 2) colorSlot = 2;
+  segObj["pal"] = WLED_PAL_COLORS_ONLY;
+  JsonArray col = segObj["col"].as<JsonArray>();
+  if (col.isNull()) col = segObj.createNestedArray("col");
+  while ((int)col.size() <= colorSlot) {
     JsonArray rgb = col.createNestedArray();
+    rgb.add(0); rgb.add(0); rgb.add(0);
+  }
+  JsonArray rgb = col[colorSlot].as<JsonArray>();
+  if (!rgb.isNull() && rgb.size() >= 3) {
+    rgb[0] = r; rgb[1] = g; rgb[2] = b;
+  } else if (!rgb.isNull()) {
+    rgb.clear();
     rgb.add(r); rgb.add(g); rgb.add(b);
   }
+}
+
+static void setSegNumericField(JsonObject segObj, const char* field, float value) {
+  if (!field || !field[0]) return;
+  int iv = (int)lroundf(value);
+  if (iv < 0) iv = 0;
+  if (iv > 255 && strcmp(field, "fx") != 0 && strcmp(field, "pal") != 0 &&
+      strcmp(field, "transition") != 0) {
+    iv = 255;
+  }
+  segObj[field] = iv;
+}
+
+static void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b) {
+  r = g = b = 0;
+  if (!hex || hex[0] != '#' || strlen(hex) < 7) return;
+  auto nib = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0;
+  };
+  r = (uint8_t)((nib(hex[1]) << 4) | nib(hex[2]));
+  g = (uint8_t)((nib(hex[3]) << 4) | nib(hex[4]));
+  b = (uint8_t)((nib(hex[5]) << 4) | nib(hex[6]));
+}
+
+static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap) {
+  wled["on"] = true;
+  JsonArray segs = wled.createNestedArray("seg");
+  JsonArray defs = segMap["segments"].as<JsonArray>();
+  if (defs.isNull()) return;
+  for (JsonVariant v : defs) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject def = v.as<JsonObject>();
+    JsonObject seg = segs.createNestedObject();
+    seg["id"] = def["wledSegId"] | 0;
+    seg["start"] = def["start"] | 0;
+    seg["stop"] = def["stop"] | STRIP_LED_COUNT;
+    seg["grp"] = def["grp"] | 1;
+    seg["spc"] = def["spc"] | 0;
+    seg["of"] = def["of"] | 0;
+    seg["rev"] = def["rev"] | false;
+    seg["mi"] = def["mi"] | false;
+    seg["on"] = true;
+    int fx = def["fx"] | -1;
+    seg["fx"] = fx >= 0 ? fx : 0;
+    if (def.containsKey("sx")) seg["sx"] = def["sx"];
+    if (def.containsKey("ix")) seg["ix"] = def["ix"];
+    int pal = def["pal"] | -1;
+    if (pal >= 0) seg["pal"] = pal;
+
+    // Static colors from map (empty string = untouched)
+    JsonArray colors = def["colors"].as<JsonArray>();
+    if (!colors.isNull()) {
+      for (int i = 0; i < 3 && i < (int)colors.size(); i++) {
+        const char* hex = colors[i] | "";
+        if (!hex || !hex[0]) continue;
+        uint8_t r, g, b;
+        parseHexColor(hex, r, g, b);
+        setSegColorSlot(seg, i, r, g, b);
+      }
+    }
+
+    // Optional per-segment preset baseline
+    const char* presetId = def["presetId"] | "";
+    if (presetId && presetId[0]) {
+      String preset = getPreset(presetId);
+      if (preset.length() > 0) {
+        DynamicJsonDocument pdoc(8192);
+        if (!deserializeJson(pdoc, preset) && pdoc.containsKey("wled")) {
+          JsonObject pw = pdoc["wled"].as<JsonObject>();
+          JsonArray psegs = pw["seg"].as<JsonArray>();
+          JsonObject srcSeg;
+          if (!psegs.isNull() && psegs.size() > 0) srcSeg = psegs[0].as<JsonObject>();
+          else srcSeg = pw;
+          for (JsonPair kv : srcSeg) {
+            const char* k = kv.key().c_str();
+            if (strcmp(k, "id") == 0 || strcmp(k, "start") == 0 || strcmp(k, "stop") == 0) continue;
+            seg[k] = kv.value();
+          }
+        }
+      }
+    }
+    applyPresetVariables(seg, def["presetVariables"].as<JsonObject>());
+  }
+}
+
+static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload, size_t plen) {
+  JsonObject timing = rule["timing"].as<JsonObject>();
+  if (timing.isNull() || !(timing["enabled"] | false)) {
+    resetMbRuleLifecycle();
+    return;
+  }
+  uint8_t offset = (uint8_t)(timing["offset"] | 5);
+  uint8_t byte = (payload && offset < plen) ? payload[offset] : 0;
+  TimingDecode td = decodeTimingByte(byte);
+  int cooldownSec = timing["cooldownSec"] | 10;
+  if (cooldownSec < 0) cooldownSec = 0;
+  const char* mode = timing["cooldownResetMode"] | "onMatch";
+
+  strncpy(mbActiveRuleId, rule["id"] | "", MB_RULE_ID_LEN - 1);
+  mbActiveRuleId[MB_RULE_ID_LEN - 1] = '\0';
+  mbActiveRuleCooldownMode =
+    (strcmp(mode, "fixed") == 0) ? MB_COOLDOWN_FIXED : MB_COOLDOWN_ON_MATCH;
+  mbRuleFadeMs = td.fadeMs;
+  mbRuleCooldownMs = (unsigned long)cooldownSec * 1000UL;
+  mbRulePhase = MB_RULE_ON;
+  mbRulePhaseDeadlineMs = millis() + td.onTimeMs;
+  Serial.printf("[Rule] timing ON %lums fade=%lums cooldown=%lums mode=%s byte=0x%02X\n",
+                td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
+                mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch", byte);
+}
+
+void resetMbRuleLifecycle() {
+  mbRulePhase = MB_RULE_IDLE;
+  mbRulePhaseDeadlineMs = 0;
+  mbRuleFadeMs = 0;
+  mbRuleCooldownMs = 10000;
+  mbActiveRuleCooldownMode = MB_COOLDOWN_ON_MATCH;
+  mbActiveRuleId[0] = '\0';
+}
+
+void serviceMbRuleLifecycle() {
+  if (mbRulePhase == MB_RULE_IDLE) return;
+  if (currentOverride != BLE_MAGIC) {
+    resetMbRuleLifecycle();
+    return;
+  }
+  if ((long)(millis() - mbRulePhaseDeadlineMs) < 0) return;
+
+  if (mbRulePhase == MB_RULE_ON) {
+    Serial.printf("[Rule] ON→FADE fadeMs=%lu\n", mbRuleFadeMs);
+    sendToWLED(injectWledTransition("{\"on\":false}", mbRuleFadeMs));
+    mbRulePhase = MB_RULE_FADE;
+    mbRulePhaseDeadlineMs = millis() + (mbRuleFadeMs > 0 ? mbRuleFadeMs : 1);
+    return;
+  }
+  if (mbRulePhase == MB_RULE_FADE) {
+    Serial.printf("[Rule] FADE→COOLDOWN cooldownMs=%lu\n", mbRuleCooldownMs);
+    mbRulePhase = MB_RULE_COOLDOWN;
+    mbRulePhaseDeadlineMs = millis() + (mbRuleCooldownMs > 0 ? mbRuleCooldownMs : 1);
+    return;
+  }
+  if (mbRulePhase == MB_RULE_COOLDOWN) {
+    Serial.println("[Rule] COOLDOWN→restore");
+    // Already black from FADE — restore without a second dip-to-black.
+    unsigned long savedFade = bleEffectTransitionMs;
+    bleEffectTransitionMs = 0;
+    resetMbRuleLifecycle();
+    clearOverride();
+    bleEffectTransitionMs = savedFade;
+    bleNotify("{\"type\":\"ble_event\",\"event\":\"rule_timeout\"}");
+  }
+}
+
+void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen) {
+  (void)payload; (void)plen;
+  const char* ruleId = rule["id"] | "";
+  if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
+  if (mbRulePhase == MB_RULE_COOLDOWN && mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) {
+    // Fixed cooldown: acknowledge only — do not mutate deadline.
+    return;
+  }
+  // ON / FADE / onMatch-COOLDOWN: re-enter ON with fresh timing (caller re-applies visuals).
+  beginTimedRuleOnPhase(rule, payload, plen);
 }
 
 void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t plen) {
@@ -241,7 +465,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   bool wand = looksLikeWand(payload, plen);
   if (wand) {
-    if (currentOverride == BLE_MAGIC) return;  // hard lockout
+    if (currentOverride == BLE_MAGIC) return;
     if (!starlightEnabled) {
       bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
       return;
@@ -256,113 +480,35 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
 
-  // Optional layout override by name
-  const char* layoutId = rule["segmentLayoutId"] | "";
-  uint8_t savedLayout = mbActiveLayoutIdx;
-  bool switchedLayout = false;
-  if (layoutId && layoutId[0]) {
-    for (uint8_t i = 0; i < mbLayoutCount; i++) {
-      if (strcmp(mbLayouts[i].name, layoutId) == 0) {
-        mbActiveLayoutIdx = i;
-        switchedLayout = true;
-        break;
-      }
+  JsonObject timing = rule["timing"].as<JsonObject>();
+  bool timingEn = !timing.isNull() && (timing["enabled"] | false);
+  const char* ruleId = rule["id"] | "";
+
+  // Same timed rule mid-lifecycle: fixed cooldown = no re-apply; else reset ON after apply.
+  if (timingEn && mbRulePhase != MB_RULE_IDLE && ruleId[0] &&
+      strcmp(mbActiveRuleId, ruleId) == 0) {
+    if (mbRulePhase == MB_RULE_COOLDOWN && mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) {
+      return;
     }
   }
 
-  JsonArray extracts = rule["extract"].as<JsonArray>();
+  const char* mapId = rule["segmentMapId"] | "";
+  JsonObject segMap = findSegmentMapById(mapId);
+
   String presetId = rule["presetId"] | "";
+  JsonArray extracts = rule["extract"].as<JsonArray>();
 
-  // Collect color extracts for multi-segment solid path when no preset
-  const char* colorKeys[16];
-  uint8_t colorPals[16];
-  uint8_t colorRgb[16][3];
-  bool colorHasRgb[16];
-  int colorCount = 0;
-  bool hasWledField = false;
-
-  struct FieldWrite { const char* field; float value; };
-  FieldWrite fields[16];
-  int fieldCount = 0;
-
-  if (!extracts.isNull()) {
-    for (JsonVariant ev : extracts) {
-      if (!ev.is<JsonObject>() || colorCount >= 16) continue;
-      JsonObject ex = ev.as<JsonObject>();
-      uint8_t offset = (uint8_t)(ex["offset"] | 0);
-      uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
-      uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
-      uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
-
-      JsonObject target = ex["target"].as<JsonObject>();
-      const char* kind = target["kind"] | "";
-
-      bool paletteMap = ex["paletteMap"] | false;
-      uint8_t r = 0, g = 0, b = 0;
-      float mapped = (float)raw;
-
-      if (paletteMap) {
-        uint8_t pal = (uint8_t)(raw & 0x1F);
-        paletteToRGB(pal, r, g, b);
-        mapped = (float)pal;
-      } else if (ex.containsKey("curve")) {
-        JsonObject curve = ex["curve"].as<JsonObject>();
-        const char* ctype = curve["type"] | "linear";
-        CurveType ct = (strcmp(ctype, "exponential") == 0) ? CurveType::EXPONENTIAL : CurveType::LINEAR;
-        float expv = curve["exponent"] | 2.0f;
-        mapped = applyCurve(raw,
-                            (uint32_t)(curve["inMin"] | 0),
-                            (uint32_t)(curve["inMax"] | 15),
-                            (float)(curve["outMin"] | 0),
-                            (float)(curve["outMax"] | 255),
-                            ct, expv);
-      }
-
-      if (strcmp(kind, "color") == 0) {
-        const char* seg = target["segment"] | "all";
-        colorKeys[colorCount] = seg;
-        if (paletteMap) {
-          colorHasRgb[colorCount] = true;
-          colorRgb[colorCount][0] = r;
-          colorRgb[colorCount][1] = g;
-          colorRgb[colorCount][2] = b;
-          colorPals[colorCount] = (uint8_t)(raw & 0x1F);
-        } else {
-          colorHasRgb[colorCount] = false;
-          colorPals[colorCount] = (uint8_t)((uint32_t)lroundf(mapped) & 0x1F);
-        }
-        colorCount++;
-      } else if (strcmp(kind, "wledField") == 0) {
-        hasWledField = true;
-        if (fieldCount < 16) {
-          fields[fieldCount].field = target["field"] | "";
-          fields[fieldCount].value = mapped;
-          fieldCount++;
-        }
-      }
-    }
-  }
-
-  // No preset + only colors → multi-segment solid (reuse existing helper)
-  if (presetId.length() == 0 && !hasWledField && colorCount > 0) {
-    saveWledStateForOverride();
-    // Build via RGB-aware path: applyMbMultiSegmentSolid uses palette indices
-    applyMbMultiSegmentSolid(colorKeys, colorPals, colorCount, src);
-    if (switchedLayout) mbActiveLayoutIdx = savedLayout;
-    bleNotify(wand
-      ? "{\"type\":\"sw_event\",\"event\":\"rule\"}"
-      : "{\"type\":\"ble_event\",\"event\":\"rule\"}");
-    return;
-  }
-
-  if (presetId.length() == 0 && colorCount == 0 && !hasWledField) {
-    // Nothing to apply
-    if (switchedLayout) mbActiveLayoutIdx = savedLayout;
-    return;
+  // startTransition
+  unsigned long startTransMs = bleEffectTransitionMs;
+  JsonObject startTr = rule["startTransition"].as<JsonObject>();
+  if (!startTr.isNull()) {
+    const char* ttype = startTr["type"] | "fade";
+    if (strcmp(ttype, "instant") == 0) startTransMs = 0;
+    else if (startTr.containsKey("timeMs")) startTransMs = (unsigned long)(startTr["timeMs"] | 0);
   }
 
   saveWledStateForOverride();
-  DynamicJsonDocument wled(12288);
+  DynamicJsonDocument wled(16384);
   bool haveWled = false;
 
   if (presetId.length() > 0) {
@@ -379,6 +525,23 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       }
     }
   }
+
+  if (!segMap.isNull()) {
+    if (!haveWled) {
+      seedWledFromSegmentMap(wled.as<JsonObject>(), segMap);
+      haveWled = true;
+    } else {
+      // Ensure geometry segments from map exist so extract targets can resolve.
+      JsonArray defs = segMap["segments"].as<JsonArray>();
+      if (!defs.isNull()) {
+        for (JsonVariant v : defs) {
+          if (!v.is<JsonObject>()) continue;
+          ensureWledSegByLocalId(wled.as<JsonObject>(), v.as<JsonObject>());
+        }
+      }
+    }
+  }
+
   if (!haveWled) {
     wled["on"] = true;
     JsonArray segs = wled.createNestedArray("seg");
@@ -390,17 +553,131 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     haveWled = true;
   }
 
-  for (int i = 0; i < colorCount; i++) {
-    uint8_t r, g, b;
-    if (colorHasRgb[i]) {
-      r = colorRgb[i][0]; g = colorRgb[i][1]; b = colorRgb[i][2];
-    } else {
-      paletteToRGB(colorPals[i], r, g, b);
+  // Extract → fan-out targets
+  if (!extracts.isNull()) {
+    for (JsonVariant ev : extracts) {
+      if (!ev.is<JsonObject>()) continue;
+      JsonObject ex = ev.as<JsonObject>();
+      uint8_t offset = (uint8_t)(ex["offset"] | 0);
+      uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
+      uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
+      uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
+
+      bool paletteMap = ex["paletteMap"] | false;
+      uint8_t r = 0, g = 0, b = 0;
+      float mapped = (float)raw;
+      if (paletteMap) {
+        uint8_t pal = (uint8_t)(raw & 0x1F);
+        paletteToRGB(pal, r, g, b);
+        mapped = (float)pal;
+      } else if (ex.containsKey("curve")) {
+        JsonObject curve = ex["curve"].as<JsonObject>();
+        const char* ctype = curve["type"] | "linear";
+        CurveType ct = (strcmp(ctype, "exponential") == 0) ? CurveType::EXPONENTIAL : CurveType::LINEAR;
+        float expv = curve["exponent"] | 2.0f;
+        mapped = applyCurve(raw,
+                            (uint32_t)(curve["inMin"] | 0),
+                            (uint32_t)(curve["inMax"] | 15),
+                            (float)(curve["outMin"] | 0),
+                            (float)(curve["outMax"] | 255),
+                            ct, expv);
+        uint8_t pal = (uint8_t)((uint32_t)lroundf(mapped) & 0x1F);
+        paletteToRGB(pal, r, g, b);
+      } else {
+        uint8_t pal = (uint8_t)(raw & 0x1F);
+        paletteToRGB(pal, r, g, b);
+      }
+
+      JsonArray targets = ex["targets"].as<JsonArray>();
+
+      auto applyMaskColor = [&](const char* mask) {
+        if (!mask || !mask[0]) mask = "all";
+        if (!segMap.isNull()) {
+          JsonArray defs = segMap["segments"].as<JsonArray>();
+          if (!defs.isNull()) {
+            for (JsonVariant v : defs) {
+              if (!v.is<JsonObject>()) continue;
+              JsonObject def = v.as<JsonObject>();
+              const char* assign = def["maskAssignment"] | "";
+              if (strcmp(assign, "ignore") == 0) continue;
+              if (strcmp(assign, mask) != 0) continue;
+              JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
+              setSegColorSlot(segObj, 0, r, g, b);
+            }
+          }
+          return;
+        }
+        int si = mbSegKeyIndex(mask);
+        if (si < 0) return;
+        MbSegMap& map = activeMbSegMap(si);
+        JsonArray segs = wled["seg"].as<JsonArray>();
+        if (segs.isNull()) segs = wled.createNestedArray("seg");
+        for (uint8_t i = 0; i < map.count; i++) {
+          JsonObject segObj;
+          bool found = false;
+          for (JsonObject s : segs) {
+            if ((int)(s["id"] | -1) == (int)map.refs[i].id) { segObj = s; found = true; break; }
+          }
+          if (!found) {
+            segObj = segs.createNestedObject();
+            segObj["id"] = map.refs[i].id;
+            segObj["start"] = map.refs[i].start;
+            segObj["stop"] = map.refs[i].stop;
+            segObj["fx"] = 0;
+            segObj["on"] = true;
+          }
+          setSegColorSlot(segObj, 0, r, g, b);
+        }
+      };
+
+      auto dispatchTarget = [&](JsonObject tgt) {
+        const char* kind = tgt["kind"] | "";
+        if (strcmp(kind, "ignore") == 0 || !kind[0]) return;
+
+        if (strcmp(kind, "segmentColor") == 0) {
+          const char* segId = tgt["segmentId"] | "";
+          int slot = tgt["colorSlot"] | 0;
+          JsonObject def = findSegInMap(segMap, segId);
+          if (def.isNull()) return;
+          JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
+          setSegColorSlot(segObj, slot, r, g, b);
+          return;
+        }
+        if (strcmp(kind, "maskColor") == 0) {
+          applyMaskColor(tgt["mask"] | "all");
+          return;
+        }
+        if (strcmp(kind, "segmentField") == 0) {
+          const char* segId = tgt["segmentId"] | "";
+          const char* field = tgt["field"] | "";
+          JsonObject def = findSegInMap(segMap, segId);
+          if (def.isNull()) return;
+          JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
+          setSegNumericField(segObj, field, mapped);
+          return;
+        }
+        if (strcmp(kind, "color") == 0) {
+          applyMaskColor(tgt["segment"] | "all");
+          return;
+        }
+        if (strcmp(kind, "wledField") == 0) {
+          const char* field = tgt["field"] | "";
+          JsonArray segs = wled["seg"].as<JsonArray>();
+          if (!segs.isNull()) {
+            for (JsonObject seg : segs) setSegNumericField(seg, field, mapped);
+          }
+          wled[field] = (int)lroundf(mapped);
+        }
+      };
+
+      if (!targets.isNull() && targets.size() > 0) {
+        for (JsonVariant tv : targets) {
+          if (tv.is<JsonObject>()) dispatchTarget(tv.as<JsonObject>());
+        }
+      } else if (ex.containsKey("target") && ex["target"].is<JsonObject>()) {
+        dispatchTarget(ex["target"].as<JsonObject>());
+      }
     }
-    setSegmentColor(wled.as<JsonObject>(), colorKeys[i], r, g, b);
-  }
-  for (int i = 0; i < fieldCount; i++) {
-    setWledNumericField(wled.as<JsonObject>(), fields[i].field, fields[i].value);
   }
 
   String wledJson;
@@ -409,25 +686,25 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   disableAllSplitSegments();
   delay(80);
   String body = preparePresetApplyPayload(wledJson);
-  bool ok = sendToWLED(injectWledTransition(body, bleEffectTransitionMs), 8000, 2);
-  if (ok) {
-    setOverride(src);
-    touchOverrideIdleTimer(src);
-    Serial.printf("[Rule] Applied preset=%s colors=%d fields=%d src=%d\n",
-                  presetId.c_str(), colorCount, fieldCount, (int)src);
-    if (wand && colorCount > 0) {
-      uint8_t r = colorHasRgb[0] ? colorRgb[0][0] : 0;
-      uint8_t g = colorHasRgb[0] ? colorRgb[0][1] : 0;
-      uint8_t b = colorHasRgb[0] ? colorRgb[0][2] : 0;
-      if (!colorHasRgb[0]) paletteToRGB(colorPals[0], r, g, b);
-      bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(colorPals[0]) +
-                ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-    } else {
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"rule\"}");
-    }
+  bool ok = sendToWLED(injectWledTransition(body, startTransMs), 8000, 2);
+  if (!ok) {
+    Serial.println("[Rule] WLED apply failed");
+    return;
   }
 
-  if (switchedLayout) mbActiveLayoutIdx = savedLayout;
+  setOverride(src);
+  if (timingEn && src == BLE_MAGIC) {
+    beginTimedRuleOnPhase(rule, payload, plen);
+  } else {
+    resetMbRuleLifecycle();
+    touchOverrideIdleTimer(src);
+  }
+
+  Serial.printf("[Rule] Applied preset=%s map=%s src=%d\n",
+                presetId.c_str(), mapId, (int)src);
+  bleNotify(wand
+    ? "{\"type\":\"sw_event\",\"event\":\"rule\"}"
+    : "{\"type\":\"ble_event\",\"event\":\"rule\"}");
 }
 
 // ── Unmatched notify ────────────────────────────────────────────────────
@@ -445,18 +722,34 @@ void applyMbRulesJson(JsonObject doc) {
   // Reuse colors / segments / randomPool / defaultPresetId via existing mapper
   applyMbMappingJson(doc);
 
-  // Cache rules[] only when the payload includes them — colors-only / legacy
-  // mb_mapping_config pushes from the phone must not wipe authoring done via set_mb_rules.
-  if (doc.containsKey("rules")) {
+  // Cache rules[] / segmentMaps[] when either is present — colors-only pushes must not wipe them.
+  if (doc.containsKey("rules") || doc.containsKey("segmentMaps")) {
     String raw;
     serializeJson(doc, raw);
-    gRulesDoc.clear();
-    if (deserializeJson(gRulesDoc, raw)) {
-      Serial.println("[Rules] cache deserialize failed");
+    // If only segmentMaps arrived without rules, merge onto existing cache
+    if (!doc.containsKey("rules") && gRulesDoc.containsKey("rules")) {
+      DynamicJsonDocument merged(32768);
+      String existing;
+      serializeJson(gRulesDoc, existing);
+      if (!deserializeJson(merged, existing)) {
+        merged["segmentMaps"] = doc["segmentMaps"];
+        if (doc.containsKey("paradeDetection")) merged["paradeDetection"] = doc["paradeDetection"];
+        if (doc.containsKey("defaultPresetId")) merged["defaultPresetId"] = doc["defaultPresetId"];
+        gRulesDoc.clear();
+        serializeJson(merged, raw);
+        deserializeJson(gRulesDoc, raw);
+      } else {
+        gRulesDoc.clear();
+        deserializeJson(gRulesDoc, raw);
+      }
+    } else {
+      gRulesDoc.clear();
+      if (deserializeJson(gRulesDoc, raw)) {
+        Serial.println("[Rules] cache deserialize failed");
+      }
     }
   } else if (doc.containsKey("paradeDetection") || doc.containsKey("defaultPresetId") ||
              doc.containsKey("colors") || doc.containsKey("segments") || doc.containsKey("randomPool")) {
-    // Merge non-rule fields into the cached doc without clearing rules
     if (doc.containsKey("paradeDetection")) {
       gRulesDoc["paradeDetection"] = doc["paradeDetection"];
     }
@@ -496,8 +789,10 @@ void applyMbRulesJson(JsonObject doc) {
   }
 
   JsonArray rules = rulesArray();
-  Serial.printf("[Rules] loaded rules=%u defaultPreset=%s parade=%d prefix=%s rssi>=%d cooldown=%lums\n",
+  JsonArray maps = gRulesDoc["segmentMaps"].as<JsonArray>();
+  Serial.printf("[Rules] loaded rules=%u maps=%u defaultPreset=%s parade=%d prefix=%s rssi>=%d cooldown=%lums\n",
                 rules.isNull() ? 0u : (unsigned)rules.size(),
+                maps.isNull() ? 0u : (unsigned)maps.size(),
                 bleDefaultPresetId.c_str(), paradeDetectEnabled ? 1 : 0,
                 paradeBeaconPrefix, paradeRssiThreshold, paradeCooldownMs);
 }
@@ -517,6 +812,10 @@ void loadMbRulesFromJson() {
 // Public accessor used by DisneyPayloadHandlers
 JsonArray mbRulesJsonArray() {
   return rulesArray();
+}
+
+JsonArray mbSegmentMapsArray() {
+  return gRulesDoc["segmentMaps"].as<JsonArray>();
 }
 
 // ── Parade detection ────────────────────────────────────────────────────

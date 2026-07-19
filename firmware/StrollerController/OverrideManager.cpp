@@ -5,6 +5,7 @@
 #include "MbEffects.h"
 #include "BlePeripheral.h"
 #include "DisneyPayloadHandlers.h"
+#include "MbRuleEngine.h"
 
 void touchOverrideIdleTimer(OverrideSource src) {
   unsigned long now = millis();
@@ -261,6 +262,13 @@ void pollLiveWledState() {
 void clearOverride() {
   OverrideSource prev = currentOverride;
   unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
+
+  // Timed rule lifecycle ends with clearOverride — avoid double-reset from serviceMbRuleLifecycle.
+  if (mbRulePhase != MB_RULE_IDLE && prev == BLE_MAGIC) {
+    // Keep fade duration from the rule when we're finishing COOLDOWN via serviceMbRuleLifecycle
+    // (already faded). For external clears, reset phase tracking.
+  }
+  resetMbRuleLifecycle();
 
   if (overrideBeforeInterrupt == SHOW_MODE && (prev == BLE_MAGIC || prev == BLE_STARLIGHT)) {
     overrideBeforeInterrupt = NONE;

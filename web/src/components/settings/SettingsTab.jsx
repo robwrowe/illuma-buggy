@@ -15,6 +15,7 @@ import { BleMappingTabBar } from '../ble/BleMappingTabBar';
 import { DefaultPresetField } from '../ble/DefaultPresetField';
 import { RandomPoolEditor } from '../ble/RandomPoolEditor';
 import { RuleEditor } from '../ble/RuleEditor';
+import { SegmentMapEditor } from '../ble/SegmentMapEditor';
 import { WledSegEditor } from '../ble/WledSegEditor';
 import { ColorInput } from '../shared/ColorInput';
 import { Field } from '../shared/Field';
@@ -225,7 +226,15 @@ export function SettingsTab({ data, update }) {
           <RuleEditor
             mb={mb}
             presets={presets}
-            layouts={mbLayouts}
+            onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
+            onEditMaps={() => setBleTab('segmentMaps')}
+          />
+        )}
+
+        {bleTab === 'segmentMaps' && (
+          <SegmentMapEditor
+            mb={mb}
+            presets={presets}
             onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
           />
         )}

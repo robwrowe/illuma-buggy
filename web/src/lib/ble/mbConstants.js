@@ -137,6 +137,9 @@ export const MB_SEGMENT_META = [
   { id: 'band7', label: 'Band LED 7', hint: 'reserved — not yet wired to a trigger' },
 ];
 
+/** Mask keys for segment map `maskAssignment` / extract `maskColor` targets. */
+export const MB_SEG_KEYS = MB_SEGMENT_META.map((s) => s.id);
+
 export const MB_ANIMATION_META = [
   { key: 'E90C', label: 'Show FX (Taste the Rainbow)' },
   { key: 'E90E', label: 'Flash' },

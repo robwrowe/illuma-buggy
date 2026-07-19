@@ -108,6 +108,15 @@ extern int           paradeRssiThreshold;
 extern unsigned long paradeCooldownMs;
 extern unsigned long paradeLastBeaconMs;
 
+// Rule-engine timing lifecycle (Part 5)
+extern MbRulePhase        mbRulePhase;
+extern unsigned long      mbRulePhaseDeadlineMs;
+extern unsigned long      mbRuleFadeMs;
+extern unsigned long      mbRuleCooldownMs;
+extern MbCooldownResetMode mbActiveRuleCooldownMode;
+extern char               mbActiveRuleId[MB_RULE_ID_LEN];
+
+
 extern DisneyPayloadJob disneyJob;
 extern portMUX_TYPE disneyJobMux;
 

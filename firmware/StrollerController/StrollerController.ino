@@ -157,8 +157,8 @@ void loop() {
     }
   }
 
-  // Auto-clear MagicBand override after timeout
-  if (currentOverride == BLE_MAGIC && magicBandTimeoutMs > 0) {
+  // Auto-clear MagicBand override after timeout (flat path — skipped while timed rule lifecycle runs)
+  if (currentOverride == BLE_MAGIC && magicBandTimeoutMs > 0 && mbRulePhase == MB_RULE_IDLE) {
     if (millis() - mbEventTimestamp >= magicBandTimeoutMs) {
       Serial.printf("[MB] Timeout after %lums — restoring state\n", magicBandTimeoutMs);
       clearOverride();
@@ -166,6 +166,7 @@ void loop() {
     }
   }
 
+  serviceMbRuleLifecycle();
   serviceParadeCooldown();
 
   if (bleCaptureToApp && bleCaptureUntilMs > 0 && millis() >= bleCaptureUntilMs) {

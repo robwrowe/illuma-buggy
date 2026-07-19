@@ -120,6 +120,14 @@ int           paradeRssiThreshold = -70;
 unsigned long paradeCooldownMs = 30000;
 unsigned long paradeLastBeaconMs = 0;
 
+MbRulePhase        mbRulePhase = MB_RULE_IDLE;
+unsigned long      mbRulePhaseDeadlineMs = 0;
+unsigned long      mbRuleFadeMs = 0;
+unsigned long      mbRuleCooldownMs = 10000;
+MbCooldownResetMode mbActiveRuleCooldownMode = MB_COOLDOWN_ON_MATCH;
+char               mbActiveRuleId[MB_RULE_ID_LEN] = "";
+
+
 DisneyPayloadJob disneyJob = {};
 portMUX_TYPE disneyJobMux = portMUX_INITIALIZER_UNLOCKED;
 

@@ -177,12 +177,84 @@ export function findMatchingRule(payloadBytes, rules) {
 }
 
 /**
+ * Lab-confirmed timing byte decode (docs/ble-packets-details/timing-byte.md).
+ * bits[3:0]=t, bit6=scaler, bit7=extended (misnamed "always-on"), bits[5:4]=fadeBits.
+ * @param {number} byte
+ */
+export function decodeTimingByte(byte) {
+  const b = Number(byte) & 0xff;
+  const t = b & 0x0f;
+  const fadeBits = (b >> 4) & 0x03;
+  const scaler = (b & 0x40) !== 0;
+  const extended = (b & 0x80) !== 0;
+  return { raw: b, t, fadeBits, scaler, extended };
+}
+
+/**
+ * On / fade / cooldown lifecycle from a timing byte + rule cooldownSec.
+ * Formulas (lab confirmed):
+ *   onSec: extended → (t===0 ? 3 : 7.6*t); else scaler → 3.0*t; else → (t===0 ? 3 : 1.6*t)
+ *   fadeSec: fadeBits * 0.5
+ * @param {number} byte
+ * @param {number} [cooldownSec=10]
+ */
+export function computeTimingLifecycle(byte, cooldownSec = 10) {
+  const decoded = decodeTimingByte(byte);
+  const { t, fadeBits, scaler, extended } = decoded;
+  let onSec;
+  if (extended) onSec = t === 0 ? 3 : 7.6 * t;
+  else if (scaler) onSec = 3.0 * t;
+  else onSec = t === 0 ? 3 : 1.6 * t;
+  const fadeSec = fadeBits * 0.5;
+  const cooldown = Number.isFinite(cooldownSec) ? Math.max(0, Number(cooldownSec)) : 10;
+  return {
+    ...decoded,
+    onSec,
+    fadeSec,
+    cooldownSec: cooldown,
+    totalSec: onSec + fadeSec + cooldown,
+  };
+}
+
+/**
+ * Human-readable label for one extract target (preview / UI).
+ * @param {object} target
+ * @param {{ segments?: object[] }} [segmentMap]
+ */
+export function formatExtractTargetLabel(target, segmentMap) {
+  if (!target || typeof target !== 'object') return '(none)';
+  const segs = Array.isArray(segmentMap?.segments) ? segmentMap.segments : [];
+  const segName = (id) => {
+    const s = segs.find((x) => x.id === id);
+    return s ? `${s.id} (${s.start}-${s.stop})` : id || '(no seg)';
+  };
+  switch (target.kind) {
+    case 'segmentColor':
+      return `segColor ${segName(target.segmentId)} col${target.colorSlot ?? 0}`;
+    case 'maskColor': {
+      const mask = target.mask || 'all';
+      const hits = segs.filter((s) => s.maskAssignment === mask);
+      if (!hits.length) return `maskColor ${mask} (no segments)`;
+      return `maskColor ${mask} → ${hits.map((s) => s.id).join(', ')}`;
+    }
+    case 'segmentField':
+      return `segField ${segName(target.segmentId)}.${target.field || '?'}`;
+    case 'ignore':
+      return 'ignore';
+    default:
+      return target.kind || '?';
+  }
+}
+
+/**
  * Preview extract slots: raw bit value + mapped (palette index or curve output).
  * @param {number[]} payloadBytes
  * @param {object[]} extracts
- * @returns {{ name: string, raw: number, mapped: number|null, paletteIndex?: number, rgb?: [number,number,number]|null, target: object }[]}
+ * @param {string[]} [colors]
+ * @param {object|null} [segmentMap]
+ * @returns {{ name: string, raw: number, mapped: number|null, paletteIndex?: number, rgb?: [number,number,number]|null, targets: object[], targetLabels: string[] }[]}
  */
-export function previewExtracts(payloadBytes, extracts, colors) {
+export function previewExtracts(payloadBytes, extracts, colors, segmentMap = null) {
   if (!Array.isArray(extracts)) return [];
   return extracts.map((ex) => {
     const name = ex?.name || '';
@@ -190,7 +262,7 @@ export function previewExtracts(payloadBytes, extracts, colors) {
     const bitStart = Number(ex?.bitStart ?? 0);
     const bitCount = Number(ex?.bitCount ?? 8);
     const raw = extractBits(payloadBytes, offset, bitStart, bitCount);
-    const target = ex?.target && typeof ex.target === 'object' ? ex.target : {};
+    const targets = Array.isArray(ex?.targets) ? ex.targets : [];
     let mapped = raw;
     let paletteIndex;
     let rgb = null;
@@ -212,7 +284,8 @@ export function previewExtracts(payloadBytes, extracts, colors) {
       mapped = applyCurve(raw, ex.curve);
     }
 
-    return { name, raw, mapped, paletteIndex, rgb, target };
+    const targetLabels = targets.map((t) => formatExtractTargetLabel(t, segmentMap));
+    return { name, raw, mapped, paletteIndex, rgb, targets, targetLabels };
   });
 }
 
@@ -220,7 +293,7 @@ export function previewExtracts(payloadBytes, extracts, colors) {
  * Match one or more packets against rules for live preview.
  * @param {string|number[]} hexOrBytes
  * @param {object[]} rules
- * @param {{ colors?: string[], extractFromRule?: object|null, matchAllRules?: boolean }} [opts]
+ * @param {{ colors?: string[], extractFromRule?: object|null, matchAllRules?: boolean, segmentMaps?: object[] }} [opts]
  */
 export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
   const bytes = disneyPayload(
@@ -238,9 +311,18 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
   }
   const first = findMatchingRule(bytes, rules || []);
   const extractRule = opts.extractFromRule || first;
+  const segmentMaps = Array.isArray(opts.segmentMaps) ? opts.segmentMaps : [];
+  const segmentMap = extractRule?.segmentMapId
+    ? segmentMaps.find((m) => m.id === extractRule.segmentMapId) || null
+    : null;
   const extracts = extractRule
-    ? previewExtracts(bytes, extractRule.extract || [], opts.colors)
+    ? previewExtracts(bytes, extractRule.extract || [], opts.colors, segmentMap)
     : [];
+  let timing = null;
+  if (extractRule?.timing?.enabled && bytes.length > Number(extractRule.timing.offset ?? 0)) {
+    const offset = Number(extractRule.timing.offset ?? 0);
+    timing = computeTimingLifecycle(bytes[offset], extractRule.timing.cooldownSec ?? 10);
+  }
   return {
     hex,
     bytes,
@@ -252,5 +334,7 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
         ? [{ rule: first, index: (rules || []).indexOf(first) }]
         : [],
     extracts,
+    timing,
+    segmentMap,
   };
 }

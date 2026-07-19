@@ -93,6 +93,19 @@ enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
 enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS };
 enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
 
+// Rule-engine effect lifecycle (timing-byte driven). IDLE = use flat magicBandTimeoutMs.
+enum MbRulePhase : uint8_t {
+  MB_RULE_IDLE = 0,
+  MB_RULE_ON,
+  MB_RULE_FADE,
+  MB_RULE_COOLDOWN,
+};
+
+enum MbCooldownResetMode : uint8_t {
+  MB_COOLDOWN_ON_MATCH = 0,
+  MB_COOLDOWN_FIXED    = 1,
+};
+
 struct EspNowPairMsg {
   uint32_t magic;
   uint8_t  logicMac[6];

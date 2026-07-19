@@ -330,7 +330,7 @@ void handleBLECommand(const String& msg) {
     JsonObject mapping = doc.containsKey("mapping") ? doc["mapping"].as<JsonObject>()
                        : doc.as<JsonObject>();
     if (!mapping.isNull()) {
-      bool hasRules = mapping.containsKey("rules");
+      bool hasRules = mapping.containsKey("rules") || mapping.containsKey("segmentMaps");
       if (hasRules) {
         serializeJson(mapping, mbRulesJson);
         mbMappingJson = mbRulesJson;
@@ -339,7 +339,6 @@ void handleBLECommand(const String& msg) {
         prefs.putString("mbMapping", mbRulesJson);
         prefs.end();
       } else {
-        // Colors/segments-only update — refresh mbMappingJson sibling but keep mbRulesJson
         serializeJson(mapping, mbMappingJson);
         prefs.begin("config", false);
         prefs.putString("mbMapping", mbMappingJson);
@@ -347,7 +346,7 @@ void handleBLECommand(const String& msg) {
       }
       mbMappingLoadedFromNvs = true;
       applyMbRulesJson(mapping);
-      Serial.printf("[Rules] updated (rules=%d, %u bytes mapping)\n",
+      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes)\n",
                     hasRules ? 1 : 0, (unsigned)(hasRules ? mbRulesJson.length() : mbMappingJson.length()));
     }
     bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");

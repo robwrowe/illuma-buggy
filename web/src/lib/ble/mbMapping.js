@@ -1,11 +1,23 @@
-import { DEFAULT_MB_WLED_COLORS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool } from './mbConstants';
+import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool } from './mbConstants';
 import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
 
 const BYTE_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
 const CMP_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte']);
+const MB_SEG_KEY_SET = new Set(MB_SEG_KEYS);
+const BLEND_MODES = new Set(['normal', 'add']);
+const COOLDOWN_RESET_MODES = new Set(['onMatch', 'fixed']);
+const START_TRANSITION_TYPES = new Set(['fade', 'instant']);
 
 export function shortRuleId() {
   return `r${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+export function shortSegmentMapId() {
+  return `sm${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+export function shortSegmentId() {
+  return `seg${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
 }
 
 export function createEmptyMatchGroup(mode = 'all') {
@@ -19,6 +31,13 @@ export function createEmptyCondition(type = 'hexPrefix') {
   return { type: 'hexPrefix', value: '' };
 }
 
+export function createEmptyExtractTarget(kind = 'maskColor') {
+  if (kind === 'segmentColor') return { kind: 'segmentColor', segmentId: '', colorSlot: 0 };
+  if (kind === 'segmentField') return { kind: 'segmentField', segmentId: '', field: '' };
+  if (kind === 'ignore') return { kind: 'ignore' };
+  return { kind: 'maskColor', mask: 'all' };
+}
+
 export function createEmptyExtract(name = '') {
   return {
     name,
@@ -26,8 +45,54 @@ export function createEmptyExtract(name = '') {
     bitStart: 0,
     bitCount: 5,
     paletteMap: true,
-    target: { kind: 'color', segment: 'all' },
+    targets: [{ kind: 'maskColor', mask: 'all' }],
   };
+}
+
+export function createEmptySegment(overrides = {}) {
+  return {
+    id: shortSegmentId(),
+    wledSegId: 0,
+    start: 0,
+    stop: 100,
+    grp: 1,
+    spc: 0,
+    of: 0,
+    rev: false,
+    mi: false,
+    blend: 'normal',
+    fx: -1,
+    sx: 128,
+    ix: 128,
+    pal: -1,
+    presetId: '',
+    presetVariables: {},
+    colors: ['', '', ''],
+    maskAssignment: 'all',
+    ...overrides,
+  };
+}
+
+export function createEmptySegmentMap(overrides = {}) {
+  return {
+    id: shortSegmentMapId(),
+    name: 'New segment map',
+    segments: [createEmptySegment()],
+    ...overrides,
+  };
+}
+
+export function createEmptyRuleTiming() {
+  return {
+    enabled: false,
+    offset: 5,
+    cooldownSec: 10,
+    cooldownResetMode: 'onMatch',
+  };
+}
+
+export function createEmptyStartTransition() {
+  return { type: 'fade', timeMs: 400 };
 }
 
 export function createEmptyRule(overrides = {}) {
@@ -39,7 +104,9 @@ export function createEmptyRule(overrides = {}) {
     match: createEmptyMatchGroup('all'),
     extract: [],
     presetId: '',
-    segmentLayoutId: '',
+    segmentMapId: '',
+    timing: createEmptyRuleTiming(),
+    startTransition: createEmptyStartTransition(),
     ...overrides,
   };
 }
@@ -47,6 +114,7 @@ export function createEmptyRule(overrides = {}) {
 export const DEFAULT_MB_MAPPING = {
   version: 1,
   rules: [],
+  segmentMaps: [],
   defaultPresetId: '',
   colors: [...DEFAULT_MB_WLED_COLORS],
   randomPool: {
@@ -149,19 +217,48 @@ function normalizeCurve(raw) {
   };
 }
 
-function normalizeTarget(raw) {
-  if (!raw || typeof raw !== 'object') return { kind: 'color', segment: 'all' };
-  if (raw.kind === 'wledField') {
-    return { kind: 'wledField', field: typeof raw.field === 'string' ? raw.field : '' };
+function normalizeHexOrEmpty(raw) {
+  if (typeof raw !== 'string') return '';
+  const v = raw.trim();
+  if (!v) return '';
+  const hex = v.startsWith('#') ? v : `#${v}`;
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : '';
+}
+
+export function normalizeExtractTarget(raw) {
+  if (!raw || typeof raw !== 'object') return createEmptyExtractTarget('maskColor');
+  const kind = raw.kind;
+  if (kind === 'segmentColor') {
+    const slot = Number(raw.colorSlot);
+    return {
+      kind: 'segmentColor',
+      segmentId: typeof raw.segmentId === 'string' ? raw.segmentId : '',
+      colorSlot: slot === 1 || slot === 2 ? slot : 0,
+    };
   }
-  const segment = typeof raw.segment === 'string' && raw.segment ? raw.segment : 'all';
-  return { kind: 'color', segment };
+  if (kind === 'maskColor') {
+    const mask = typeof raw.mask === 'string' && MB_SEG_KEY_SET.has(raw.mask) ? raw.mask : 'all';
+    return { kind: 'maskColor', mask };
+  }
+  if (kind === 'segmentField') {
+    return {
+      kind: 'segmentField',
+      segmentId: typeof raw.segmentId === 'string' ? raw.segmentId : '',
+      field: typeof raw.field === 'string' ? raw.field : '',
+    };
+  }
+  if (kind === 'ignore') return { kind: 'ignore' };
+  return createEmptyExtractTarget('maskColor');
 }
 
 export function normalizeExtract(raw) {
   if (!raw || typeof raw !== 'object') return createEmptyExtract();
   const paletteMap = !!raw.paletteMap;
   const curve = paletteMap ? null : normalizeCurve(raw.curve);
+  // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.map(normalizeExtractTarget)
+    : [createEmptyExtractTarget('maskColor')];
   return {
     name: typeof raw.name === 'string' ? raw.name : '',
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
@@ -169,7 +266,7 @@ export function normalizeExtract(raw) {
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
     paletteMap,
     ...(curve ? { curve } : {}),
-    target: normalizeTarget(raw.target),
+    targets,
   };
 }
 
@@ -216,6 +313,82 @@ export function normalizeConditionNode(raw) {
   return { mode, children };
 }
 
+export function normalizePresetVariables(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    if (typeof key !== 'string' || !key.trim()) return;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      out[key.trim()] = value;
+    } else if (value == null) {
+      out[key.trim()] = '';
+    } else {
+      out[key.trim()] = String(value);
+    }
+  });
+  return out;
+}
+
+export function normalizeSegment(raw) {
+  const d = createEmptySegment();
+  if (!raw || typeof raw !== 'object') return d;
+  const maskRaw = typeof raw.maskAssignment === 'string' ? raw.maskAssignment : d.maskAssignment;
+  const maskAssignment = maskRaw === 'ignore' || MB_SEG_KEY_SET.has(maskRaw) ? maskRaw : 'all';
+  const colorsSrc = Array.isArray(raw.colors) ? raw.colors : [];
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentId(),
+    wledSegId: Number.isFinite(raw.wledSegId) ? Math.max(0, Number(raw.wledSegId)) : d.wledSegId,
+    start: Number.isFinite(raw.start) ? Math.max(0, Number(raw.start)) : d.start,
+    stop: Number.isFinite(raw.stop) ? Math.max(0, Number(raw.stop)) : d.stop,
+    grp: Number.isFinite(raw.grp) ? Math.max(1, Number(raw.grp)) : d.grp,
+    spc: Number.isFinite(raw.spc) ? Math.max(0, Number(raw.spc)) : d.spc,
+    of: Number.isFinite(raw.of) ? Number(raw.of) : d.of,
+    rev: !!raw.rev,
+    mi: !!raw.mi,
+    blend: BLEND_MODES.has(raw.blend) ? raw.blend : 'normal',
+    fx: Number.isFinite(raw.fx) ? Number(raw.fx) : d.fx,
+    sx: Number.isFinite(raw.sx) ? Math.min(255, Math.max(0, Number(raw.sx))) : d.sx,
+    ix: Number.isFinite(raw.ix) ? Math.min(255, Math.max(0, Number(raw.ix))) : d.ix,
+    pal: Number.isFinite(raw.pal) ? Number(raw.pal) : d.pal,
+    presetId: typeof raw.presetId === 'string' ? raw.presetId : '',
+    presetVariables: normalizePresetVariables(raw.presetVariables),
+    colors: [0, 1, 2].map((i) => normalizeHexOrEmpty(colorsSrc[i])),
+    maskAssignment,
+  };
+}
+
+export function normalizeSegmentMap(raw) {
+  if (!raw || typeof raw !== 'object') return createEmptySegmentMap();
+  const segments = Array.isArray(raw.segments) && raw.segments.length
+    ? raw.segments.map(normalizeSegment)
+    : [createEmptySegment()];
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentMapId(),
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'Untitled map',
+    segments,
+  };
+}
+
+export function normalizeRuleTiming(raw) {
+  const d = createEmptyRuleTiming();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  return {
+    enabled: !!raw.enabled,
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : d.offset,
+    cooldownSec: Number.isFinite(raw.cooldownSec) ? Math.max(0, Number(raw.cooldownSec)) : d.cooldownSec,
+    cooldownResetMode: COOLDOWN_RESET_MODES.has(raw.cooldownResetMode) ? raw.cooldownResetMode : d.cooldownResetMode,
+  };
+}
+
+export function normalizeStartTransition(raw) {
+  const d = createEmptyStartTransition();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  return {
+    type: START_TRANSITION_TYPES.has(raw.type) ? raw.type : d.type,
+    timeMs: Number.isFinite(raw.timeMs) ? Math.max(0, Number(raw.timeMs)) : d.timeMs,
+  };
+}
+
 export function normalizeMbRule(raw, index = 0) {
   const d = createEmptyRule();
   if (!raw || typeof raw !== 'object') {
@@ -229,7 +402,9 @@ export function normalizeMbRule(raw, index = 0) {
     match: normalizeConditionNode(raw.match || createEmptyMatchGroup('all')),
     extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],
     presetId: typeof raw.presetId === 'string' ? raw.presetId : '',
-    segmentLayoutId: typeof raw.segmentLayoutId === 'string' ? raw.segmentLayoutId : '',
+    segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
+    timing: normalizeRuleTiming(raw.timing),
+    startTransition: normalizeStartTransition(raw.startTransition),
   };
 }
 
@@ -257,10 +432,12 @@ export function normalizeMbMapping(raw) {
 
   const rulesSrc = Array.isArray(raw.rules) ? raw.rules : [];
   const rules = rulesSrc.map((r, i) => normalizeMbRule(r, i));
+  const segmentMaps = (raw.segmentMaps || []).map(normalizeSegmentMap);
 
   return {
     version: 1,
     rules,
+    segmentMaps,
     defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
     colors,
     randomPool: normalizeRandomPool(raw.randomPool),
@@ -284,6 +461,7 @@ export function mbMappingToBlePayload(config) {
   return {
     version: 1,
     rules: synced.rules,
+    segmentMaps: synced.segmentMaps,
     defaultPresetId: synced.defaultPresetId || '',
     colors,
     randomPool: {

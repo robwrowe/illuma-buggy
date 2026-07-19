@@ -21,7 +21,7 @@ int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules
 
 void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t plen);
 
-// Load/parse the rules document (rules + colors + segments + paradeDetection + defaultPresetId).
+// Load/parse the rules document (rules + segmentMaps + colors + paradeDetection + …).
 void applyMbRulesJson(JsonObject root);
 void loadMbRulesFromJson();
 
@@ -31,6 +31,13 @@ void serviceParadeCooldown();
 void manualParadeStart();
 void manualParadeStop();
 
+// Timing-byte lifecycle for rule-engine MB effects (Part 5).
+void serviceMbRuleLifecycle();
+void resetMbRuleLifecycle();
+// Called when the same timed rule matches again while a lifecycle is active.
+void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen);
+
 void notifyMbUnmatched(const uint8_t* payload, size_t plen);
 JsonArray mbRulesJsonArray();
+JsonArray mbSegmentMapsArray();
 

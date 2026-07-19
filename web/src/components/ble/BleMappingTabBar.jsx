@@ -4,6 +4,7 @@ export function BleMappingTabBar({ active, onChange }) {
   const tabs = [
     { id: 'device', label: 'Device' },
     { id: 'rules', label: 'Rules' },
+    { id: 'segmentMaps', label: 'Segment Maps' },
     { id: 'sw', label: 'Starlight' },
     { id: 'mb', label: 'MagicBand' },
     { id: 'show', label: 'Show Mode' },

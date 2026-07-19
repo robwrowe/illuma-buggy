@@ -121,8 +121,16 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
       payload, plen);
   }
 
-  // MB effect dedupe — refresh idle timer only
+  // MB effect dedupe — timed rule lifecycle still needs repeat matches to reset ON phase
   if (mbEffectIsRepeatAdvert(payload, plen)) {
+    if (mbRulePhase != MB_RULE_IDLE && magicBandEnabled) {
+      JsonArray rules = mbRulesJsonArray();
+      int matchIdx = findMatchingRule(payload, plen, rules);
+      if (matchIdx >= 0) {
+        applyMatchedRule(rules[matchIdx].as<JsonObject>(), payload, plen);
+        return;
+      }
+    }
     if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
     return;
   }
