@@ -56,6 +56,7 @@ export default function SettingsScreen() {
     magicBandEnabled, setMagicBandEnabled,
     magicBandFivePoint, setMagicBandFivePoint,
     magicBandTimeoutSec, setMagicBandTimeoutSec,
+    mbUnmatchedLogEnabled, setMbUnmatchedLogEnabled,
     bleEffectTransitionMs, setBleEffectTransitionMs,
     wledSsid, setWledSsid,
     wledPass, setWledPass,
@@ -481,6 +482,18 @@ export default function SettingsScreen() {
             onEndEditing={() => { pushMbConfig(); saveToStorage(); }}
             keyboardType="number-pad"
             selectTextOnFocus
+          />
+        </View>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Log unmatched MB/Wand packets</Text>
+            <Text style={s.rowHint}>Runs continuously while connected. Disable if it causes instability.</Text>
+          </View>
+          <Switch
+            value={mbUnmatchedLogEnabled}
+            onValueChange={setMbUnmatchedLogEnabled}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
           />
         </View>
       </View>

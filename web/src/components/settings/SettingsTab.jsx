@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import {
-  Badge,
   Checkbox,
   Group,
   NumberInput,
@@ -14,8 +13,8 @@ import {
 } from '@mantine/core';
 import { BleMappingTabBar } from '../ble/BleMappingTabBar';
 import { DefaultPresetField } from '../ble/DefaultPresetField';
-import { MbEffectField } from '../ble/MbEffectField';
 import { RandomPoolEditor } from '../ble/RandomPoolEditor';
+import { RuleEditor } from '../ble/RuleEditor';
 import { WledSegEditor } from '../ble/WledSegEditor';
 import { ColorInput } from '../shared/ColorInput';
 import { Field } from '../shared/Field';
@@ -23,8 +22,8 @@ import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
 import { webBleBoard } from '../../lib/ble/chunking';
-import { MB_ANIMATION_META, MB_COLOR_NAMES, MB_EFFECT_CLASS_META, MB_PAL_RANDOM, MB_PATTERN_META, MB_SEGMENT_META, MB_SEGMENT_SIM_COMMAND, SW_ANIMATION_META, TIER2_OPCODE_OPTIONS } from '../../lib/ble/mbConstants';
-import { DEFAULT_MB_EFFECT_CLASSES, DEFAULT_MB_MAPPING, normalizeMbMapping, withSegRefDefaults } from '../../lib/ble/mbMapping';
+import { MB_COLOR_NAMES, MB_PAL_RANDOM, MB_SEGMENT_META, MB_SEGMENT_SIM_COMMAND } from '../../lib/ble/mbConstants';
+import { DEFAULT_MB_MAPPING, normalizeMbMapping, withSegRefDefaults } from '../../lib/ble/mbMapping';
 import { DEFAULT_DATA, generateId, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
 import { buildFiveCornerPreview, buildPresetLayoutPayload, buildSegmentHighlightPreview, fetchWledSegmentsFromIp, postWledState, pruneRefsToSnapshot } from '../../lib/wled/capture';
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
@@ -37,7 +36,7 @@ export function SettingsTab({ data, update }) {
   const activeLayoutId = data.mbActiveSegmentLayoutId || mbLayouts[0]?.id;
   const activeLayout = mbLayouts.find(l => l.id === activeLayoutId) || mbLayouts[0];
   const mbSegments = activeLayout?.segments || mb.segments;
-  const [bleTab, setBleTab] = useState('sw');
+  const [bleTab, setBleTab] = useState('rules');
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
   const [wledPreviewErr, setWledPreviewErr] = useState('');
   const [segSnapshots, setSegSnapshots] = useState({});
@@ -52,25 +51,6 @@ export function SettingsTab({ data, update }) {
     if (!/^#[0-9a-fA-F]{6}$/.test(v)) return;
     colors[idx] = v;
     setMb({ colors });
-  };
-  const setAnim = (key, patch) => setMb({ animations: { ...mb.animations, [key]: { ...mb.animations[key], ...patch } } });
-  const setSwAnim = (key, patch) => setMb({ swAnimations: { ...mb.swAnimations, [key]: { ...mb.swAnimations[key], ...patch } } });
-  const setPat = (key, patch) => setMb({ patterns: { ...mb.patterns, [key]: { ...mb.patterns[key], ...patch } } });
-  const setEffectClass = (key, patch) => {
-    const ec = mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES;
-    setMb({ effectClasses: { ...ec, [key]: { ...ec[key], ...patch } } });
-  };
-  const setUnclassifiedOpcode = (opcode, presetId) => {
-    const ec = mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES;
-    setMb({
-      effectClasses: {
-        ...ec,
-        unclassifiedOpcodes: {
-          ...ec.unclassifiedOpcodes,
-          [opcode]: { presetId, useMbColors: false },
-        },
-      },
-    });
   };
 
   const updateActiveLayoutSegments = (segKey, refs) => {
@@ -141,7 +121,7 @@ export function SettingsTab({ data, update }) {
   const applyDefaultLayout = async () => {
     setWledPreviewErr('');
     const preset = presets.find(p => p.id === mb.defaultPresetId);
-    if (!preset) { setWledPreviewErr('Set a default zone preset on the Starlight or MagicBand tab first.'); return; }
+    if (!preset) { setWledPreviewErr('Set a default zone preset on the Rules tab first.'); return; }
     const payload = buildPresetLayoutPayload(preset, data.customSegmentLayouts);
     if (!payload) { setWledPreviewErr('Link a segment layout to that preset or save segments in the preset.'); return; }
     await sendStripPreview(payload);
@@ -174,12 +154,12 @@ export function SettingsTab({ data, update }) {
       <Stack p="md" gap="md" maw={720}>
         <Title order={3}>Settings</Title>
         <Text size="xs" c="dimmed" lh={1.6}>
-          Wand and MagicBand effects use the <strong>same presets as GPS zones</strong>. Push mapping + presets with <strong>📡 Board</strong>.
+          MagicBand+ and wand packets are mapped with the <strong>Rules</strong> engine. Push rules + presets with <strong>📡 Board</strong>.
         </Text>
 
         <BleMappingTabBar active={bleTab} onChange={setBleTab} />
 
-        {(bleTab === 'sw' || bleTab === 'mb') && (
+        {(bleTab === 'rules' || bleTab === 'sw' || bleTab === 'mb') && (
           <DefaultPresetField mb={mb} presets={presets} onChange={setMb} />
         )}
 
@@ -241,93 +221,49 @@ export function SettingsTab({ data, update }) {
           </>
         )}
 
+        {bleTab === 'rules' && (
+          <RuleEditor
+            mb={mb}
+            presets={presets}
+            layouts={mbLayouts}
+            onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
+          />
+        )}
+
         {bleTab === 'sw' && (
-          <>
-            <Text size="xs" c="dimmed">
-              Starlight has priority over MagicBand+. Test with WandSimulator: <code style={{ fontFamily: 'monospace' }}>sw cast red</code>, <code style={{ fontFamily: 'monospace' }}>sw fx sparkle</code>.
+          <AppCard>
+            <Text fw={700} size="sm" mb="xs">Starlight Wand</Text>
+            <Text size="xs" c="dimmed" lh={1.5}>
+              Wand casts and SW FX packets are matched by the <strong>Rules</strong> tab (hex prefixes like <code style={{ fontFamily: 'monospace' }}>CF0B</code> / <code style={{ fontFamily: 'monospace' }}>CF9B</code>).
+              Device enable/timeout remains under <strong>Device</strong>. Test with Wand Lab or WandSimulator.
             </Text>
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-              {SW_ANIMATION_META.map(({ key, label, hint }) => (
-                <MbEffectField key={key} label={label} hint={hint} compact
-                  mapping={mb.swAnimations?.[key] || DEFAULT_MB_MAPPING.swAnimations[key]} presets={presets}
-                  onChange={m => setSwAnim(key, m)} />
-              ))}
-            </SimpleGrid>
-          </>
+          </AppCard>
         )}
 
         {bleTab === 'mb' && (
-          <>
-            <SectionHead>MagicBand+ Effect Mapping</SectionHead>
-            <Text size="xs" c="dimmed" lh={1.5}>
-              Animation classes group opcodes by behavior. Empty = firmware built-in fallback.
+          <AppCard>
+            <Text fw={700} size="sm" mb="xs">MagicBand+ mapping</Text>
+            <Text size="xs" c="dimmed" lh={1.5} mb="sm">
+              Per-opcode / effect-class editors are replaced by the ordered <strong>Rules</strong> engine.
+              Use Rules for hexPrefix / byte / bits conditions, palette extracts, and presets.
             </Text>
-            {MB_EFFECT_CLASS_META.map(({ key, label, description, badge, tier }) => (
-              <AppCard key={key} mb="xs" p="sm">
-                <Group justify="space-between" gap="xs" mb={6}>
-                  <Text fw={700} size="sm">{label}</Text>
-                  <Badge variant="light" size="xs" color="gray">{badge}</Badge>
-                </Group>
-                <Text size="xs" c="dimmed" mb="sm" lh={1.4}>{description}</Text>
-                <Field label="Preset">
-                  <SearchableSelect
-                    value={(mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES)[key]?.presetId || ''}
-                    onChange={v => setEffectClass(key, { presetId: v })}
-                    placeholder="Default preset" options={presets.map(p => ({ value: p.id, label: p.name }))} allowEmpty={true} />
-                </Field>
-                {tier === 1 && (
-                  <Checkbox
-                    label="Use MagicBand+ decoded colors"
-                    checked={(mb.effectClasses || DEFAULT_MB_EFFECT_CLASSES)[key]?.useMbColors !== false}
-                    onChange={(e) => setEffectClass(key, { useMbColors: e.target.checked })}
-                    mt="xs"
-                  />
-                )}
-              </AppCard>
-            ))}
-            <SectionHead>Per-opcode Tier 2 overrides</SectionHead>
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="md">
-              {TIER2_OPCODE_OPTIONS.map(opcode => (
-                <Field key={opcode} label={opcode}>
-                  <SearchableSelect
-                    value={mb.effectClasses?.unclassifiedOpcodes?.[opcode]?.presetId || ''}
-                    onChange={v => setUnclassifiedOpcode(opcode, v)}
-                    placeholder="Unclassified default" options={presets.map(p => ({ value: p.id, label: p.name }))} allowEmpty={true} />
-                </Field>
-              ))}
-            </SimpleGrid>
-            <details>
-              <summary style={{ fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text2)' }}>Legacy per-opcode mapping</summary>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
-                {MB_ANIMATION_META.filter(a => a.key !== 'wand').map(({ key, label }) => (
-                  <MbEffectField key={key} label={label} compact
-                    mapping={mb.animations[key]} presets={presets}
-                    onChange={m => setAnim(key, m)} />
-                ))}
-              </SimpleGrid>
-              <SectionHead>Patterns (E909)</SectionHead>
-              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                {MB_PATTERN_META.map(({ key, label }) => (
-                  <MbEffectField key={key} label={`${key} — ${label}`} compact
-                    mapping={mb.patterns[key]} presets={presets}
-                    onChange={m => setPat(key, m)} />
-                ))}
-              </SimpleGrid>
-            </details>
-          </>
+            <AppButton size="compact-sm" variant="primary" onClick={() => setBleTab('rules')}>
+              Open Rules
+            </AppButton>
+          </AppCard>
         )}
 
         {bleTab === 'show' && (() => {
           const sm = data.showModeConfig || DEFAULT_DATA.showModeConfig;
           const smOpts = showModePresetOptions(presets);
-          const fwLiveOpts = showModePresetOptions(presets, true);
           const setShow = (patch) => update({ showModeConfig: { ...sm, ...patch } });
           const setParade = (patch) => setShow({ parade: { ...sm.parade, ...patch } });
           const setFireworks = (patch) => setShow({ fireworks: { ...sm.fireworks, ...patch } });
           return (
             <>
               <Text size="xs" c="dimmed" lh={1.5}>
-                Parade and fireworks looks are pushed via <strong>📡 Board</strong>. Android parade buttons send phase changes live over BLE.
+                Parade and fireworks looks are pushed via <strong>📡 Board</strong>. Live phase is blackout-only on firmware (no live preset).
+                Android show buttons send phase changes live over BLE.
               </Text>
               <AppCard style={{ borderColor: 'var(--primary)' }}>
                 <Text fw={700} size="sm" mb="sm" c="var(--primary)">Parade</Text>
@@ -335,8 +271,8 @@ export function SettingsTab({ data, update }) {
                   <SearchableSelect value={sm.parade?.pre || ''} onChange={v => setParade({ pre: v })}
                     placeholder="(none)" options={smOpts} allowEmpty={true} />
                 </Field>
-                <Field label="Show look (live)">
-                  <SearchableSelect value={sm.parade?.live || ''} onChange={v => setParade({ live: v })}
+                <Field label="Post-show look">
+                  <SearchableSelect value={sm.parade?.post || ''} onChange={v => setParade({ post: v })}
                     placeholder="(none)" options={smOpts} allowEmpty={true} />
                 </Field>
               </AppCard>
@@ -345,10 +281,6 @@ export function SettingsTab({ data, update }) {
                 <Field label="Pre-show look">
                   <SearchableSelect value={sm.fireworks?.pre || ''} onChange={v => setFireworks({ pre: v })}
                     placeholder="(none)" options={smOpts} allowEmpty={true} />
-                </Field>
-                <Field label="During show (live)">
-                  <SearchableSelect value={sm.fireworks?.live ?? '__BLACK__'} onChange={v => setFireworks({ live: v || '__BLACK__' })}
-                    placeholder="Black" options={fwLiveOpts} allowEmpty={false} />
                 </Field>
                 <Field label="Post-show look">
                   <SearchableSelect value={sm.fireworks?.post || ''} onChange={v => setFireworks({ post: v })}

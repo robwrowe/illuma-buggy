@@ -107,9 +107,18 @@ String liveWledState    = "";
 unsigned long lastLiveStatePollMs = 0;
 String baselineWledState  = "";
 String mbMappingJson = "";
+String mbRulesJson = "";
 bool   mbMappingLoadedFromNvs = false;
 String bleDefaultPresetId = "";
 bool   wledWasConnected   = false;
+
+bool          mbUnmatchedLogEnabled = false;
+
+bool          paradeDetectEnabled = false;
+char          paradeBeaconPrefix[16] = "cd07";
+int           paradeRssiThreshold = -70;
+unsigned long paradeCooldownMs = 30000;
+unsigned long paradeLastBeaconMs = 0;
 
 DisneyPayloadJob disneyJob = {};
 portMUX_TYPE disneyJobMux = portMUX_INITIALIZER_UNLOCKED;

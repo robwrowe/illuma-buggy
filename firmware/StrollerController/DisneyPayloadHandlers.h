@@ -14,4 +14,3 @@ void notifyWandPalette(uint8_t paletteIdx, OverrideSource src);
 bool mbEffectIsRepeatAdvert(const uint8_t* payload, size_t plen);
 void rememberMbEffect(const uint8_t* payload, size_t plen);
 void notifyMbE9ToApp(const uint8_t* payload, size_t plen);
-void notifyUnknownAnimation(const uint8_t* payload, size_t plen, SwMatchQuality quality, uint16_t func);

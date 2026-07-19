@@ -69,12 +69,12 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
   }
 
   if (opts.mbMapping) {
-    onProgress?.('Sending MB mapping…');
+    onProgress?.('Sending MB rules…');
     await webBleBoard.send({
-      type: 'mb_mapping_config',
+      type: 'set_mb_rules',
       mapping: mbMappingToBlePayload(mb),
     });
-    sent.push('MB mapping');
+    sent.push(`MB rules (${(mb.rules || []).length})`);
     await delay(BLE_SEND_DELAY_MS);
     if ((data.mbSegmentLayouts || []).length > 0) {
       onProgress?.('Sending MB segment layouts…');
@@ -127,7 +127,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 
 export const BOARD_SYNC_ITEMS = [
   { key: 'presets', label: 'Presets', hint: (data) => `${(data.presets || []).length} preset${(data.presets || []).length === 1 ? '' : 's'} (ESP32 NVS, not WLED slots)` },
-  { key: 'mbMapping', label: 'MB / wand mapping', hint: () => 'Segment regions, colors, animations, patterns' },
+  { key: 'mbMapping', label: 'MB rules + mapping', hint: (data) => `${(data.mbMapping?.rules || []).length} rules, colors, segments` },
   { key: 'swConfig', label: 'Starlight Wand', hint: () => 'Enabled + auto-clear timeout' },
   { key: 'mbConfig', label: 'MagicBand+', hint: () => 'Enabled, 5-point mode, timeout' },
   { key: 'effectTransition', label: 'Effect transitions', hint: (data) => `${data.bleEffectTransitionMs ?? 700} ms fade` },

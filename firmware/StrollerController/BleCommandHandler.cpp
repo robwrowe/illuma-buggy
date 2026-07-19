@@ -5,6 +5,7 @@
 #include "WledClient.h"
 #include "OverrideManager.h"
 #include "MbMapping.h"
+#include "MbRuleEngine.h"
 #include "MbEffects.h"
 #include "ColorPalette.h"
 #include "WiFiManager.h"
@@ -242,6 +243,26 @@ void handleBLECommand(const String& msg) {
     Serial.printf("[Capture] app recording %s\n", bleCaptureToApp ? "ON" : "OFF");
   }
 
+  // ── Unmatched rule-engine packet log (always-on, independent of capture) ──
+  else if (type == "mb_unmatched_log_config") {
+    if (doc.containsKey("active")) mbUnmatchedLogEnabled = doc["active"].as<bool>();
+    prefs.begin("config", false);
+    prefs.putBool("mbUnmatched", mbUnmatchedLogEnabled);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"mb_unmatched_log_config\","
+              "\"active\":" + String(mbUnmatchedLogEnabled ? "true" : "false") + "}");
+    Serial.printf("[Rules] unmatched log %s\n", mbUnmatchedLogEnabled ? "ON" : "OFF");
+  }
+
+  else if (type == "parade_manual_start") {
+    manualParadeStart();
+    bleNotify("{\"type\":\"ack\",\"action\":\"parade_manual_start\"}");
+  }
+  else if (type == "parade_manual_stop") {
+    manualParadeStop();
+    bleNotify("{\"type\":\"ack\",\"action\":\"parade_manual_stop\"}");
+  }
+
   // ── MB / SW effect fade ──
   else if (type == "ble_effect_config") {
     if (doc.containsKey("transition_ms")) {
@@ -304,18 +325,32 @@ void handleBLECommand(const String& msg) {
     bleNotify(ack);
   }
 
-  // ── Unified MB→WLED mapping ──
-  else if (type == "mb_mapping_config") {
-    if (doc.containsKey("mapping")) {
-      serializeJson(doc["mapping"], mbMappingJson);
-      prefs.begin("config", false);
-      prefs.putString("mbMapping", mbMappingJson);
-      prefs.end();
+  // ── MB rule engine config (rules + colors + segments + paradeDetection) ──
+  else if (type == "set_mb_rules" || type == "mb_rules_config" || type == "mb_mapping_config") {
+    JsonObject mapping = doc.containsKey("mapping") ? doc["mapping"].as<JsonObject>()
+                       : doc.as<JsonObject>();
+    if (!mapping.isNull()) {
+      bool hasRules = mapping.containsKey("rules");
+      if (hasRules) {
+        serializeJson(mapping, mbRulesJson);
+        mbMappingJson = mbRulesJson;
+        prefs.begin("config", false);
+        prefs.putString("mbRules", mbRulesJson);
+        prefs.putString("mbMapping", mbRulesJson);
+        prefs.end();
+      } else {
+        // Colors/segments-only update — refresh mbMappingJson sibling but keep mbRulesJson
+        serializeJson(mapping, mbMappingJson);
+        prefs.begin("config", false);
+        prefs.putString("mbMapping", mbMappingJson);
+        prefs.end();
+      }
       mbMappingLoadedFromNvs = true;
-      applyMbMappingJson(doc["mapping"]);
-      Serial.printf("[MB] Mapping updated (%u bytes)\n", (unsigned)mbMappingJson.length());
+      applyMbRulesJson(mapping);
+      Serial.printf("[Rules] updated (rules=%d, %u bytes mapping)\n",
+                    hasRules ? 1 : 0, (unsigned)(hasRules ? mbRulesJson.length() : mbMappingJson.length()));
     }
-    bleNotify("{\"type\":\"ack\",\"action\":\"mb_mapping_config\",\"ok\":true}");
+    bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");
   }
 
   else if (type == "mb_layout_set") {

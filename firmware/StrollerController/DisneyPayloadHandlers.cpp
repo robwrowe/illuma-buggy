@@ -4,11 +4,13 @@
 #include "MbEffects.h"
 #include "MbPacketDecode.h"
 #include "MbMapping.h"
+#include "MbRuleEngine.h"
 #include "SwEffects.h"
 #include "OverrideManager.h"
 #include "ColorPalette.h"
 #include "BlePeripheral.h"
 #include "DebugLog.h"
+#include "PresetStore.h"
 #include <string.h>
 
 static const uint8_t* pktRaw(const ParsedDisneyPacket& pkt) {
@@ -19,7 +21,17 @@ static size_t pktRawLen(const ParsedDisneyPacket& pkt) {
   return pkt.rawLen;
 }
 
+static bool looksLikeWandPayload(const uint8_t* payload, size_t plen) {
+  if (!payload || plen < 6) return false;
+  if (memcmp(payload, WAND_CAST_SIG, 6) == 0) return true;
+  if (plen >= 2 && payload[0] == 0xCF && payload[1] == 0x9B) return true;
+  return false;
+}
+
 void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
+  // Hard lockout: MagicBand+ owns the strip — wand must not interrupt.
+  if (currentOverride == BLE_MAGIC) return;
+
   uint8_t r, g, b;
   paletteToRGB(paletteIdx, r, g, b);
   if (!canTakeOverride(src)) {
@@ -80,77 +92,37 @@ void notifyMbE9ToApp(const uint8_t* payload, size_t plen) {
             ",\"ts\":" + String(millis()) + "}");
 }
 
-void notifyUnknownAnimation(const uint8_t* payload, size_t plen, SwMatchQuality quality, uint16_t func) {
-  if (!bleCaptureToApp || !bleConnected) return;
-  String q = quality == SW_MATCH_FUZZY ? "fuzzy" : "none";
-  bleNotify("{\"type\":\"unknown_anim\",\"quality\":\"" + q +
-            "\",\"func\":\"0x" + String(func, HEX) +
-            "\",\"hex\":\"" + mfrToHexFull(payload, plen, 64) +
-            "\",\"len\":" + String(plen) +
-            ",\"label\":\"" + String(captureLabel) +
-            "\",\"ts\":" + String(millis()) + "}");
-}
-
-static void applyWandFromParsed(const ParsedDisneyPacket& pkt, bool legacy) {
+void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   const uint8_t* payload = pktRaw(pkt);
   size_t plen = pktRawLen(pkt);
-  if (!payload || plen == 0) {
-    // No raw — apply palette only
-    uint8_t paletteIdx = pkt.paletteCount > 0 ? pkt.palettes[0] : 0;
-    if (!starlightEnabled) {
-      bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
+  int rssi = (int)pkt.rssi;
+
+  // Parade beacon detection runs for any payload (including otherwise-unmapped frames).
+  if (payload && plen > 0) {
+    checkParadeBeacon(payload, plen, rssi);
+  }
+
+  if (!payload || plen == 0) return;
+
+  // Hard lockout: ignore wand packets entirely while MagicBand+ holds override.
+  if (looksLikeWandPayload(payload, plen) && currentOverride == BLE_MAGIC) return;
+
+  // Wand cast dedupe
+  if (looksLikeWandPayload(payload, plen)) {
+    if (wandCastIsDuplicateAdvert(payload, plen)) {
+      if (starlightEnabled && currentOverride == BLE_STARLIGHT) {
+        touchOverrideIdleTimer(BLE_STARLIGHT);
+      }
       return;
     }
-    notifyWandPalette(paletteIdx, BLE_STARLIGHT);
-    return;
+    rememberWandCast(payload, plen);
+    notifySwDebug(
+      (plen >= 2 && payload[0] == 0xCF && payload[1] == 0x9B) ? "wand_cf9b" : "wand_cast",
+      payload, plen);
   }
 
-  if (wandCastIsDuplicateAdvert(payload, plen)) {
-    if (starlightEnabled && currentOverride == BLE_STARLIGHT) {
-      touchOverrideIdleTimer(BLE_STARLIGHT);
-    }
-    return;
-  }
-  rememberWandCast(payload, plen);
-
-  uint8_t paletteIdx = pkt.paletteCount > 0 ? pkt.palettes[0]
-                      : (legacy ? (payload[plen - 1] & 0x1F) : (payload[12] & 0x1F));
-  if (legacy) {
-    Serial.printf("[Wand] CF9B legacy cast palette=%u len=%u\n", paletteIdx, (unsigned)plen);
-    notifySwDebug("wand_cf9b", payload, plen);
-  } else {
-    Serial.printf("[Wand] CAST palette=%u roll=%02X%02X%02X%02X%02X%02X\n",
-                  paletteIdx, plen > 6 ? payload[6] : 0, plen > 7 ? payload[7] : 0,
-                  plen > 8 ? payload[8] : 0, plen > 9 ? payload[9] : 0,
-                  plen > 10 ? payload[10] : 0, plen > 11 ? payload[11] : 0);
-    notifySwDebug("wand_cast", payload, plen);
-  }
-
-  if (!starlightEnabled) {
-    bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
-    return;
-  }
-  notifyWandPalette(paletteIdx, BLE_STARLIGHT);
-}
-
-void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
-  if (pkt.kind == DisneyPacketKind::UNKNOWN) return;
-
-  // MB effect dedupe / defer needs raw when available
-  const uint8_t* payload = pktRaw(pkt);
-  size_t plen = pktRawLen(pkt);
-
-  if (pkt.kind == DisneyPacketKind::WAND_CAST) {
-    applyWandFromParsed(pkt, false);
-    return;
-  }
-  if (pkt.kind == DisneyPacketKind::WAND_CF9B_LEGACY) {
-    applyWandFromParsed(pkt, true);
-    return;
-  }
-
-  // MagicBand / show family
-  if (payload && plen > 0 && mbEffectIsRepeatAdvert(payload, plen)) {
+  // MB effect dedupe — refresh idle timer only
+  if (mbEffectIsRepeatAdvert(payload, plen)) {
     if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
     return;
   }
@@ -164,10 +136,7 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     }
   } mbPendingGuard;
 
-  Serial.printf("[MB+] kind=%u opcode=0x%04X len=%u\n",
-                (unsigned)pkt.kind, pkt.opcode, (unsigned)plen);
-
-  if (mbDeferToApp && bleConnected && magicBandEnabled && payload && plen >= 3 &&
+  if (mbDeferToApp && bleConnected && magicBandEnabled && plen >= 3 &&
       payload[2] == 0xE9) {
     if (!canTakeOverride(BLE_MAGIC)) return;
     rememberMbEffect(payload, plen);
@@ -177,141 +146,41 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     return;
   }
 
-  switch (pkt.kind) {
-    case DisneyPacketKind::E905_SINGLE:
-      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
-      applyMbSingleMask(pkt.maskByte, pkt.palettes[0], BLE_MAGIC);
-      {
-        uint8_t r, g, b;
-        paletteToRGB(pkt.palettes[0], r, g, b);
-        bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-      }
-      if (payload && plen) rememberMbEffect(payload, plen);
-      break;
-
-    case DisneyPacketKind::E906_DUAL:
-      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
-      applyMbDual(pkt.palettes[0], pkt.palettes[1], BLE_MAGIC);
-      {
-        uint8_t r, g, b;
-        paletteToRGB(pkt.palettes[1] & 0x1F, r, g, b);
-        bleNotify("{\"type\":\"ble_color\",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-      }
-      if (payload && plen) rememberMbEffect(payload, plen);
-      break;
-
-    case DisneyPacketKind::E908_RGB:
-      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
-      applyFullStripSolid(pkt.palettes[0], pkt.palettes[1], pkt.palettes[2], BLE_MAGIC);
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"rgb\"}");
-      if (payload && plen) rememberMbEffect(payload, plen);
-      break;
-
-    case DisneyPacketKind::E909_FIVE_PALETTE: {
-      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
-      uint8_t tl = pkt.palettes[0], bl = pkt.palettes[1], br = pkt.palettes[2];
-      uint8_t tr = pkt.palettes[3], c = pkt.palettes[4];
-      if (pkt.maskByte & 0x80) {
-        char patKey[2] = { 0, 0 };
-        const char* hex = "0123456789ABCDEF";
-        patKey[0] = hex[pkt.maskByte & 0x0F];
-        uint8_t pals[5] = { tl, bl, br, tr, c };
-        if (applyMbPatternKey(patKey, pals, 5, BLE_MAGIC)) {
-          if (payload && plen) rememberMbEffect(payload, plen);
-          break;
-        }
-      }
-      applyMbFive(tl, bl, br, tr, c, BLE_MAGIC);
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"five_color\"}");
-      if (payload && plen) rememberMbEffect(payload, plen);
-      break;
-    }
-
-    case DisneyPacketKind::E90C_PALETTE: {
-      if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) return;
-      applyMbFive(pkt.palettes[0], pkt.palettes[1], pkt.palettes[2],
-                  pkt.palettes[3], pkt.palettes[4], BLE_MAGIC);
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"five_color\"}");
-      if (payload && plen) rememberMbEffect(payload, plen);
-      break;
-    }
-
-    case DisneyPacketKind::E90E_FLASH:
-      if (payload && plen) {
-        if (!tryApplySwE9Payload(payload, plen, "E90E", "flash"))
-          applyMbAnimOpcode("E90E", "flash");
-        rememberMbEffect(payload, plen);
-      } else {
-        applyMbAnimOpcode("E90E", "flash");
-      }
-      break;
-
-    case DisneyPacketKind::E90C_ANIMATION:
-      if (payload && plen) {
-        if (!tryApplySwE9Payload(payload, plen, "E90C", "show_fx")) {
-          notifyUnknownAnimation(payload, plen, SW_MATCH_NONE, 0xE90C);
-          applyMbAnimOpcode("E90C", "show_fx");
-        }
-        rememberMbEffect(payload, plen);
-      }
-      break;
-
-    case DisneyPacketKind::E9_UNCLASSIFIED: {
-      // Opcodes that previously had dedicated applyMbAnimOpcode paths keep them
-      // after SW match fails. Truly unknown opcodes only log (no inventing).
-      if (payload && plen) rememberMbEffect(payload, plen);
-
-      if (pkt.opcode == 0xE90E) {
-        if (!payload || !tryApplySwE9Payload(payload, plen, "E90E", "flash"))
-          applyMbAnimOpcode("E90E", "flash");
-        break;
-      }
-      if (pkt.opcode == 0xE90F) {
-        if (magicBandEnabled && canTakeOverride(BLE_MAGIC)) {
-          if (payload) notifyUnknownAnimation(payload, plen, SW_MATCH_NONE, 0xE90F);
-          applyMbAnimOpcode("E90F", "animation");
-        }
-        break;
-      }
-      if (pkt.opcode == 0xE910) {
-        if (!payload || !tryApplySwE9Payload(payload, plen, "E910", "animation"))
-          applyMbAnimOpcode("E910", "animation");
-        break;
-      }
-      if (pkt.opcode == 0xE911) {
-        if (!payload || !tryApplySwE9Payload(payload, plen, "E911", "animation"))
-          applyMbAnimOpcode("E911", "animation");
-        break;
-      }
-      if (pkt.opcode == 0xE912) {
-        if (!payload || !tryApplySwE9Payload(payload, plen, "E912", "animation"))
-          applyMbAnimOpcode("E912", "animation");
-        break;
-      }
-      if (pkt.opcode == 0xE913) {
-        if (!payload || !tryApplySwE9Payload(payload, plen, "E913", "animation"))
-          applyMbAnimOpcode("E913", "animation");
-        break;
-      }
-
-      // Bare show E9 (historically try SW then E90C anim)
-      if (payload && plen >= 2 && payload[0] == 0xE9) {
-        if (tryApplySwE9Payload(payload, plen, "E90C", "show")) break;
-        if (!magicBandEnabled || !canTakeOverride(BLE_MAGIC)) break;
-        applyMbAnimOpcode("E90C", "show");
-        break;
-      }
-
-      Serial.printf("[MB+] unhandled func 0x%04X\n", pkt.opcode);
-      if (magicBandEnabled && canTakeOverride(BLE_MAGIC))
-        bleNotify("{\"type\":\"ble_event\",\"event\":\"animation\"}");
-      break;
-    }
-
-    default:
-      Serial.printf("[MB+] unhandled kind %u\n", (unsigned)pkt.kind);
-      break;
+  JsonArray rules = mbRulesJsonArray();
+  int matchIdx = findMatchingRule(payload, plen, rules);
+  if (matchIdx >= 0) {
+    JsonObject rule = rules[matchIdx].as<JsonObject>();
+    Serial.printf("[Rule] match idx=%d name=%s\n", matchIdx, rule["name"] | "");
+    applyMatchedRule(rule, payload, plen);
+    rememberMbEffect(payload, plen);
+    return;
   }
+
+  // Infrastructure noise (wake pings / wand idle) — don't spam unmatched log or default preset
+  bool infraNoise = (plen >= 2 && payload[0] == 0xCC && payload[1] == 0x03) ||
+                    (plen >= 2 && payload[0] == 0x0F && payload[1] == 0x11);
+  if (infraNoise) return;
+
+  // No rule matched
+  notifyMbUnmatched(payload, plen);
+
+  if (bleDefaultPresetId.length() > 0) {
+    bool wand = looksLikeWandPayload(payload, plen);
+    OverrideSource src = wand ? BLE_STARLIGHT : BLE_MAGIC;
+    if (wand && !starlightEnabled) return;
+    if (!wand && !magicBandEnabled) return;
+    if (!canTakeOverride(src)) return;
+    saveWledStateForOverride();
+    if (applyPreset(bleDefaultPresetId)) {
+      setOverride(src);
+      touchOverrideIdleTimer(src);
+      rememberMbEffect(payload, plen);
+      Serial.printf("[Rule] defaultPresetId=%s\n", bleDefaultPresetId.c_str());
+    }
+    return;
+  }
+
+  Serial.printf("[Rule] no match len=%u rssi=%d\n", (unsigned)plen, rssi);
 }
 
 void handleDisneyPayload(const uint8_t* payload, size_t plen) {
@@ -321,13 +190,11 @@ void handleDisneyPayload(const uint8_t* payload, size_t plen) {
 
 void handleWandCast(const uint8_t* payload, size_t plen) {
   ParsedDisneyPacket pkt = decodeDisneyPayload(payload, plen, millis());
-  if (pkt.kind != DisneyPacketKind::WAND_CAST) return;
   applyParsedDisneyPacket(pkt);
 }
 
 void handleLegacyCf9bCast(const uint8_t* payload, size_t plen) {
   ParsedDisneyPacket pkt = decodeDisneyPayload(payload, plen, millis());
-  if (pkt.kind != DisneyPacketKind::WAND_CF9B_LEGACY) return;
   applyParsedDisneyPacket(pkt);
 }
 

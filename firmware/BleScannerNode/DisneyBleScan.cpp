@@ -35,11 +35,9 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     if (plen == 0) return;
 
     ParsedDisneyPacket pkt = decodeDisneyPayload(payload, plen, millis());
-    // UNKNOWN frames (tag DISNEY / PING / WAND-IDLE) used to be dropped here. That left
-    // the logic board's scanner-alive watchdog with lastScannerPacketMs==0 forever while
-    // this node happily logged [Scan:DISNEY] — triggering local BLE scan fallback and
-    // re-introducing NimBLE peripheral+observer contention. Forward them as keepalives
-    // (raw populated); applyParsedDisneyPacket no-ops on UNKNOWN on the logic board.
+    pkt.rssi = (int8_t)constrain(rssi, -128, 127);
+    // UNKNOWN frames are keepalives for the logic board watchdog AND candidates for
+    // parade-beacon / rule-engine matching on the logic board.
     if (pkt.kind == DisneyPacketKind::UNKNOWN) {
       if (pkt.rawLen == 0 && plen > 0) {
         size_t n = plen < PARSED_PACKET_RAW_MAX ? plen : PARSED_PACKET_RAW_MAX;
@@ -47,10 +45,11 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
         pkt.rawLen = (uint8_t)n;
         pkt.hasRawFallback = 1;
       }
-      // Rate-limit identical idle/ping/unclassified Disney so ESP-NOW isn't flooded;
-      // ABSENT watchdog is 20s — 2s keepalives leave plenty of headroom.
+      // Rate-limit identical idle/ping frames; always forward strong-signal packets
+      // so proximity beacons aren't dropped by the keepalive throttle.
       static unsigned long lastUnknownFwdMs = 0;
-      if (!isNew && (millis() - lastUnknownFwdMs) < 2000) return;
+      bool strongSignal = pkt.rssi >= -75;
+      if (!isNew && !strongSignal && (millis() - lastUnknownFwdMs) < 2000) return;
       lastUnknownFwdMs = millis();
     }
     scannerTransportSend(pkt);

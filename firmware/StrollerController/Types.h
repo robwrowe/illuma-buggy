@@ -67,6 +67,7 @@ enum class DisneyPacketKind : uint8_t {
 };
 
 // Wire contract for ESP-NOW and decode→apply boundary. Packed for stable sizeof.
+// rssi is filled by the scanner; rule engine / parade detection consume it on the logic board.
 struct __attribute__((packed)) ParsedDisneyPacket {
   DisneyPacketKind kind;
   uint16_t         opcode;
@@ -76,6 +77,7 @@ struct __attribute__((packed)) ParsedDisneyPacket {
   uint8_t          hasRawFallback;  // 0/1 — true when undecodable; rawPayload populated
   uint8_t          rawPayload[PARSED_PACKET_RAW_MAX];
   uint8_t          rawLen;
+  int8_t           rssi;
   uint32_t         capturedAtMs;
 };
 

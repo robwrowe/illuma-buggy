@@ -418,6 +418,9 @@ class BLEService {
     if (active && label) msg.label = label;
     return this.send(msg);
   }
+  sendMbUnmatchedLogConfig(active: boolean) {
+    return this.send({ type: 'mb_unmatched_log_config', active });
+  }
   sendBoardRole(role: 'standalone' | 'logic_board') {
     return this.send({ type: 'set_board_role', role });
   }

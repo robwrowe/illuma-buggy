@@ -121,6 +121,15 @@ export interface BrightnessConfig {
 
 export type BoardRoleMode = 'standalone' | 'logic_board';
 
+export interface MbUnmatchedEntry {
+  boardTs: number;
+  receivedAt: number;
+  hex: string;
+  len: number;
+}
+
+const MAX_MB_UNMATCHED_LOG = 200;
+
 export interface DeviceStatus {
   override:           number;
   killOnZone:           boolean;
@@ -156,7 +165,9 @@ import {
 import {
   BleCapturePacket, BleCaptureSession,
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
+  shouldIgnoreBleCapturePacket,
 } from '../utils/bleCapture';
+import { bleService } from '../services/BLEService';
 import {
   getBestAvailableFixSync,
   primeLocationRuntimeCache,
@@ -280,6 +291,13 @@ interface AppState {
   setMagicBandFivePoint: (val: boolean) => void;
   magicBandTimeoutSec:   number;
   setMagicBandTimeoutSec:(val: number) => void;
+  /** Continuous unmatched MB/Wand packet log (firmware → app). Persisted toggle. */
+  mbUnmatchedLogEnabled: boolean;
+  setMbUnmatchedLogEnabled: (val: boolean) => void;
+  /** Runtime rolling buffer (most-recent-first). Not persisted. */
+  mbUnmatchedLog: MbUnmatchedEntry[];
+  appendMbUnmatched: (entry: Omit<MbUnmatchedEntry, 'receivedAt'>) => void;
+  clearMbUnmatchedLog: () => void;
   bleEffectTransitionMs: number;
   setBleEffectTransitionMs:(val: number) => void;
   wledSsid:              string;
@@ -363,6 +381,11 @@ interface AppState {
   bleCaptureBuffer:       BleCapturePacket[];
   bleCaptureSessions:     BleCaptureSession[];
   bleCaptureDraftName:    string;
+  /** Persisted noise tags to skip during capture (`PING`, `WAND_IDLE`). */
+  bleCaptureIgnoreTags:   string[];
+  setBleCaptureIgnoreTags:(tags: string[]) => void;
+  /** Runtime count of packets skipped by ignore filters. Not persisted. */
+  bleCaptureIgnoredCount: number;
   /** Runtime-only: capture is borrowing the background location pipeline. */
   captureForcedLocationTracking: boolean;
   captureSource:          'firmware' | 'phone';
@@ -396,7 +419,7 @@ const DEFAULT_RECALL: RecallState = {
 
 const DEFAULT_SHOW_MODE: ShowModeConfig = {
   parade: { pre: '', live: '', post: '' },
-  fireworks: { pre: '', live: '__BLACK__', post: '' },
+  fireworks: { pre: '', live: '', post: '' },
 };
 
 const DEFAULT_WAND_LAB: WandLabConfig = { simIp: '', log: [] };
@@ -499,6 +522,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   magicBandEnabled:    true,
   magicBandFivePoint:  true,
   magicBandTimeoutSec: 15,
+  mbUnmatchedLogEnabled: false,
+  mbUnmatchedLog:      [],
   bleEffectTransitionMs: 700,
   wledSsid:            '',
   wledPass:            '',
@@ -521,6 +546,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureBuffer:       [],
   bleCaptureSessions:     [],
   bleCaptureDraftName:    'Parade capture',
+  bleCaptureIgnoreTags:   [],
+  bleCaptureIgnoredCount: 0,
   captureForcedLocationTracking: false,
   captureSource:          'firmware',
   parks:                  [],
@@ -709,6 +736,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
   setMagicBandFivePoint: (val)          => set({ magicBandFivePoint: val }),
   setMagicBandTimeoutSec:(val)          => set({ magicBandTimeoutSec: val }),
+  setMbUnmatchedLogEnabled: (val) => {
+    set({ mbUnmatchedLogEnabled: val });
+    // Enable only when session is ready; always send disable while connected.
+    if (val ? bleService.isSessionReady() : bleService.isConnected()) {
+      void bleService.sendMbUnmatchedLogConfig(val);
+    }
+    get().saveToStorage();
+  },
+  appendMbUnmatched: (entry) => {
+    const next: MbUnmatchedEntry = { ...entry, receivedAt: Date.now() };
+    set(s => ({
+      mbUnmatchedLog: [next, ...s.mbUnmatchedLog].slice(0, MAX_MB_UNMATCHED_LOG),
+    }));
+  },
+  clearMbUnmatchedLog: () => set({ mbUnmatchedLog: [] }),
   setBleEffectTransitionMs:(val)        => set({ bleEffectTransitionMs: val }),
   setWledSsid:           (val)          => set({ wledSsid: val }),
   setWledPass:           (val)          => set({ wledPass: val }),
@@ -728,6 +770,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCaptureSource:         (val) => set({ captureSource: val }),
   setBleCaptureDurationSec: (sec) => set({ bleCaptureDurationSec: sec }),
   setBleCaptureDraftName:   (name) => set({ bleCaptureDraftName: name }),
+  setBleCaptureIgnoreTags:  (tags) => {
+    set({ bleCaptureIgnoreTags: tags });
+    get().saveToStorage();
+  },
 
   startBleCapture: () => {
     const s = get();
@@ -741,6 +787,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureSegment: 1,
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
+      bleCaptureIgnoredCount: 0,
       captureForcedLocationTracking: true,
     });
     void primeLocationRuntimeCache();
@@ -797,6 +844,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   appendBleCapturePacket: (pkt) => {
     const s = get();
     if (!s.bleCaptureActive) return;
+    if (shouldIgnoreBleCapturePacket(pkt.tag, pkt.hex, s.bleCaptureIgnoreTags)) {
+      set({ bleCaptureIgnoredCount: s.bleCaptureIgnoredCount + 1 });
+      return;
+    }
     if (s.bleCaptureBuffer.length >= MAX_PACKETS_PER_SESSION) {
       get().rolloverBleCapture();
     }
@@ -848,10 +899,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
-                    'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs',
+                    'magicBandFivePoint','magicBandTimeoutSec','mbUnmatchedLogEnabled',
+                    'bleEffectTransitionMs',
                     'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','boardConnectEnabled',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
+                    'bleCaptureIgnoreTags',
                     'customPalettes','savedColors','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
                     'showInstanceOverrides','ftbPresetId','wandLab',
@@ -900,6 +953,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         magicBandEnabled:   d.magicBandEnabled   ?? true,
         magicBandFivePoint: d.magicBandFivePoint ?? true,
         magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
+        mbUnmatchedLogEnabled: d.mbUnmatchedLogEnabled ?? false,
         bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
         wledSsid:           d.wledSsid           ?? '',
         wledPass:           d.wledPass           ?? '',
@@ -926,6 +980,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         bleCaptureSessions: d.bleCaptureSessions ?? [],
         bleCaptureDurationSec: d.bleCaptureDurationSec ?? 900,
         bleCaptureDraftName:   d.bleCaptureDraftName   ?? 'Parade capture',
+        bleCaptureIgnoreTags:  Array.isArray(d.bleCaptureIgnoreTags) ? d.bleCaptureIgnoreTags : [],
         parks:              d.parks              ?? [],
         activePark:         null,
         showModeConfig:     d.showModeConfig     ?? DEFAULT_SHOW_MODE,
@@ -956,6 +1011,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
         ['magicBandFivePoint', JSON.stringify(s.magicBandFivePoint)],
         ['magicBandTimeoutSec',JSON.stringify(s.magicBandTimeoutSec)],
+        ['mbUnmatchedLogEnabled', JSON.stringify(s.mbUnmatchedLogEnabled)],
         ['bleEffectTransitionMs', JSON.stringify(s.bleEffectTransitionMs)],
         ['wledSsid',           JSON.stringify(s.wledSsid)],
         ['wledPass',           JSON.stringify(s.wledPass)],
@@ -980,6 +1036,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['bleCaptureSessions', JSON.stringify(s.bleCaptureSessions)],
         ['bleCaptureDurationSec', JSON.stringify(s.bleCaptureDurationSec)],
         ['bleCaptureDraftName',   JSON.stringify(s.bleCaptureDraftName)],
+        ['bleCaptureIgnoreTags',  JSON.stringify(s.bleCaptureIgnoreTags)],
         ['parks',              JSON.stringify(s.parks)],
         ['showModeConfig',     JSON.stringify(s.showModeConfig)],
         ['showBindings',       JSON.stringify(s.showBindings)],

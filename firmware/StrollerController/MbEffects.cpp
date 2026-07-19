@@ -298,7 +298,7 @@ void disableMbSplitSegments() {
 
 // ─────────────────────────────────────────────
 // OVERRIDE LOGIC
-// Priority: Starlight Wand (4) > MagicBand+ (3) > Manual (2) > Zone (1)
+// Priority: MagicBand+ (5) > Starlight Wand (4) > Manual (2) > Zone (1)
 // ─────────────────────────────────────────────
 
 void disableAllSplitSegments() {

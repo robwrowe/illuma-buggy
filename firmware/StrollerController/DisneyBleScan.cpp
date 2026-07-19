@@ -32,7 +32,9 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     if (plen == 0) return;
 
     ParsedDisneyPacket pkt = decodeDisneyPayload(payload, plen, millis());
-    if (pkt.kind == DisneyPacketKind::UNKNOWN) return;
+    pkt.rssi = (int8_t)constrain(rssi, -128, 127);
+    // Forward all Disney payloads (including UNKNOWN) so the rule engine / parade
+    // detector can evaluate raw bytes. Dedup still applies at apply time.
     transportSendParsedPacket(pkt);
   }
 };

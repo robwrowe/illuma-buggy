@@ -37,6 +37,7 @@ uint8_t scale6To8(uint8_t v) {
 // Always retain raw for dedup / defer-to-app / SW matching. hasRawFallback marks
 // undecodable classification (apply should not invent palettes / anim fallbacks).
 static void copyRaw(ParsedDisneyPacket& pkt, const uint8_t* payload, size_t plen) {
+  if (!payload || plen == 0) return;
   size_t n = plen < PARSED_PACKET_RAW_MAX ? plen : PARSED_PACKET_RAW_MAX;
   memcpy(pkt.rawPayload, payload, n);
   pkt.rawLen = (uint8_t)n;
@@ -169,8 +170,14 @@ ParsedDisneyPacket decodeDisneyPayload(const uint8_t* payload, size_t plen, unsi
     return pkt;
   }
 
-  if (isWandIdleBeacon(payload, plen)) return pkt;  // UNKNOWN — not an effect
-  if (plen >= 2 && payload[0] == 0xCC && payload[1] == 0x03) return pkt;  // wake ping
+  if (isWandIdleBeacon(payload, plen)) {
+    copyRaw(pkt, payload, plen);
+    return pkt;  // UNKNOWN — not an effect
+  }
+  if (plen >= 2 && payload[0] == 0xCC && payload[1] == 0x03) {
+    copyRaw(pkt, payload, plen);
+    return pkt;  // wake ping
+  }
 
   if (plen >= 5 && (payload[0] == 0xE1 || payload[0] == 0xE2) && payload[2] == 0xE9) {
     decodeE1E2(pkt, payload, plen);
@@ -185,5 +192,7 @@ ParsedDisneyPacket decodeDisneyPayload(const uint8_t* payload, size_t plen, unsi
     return pkt;
   }
 
+  // Unclassified Disney payload (e.g. proximity/parade beacons) — keep raw for rule engine.
+  copyRaw(pkt, payload, plen);
   return pkt;
 }

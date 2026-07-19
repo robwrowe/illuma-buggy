@@ -64,6 +64,35 @@ function disneyPayload(bytes: number[]): number[] {
   return e9DisneyPayload(bytes);
 }
 
+/** Ignore-list keys for capture noise filters (UI + store). */
+export const BLE_CAPTURE_NOISE_PING = 'PING';
+export const BLE_CAPTURE_NOISE_WAND_IDLE = 'WAND_IDLE';
+
+/**
+ * Normalize firmware/phone packet tags (`PING`, `WAND-IDLE`) and hex shape into
+ * ignore-list keys (`PING`, `WAND_IDLE`). Returns null when not a noise category.
+ */
+export function bleCaptureNoiseTag(tag: string, hex: string): string | null {
+  const normalized = tag.replace(/-/g, '_').toUpperCase();
+  if (normalized === BLE_CAPTURE_NOISE_PING) return BLE_CAPTURE_NOISE_PING;
+  if (normalized === BLE_CAPTURE_NOISE_WAND_IDLE) return BLE_CAPTURE_NOISE_WAND_IDLE;
+
+  const bytes = disneyPayload(hexToBytesLocal(hex));
+  if (bytes.length >= 2 && bytes[0] === 0xcc && bytes[1] === 0x03) return BLE_CAPTURE_NOISE_PING;
+  if (bytes.length >= 2 && bytes[0] === 0x0f && bytes[1] === 0x11) return BLE_CAPTURE_NOISE_WAND_IDLE;
+  return null;
+}
+
+export function shouldIgnoreBleCapturePacket(
+  tag: string,
+  hex: string,
+  ignoreTags: string[],
+): boolean {
+  if (ignoreTags.length === 0) return false;
+  const noise = bleCaptureNoiseTag(tag, hex);
+  return noise != null && ignoreTags.includes(noise);
+}
+
 /** Human-readable hint for parade analysis */
 export function describeBlePacket(tag: string, hex: string): string {
   const bytes = disneyPayload(hexToBytesLocal(hex));
@@ -72,6 +101,7 @@ export function describeBlePacket(tag: string, hex: string): string {
   const parsed = parseE9Packet(bytes);
   if (parsed) return describeParsedE9(parsed);
 
+  // Keep noise categories aligned with bleCaptureNoiseTag / ignore filters
   if (bytes[0] === 0xcc && bytes[1] === 0x03) return 'CC03 wake ping';
 
   if (bytes.length >= 6 && bytes[0] === 0xcf && bytes[1] === 0x0b) {

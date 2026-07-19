@@ -98,7 +98,7 @@ function migrateShowModeDefaults<T extends Record<string, unknown>>(data: T): T 
     ...data,
     showModeConfig: {
       parade: { pre: '', live: '', post: '' },
-      fireworks: { pre: '', live: '__BLACK__', post: '' },
+      fireworks: { pre: '', live: '', post: '' },
     } satisfies ShowModeConfig,
   };
 }

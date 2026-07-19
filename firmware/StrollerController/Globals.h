@@ -95,9 +95,18 @@ extern String liveWledState;
 extern unsigned long lastLiveStatePollMs;
 extern String baselineWledState;
 extern String mbMappingJson;
+extern String mbRulesJson;
 extern bool   mbMappingLoadedFromNvs;
 extern String bleDefaultPresetId;
 extern bool   wledWasConnected;
+
+extern bool          mbUnmatchedLogEnabled;
+
+extern bool          paradeDetectEnabled;
+extern char          paradeBeaconPrefix[16];
+extern int           paradeRssiThreshold;
+extern unsigned long paradeCooldownMs;
+extern unsigned long paradeLastBeaconMs;
 
 extern DisneyPayloadJob disneyJob;
 extern portMUX_TYPE disneyJobMux;

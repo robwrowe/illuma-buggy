@@ -17,8 +17,8 @@ int overridePriority(OverrideSource src) {
     case ZONE:          return 1;
     case MANUAL:        return 2;
     case SHOW_MODE:     return 3;
-    case BLE_MAGIC:     return 4;
-    case BLE_STARLIGHT: return 5;
+    case BLE_STARLIGHT: return 4;
+    case BLE_MAGIC:     return 5;
     default:            return 0;
   }
 }
@@ -199,17 +199,18 @@ bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
 }
 
 void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
-  if (phase == PHASE_BLACK) {
+  // LIVE is blackout-only: turn lights off once on enter so the rule engine can drive
+  // effects without fighting a competing "live look" preset push.
+  if (phase == PHASE_BLACK || phase == PHASE_LIVE) {
     sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
     return;
   }
   String presetId;
   if (type == SHOW_PARADE) {
-    presetId = (phase == PHASE_PRE) ? showLookParadePre : showLookParadeLive;
+    presetId = showLookParadePre;  // PRE only; LIVE handled above
   } else if (type == SHOW_FIREWORKS) {
     if (phase == PHASE_PRE) presetId = showLookFireworksPre;
-    else if (phase == PHASE_LIVE) presetId = showLookFireworksLive;
-    else presetId = showLookFireworksPost;
+    else presetId = showLookFireworksPost;  // POST; LIVE handled above
   }
   if (presetId == "__BLACK__") {
     sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));

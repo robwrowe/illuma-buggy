@@ -75,6 +75,10 @@ export default function HomeScreen() {
     setOverrideDetail,
     bleCaptureActive,
     bleCaptureLiveCount,
+    mbUnmatchedLogEnabled,
+    mbUnmatchedLog,
+    appendMbUnmatched,
+    clearMbUnmatchedLog,
     ftbPresetId,
     setFtbPresetId,
     bleEffectTransitionMs,
@@ -230,9 +234,15 @@ export default function HomeScreen() {
             ? `MB+ color → R${msg.r} G${msg.g} B${msg.b}`
             : `MB+: ${String(msg.event)}`;
         setEvents((prev) => [label, ...prev].slice(0, 12));
+      } else if (msg.type === "mb_unmatched") {
+        appendMbUnmatched({
+          boardTs: Number(msg.ts) || 0,
+          hex: String(msg.hex ?? ""),
+          len: Number(msg.len) || 0,
+        });
       }
     });
-  }, []);
+  }, [appendMbUnmatched]);
 
   const overrideIndex = deviceStatus?.override ?? 0;
   const overrideColor =
@@ -850,10 +860,7 @@ export default function HomeScreen() {
             </Text>
           ) : (
             events.map((e, i) => (
-              <View
-                key={i}
-                style={[s.row, { opacity: Math.max(0.3, 1 - i * 0.08) }]}
-              >
+              <View key={i} style={s.row}>
                 <IconBolt size={11} color={colors.primary} />
                 <Text
                   style={[s.subText, { marginLeft: 4, flex: 1 }]}
@@ -866,8 +873,50 @@ export default function HomeScreen() {
           )}
         </View>
       )}
+
+      {isConnected && mbUnmatchedLogEnabled && (
+        <View style={s.card}>
+          <View style={s.row}>
+            <IconBolt size={15} color={colors.textSecondary} />
+            <Text style={[s.label, { flex: 1 }]}>Unmatched MB/Wand</Text>
+            {mbUnmatchedLog.length > 0 && (
+              <TouchableOpacity style={s.clearBtn} onPress={clearMbUnmatchedLog}>
+                <IconX size={12} color={colors.danger} />
+                <Text style={[s.clearBtnText, { color: colors.danger }]}>Clear</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {mbUnmatchedLog.length === 0 ? (
+            <Text style={s.subText}>
+              Packets that did not match a rule appear here
+            </Text>
+          ) : (
+            mbUnmatchedLog.slice(0, 20).map((e, i) => (
+              <View key={`${e.boardTs}-${e.receivedAt}-${i}`} style={s.row}>
+                <Text
+                  style={[s.subText, { flex: 1, fontFamily: "monospace" }]}
+                  numberOfLines={2}
+                >
+                  {e.hex}
+                </Text>
+                <Text style={[s.subText, { marginLeft: 8 }]}>
+                  {formatRelTime(e.receivedAt)}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+      )}
     </ScrollView>
   );
+}
+
+function formatRelTime(receivedAt: number): string {
+  const sec = Math.max(0, Math.floor((Date.now() - receivedAt) / 1000));
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  return `${Math.floor(min / 60)}h ago`;
 }
 
 const styles = (

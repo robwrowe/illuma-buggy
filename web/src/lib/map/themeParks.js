@@ -26,7 +26,7 @@ export function inferShowKind(name) {
 
 export function normalizeShowBinding(raw, defaults) {
   if (!raw?.parkId || !raw.entityId || !raw.name) return null;
-  const presets = raw.presets || { pre: '', live: '', post: '' };
+  const presets = raw.presets || { pre: '', post: '' };
   const kind = raw.kind === 'fireworks' || raw.kind === 'parade' ? raw.kind : inferShowKind(raw.name);
   return {
     id: raw.id || `${raw.parkId}-${raw.entityId}`,
@@ -34,21 +34,23 @@ export function normalizeShowBinding(raw, defaults) {
     entityId: raw.entityId,
     name: raw.name,
     kind,
-    presets: { pre: presets.pre || '', live: presets.live || '', post: presets.post || '' },
+    presets: { pre: presets.pre || '', post: presets.post || '' },
     preLeadSec: Number.isFinite(raw.preLeadSec) ? raw.preLeadSec : defaults.defaultPreLeadSec,
     postDelaySec: Number.isFinite(raw.postDelaySec) ? raw.postDelaySec : defaults.defaultPostDelaySec,
+    liveOffsetSec: Number.isFinite(raw.liveOffsetSec) ? raw.liveOffsetSec : 0,
     homeVisibleBeforeMin: Number.isFinite(raw.homeVisibleBeforeMin)
       ? raw.homeVisibleBeforeMin : defaults.defaultHomeVisibleBeforeMin,
     homeVisibleAfterMin: Number.isFinite(raw.homeVisibleAfterMin)
       ? raw.homeVisibleAfterMin : defaults.defaultHomeVisibleAfterMin,
-    durationMin: Number.isFinite(raw.durationMin)
-      ? raw.durationMin
-      : (kind === 'fireworks' ? defaults.defaultFireworksDurationMin : defaults.defaultParadeDurationMin),
+    durationSec: Number.isFinite(raw.durationSec)
+      ? raw.durationSec
+      : (kind === 'fireworks' ? defaults.defaultFireworksDurationSec : defaults.defaultParadeDurationSec),
     autoStartDisabled: !!raw.autoStartDisabled,
     scopeZoneId: raw.scopeZoneId || null,
   };
 }
 
+/** Live look empty — firmware LIVE is blackout-only. */
 export function buildLegacyShowModeConfig(bindings, parkId) {
   const parkBindings = parkId ? (bindings || []).filter(b => b.parkId === parkId) : (bindings || []);
   const parade = parkBindings.find(b => b.kind === 'parade');
@@ -56,12 +58,12 @@ export function buildLegacyShowModeConfig(bindings, parkId) {
   return {
     parade: {
       pre: parade?.presets.pre || '',
-      live: parade?.presets.live || '',
+      live: '',
       post: parade?.presets.post || '',
     },
     fireworks: {
       pre: fireworks?.presets.pre || '',
-      live: fireworks?.presets.live || '__BLACK__',
+      live: '',
       post: fireworks?.presets.post || '',
     },
   };

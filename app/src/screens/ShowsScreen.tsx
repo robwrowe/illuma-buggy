@@ -1,5 +1,6 @@
 /**
- * Assign pre/live/post presets to park parades & fireworks; configure timing defaults.
+ * Assign pre/post presets to park parades & fireworks; configure timing defaults.
+ * Live phase is blackout-only (no live preset).
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -25,16 +26,15 @@ import {
 } from '../utils/showBindings';
 import { generateId } from '../utils/utils';
 
-type PhaseKey = 'pre' | 'live' | 'post';
+type PhaseKey = 'pre' | 'post';
 type PickerTarget = { bindingId: string; phase: PhaseKey } | null;
 
 const PHASE_LABELS: Record<PhaseKey, string> = {
   pre: 'Pre-show',
-  live: 'In-show',
   post: 'Post-show',
 };
 
-function presetLabel(presets: { id: string; name: string }[], id: string, kind: ShowKind, phase: PhaseKey): string {
+function presetLabel(presets: { id: string; name: string }[], id: string, _kind: ShowKind, _phase: PhaseKey): string {
   if (!id) return '—';
   if (id === '__BLACK__') return 'Black (strip off)';
   const p = presets.find(x => x.id === id);
@@ -96,7 +96,7 @@ export default function ShowsScreen() {
       entityId,
       name,
       kind: inferShowKind(name),
-      presets: { pre: '', live: '', post: '' },
+      presets: { pre: '', post: '' },
     }, showSettings);
     if (!binding) return;
     upsertShowBinding(binding);
@@ -139,7 +139,6 @@ export default function ShowsScreen() {
     return parkZones.find(z => z.id === binding.scopeZoneId)?.name ?? 'Zone';
   };
 
-  const editing = editingId ? showBindings.find(b => b.id === editingId) : null;
   const pickerBinding = picker ? showBindings.find(b => b.id === picker.bindingId) : null;
 
   return (
@@ -155,9 +154,9 @@ export default function ShowsScreen() {
             ['defaultPostDelaySec', 'Post-show delay (sec)', 30],
             ['defaultHomeVisibleBeforeMin', 'Home visible before (min)', 15],
             ['defaultHomeVisibleAfterMin', 'Home visible after (min)', 10],
-            ['defaultParadeDurationMin', 'Default parade duration (min)', 5],
-            ['defaultFireworksDurationMin', 'Default fireworks duration (min)', 5],
-          ] as const).map(([key, label, step]) => (
+            ['defaultParadeDurationSec', 'Default parade duration (sec)', 5],
+            ['defaultFireworksDurationSec', 'Default fireworks duration (sec)', 5],
+          ] as const).map(([key, label]) => (
             <View key={key} style={s.numRow}>
               <Text style={s.rowLabel}>{label}</Text>
               <TextInput
@@ -328,7 +327,7 @@ export default function ShowsScreen() {
                     <View style={s.rowBetween}>
                       <View style={{ flex: 1 }}>
                         <Text style={s.bindingName}>{b.name}</Text>
-                        <Text style={s.hint}>{b.kind} · {scopeLabel(b)} · {b.durationMin}m · pre {b.preLeadSec}s · post +{b.postDelaySec}s</Text>
+                        <Text style={s.hint}>{b.kind} · {scopeLabel(b)} · {b.durationSec}s · pre {b.preLeadSec}s · live {b.liveOffsetSec >= 0 ? '+' : ''}{b.liveOffsetSec}s · post +{b.postDelaySec}s</Text>
                       </View>
                       <TouchableOpacity
                         onPress={() => {
@@ -352,7 +351,7 @@ export default function ShowsScreen() {
                           <Text style={s.phaseValue}>{scopeLabel(b)}</Text>
                           <IconPencil size={14} color={colors.textMuted} />
                         </TouchableOpacity>
-                        {(['pre', 'live', 'post'] as PhaseKey[]).map(phase => (
+                        {(['pre', 'post'] as PhaseKey[]).map(phase => (
                           <TouchableOpacity
                             key={phase}
                             style={s.phaseRow}
@@ -384,8 +383,9 @@ export default function ShowsScreen() {
                           </View>
                         )}
                         {([
-                          ['durationMin', 'Show duration (min)'],
+                          ['durationSec', 'Show duration (sec)'],
                           ['preLeadSec', 'Pre lead (sec)'],
+                          ['liveOffsetSec', 'Live start offset (sec, +/-)'],
                           ['postDelaySec', 'Post delay (sec)'],
                           ['homeVisibleBeforeMin', 'Home before (min)'],
                           ['homeVisibleAfterMin', 'Home after (min)'],
@@ -394,7 +394,7 @@ export default function ShowsScreen() {
                             <Text style={s.rowLabel}>{label}</Text>
                             <TextInput
                               style={s.numInput}
-                              keyboardType="number-pad"
+                              keyboardType={key === 'liveOffsetSec' ? 'numbers-and-punctuation' : 'number-pad'}
                               value={String(b[key])}
                               onChangeText={(v) => {
                                 const n = parseInt(v, 10);
@@ -448,22 +448,10 @@ export default function ShowsScreen() {
         title={picker ? `${PHASE_LABELS[picker.phase]} preset` : ''}
         presets={presets}
         selectedId={pickerBinding && picker ? pickerBinding.presets[picker.phase] : ''}
-        emptyLabel={
-          picker?.phase === 'live' && pickerBinding?.kind === 'fireworks'
-            ? 'Black (strip off)'
-            : 'None'
-        }
-        extraOptions={
-          picker?.phase === 'live' && pickerBinding?.kind === 'fireworks'
-            ? [{ id: '__BLACK__', label: 'Black (strip off)' }]
-            : undefined
-        }
+        emptyLabel="None"
         onSelect={(id) => {
           if (!picker || !pickerBinding) return;
           const presetsNext = { ...pickerBinding.presets, [picker.phase]: id };
-          if (picker.phase === 'live' && pickerBinding.kind === 'fireworks' && !id) {
-            presetsNext.live = '__BLACK__';
-          }
           updateBinding(picker.bindingId, { presets: presetsNext });
           setPicker(null);
         }}

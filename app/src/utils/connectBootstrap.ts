@@ -193,6 +193,10 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
   await delay(300);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
+  await bleService.sendMbUnmatchedLogConfig(s.mbUnmatchedLogEnabled);
+  await delay(200);
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
+
   await bleService.sendBoardRole(s.boardRole);
   await delay(300);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };

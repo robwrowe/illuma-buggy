@@ -121,7 +121,7 @@ export const DEFAULT_DATA = {
   mbSegmentLayouts: [], mbActiveSegmentLayoutId: null,
   showModeConfig: {
     parade: { pre: '', live: '', post: '' },
-    fireworks: { pre: '', live: '__BLACK__', post: '' },
+    fireworks: { pre: '', live: '', post: '' },
   },
   showBindings: [],
   showSettings: {
@@ -129,8 +129,8 @@ export const DEFAULT_DATA = {
     defaultPostDelaySec: 60,
     defaultHomeVisibleBeforeMin: 60,
     defaultHomeVisibleAfterMin: 15,
-    defaultParadeDurationMin: 30,
-    defaultFireworksDurationMin: 20,
+    defaultParadeDurationSec: 1800,
+    defaultFireworksDurationSec: 1200,
     showNightBrightness: 5,
     showAutoBrightness: true,
   },

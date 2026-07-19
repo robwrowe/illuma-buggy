@@ -11,6 +11,7 @@
 #include "PresetStore.h"
 #include "OverrideManager.h"
 #include "MbMapping.h"
+#include "MbRuleEngine.h"
 #include "MbEffects.h"
 #include "BlePeripheral.h"
 #include "DisneyBleScan.h"
@@ -39,7 +40,10 @@ void setup() {
   mbChaseThickness    = prefs.getUChar("mbGrp", 4);
   if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
+  mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
+  mbRulesJson         = prefs.getString("mbRules", "");
   mbMappingJson       = prefs.getString("mbMapping", "");
+  if (mbRulesJson.length() == 0 && mbMappingJson.length() > 0) mbRulesJson = mbMappingJson;
   mbLayoutsJson       = prefs.getString("mbLayouts", "");
   mbActiveLayoutIdx   = prefs.getUChar("mbActiveLayout", 0);
   showLookParadePre     = prefs.getString("showParaPre", "");
@@ -62,8 +66,8 @@ void setup() {
   prefs.end();
   loadMbMappingDefaults();
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
-  loadMbMappingFromJson();
-  mbMappingLoadedFromNvs = mbMappingJson.length() > 0;
+  loadMbRulesFromJson();
+  mbMappingLoadedFromNvs = mbRulesJson.length() > 0 || mbMappingJson.length() > 0;
   loadWledBaselineFromNvs();
   Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums role=%u\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
@@ -161,6 +165,8 @@ void loop() {
       bleNotify("{\"type\":\"ble_event\",\"event\":\"timeout\"}");
     }
   }
+
+  serviceParadeCooldown();
 
   if (bleCaptureToApp && bleCaptureUntilMs > 0 && millis() >= bleCaptureUntilMs) {
     stopBleCapture("timeout");

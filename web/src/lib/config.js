@@ -69,7 +69,7 @@ export function migrateShowModeDefaults(data) {
     ...data,
     showModeConfig: {
       parade: { pre: '', live: '', post: '' },
-      fireworks: { pre: '', live: '__BLACK__', post: '' },
+      fireworks: { pre: '', live: '', post: '' },
     },
   };
 }
