@@ -74,9 +74,11 @@ void scannerSetLogicMac(const uint8_t mac[6], uint8_t channel) {
 
 void scannerChannelSweepTick() {
   if (logicPeerConfigured) return;
+  // Dwell longer than the logic board's pair-beacon interval so we can't skip past our
+  // channel between beacons — guarantees a catch within one sweep cycle.
   static unsigned long lastHopMs = 0;
   static uint8_t ch = 1;
-  if (millis() - lastHopMs < 300) return;
+  if (millis() - lastHopMs < 400) return;
   lastHopMs = millis();
   lockChannel(ch);
   if (++ch > 13) ch = 1;

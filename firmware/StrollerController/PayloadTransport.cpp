@@ -2,10 +2,17 @@
 #include "Globals.h"
 #include "DisneyPayloadHandlers.h"
 #include "MbPacketDecode.h"
+#include "DisneyBleScan.h"
+#include <NimBLEDevice.h>
 #include <esp_now.h>
 #include <WiFi.h>
 #include <string.h>
 #include <stdlib.h>
+
+// How long without an ESP-NOW packet before we consider the scanner absent.
+#define SCANNER_ABSENT_MS 20000
+// A packet within this window means the scanner link is healthy.
+#define SCANNER_ALIVE_MS  10000
 
 BoardRole boardRole = BoardRole::STANDALONE;
 uint8_t scannerPeerMac[6] = {0};
@@ -94,8 +101,8 @@ static bool ensureEspNowPeer(const uint8_t mac[6]) {
   return true;
 }
 
-static unsigned long pairResendUntilMs = 0;
 static unsigned long lastPairSendMs = 0;
+static bool localScanFallbackActive = false;
 
 static void sendPairMessage() {
   EspNowPairMsg msg = {};
@@ -108,7 +115,7 @@ static void sendPairMessage() {
   msg.channel = (uint8_t)WiFi.channel();
   esp_err_t err = esp_now_send(scannerPeerMac, (const uint8_t*)&msg, sizeof(msg));
   lastPairSendMs = millis();
-  Serial.printf("[ESP-NOW] pair msg to %s ch=%u: %s\n",
+  Serial.printf("[ESP-NOW] pair beacon to %s ch=%u: %s\n",
                 transportMacToString(scannerPeerMac).c_str(),
                 (unsigned)msg.channel, err == ESP_OK ? "ok" : "fail");
 }
@@ -126,22 +133,42 @@ void transportSetScannerMac(const uint8_t mac[6]) {
     return;
   }
 
-  if (!ensureEspNowPeer(scannerPeerMac)) return;
+  ensureEspNowPeer(scannerPeerMac);
+  // The loop-driven pair beacon (transportPairResendTick) does the actual pairing once
+  // WiFi is up, so the advertised channel is the stable AP channel.
+  Serial.println("[ESP-NOW] scanner MAC set — beaconing pair on stable channel");
+}
 
-  // Reflected pairing: send our STA MAC + channel so the scanner can store both. Repeat
-  // for a few seconds (loop tick) so a channel-sweeping scanner catches it.
-  sendPairMessage();
-  pairResendUntilMs = millis() + 8000;  // ~2 full scanner sweep cycles
+static bool scannerLinkAlive() {
+  return lastScannerPacketMs != 0 && (millis() - lastScannerPacketMs < SCANNER_ALIVE_MS);
 }
 
 void transportPairResendTick() {
-  if (pairResendUntilMs == 0) return;
-  if (millis() >= pairResendUntilMs) {
-    pairResendUntilMs = 0;
-    Serial.println("[ESP-NOW] pairing window closed");
-    return;
+  if (boardRole != BoardRole::LOGIC_BOARD || !scannerPeerConfigured) return;
+  // Only beacon once WiFi is connected, so the channel we advertise is the stable AP
+  // channel the scanner must lock onto (not the transient boot-time channel).
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (scannerLinkAlive()) return;  // packets flowing — already paired & healthy
+  // Beacon faster than the scanner's per-channel dwell so a beacon is guaranteed to land
+  // while the scanner is sitting on our channel during its sweep.
+  if (millis() - lastPairSendMs >= 200) sendPairMessage();
+}
+
+void serviceScannerFallback() {
+  if (boardRole != BoardRole::LOGIC_BOARD) return;
+
+  if (!localScanFallbackActive) {
+    unsigned long silentFor = lastScannerPacketMs ? (millis() - lastScannerPacketMs) : millis();
+    if (silentFor > SCANNER_ABSENT_MS) {
+      Serial.println("[Fallback] Scanner silent — starting local BLE scan on logic board");
+      startBLEScan();
+      localScanFallbackActive = true;
+    }
+  } else if (scannerLinkAlive()) {
+    Serial.println("[Fallback] Scanner back online — stopping local BLE scan");
+    NimBLEDevice::getScan()->stop();
+    localScanFallbackActive = false;
   }
-  if (millis() - lastPairSendMs >= 250) sendPairMessage();
 }
 
 void payloadTransportInit() {
