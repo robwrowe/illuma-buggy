@@ -18,7 +18,7 @@ Same as StrollerController on this hardware:
 
 ## Pairing
 
-1. Flash scanner node — it advertises as `IllumaScanner-unpaired` until paired.
+1. Flash scanner node — it advertises as `IllumaScan` (manufacturer data `49 53` + MAC) until paired.
 2. On logic board (Dual-Board mode): use app discovery or `set_scanner_mac` with scanner MAC.
 3. Logic board sends reflected ESP-NOW pair message; scanner stores `pairedLogicMac` and stops advertising.
 

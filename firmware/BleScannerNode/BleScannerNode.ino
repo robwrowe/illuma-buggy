@@ -3,7 +3,7 @@
  * Filters + decodes packets, forwards ParsedDisneyPacket to logic board via ESP-NOW.
  *
  * Pairing:
- *   - Unpaired: advertises as IllumaScanner-unpaired (manufacturer data includes MAC)
+ *   - Unpaired: advertises as IllumaScan (manufacturer data includes MAC)
  *   - App sets scanner MAC on logic board → reflected ESP-NOW pair closes the loop
  *   - Manual fallback: serial `pair AA:BB:CC:DD:EE:FF`
  */
@@ -32,12 +32,19 @@ void setup() {
   }
   prefs.end();
 
+  // Lower BLE TX power before the radio comes up — reduces the current spike that
+  // trips the brownout detector on marginal USB power. -3 dBm is plenty co-located.
   NimBLEDevice::init("IllumaScanner");
-  delay(200);
+  NimBLEDevice::setPower(-3);
+  delay(300);
 
+  // Stagger radio bring-up so BLE + WiFi(STA) init spikes don't stack.
   scannerTransportInit();
+  delay(300);
+
   if (!logicPeerConfigured) {
     scannerAdvertiseInit();
+    delay(150);
   }
 
   startBLEScan();

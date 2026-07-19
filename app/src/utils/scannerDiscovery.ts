@@ -4,7 +4,7 @@ import base64 from 'base64-js';
 /** Matches firmware Config.h SCANNER_MFR_MAGIC_* + 6-byte MAC */
 export const SCANNER_MFR_MAGIC_0 = 0x49;
 export const SCANNER_MFR_MAGIC_1 = 0x53;
-export const SCANNER_UNPAIRED_NAME = 'IllumaScanner-unpaired';
+export const SCANNER_UNPAIRED_NAME = 'IllumaScan';
 
 export interface DiscoveredScanner {
   mac: string;

@@ -696,7 +696,7 @@ export default function SettingsScreen() {
               style={{ maxHeight: 280 }}
               ListEmptyComponent={
                 <Text style={[s.rowHint, { paddingVertical: 16, textAlign: 'center' }]}>
-                  {scannerScanning ? 'Listening for IllumaScanner-unpaired…' : 'No scanners found'}
+                  {scannerScanning ? 'Listening for unpaired scanners…' : 'No scanners found'}
                 </Text>
               }
               renderItem={({ item }) => (
