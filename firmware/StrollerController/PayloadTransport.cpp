@@ -65,26 +65,32 @@ static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len) {
   if (!data || len <= 0) return;
 
-  // Reflected pairing is scanner-side; logic board only receives ParsedDisneyPacket.
+  const char* typeLabel = "other";
+  if (len == (int)sizeof(ParsedDisneyPacket)) typeLabel = "scan";
+  else if (len == (int)sizeof(EspNowPairMsg)) typeLabel = "pair";
+
+  // Reflected pairing is scanner-side; logic board only accepts ParsedDisneyPacket.
   if (len == (int)sizeof(ParsedDisneyPacket)) {
     ParsedDisneyPacket pkt;
     memcpy(&pkt, data, sizeof(pkt));
     lastScannerPacketMs = millis();
     espNowRxCount++;
-    // Positive proof the packet came over ESP-NOW (scanner) rather than local BLE.
-    if (bleScanLogEnabled) {
-      Serial.printf("[ESP-NOW] rx #%lu kind=%u op=0x%04X raw=%u from %s\n",
-                    (unsigned long)espNowRxCount, (unsigned)pkt.kind,
-                    (unsigned)pkt.opcode, (unsigned)pkt.rawLen,
-                    mac ? transportMacToString(mac).c_str() : "?");
+    // Always log early packets + periodic thereafter (proof scanner→logic path is alive).
+    if (espNowRxCount <= 40 || (espNowRxCount % 25) == 0) {
+      Serial.printf("[ESP-NOW] recv from %s: len=%d type=%s rx=#%lu kind=%u op=0x%04X\n",
+                    mac ? transportMacToString(mac).c_str() : "?",
+                    len, typeLabel, (unsigned long)espNowRxCount,
+                    (unsigned)pkt.kind, (unsigned)pkt.opcode);
     }
     queueParsedPacket(pkt);
     return;
   }
 
   espNowRxRejected++;
-  Serial.printf("[ESP-NOW] Ignoring len=%d (expected %u)\n",
-                len, (unsigned)sizeof(ParsedDisneyPacket));
+  Serial.printf("[ESP-NOW] recv from %s: len=%d type=%s — ignored (expected %u) rejected=%lu\n",
+                mac ? transportMacToString(mac).c_str() : "?",
+                len, typeLabel, (unsigned)sizeof(ParsedDisneyPacket),
+                (unsigned long)espNowRxRejected);
 }
 
 static bool ensureEspNowPeer(const uint8_t mac[6]) {
@@ -160,8 +166,12 @@ void serviceScannerFallback() {
   if (boardRole != BoardRole::LOGIC_BOARD) return;
 
   if (!localScanFallbackActive) {
-    unsigned long silentFor = lastScannerPacketMs ? (millis() - lastScannerPacketMs) : millis();
+    unsigned long now = millis();
+    unsigned long silentFor = lastScannerPacketMs ? (now - lastScannerPacketMs) : now;
     if (silentFor > SCANNER_ABSENT_MS) {
+      Serial.printf("[Fallback] lastScanPacketMs=%lu now=%lu delta=%lu threshold=%lu\n",
+                    (unsigned long)lastScannerPacketMs, (unsigned long)now,
+                    (unsigned long)silentFor, (unsigned long)SCANNER_ABSENT_MS);
       Serial.println("[Fallback] Scanner silent — starting local BLE scan on logic board");
       startBLEScan();
       localScanFallbackActive = true;
@@ -188,6 +198,9 @@ void payloadTransportInit() {
   // any init done here would be dead by the time we need it. transportEnsureEspNow() is
   // (re)called after every successful WiFi connect instead.
   Serial.println("[ESP-NOW] LOGIC_BOARD — ESP-NOW inits after WiFi connects");
+  Serial.printf("[Fallback] SCANNER_ABSENT_MS=%lu SCANNER_ALIVE_MS=%lu "
+                "(local scan starts only after absent window with no ESP-NOW scan packets)\n",
+                (unsigned long)SCANNER_ABSENT_MS, (unsigned long)SCANNER_ALIVE_MS);
 }
 
 void transportEnsureEspNow() {

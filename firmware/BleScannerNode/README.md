@@ -30,6 +30,19 @@ channel (STA); the scanner has no AP, so it locks onto the channel from the pair
 restores it on boot. Caveat: if the AP uses auto-channel and later changes, re-pair (or pin
 the AP to a fixed channel).
 
+### Scanner-alive keepalives
+
+Classified Disney packets (`MB+`, wand casts, etc.) are always forwarded. Unclassified frames
+tagged `[Scan:DISNEY]` / `PING` / `WAND-IDLE` decode as `UNKNOWN` — these are still forwarded
+(rate-limited ~2s) with raw payload so the logic board's scanner-alive watchdog advances.
+Without that, pairing beacons alone leave `lastScannerPacketMs` at 0 and the logic board
+falls back to local BLE scan (re-introducing NimBLE contention).
+
+Healthy session serial cues:
+
+- Scanner: `[ESP-NOW] forwarding scan packet #N …` then `send cb: SUCCESS`
+- Logic: `[ESP-NOW] recv from … type=scan` — **no** `[Fallback] Scanner silent`
+
 Manual fallback on scanner serial @ 115200 (note: manual `pair` does not carry a channel —
 use app discovery so the channel is synced):
 

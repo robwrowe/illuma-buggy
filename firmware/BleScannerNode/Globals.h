@@ -23,3 +23,6 @@ extern uint8_t pairedChannel;
 
 extern uint32_t espNowSendOk;
 extern uint32_t espNowSendFail;
+extern uint32_t espNowSendCbOk;    // ESP_NOW_SEND_SUCCESS from send callback
+extern uint32_t espNowSendCbFail;  // ESP_NOW_SEND_FAIL from send callback
+extern uint32_t espNowTxSeq;       // packets attempted (pre-queue)

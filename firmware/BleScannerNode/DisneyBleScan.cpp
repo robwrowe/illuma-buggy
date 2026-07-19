@@ -4,8 +4,10 @@
 #include "MbPacketDecode.h"
 #include "ScannerPayloadTransport.h"
 #include "DebugLog.h"
+#include "Config.h"
 #include <NimBLEDevice.h>
 #include <string>
+#include <string.h>
 
 class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
   void onResult(const NimBLEAdvertisedDevice* device) {
@@ -33,7 +35,24 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     if (plen == 0) return;
 
     ParsedDisneyPacket pkt = decodeDisneyPayload(payload, plen, millis());
-    if (pkt.kind == DisneyPacketKind::UNKNOWN) return;
+    // UNKNOWN frames (tag DISNEY / PING / WAND-IDLE) used to be dropped here. That left
+    // the logic board's scanner-alive watchdog with lastScannerPacketMs==0 forever while
+    // this node happily logged [Scan:DISNEY] — triggering local BLE scan fallback and
+    // re-introducing NimBLE peripheral+observer contention. Forward them as keepalives
+    // (raw populated); applyParsedDisneyPacket no-ops on UNKNOWN on the logic board.
+    if (pkt.kind == DisneyPacketKind::UNKNOWN) {
+      if (pkt.rawLen == 0 && plen > 0) {
+        size_t n = plen < PARSED_PACKET_RAW_MAX ? plen : PARSED_PACKET_RAW_MAX;
+        memcpy(pkt.rawPayload, payload, n);
+        pkt.rawLen = (uint8_t)n;
+        pkt.hasRawFallback = 1;
+      }
+      // Rate-limit identical idle/ping/unclassified Disney so ESP-NOW isn't flooded;
+      // ABSENT watchdog is 20s — 2s keepalives leave plenty of headroom.
+      static unsigned long lastUnknownFwdMs = 0;
+      if (!isNew && (millis() - lastUnknownFwdMs) < 2000) return;
+      lastUnknownFwdMs = millis();
+    }
     scannerTransportSend(pkt);
   }
 };

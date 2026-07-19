@@ -3,6 +3,7 @@
 #include "ScannerAdvertise.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <esp_idf_version.h>
 #include <WiFi.h>
 #include <string.h>
 
@@ -104,6 +105,30 @@ static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 }
 #endif
 
+static void logSendCb(esp_now_send_status_t status) {
+  if (status == ESP_NOW_SEND_SUCCESS) espNowSendCbOk++;
+  else espNowSendCbFail++;
+  // Verbose for the first packets, then periodic — avoids serial flood during capture.
+  if (espNowTxSeq <= 40 || (espNowTxSeq % 25) == 0 || status != ESP_NOW_SEND_SUCCESS) {
+    Serial.printf("[ESP-NOW] send cb: %s for packet #%lu (cb ok/fail=%lu/%lu)\n",
+                  status == ESP_NOW_SEND_SUCCESS ? "SUCCESS" : "FAIL",
+                  (unsigned long)espNowTxSeq,
+                  (unsigned long)espNowSendCbOk, (unsigned long)espNowSendCbFail);
+  }
+}
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+static void onEspNowSend(const esp_now_send_info_t* info, esp_now_send_status_t status) {
+  (void)info;
+  logSendCb(status);
+}
+#else
+static void onEspNowSend(const uint8_t* mac, esp_now_send_status_t status) {
+  (void)mac;
+  logSendCb(status);
+}
+#endif
+
 void scannerTransportInit() {
   static_assert(sizeof(ParsedDisneyPacket) <= 250, "ParsedDisneyPacket exceeds ESP-NOW cap");
   Serial.printf("[Transport] ParsedDisneyPacket sizeof=%u\n", (unsigned)sizeof(ParsedDisneyPacket));
@@ -116,6 +141,7 @@ void scannerTransportInit() {
     Serial.printf("[ESP-NOW] init result: %d\n", (int)err);
   }
   esp_now_register_recv_cb(onEspNowRecv);
+  esp_now_register_send_cb(onEspNowSend);
 
   if (logicPeerConfigured) {
     if (pairedChannel >= 1 && pairedChannel <= 14) lockChannel(pairedChannel);
@@ -128,18 +154,27 @@ void scannerTransportInit() {
 }
 
 void scannerTransportSend(const ParsedDisneyPacket& pkt) {
-  if (!logicPeerConfigured) return;
-  esp_err_t err = esp_now_send(pairedLogicMac, (const uint8_t*)&pkt, sizeof(pkt));
-  // NOTE: ESP_OK means the frame was queued for TX, not that the logic board
-  // received it. Compare this ok count against the logic board's [ESP-NOW] rx
-  // count (serial `status`) to gauge over-the-air delivery.
-  if (err == ESP_OK) espNowSendOk++;
-  else espNowSendFail++;
-  if (bleScanLogEnabled) {
-    Serial.printf("[ESP-NOW] tx kind=%u op=0x%04X -> %s (%s, ok/fail=%lu/%lu)\n",
-                  (unsigned)pkt.kind, (unsigned)pkt.opcode,
+  if (!logicPeerConfigured) {
+    Serial.println("[ESP-NOW] skip forward — not paired");
+    return;
+  }
+  if (!ensureEspNowPeer(pairedLogicMac)) return;
+
+  espNowTxSeq++;
+  if (espNowTxSeq <= 40 || (espNowTxSeq % 25) == 0) {
+    Serial.printf("[ESP-NOW] forwarding scan packet #%lu to %s (len=%u kind=%u op=0x%04X)\n",
+                  (unsigned long)espNowTxSeq,
                   scannerMacToString(pairedLogicMac).c_str(),
-                  err == ESP_OK ? "queued" : "ERR",
-                  (unsigned long)espNowSendOk, (unsigned long)espNowSendFail);
+                  (unsigned)sizeof(pkt),
+                  (unsigned)pkt.kind, (unsigned)pkt.opcode);
+  }
+
+  esp_err_t err = esp_now_send(pairedLogicMac, (const uint8_t*)&pkt, sizeof(pkt));
+  // ESP_OK means queued for TX — delivery confirmed (or not) in onEspNowSend.
+  if (err == ESP_OK) espNowSendOk++;
+  else {
+    espNowSendFail++;
+    Serial.printf("[ESP-NOW] esp_now_send ERR %d (queued ok/fail=%lu/%lu)\n",
+                  (int)err, (unsigned long)espNowSendOk, (unsigned long)espNowSendFail);
   }
 }
