@@ -119,6 +119,8 @@ export function computeBoardConfigFingerprint(input: {
   starlightEnabled: boolean;
   magicBandEnabled: boolean;
   bleEffectTransitionMs: number;
+  boardRole: string;
+  scannerMac: string;
 }): string {
   const payload = JSON.stringify({
     presetKeys: input.presets.map(p => `${p.id}:${p.createdAt}`).sort(),
@@ -129,6 +131,8 @@ export function computeBoardConfigFingerprint(input: {
     sw: input.starlightEnabled,
     mb: input.magicBandEnabled,
     bleMs: input.bleEffectTransitionMs,
+    role: input.boardRole,
+    scanner: input.scannerMac,
   });
   let h = 5381;
   for (let i = 0; i < payload.length; i++) {

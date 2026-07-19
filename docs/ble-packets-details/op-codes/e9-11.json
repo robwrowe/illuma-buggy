@@ -1,0 +1,392 @@
+[
+  {
+    "id": "mr9zg9zc7ca5",
+    "ts": 1783388474760,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100440f514258f44882d146050fd06500b0",
+    "origBytes": "e100e91100440f514258f44882d146050fd06500b0",
+    "tag": "unknown",
+    "note": "inner / outer\n\ncan't tell if its fading between three colors (yellow > white > blue > white > yellow) or two (yellow > blue > yellow).\n\n~3s cycle, ~12 total"
+  },
+  {
+    "id": "mr9zd1zp0s88",
+    "ts": 1783388324437,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100070f555d58f44882d1460508d06500b0",
+    "origBytes": "e100e91100070f555d58f44882d1460508d06500b0",
+    "tag": "unknown",
+    "note": "~11s total, ~1.5s cycle.\ninner / outer, red/off. fades back and forth."
+  },
+  {
+    "id": "mr9zb7ct3msp",
+    "ts": 1783388238077,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100010f5a475bf03134374894d13d0507b0",
+    "origBytes": "e100e91100010f5a475bf03134374894d13d0507b0",
+    "tag": "unknown",
+    "note": "~1.5s total, inner (green), outer (purple). heartbeat pulses twice in unison"
+  },
+  {
+    "id": "mr9z9vrgfgvf",
+    "ts": 1783388176396,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e911004f0f4f5558f44882d146022ad06501b0",
+    "origBytes": "e200e911004f0f4f5558f44882d146022ad06501b0",
+    "tag": "unknown",
+    "note": "inner / outer. inner is blood orange, outer is orange/light orange.\n\ncolor slowly fades to opposite, then cuts to normal.\n\n~3s cycle, ~46s total"
+  },
+  {
+    "id": "mr9z5hfm6d8m",
+    "ts": 1783387971202,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e911000f0f485958f44882d146020dd06505b0",
+    "origBytes": "e100e911000f0f485958f44882d146020dd06505b0",
+    "tag": "unknown",
+    "note": "~1.5s cycle. outer green, inner pink. ~23.5s total"
+  },
+  {
+    "id": "mr9z3gw9p86a",
+    "ts": 1783387877193,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e911004f0f444f58f44882d1460607d06543b0",
+    "origBytes": "e200e911004f0f444f58f44882d1460607d06543b0",
+    "tag": "unknown",
+    "note": "Can't tell if its yellow, blue, and white or just yellow & blue. Alternating corners\n\nColor cuts on, then fades (to white?), then switches to the other color and fades. ~45s total"
+  },
+  {
+    "id": "mr9yzrahafm2",
+    "ts": 1783387704041,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e911006f0f564858f44882d1460208d06500b0",
+    "origBytes": "e100e911006f0f564858f44882d1460208d06500b0",
+    "tag": "unknown",
+    "note": "inner / outer, purple/pink & cyan, fade back-and-forth. ~47s"
+  },
+  {
+    "id": "mr9xlyu9of60",
+    "ts": 1783385381025,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e911006f0f445b58f44882d1460609d06543b0",
+    "origBytes": "e100e911006f0f445b58f44882d1460609d06543b0",
+    "tag": "unknown",
+    "note": "slow switch between two colors, hard cuts"
+  },
+  {
+    "id": "mr9pkxrqcimu",
+    "ts": 1783371896054,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91100680f534d58f44882d146050fd06500ba",
+    "origBytes": "e200e91100680f534d58f44882d146050fd06500ba",
+    "tag": "e9_11",
+    "note": "Very slow cross-fade between two colors (yellow / pink)"
+  },
+  {
+    "id": "mr9pkarb25qh",
+    "ts": 1783371866231,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91100540f534d58f44882d146050fd06500b0",
+    "origBytes": "e200e91100540f534d58f44882d146050fd06500b0",
+    "tag": "e9_11",
+    "note": "Slow cross-fade between two colors inner/outer (yellow / pink)"
+  },
+  {
+    "id": "mr9pjsshricz",
+    "ts": 1783371842945,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91100020f5d555bf03134374894d13d0507b0",
+    "origBytes": "e200e91100020f5d555bf03134374894d13d0507b0",
+    "tag": "e9_11",
+    "note": "quick pulse flash (inner) x2, wait a beat, quick pulse flash (inner) x2, end. red."
+  },
+  {
+    "id": "mr9pilx5vhio",
+    "ts": 1783371787385,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100560f555d58f44882d146050fd06500b0",
+    "origBytes": "e100e91100560f555d58f44882d146050fd06500b0",
+    "tag": "e9_11",
+    "note": "ping-pong fade in/out on inner/outer. all red."
+  },
+  {
+    "id": "mr9phzzfatv4",
+    "ts": 1783371758955,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100560f534d58f44882d146050fd06500ba",
+    "origBytes": "e100e91100560f534d58f44882d146050fd06500ba",
+    "tag": "e9_11",
+    "note": "Cross fade between two colors (pink / yellow). Inner/outer."
+  },
+  {
+    "id": "mr9phbyjhjfm",
+    "ts": 1783371727819,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100480f43485bf0403f374894d13d051eb0",
+    "origBytes": "e100e91100480f43485bf0403f374894d13d051eb0",
+    "tag": "e9_11",
+    "note": "inner / outer (blue / pink), slowly fades in-out"
+  },
+  {
+    "id": "mr9pgc2k1bij",
+    "ts": 1783371681308,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100440f5b5d58f44882d146050fd06500b0",
+    "origBytes": "e100e91100440f5b5d58f44882d146050fd06500b0",
+    "tag": "e9_11",
+    "note": "inner / outer fade, one color. outer fades on, inner fades out; outer fades out, inner fades on. white-ish."
+  },
+  {
+    "id": "mr9ped0el9wb",
+    "ts": 1783371589214,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100440f475558f44882d1460607d06536b0",
+    "origBytes": "e100e91100440f475558f44882d1460607d06536b0",
+    "tag": "e9_11",
+    "note": "Two colors (may be three), seems to cut on and then fade. Red/pink."
+  },
+  {
+    "id": "mr9pdny71xhv",
+    "ts": 1783371556735,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91100020f5d555bf03134374894d13d0507b0",
+    "origBytes": "e100e91100020f5d555bf03134374894d13d0507b0",
+    "tag": "e9_11",
+    "note": "Outer pulse twice, wait, pulse twice. Red."
+  },
+  {
+    "id": "mr9pd0rgwrhg",
+    "ts": 1783371526684,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e91100020f5d555bf03134374894d13d0507b0",
+    "origBytes": "e100e91100020f5d555bf03134374894d13d0507b0",
+    "tag": "e9_10",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mr9nznfc8j2l",
+    "ts": 1783369223256,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91100540f445558f44882d146050fd06500b0",
+    "origBytes": "e200e91100540f445558f44882d146050fd06500b0",
+    "tag": "e9_11",
+    "note": "Inner / Outer cross fade between red & blue"
+  },
+  {
+    "id": "mr9nywjxe3ul",
+    "ts": 1783369188429,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e911006f0f445b58f44882d1460609d06543b0",
+    "origBytes": "e200e911006f0f445b58f44882d1460609d06543b0",
+    "tag": "e9_11",
+    "note": "Ligthing-esque changing colors. Seems like 2 but may be 3 colors."
+  },
+  {
+    "id": "mr9ny4nh0azu",
+    "ts": 1783369152269,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91100af0f5b5d58f44882d146052bd06538b0",
+    "origBytes": "e200e91100af0f5b5d58f44882d146052bd06538b0",
+    "tag": "e9_11",
+    "note": "Slow twinkle"
+  },
+  {
+    "id": "mr9nx4yfi7e7",
+    "ts": 1783369106007,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e911002a0f5d5358f44882d1460602d06543b0",
+    "origBytes": "e200e911002a0f5d5358f44882d1460602d06543b0",
+    "tag": "e9_11",
+    "note": "Burst via /show: 10 reps, 100ms dwell.\n\nThree colors, seems to pulse/strobe randomly. doesn't go to black."
+  },
+  {
+    "id": "mr9nwiuapx8o",
+    "ts": 1783369077346,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e911002a0f5d5358f44882d1460602d06543b0",
+    "origBytes": "e200e911002a0f5d5358f44882d1460602d06543b0",
+    "tag": "e9_11",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mr9nvxcth3sr",
+    "ts": 1783369049501,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e911008f0f535c58f44882d1460207d06558b0",
+    "origBytes": "e100e911008f0f535c58f44882d1460207d06558b0",
+    "tag": "e9_11",
+    "note": "Three colors, seems to be a random pulse, not sure what the consistency is"
+  },
+  {
+    "id": "mr9nvgwf3z5k",
+    "ts": 1783369028175,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e911008f0f535c58f44882d1460207d06558b0",
+    "origBytes": "e100e911008f0f535c58f44882d1460207d06558b0",
+    "tag": "e9_11",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mr9ntx90zvgq",
+    "ts": 1783368956052,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e911002f0f444f58f44882d146090dd06519b0",
+    "origBytes": "e200e911002f0f444f58f44882d146090dd06519b0",
+    "tag": "e9_11",
+    "note": "Three colors. Wand pulses up; magic band goes in a circle chase."
+  },
+  {
+    "id": "mr9nt4f9vyx2",
+    "ts": 1783368918693,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e911006f0f404b58f44882d146020cd06519b0",
+    "origBytes": "e200e911006f0f404b58f44882d146020cd06519b0",
+    "tag": "e9_11",
+    "note": "MB Chase in a circle; wand ping-pongs pink with trailing two-colors (three colors total). goes on for a long time"
+  },
+  {
+    "id": "mr9mzlndu1o8",
+    "ts": 1783367541337,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e91100540f445558f44882d146050fd06500b0",
+    "origBytes": "e200e91100540f445558f44882d146050fd06500b0",
+    "tag": "unknown",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mrp3fxw314ma",
+    "ts": 1784302170195,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911006f0f445b58f44882d1460609d06543b0",
+    "origBytes": "e911006f0f445b58f44882d1460609d06543b0",
+    "tag": "unknown",
+    "note": "~3s cycle time\nblue & white\nseems to be a shimmer\nsegments alternate, either blue cuts on then fades to white, or white cuts on then fades to blue\n~50s total time"
+  },
+  {
+    "id": "mrp3e7t03u6h",
+    "ts": 1784302089732,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91100af0f5b5d58f44882d146052bd06538b0",
+    "origBytes": "e91100af0f5b5d58f44882d146052bd06538b0",
+    "tag": "unknown",
+    "note": "~3.5-4s cycle time\nWhite & off\nSlow shimmer/fading, seems to be sporadic (although maybe its a pattern i can't figure out)\n~117s total run time"
+  },
+  {
+    "id": "mrp3840j1lg7",
+    "ts": 1784301804883,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911000f0f444f58f44882d146060ad06543b0",
+    "origBytes": "e911000f0f444f58f44882d146060ad06543b0",
+    "tag": "unknown",
+    "note": "~1.5s cycle time\nyellow > off white > blue\n~26s total time\nUR + BL paired together (slight offset), UL + BR paired together (slight timing offset)\nCenter seems to be synced with both pairings (it changes color when either pairing is adjusted)"
+  },
+  {
+    "id": "mrp34lv332kl",
+    "ts": 1784301641391,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911002f0f594758f44882d146090dd06519b0",
+    "origBytes": "e911002f0f594758f44882d146090dd06519b0",
+    "tag": "unknown",
+    "note": "~1.5s cycle time\n~27s total time\nColors progress UR > BR > BL > UL\nGreen to teal to purple\nCenter LED seems to fade over the full cycle time between the three colors"
+  },
+  {
+    "id": "mrp32myoinvl",
+    "ts": 1784301549504,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911000f0f515558f44882d146023ed06505b0",
+    "origBytes": "e911000f0f515558f44882d146023ed06505b0",
+    "tag": "unknown",
+    "note": "Total time ~26s\nFade time ~1.5s\ninner/outer\ntwo orange colors"
+  },
+  {
+    "id": "mrp2vkzinug0",
+    "ts": 1784301220350,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911006f0f564858f44882d1460208d06500b0",
+    "origBytes": "e911006f0f564858f44882d1460208d06500b0",
+    "tag": "unknown",
+    "note": "inner/outer cross fade\n~1.5s cross fade\nteal & purple\n~49s total time"
+  },
+  {
+    "id": "mrp2ty2f0wmy",
+    "ts": 1784301143992,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911000f0f485958f44882d146020dd06505b0",
+    "origBytes": "e911000f0f485958f44882d146020dd06505b0",
+    "tag": "unknown",
+    "note": "~1.5s cross fade\ngreen & purple (maybe white too, or could be cross fade color)\nSeems like an inner/outer cross fade\n~26s total time\ncuts off (no fade out)"
+  },
+  {
+    "id": "mrp2ru4dssin",
+    "ts": 1784301045565,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911000f0f545158f44882d146020dd06505b0",
+    "origBytes": "e911000f0f545158f44882d146020dd06505b0",
+    "tag": "unknown",
+    "note": "fire-ish effect\nyellow & orange\n~25s total run time\n~1.5s cross fade time\nsmooth cross fade back & forth"
+  },
+  {
+    "id": "mrp2q9xl35u5",
+    "ts": 1784300972745,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e911004f0f444f58f44882d1460607d06543b0",
+    "origBytes": "e911004f0f444f58f44882d1460607d06543b0",
+    "tag": "unknown",
+    "note": "Cross fade: 1.5s\nThree colors: blue, yellow, white\nSeems to have UL, BR, & center fade in quick succession, pause, UR + BL then fade in quick succession.\nTotal time: ~50s"
+  },
+  {
+    "id": "mrqwq1a88xaw",
+    "ts": 1784411816192,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91100c10fa2b2b9acb530d037f4d246001978",
+    "origBytes": "e200e91100c10fa2b2b9acb530d037f4d246001978",
+    "tag": "unknown",
+    "note": "Cycle ~2.5s\nTotal ~15s\nFive unique colors\nUL > BL > BR > UR > Center, repeat"
+  },
+  {
+    "id": "mrqwnn2vavjc",
+    "ts": 1784411704471,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e911001f0fbcbcbcbdbd30d037f4d246006464",
+    "origBytes": "e200e911001f0fbcbcbcbdbd30d037f4d246006464",
+    "tag": "unknown",
+    "note": "All White\n~24s\nCounter-clockwise Circle animation\nCenter flashes 0.5s on, 0.5s off\nOuter seems to be on a ~0.75s interval"
+  } 
+]

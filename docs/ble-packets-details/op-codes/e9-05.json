@@ -1,0 +1,32 @@
+[
+  {
+    "id": "mr9myqbrb4re",
+    "ts": 1783367500743,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e90500120ef5bb",
+    "origBytes": "e200e90500120ef5bb",
+    "tag": "unknown",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mr9mymjb4qit",
+    "ts": 1783367495831,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e90500120ef5bb",
+    "origBytes": "e200e90500120ef5bb",
+    "tag": "unknown",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mr9myifuvn6h",
+    "ts": 1783367490522,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e90500120ef5bb",
+    "origBytes": "e200e90500120ef5bb",
+    "tag": "unknown",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  }
+]

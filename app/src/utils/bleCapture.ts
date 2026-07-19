@@ -22,6 +22,8 @@ export interface BleCapturePacket {
   lat?: number;
   lng?: number;
   accuracyM?: number;
+  /** Wall-clock time when the attached GPS fix was refreshed. */
+  gpsUpdatedAt?: number;
 }
 
 export interface BleCaptureSession {
@@ -99,11 +101,14 @@ export function formatCaptureExport(session: BleCaptureSession): string {
     `# Ended:   ${new Date(session.endedAt).toISOString()}`,
     `# Packets: ${session.packets.length}`,
     `#`,
-    `# ts_ms\trssi\tdevice_id\tlat\tlng\taccuracy_m\ttag\thint\tquality\tfunc\thex\tnote`,
+    `# ts_ms\treceived_at\tgps_updated_at\tgps_age_ms\trssi\tdevice_id\tlat\tlng\taccuracy_m\ttag\thint\tquality\tfunc\thex\tnote`,
   ];
   for (const p of session.packets) {
+    const gpsAgeMs = p.gpsUpdatedAt != null
+      ? Math.max(0, p.receivedAt - p.gpsUpdatedAt)
+      : '';
     lines.push(
-      `${p.boardTs}\t${p.rssi}\t${p.deviceId ?? ''}\t${fmtCoord(p.lat)}\t${fmtCoord(p.lng)}\t${p.accuracyM != null && Number.isFinite(p.accuracyM) ? Math.round(p.accuracyM) : ''}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
+      `${p.boardTs}\t${p.receivedAt}\t${p.gpsUpdatedAt ?? ''}\t${gpsAgeMs}\t${p.rssi}\t${p.deviceId ?? ''}\t${fmtCoord(p.lat)}\t${fmtCoord(p.lng)}\t${p.accuracyM != null && Number.isFinite(p.accuracyM) ? Math.round(p.accuracyM) : ''}\t${p.tag}\t${describeBlePacket(p.tag, p.hex)}\t${p.quality ?? ''}\t${p.func ?? ''}\t${p.hex}\t${p.note ?? ''}`,
     );
   }
   return lines.join('\n');

@@ -245,7 +245,10 @@ export function reapplyCurrentZoneForced(reason: string) {
   applyZoneEntry(zone, true, reason);
 }
 
-export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean }) {
+export function processLocationUpdate(
+  pt: LatLng,
+  opts?: { background?: boolean; accuracyM?: number },
+) {
   const s = useAppStore.getState();
   const { zones, indoorZones, parks, brightnessConfig, zonesEnabled } = s;
   const src = opts?.background ? 'bg' : 'fg';
@@ -305,6 +308,18 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
     lastSolarDay = nowSolarDay;
   }
 
+  // Persist every fix before show-protection can short-circuit zone triggering.
+  // BLE captures commonly run during protected shows and still need live GPS.
+  void saveLocationRuntime({
+    userLocation: pt,
+    activeZoneIds: activeIds,
+    activePark: resolvedPark ?? s.activePark,
+    ...(opts?.accuracyM != null && Number.isFinite(opts.accuracyM)
+      ? { accuracyM: opts.accuracyM }
+      : {}),
+    updatedAt: Date.now(),
+  });
+
   const protectShow = isShowProtectingZones(activeIds);
 
   if (protectShow) {
@@ -321,12 +336,6 @@ export function processLocationUpdate(pt: LatLng, opts?: { background?: boolean 
   runZoneTriggerLogic(pt, zones, zonesEnabled, exitingShowProtection, src);
   flushPendingZoneIfConnected('gps-tick');
 
-  void saveLocationRuntime({
-    userLocation: pt,
-    activeZoneIds: activeIds,
-    activePark: resolvedPark ?? s.activePark,
-    updatedAt: Date.now(),
-  });
   void saveZoneRuntime({
     currentZoneId,
     lastZoneApply,

@@ -20,6 +20,42 @@ export const NOTIFY_CHAR_UUID = '12345678-1234-1234-1234-123456789abe';
 const BLE_RESTORE_STATE_ID    = 'IllumaBuggyBLE';
 
 const GATT_BUSY_ERROR_CODE = 4; // BleErrorCode.OperationStartFailed
+const GATT_ACTIVITY_LOG_MAX = 256;
+const NOTIFY_BURST_GAP_MS = 250;
+
+export interface GattActivityWindow {
+  start: number;
+  end: number;
+  kind: 'write' | 'notify';
+}
+
+/** Bounded in-memory diagnostic history for phone scan/GATT correlation. */
+export const gattActivityLog: GattActivityWindow[] = [];
+
+function beginGattActivity(kind: GattActivityWindow['kind'], at = Date.now()): GattActivityWindow {
+  const activity = { start: at, end: at, kind };
+  gattActivityLog.push(activity);
+  if (gattActivityLog.length > GATT_ACTIVITY_LOG_MAX) gattActivityLog.shift();
+  return activity;
+}
+
+function finishGattActivity(activity: GattActivityWindow): void {
+  activity.end = Date.now();
+}
+
+function recordGattNotification(): void {
+  const now = Date.now();
+  const last = gattActivityLog[gattActivityLog.length - 1];
+  if (last?.kind === 'notify' && now - last.end <= NOTIFY_BURST_GAP_MS) {
+    last.end = now;
+    return;
+  }
+  beginGattActivity('notify', now);
+}
+
+export function getGattActivitySince(since: number): GattActivityWindow[] {
+  return gattActivityLog.filter(activity => activity.end >= since);
+}
 
 function isGattBusy(e: unknown): boolean {
   const code = (e as { errorCode?: number })?.errorCode;
@@ -247,6 +283,7 @@ class BLEService {
 
   /** Try with-response first; fall back to WRITE_NR if the stack rejects the queued op. */
   private async writeCmd(device: Device, b64: string): Promise<void> {
+    const activity = beginGattActivity('write');
     const backgrounded = AppState.currentState !== 'active';
     // Android often never resolves GATT write promises while backgrounded — the native
     // write still goes out, but awaiting it stalls the send queue until foreground.
@@ -256,22 +293,27 @@ class BLEService {
         .writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64)
         .catch((e) => {
           if (!isGattBusy(e)) console.warn('[BLE] background NR write failed:', e);
-        });
+        })
+        .finally(() => finishGattActivity(activity));
       return;
     }
     try {
-      await device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
-      return;
-    } catch (e) {
-      if (!isGattBusy(e)) {
-        try {
-          await device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
-          return;
-        } catch (inner) {
-          throw inner;
+      try {
+        await device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+        return;
+      } catch (e) {
+        if (!isGattBusy(e)) {
+          try {
+            await device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+            return;
+          } catch (inner) {
+            throw inner;
+          }
         }
+        throw e;
       }
-      throw e;
+    } finally {
+      finishGattActivity(activity);
     }
   }
 
@@ -376,6 +418,12 @@ class BLEService {
     if (active && label) msg.label = label;
     return this.send(msg);
   }
+  sendBoardRole(role: 'standalone' | 'logic_board') {
+    return this.send({ type: 'set_board_role', role });
+  }
+  sendScannerMac(mac: string) {
+    return this.send({ type: 'set_scanner_mac', mac });
+  }
 
   private async requestPermissions(): Promise<void> {
     if (Platform.OS !== 'android') return;
@@ -472,7 +520,10 @@ class BLEService {
           console.error('[BLE] Notify error:', err);
           return;
         }
-        if (char?.value) this.handleNotification(char.value);
+        if (char?.value) {
+          recordGattNotification();
+          this.handleNotification(char.value);
+        }
       });
 
       // Brief pause so the notify subscription can finish enabling CCCD.

@@ -1,0 +1,52 @@
+[
+  {
+    "id": "mr9x87hpvh99",
+    "ts": 1783384739053,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e90900010fa4b5a4b5a4b0",
+    "origBytes": "e100e90900010fa4b5a4b5a4b0",
+    "tag": "e9_12",
+    "note": "Burst via /show: 10 reps, 2000ms dwell"
+  },
+  {
+    "id": "mr9n2uvq934i",
+    "ts": 1783367693270,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e90900010fb1bdbdb1b1b3",
+    "origBytes": "e100e90900010fb1bdbdb1b1b3",
+    "tag": "unknown",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mr9n2qg7lfwi",
+    "ts": 1783367687527,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e90900010fb1bdbdb1b1b3",
+    "origBytes": "e100e90900010fb1bdbdb1b1b3",
+    "tag": "unknown",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mr9e95s7fsu4",
+    "ts": 1783352870791,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90900130fbbb5a4a4b5b0",
+    "origBytes": "e200e90900130fbbb5a4a4b5b0",
+    "tag": "unknown",
+    "note": "TL & TR: Red\nBL & BR: Blue\nCenter: White"
+  },
+  {
+    "id": "mrqws1w4bgb5",
+    "ts": 1784411910292,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90900110fadadadbcbcb1",
+    "origBytes": "e200e90900110fadadadbcbcb1",
+    "tag": "unknown",
+    "note": "On for 1.5s, fade out 0.5s\nUL + BL, white\nUR + BR + Center, purple-pink\nSteady on"
+  }
+]

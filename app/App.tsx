@@ -299,8 +299,22 @@ export default function App() {
           wledIp: msg.wled_ip as string | undefined,
           wledPort: msg.wled_port as number | undefined,
           mbMappingLoaded: msg.mb_mapping_loaded as boolean | undefined,
+          boardRole: (msg.board_role as 'standalone' | 'logic_board' | undefined) ?? undefined,
+          scannerMac: msg.scanner_mac as string | undefined,
+          logicMac: msg.logic_mac as string | undefined,
+          scannerSeen: msg.scanner_seen as boolean | undefined,
+          scannerAgeMs: msg.scanner_age_ms as number | undefined,
         });
         if (override === 0) setOverrideDetail(null);
+        const role = msg.board_role as string | undefined;
+        if (role === "standalone" || role === "logic_board") {
+          const current = useAppStore.getState().boardRole;
+          if (current !== role) useAppStore.getState().setBoardRole(role);
+        }
+        const boardScannerMac = msg.scanner_mac as string | undefined;
+        if (boardScannerMac && boardScannerMac !== useAppStore.getState().scannerMac) {
+          useAppStore.getState().setScannerMac(boardScannerMac);
+        }
       }
     });
 

@@ -73,7 +73,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       require('../utils/zoneLocationCore') as typeof import('../utils/zoneLocationCore');
     processLocationUpdate(
       { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
-      { background: true },
+      { background: true, accuracyM: loc.coords.accuracy ?? undefined },
     );
   } catch (e: unknown) {
     console.warn('[LocationTask] handler failed:', e);

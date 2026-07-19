@@ -23,10 +23,12 @@ import { dismissStrollerNotification } from '../services/strollerNotification';
 
 export function useZoneManager() {
   const zonesEnabledRef = useRef(useAppStore.getState().zonesEnabled);
+  const captureLocationRef = useRef(useAppStore.getState().captureForcedLocationTracking);
 
   useEffect(() => {
     return useAppStore.subscribe((state) => {
       zonesEnabledRef.current = state.zonesEnabled;
+      captureLocationRef.current = state.captureForcedLocationTracking;
     });
   }, []);
 
@@ -148,7 +150,7 @@ export function useZoneManager() {
         );
         processLocationUpdate(
           { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
-          { background: srcBackground },
+          { background: srcBackground, accuracyM: loc.coords.accuracy ?? undefined },
         );
       } catch (e) {
         console.warn('[Location] lastKnown failed:', reason, e);
@@ -185,7 +187,7 @@ export function useZoneManager() {
         );
         processLocationUpdate(
           { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
-          { background: srcBackground },
+          { background: srcBackground, accuracyM: loc.coords.accuracy ?? undefined },
         );
       } catch (e) {
         console.warn('[Location] getCurrentPosition failed:', reason, e);
@@ -216,7 +218,7 @@ export function useZoneManager() {
           (loc) => {
             processLocationUpdate(
               { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
-              { background: false },
+              { background: false, accuracyM: loc.coords.accuracy ?? undefined },
             );
           },
         );
@@ -261,7 +263,10 @@ export function useZoneManager() {
 
     const startTracking = async (reason: string) => {
       const gen = ++trackingGeneration;
-      console.log('[Location] startTracking', reason, { zones: zonesEnabledRef.current });
+      console.log('[Location] startTracking', reason, {
+        zones: zonesEnabledRef.current,
+        capture: captureLocationRef.current,
+      });
 
       if (!(await ensureForegroundPermission())) {
         console.warn('[Location] startTracking paused — grant location while app is open');
@@ -300,8 +305,8 @@ export function useZoneManager() {
     };
 
     const syncWatchMode = async (reason: string) => {
-      if (!zonesEnabledRef.current) {
-        console.log('[Location] zones disabled — not tracking');
+      if (!zonesEnabledRef.current && !captureLocationRef.current) {
+        console.log('[Location] zones and capture disabled — not tracking');
         await stopTracking();
         return;
       }
@@ -335,7 +340,7 @@ export function useZoneManager() {
       persistAppVisibility(next);
       const gen = ++appStateGeneration;
       console.log('[Location] appState', prev, '→', next);
-      if (!zonesEnabledRef.current) return;
+      if (!zonesEnabledRef.current && !captureLocationRef.current) return;
 
       if (next === 'active') {
         stopDrainPoll();
@@ -388,11 +393,17 @@ export function useZoneManager() {
     });
 
     const storeSub = useAppStore.subscribe((state, prev) => {
-      if (state.zonesEnabled !== prev.zonesEnabled) {
-        void syncWatchMode('zones-toggle');
+      if (
+        state.zonesEnabled !== prev.zonesEnabled
+        || state.captureForcedLocationTracking !== prev.captureForcedLocationTracking
+      ) {
+        void syncWatchMode('location-consumer-toggle');
         return;
       }
-      if (state.locationPollSec !== prev.locationPollSec && zonesEnabledRef.current) {
+      if (
+        state.locationPollSec !== prev.locationPollSec
+        && (zonesEnabledRef.current || captureLocationRef.current)
+      ) {
         startPoll();
         if (AppState.currentState === 'active' && backgroundGranted) {
           void restartLocationTask().catch((e) => console.warn('[Location] task restart failed:', e));

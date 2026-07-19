@@ -22,8 +22,20 @@ export interface LocationRuntimeSnapshot {
   userLocation: LatLng;
   activeZoneIds: string[];
   activePark: ParkConfig | null;
+  accuracyM?: number;
   updatedAt: number;
 }
+
+export interface CaptureGpsFix {
+  latitude: number;
+  longitude: number;
+  accuracyM?: number;
+  updatedAt: number;
+}
+
+export const STALE_FIX_MAX_AGE_MS = 5 * 60_000;
+
+let lastLocationSnapshot: LocationRuntimeSnapshot | null = null;
 
 export interface ZoneRuntimeSnapshot {
   currentZoneId: string | null;
@@ -45,6 +57,9 @@ export interface AppVisibilitySnapshot {
 }
 
 export async function saveLocationRuntime(snapshot: LocationRuntimeSnapshot): Promise<void> {
+  // Keep capture packet tagging synchronous while AsyncStorage mirrors the fix
+  // for a future/headless JS context.
+  lastLocationSnapshot = snapshot;
   await AsyncStorage.setItem(LOCATION_RUNTIME_KEY, JSON.stringify(snapshot));
 }
 
@@ -52,10 +67,47 @@ export async function loadLocationRuntime(): Promise<LocationRuntimeSnapshot | n
   const raw = await AsyncStorage.getItem(LOCATION_RUNTIME_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as LocationRuntimeSnapshot;
+    const snapshot = JSON.parse(raw) as LocationRuntimeSnapshot;
+    lastLocationSnapshot = snapshot;
+    return snapshot;
   } catch {
     return null;
   }
+}
+
+/** Warm the synchronous capture-fix cache from the persisted background snapshot. */
+export async function primeLocationRuntimeCache(): Promise<void> {
+  await loadLocationRuntime();
+}
+
+/**
+ * Returns a fresh fix for BLE packet tagging without making the scan callback
+ * asynchronous. A live store coordinate is only used when the timestamped
+ * runtime snapshot proves that the location pipeline is still updating.
+ */
+export function getBestAvailableFixSync(
+  liveUserLocation: LatLng | null,
+  now = Date.now(),
+): CaptureGpsFix | null {
+  const snapshot = lastLocationSnapshot;
+  if (
+    !snapshot
+    || !Number.isFinite(snapshot.updatedAt)
+    || now - snapshot.updatedAt < 0
+    || now - snapshot.updatedAt >= STALE_FIX_MAX_AGE_MS
+  ) {
+    return null;
+  }
+
+  const point = liveUserLocation ?? snapshot.userLocation;
+  return {
+    latitude: point.latitude,
+    longitude: point.longitude,
+    ...(snapshot.accuracyM != null && Number.isFinite(snapshot.accuracyM)
+      ? { accuracyM: snapshot.accuracyM }
+      : {}),
+    updatedAt: snapshot.updatedAt,
+  };
 }
 
 export async function saveZoneRuntime(snapshot: ZoneRuntimeSnapshot): Promise<void> {

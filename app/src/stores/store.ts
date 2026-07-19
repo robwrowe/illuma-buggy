@@ -119,6 +119,8 @@ export interface BrightnessConfig {
   solarThresholdDeg: number;
 }
 
+export type BoardRoleMode = 'standalone' | 'logic_board';
+
 export interface DeviceStatus {
   override:           number;
   killOnZone:           boolean;
@@ -137,6 +139,11 @@ export interface DeviceStatus {
   wledIp?:              string;
   wledPort?:            number;
   mbMappingLoaded?:     boolean;
+  boardRole?:           BoardRoleMode;
+  scannerMac?:          string;
+  logicMac?:            string;
+  scannerSeen?:         boolean;
+  scannerAgeMs?:        number;
 }
 
 import {
@@ -151,10 +158,9 @@ import {
   MAX_CAPTURE_SESSIONS, MAX_PACKETS_PER_SESSION,
 } from '../utils/bleCapture';
 import {
-  getCaptureLocation,
-  startCaptureLocation,
-  stopCaptureLocation,
-} from '../utils/captureLocation';
+  getBestAvailableFixSync,
+  primeLocationRuntimeCache,
+} from '../utils/locationRuntimeBridge';
 import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
   finalizeWledSegmentPayload,
@@ -297,6 +303,10 @@ interface AppState {
   /** When off, the app never scans for or connects to the IllumaBuggy board. */
   boardConnectEnabled:   boolean;
   setBoardConnectEnabled:(val: boolean) => void;
+  boardRole:             BoardRoleMode;
+  setBoardRole:          (role: BoardRoleMode) => void;
+  scannerMac:            string;
+  setScannerMac:         (mac: string) => void;
 
   // Persistence
   loadFromStorage: () => Promise<void>;
@@ -353,12 +363,15 @@ interface AppState {
   bleCaptureBuffer:       BleCapturePacket[];
   bleCaptureSessions:     BleCaptureSession[];
   bleCaptureDraftName:    string;
+  /** Runtime-only: capture is borrowing the background location pipeline. */
+  captureForcedLocationTracking: boolean;
   captureSource:          'firmware' | 'phone';
   setCaptureSource:       (v: 'firmware' | 'phone') => void;
   setBleCaptureDurationSec: (sec: number) => void;
   setBleCaptureDraftName:   (name: string) => void;
   startBleCapture:          () => void;
   stopBleCapture:           (reason?: string) => void;
+  rolloverBleCapture:       () => void;
   appendBleCapturePacket:   (pkt: Omit<BleCapturePacket, 'receivedAt'>) => void;
   updateBleCapturePacketNote: (boardTs: number, hex: string, note: string) => void;
   deleteBleCaptureSession:  (id: string) => void;
@@ -496,6 +509,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   zonesEnabled:        true,
   syncMode:            'auto',
   boardConnectEnabled: true,
+  boardRole:           'standalone',
+  scannerMac:          '',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
   bleCaptureActive:       false,
   bleCaptureDurationSec:  900,
@@ -506,6 +521,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   bleCaptureBuffer:       [],
   bleCaptureSessions:     [],
   bleCaptureDraftName:    'Parade capture',
+  captureForcedLocationTracking: false,
   captureSource:          'firmware',
   parks:                  [],
   activePark:             null,
@@ -706,6 +722,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
   setSyncMode:           (val)          => { set({ syncMode: val }); get().saveToStorage(); },
   setBoardConnectEnabled:(val)          => { set({ boardConnectEnabled: val }); get().saveToStorage(); },
+  setBoardRole:          (role)         => { set({ boardRole: role }); get().saveToStorage(); },
+  setScannerMac:         (mac)          => set({ scannerMac: mac }),
 
   setCaptureSource:         (val) => set({ captureSource: val }),
   setBleCaptureDurationSec: (sec) => set({ bleCaptureDurationSec: sec }),
@@ -723,12 +741,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureSegment: 1,
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
+      captureForcedLocationTracking: true,
     });
-    void startCaptureLocation();
+    void primeLocationRuntimeCache();
   },
 
   stopBleCapture: (reason = 'manual') => {
-    stopCaptureLocation();
     const s = get();
     if (!s.bleCaptureActive && s.bleCaptureBuffer.length === 0) {
       set({
@@ -736,6 +754,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         bleCaptureStartedAt: null,
         bleCaptureEndsAt: null,
         bleCaptureSegment: 1,
+        captureForcedLocationTracking: false,
       });
       return;
     }
@@ -749,6 +768,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureSegment: 1,
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
+      captureForcedLocationTracking: false,
       bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
     });
     get().saveToStorage();
@@ -782,14 +802,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     const active = get();
     if (!active.bleCaptureActive) return;
-    const gps = getCaptureLocation() ?? active.userLocation;
+    const gps = getBestAvailableFixSync(active.userLocation);
     const entry: BleCapturePacket = {
       ...pkt,
       receivedAt: Date.now(),
       ...(gps ? {
         lat: gps.latitude,
         lng: gps.longitude,
-        ...('accuracyM' in gps && gps.accuracyM != null ? { accuracyM: gps.accuracyM } : {}),
+        ...(gps.accuracyM != null ? { accuracyM: gps.accuracyM } : {}),
+        gpsUpdatedAt: gps.updatedAt,
       } : {}),
     };
     const buf = [...active.bleCaptureBuffer, entry];
@@ -828,7 +849,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandFivePoint','magicBandTimeoutSec','bleEffectTransitionMs',
-                    'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','boardConnectEnabled','locationPollSec','mbMapping',
+                    'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','boardConnectEnabled',
+                    'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'customPalettes','savedColors','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
@@ -886,6 +908,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         zonesEnabled:       d.zonesEnabled       ?? true,
         syncMode:           d.syncMode           ?? 'auto',
         boardConnectEnabled:d.boardConnectEnabled ?? true,
+        boardRole:          (d.boardRole as BoardRoleMode) ?? 'standalone',
+        scannerMac:         (d.scannerMac as string) ?? '',
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
         mbMapping:          hydratedMbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
@@ -940,6 +964,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
         ['syncMode',           JSON.stringify(s.syncMode)],
         ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],
+        ['boardRole',           JSON.stringify(s.boardRole)],
+        ['scannerMac',          JSON.stringify(s.scannerMac)],
         ['locationPollSec',    JSON.stringify(s.locationPollSec)],
         ['mbMapping',          JSON.stringify(s.mbMapping)],
         ['recallState',        JSON.stringify(s.recallState)],
@@ -1049,6 +1075,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
       magicBandTimeoutSec:s.magicBandTimeoutSec,
       bleEffectTransitionMs: s.bleEffectTransitionMs,
+      boardRole:          s.boardRole,
+      scannerMac:         s.scannerMac,
       locationPollSec:    s.locationPollSec,
       mbMapping:          s.mbMapping,
       bleCaptureSessions: s.bleCaptureSessions,
@@ -1077,6 +1105,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandFivePoint: m.magicBandFivePoint ?? true,
       magicBandTimeoutSec:m.magicBandTimeoutSec ?? 15,
       bleEffectTransitionMs: m.bleEffectTransitionMs ?? 700,
+      boardRole:          (m.boardRole as BoardRoleMode) ?? 'standalone',
+      scannerMac:         (m.scannerMac as string) ?? '',
       locationPollSec:    m.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
       mbMapping:          normalizeMbMapping(m.mbMapping),
       bleCaptureSessions: m.bleCaptureSessions ?? data.bleCaptureSessions ?? [],

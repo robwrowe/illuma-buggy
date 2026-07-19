@@ -57,6 +57,10 @@ export type PhoneScanPacketHandler = (pkt: {
 
 let scanManager: BleManager | null = null;
 let scanActive = false;
+let lastPacketAt: number | null = null;
+let lastCallbackAt: number | null = null;
+let totalCallbackCount = 0;
+let callbackTimes: number[] = [];
 const listeners = new Set<PhoneScanPacketHandler>();
 
 /**
@@ -71,12 +75,23 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
   if (!scanActive) {
     if (!scanManager) scanManager = new BleManager();
     scanActive = true;
+    lastPacketAt = null;
+    lastCallbackAt = null;
+    totalCallbackCount = 0;
+    callbackTimes = [];
 
     scanManager.startDeviceScan(null, { allowDuplicates: true }, (error, device: Device | null) => {
       if (error) {
         console.warn('[PhoneBleScan] Scan error:', error);
+        scanActive = false;
         return;
       }
+      const callbackAt = Date.now();
+      lastCallbackAt = callbackAt;
+      totalCallbackCount++;
+      callbackTimes.push(callbackAt);
+      callbackTimes = callbackTimes.filter(at => callbackAt - at <= 10_000);
+
       if (!device?.manufacturerData) return;
       const raw = decodeManufacturerData(device.manufacturerData);
       if (raw.length === 0 || !isDisneyMfr(raw)) return;
@@ -84,6 +99,7 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
       const tag = classifyScanPacket(raw);
       const hex = raw.map(b => b.toString(16).padStart(2, '0')).join('');
       const pkt = { tag, rssi: device.rssi ?? 0, hex, len: raw.length, deviceId: device.id };
+      lastPacketAt = Date.now();
       for (const handler of listeners) handler(pkt);
     });
   }
@@ -96,12 +112,31 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
 
 /** Force-stops the scan immediately regardless of remaining listeners. */
 export function stopPhoneBleScan(): void {
-  if (!scanActive) return;
-  scanManager?.stopDeviceScan();
+  if (scanActive) scanManager?.stopDeviceScan();
   scanActive = false;
   listeners.clear();
 }
 
 export function isPhoneBleScanActive(): boolean {
   return scanActive;
+}
+
+export function getPhoneBleScanStatus(): { active: boolean; lastPacketAt: number | null } {
+  return { active: scanActive, lastPacketAt };
+}
+
+/** OS scan-callback health, including advertisements rejected by the Disney filter. */
+export function getPhoneBleScanHealth(): {
+  active: boolean;
+  lastCallbackAt: number | null;
+  totalCallbackCount: number;
+  callbacksLast10s: number;
+} {
+  const cutoff = Date.now() - 10_000;
+  return {
+    active: scanActive,
+    lastCallbackAt,
+    totalCallbackCount,
+    callbacksLast10s: callbackTimes.filter(at => at >= cutoff).length,
+  };
 }

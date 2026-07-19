@@ -14,6 +14,7 @@ import {
   resolveActiveLayoutIndex,
 } from './bleBoardSync';
 import { collectMappingPresetIds } from './mbConfig';
+import { normalizeScannerMacInput } from './scannerDiscovery';
 import {
   computeBoardConfigFingerprint,
   extractBoardPresetIds,
@@ -41,6 +42,8 @@ interface BoardStatusSnapshot {
   mbLayoutActive: number;
   mbLayoutCount: number;
   mbMappingLoaded: boolean;
+  boardRole: string;
+  scannerMac: string;
 }
 
 function waitForBleMessage(type: string, timeoutMs: number): Promise<string | void> {
@@ -73,6 +76,8 @@ function requestBoardStatus(timeoutMs = 8000): Promise<BoardStatusSnapshot | nul
         mbLayoutActive: Number(msg.mb_layout_active ?? 0),
         mbLayoutCount: Number(msg.mb_layout_count ?? 0),
         mbMappingLoaded: msg.mb_mapping_loaded !== false,
+        boardRole: String(msg.board_role ?? ''),
+        scannerMac: String(msg.scanner_mac ?? ''),
       });
     });
     void bleService.sendStatus();
@@ -103,7 +108,40 @@ function getFingerprint() {
     starlightEnabled: s.starlightEnabled,
     magicBandEnabled: s.magicBandEnabled,
     bleEffectTransitionMs: s.bleEffectTransitionMs,
+    boardRole: s.boardRole,
+    scannerMac: s.scannerMac,
   });
+}
+
+/**
+ * Push board role / scanner MAC only when the board's reported values diverge from
+ * the app. Idempotent — on a full sync runEssentialConfig already pushed them, so the
+ * fetched status matches and nothing is re-sent. On a quick reconnect this is the only
+ * thing that corrects a board that booted in the wrong role.
+ */
+async function reconcileBoardRole(
+  token: number,
+  status: BoardStatusSnapshot | null,
+): Promise<void> {
+  if (!status) return;
+  const s = useAppStore.getState();
+
+  if (status.boardRole && status.boardRole !== s.boardRole) {
+    console.log(`[Bootstrap] Board role mismatch (board=${status.boardRole} app=${s.boardRole}) — pushing`);
+    await bleService.sendBoardRole(s.boardRole);
+    await delay(300);
+    if (!bleService.isConnected() || token !== bootstrapToken) return;
+  }
+
+  if (s.boardRole === 'logic_board' && s.scannerMac.trim()) {
+    const want = normalizeScannerMacInput(s.scannerMac) ?? s.scannerMac.trim().toUpperCase();
+    const have = (status.scannerMac || '').trim().toUpperCase();
+    if (want && want !== have) {
+      console.log(`[Bootstrap] Scanner MAC mismatch (board=${have || '(none)'} app=${want}) — pushing`);
+      await bleService.sendScannerMac(want);
+      await delay(300);
+    }
+  }
 }
 
 function layoutMatchesBoard(
@@ -154,6 +192,16 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
   await bleService.sendBleEffectConfig(s.bleEffectTransitionMs);
   await delay(300);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
+
+  await bleService.sendBoardRole(s.boardRole);
+  await delay(300);
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
+
+  if (s.boardRole === 'logic_board' && s.scannerMac.trim()) {
+    await bleService.sendScannerMac(s.scannerMac.trim());
+    await delay(300);
+    if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
+  }
 
   await bleService.sendMbMappingConfig(
     mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
@@ -392,6 +440,12 @@ export async function runConnectBootstrap(): Promise<void> {
   }
 
   const status = await requestBoardStatus();
+  // Reconcile board role / scanner MAC on every connect (incl. quick reconnect, which
+  // skips runEssentialConfig). The board can boot Standalone from its own NVS if the
+  // role was never persisted; push the app's desired role so the board writes NVS and
+  // comes up correctly after a reboot — this is what enables ESP-NOW to survive reboots.
+  await reconcileBoardRole(token, status);
+
   if (shouldForceMappingPresetSync(status, s.mbMapping)) {
     setBoardSyncPhase('essential', 'Syncing MB+/Wand mapping presets…', {
       commandsReady: false,

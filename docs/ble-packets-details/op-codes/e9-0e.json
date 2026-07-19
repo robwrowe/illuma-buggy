@@ -1,0 +1,1064 @@
+[
+  {
+    "id": "mr9yddgskocn",
+    "ts": 1783386659692,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00830fb5b9b2adb659190b48aeb0",
+    "origBytes": "e100e90e00830fb5b9b2adb659190b48aeb0",
+    "tag": "unknown",
+    "note": "5 colors, fixed position, cut on, slowly fade out, ~22s total (each fade ~1.5s, stays off for ~1s)"
+  },
+  {
+    "id": "mr9ybsg6k3hx",
+    "ts": 1783386585798,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00150fbbbbbbbbbb59190248aeb0",
+    "origBytes": "e100e90e00150fbbbbbbbbbb59190248aeb0",
+    "tag": "unknown",
+    "note": "one color, fireworks pulse, quick, 8s"
+  },
+  {
+    "id": "mr9yaqomuuwc",
+    "ts": 1783386536854,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00110fbca7b9a7b959190248aeb0",
+    "origBytes": "e100e90e00110fbca7b9a7b959190248aeb0",
+    "tag": "unknown",
+    "note": "green+purple, fireworks/pulse, 2s"
+  },
+  {
+    "id": "mr9y9ls4anti",
+    "ts": 1783386483844,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00020fbca0bca0bc5917fb48aebb",
+    "origBytes": "e100e90e00020fbca0bca0bc5917fb48aebb",
+    "tag": "unknown",
+    "note": "fireworks pulse, two colors, ~3s"
+  },
+  {
+    "id": "mr9y8gckday3",
+    "ts": 1783386430148,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00010fbda0a0bda059070048aeb5",
+    "origBytes": "e100e90e00010fbda0a0bda059070048aeb5",
+    "tag": "unknown",
+    "note": "fireworks/pusling, single color, ~2s"
+  },
+  {
+    "id": "mr9xujwtt3zx",
+    "ts": 1783385781581,
+    "kind": "single",
+    "presetKey": "flash",
+    "bytes": "e100e90e00010fbda0a0bda059070048aeb5",
+    "origBytes": "e100e90e00010fbda0a0bda059070048aeb5",
+    "tag": "unknown",
+    "note": "flash/firework effect"
+  },
+  {
+    "id": "mr9xkx1kd4gp",
+    "ts": 1783385332040,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00ff0fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "Super slow animation"
+  },
+  {
+    "id": "mr9xju9epzaq",
+    "ts": 1783385281778,
+    "kind": "single",
+    "presetKey": "sweep:b5",
+    "bytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "Seems to increase speed"
+  },
+  {
+    "id": "mr9xgmldillb",
+    "ts": 1783385131873,
+    "kind": "single",
+    "presetKey": "sweep:b5",
+    "bytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "Seems to continue to increase speed"
+  },
+  {
+    "id": "mr9xf36xkhl5",
+    "ts": 1783385060073,
+    "kind": "single",
+    "presetKey": "sweep:b5",
+    "bytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "Sweep byte 5: 0x07–0x0F step 0x01, 3000ms dwell, off between (1000ms).\n\nSpeed of flashes increases as time goes on"
+  },
+  {
+    "id": "mr9xd10qsv41",
+    "ts": 1783384963946,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00070fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "~11 s, fireworks bursting, upper red, bottom blue, center white"
+  },
+  {
+    "id": "mr9xb84a7t23",
+    "ts": 1783384879834,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "Upper red, lower blue, center white; fireworks bursting"
+  },
+  {
+    "id": "mr9xb4w0e64z",
+    "ts": 1783384875648,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "tag": "e9_12",
+    "note": "Burst via /show: 10 reps, 3000ms dwell"
+  },
+  {
+    "id": "mr9f6w595fob",
+    "ts": 1783354444605,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e003c0fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "TL & TR: Red BL & BR: Blue C: White As the sweep increases it does seem to speed up (~00-14), but at some point in 50-60 (dec) range it starts to slow down"
+  },
+  {
+    "id": "mr9f182omcdj",
+    "ts": 1783354180128,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "TL & TR: Red\nBL & BR: Blue\nC: White\n\nAs the sweep increases it does seem to speed up (~00-14), but at some point in the 200s it seems to slow down to a crawl"
+  },
+  {
+    "id": "mr9ei975yk8t",
+    "ts": 1783353295121,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "origBytes": "e100e90e00000fbbb5a4a4b559190248aeb8",
+    "tag": "unknown",
+    "note": "async strobe, 3 colors"
+  },
+  {
+    "id": "mr9eacim5s92",
+    "ts": 1783352926174,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90e00050fbbb5a4a4b559190248aeb7",
+    "origBytes": "e100e90e00050fbbb5a4a4b559190248aeb7",
+    "tag": "unknown",
+    "note": "TL & TR: Red\nBL & BR: Blue\nCenter: White\n\nStrobing all five LEDs, but colors are persistent"
+  },
+  {
+    "id": "mr9e3eutuw1a",
+    "ts": 1783352602613,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e90e00120fbbbbbbbbbb59190248aeb8",
+    "origBytes": "e100e90e00120fbbbbbbbbbb59190248aeb8",
+    "tag": "e9_10",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+
+  {
+    "id": "mrciqqw2eesr",
+    "ts": 1783541808290,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248ffb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248ffb7",
+    "tag": "ignored",
+    "note": "tried 3 times, no device responded"
+  },
+  {
+    "id": "mrciq4f55g4s",
+    "ts": 1783541779169,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248d0b7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248d0b7",
+    "tag": "ignored",
+    "note": "tried 3 times, no device responded"
+  },
+  {
+    "id": "mrcipdsg4f36",
+    "ts": 1783541744656,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb5919024850b7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb5919024850b7",
+    "tag": "ignored",
+    "note": "tried 3 times, no device responded"
+  },
+  {
+    "id": "mrciourdjvnu",
+    "ts": 1783541719993,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb5919024800b7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb5919024800b7",
+    "tag": "ignored",
+    "note": "tried 3 times, no device responded"
+  },
+  {
+    "id": "mrcio34o6irb",
+    "ts": 1783541684184,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb591902ffaeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb591902ffaeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrcink3c8f3k",
+    "ts": 1783541659512,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190280aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190280aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrcimzdka7c3",
+    "ts": 1783541632664,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190220aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190220aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrcimfx48zsr",
+    "ts": 1783541607448,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190200aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190200aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrcil5s68a9d",
+    "ts": 1783541547654,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbbff190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbbff190248aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrcik6c0lotc",
+    "ts": 1783541501712,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb90190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb90190248aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrcijkm1yqhr",
+    "ts": 1783541473561,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb30190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb30190248aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrciisimbf04",
+    "ts": 1783541437150,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb00190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb00190248aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, no fade, all five LED lit entire time"
+  },
+  {
+    "id": "mrcihfh1izac",
+    "ts": 1783541373589,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59ff0248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59ff0248aeb7",
+    "tag": "unknown",
+    "note": "Inconsistent behavior. Two flashes, ~3-4s\n\nDifferent LEDs flash each time. Sometimes two will flash, but no consistent behavior."
+  },
+  {
+    "id": "mrcied460vgc",
+    "ts": 1783541230566,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "tag": "unknown",
+    "note": "all five leds flash in sync (new behavior), 6 flashes, 3 s"
+  },
+  {
+    "id": "mrcidm6x7a48",
+    "ts": 1783541195673,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59300248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59300248aeb7",
+    "tag": "unknown",
+    "note": "~3s, 6 flashes. Flash pattern is not consistent - it is random each firing"
+  },
+  {
+    "id": "mrcibh4ukfuh",
+    "ts": 1783541095806,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb590a0248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb590a0248aeb7",
+    "tag": "unknown",
+    "note": "On for ~3-3.5s. Random flash count (2-5, seems not all leds have the same flash count)"
+  },
+  {
+    "id": "mrci9a8367ll",
+    "ts": 1783540993539,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59000248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59000248aeb7",
+    "tag": "unknown",
+    "note": "Very hard to find anything consistent. Only 1-2 leds flash, they flash ~2 times, and it's very slow. approx 3s total. center/hand led seems to be most common, but not always used across multiple tests."
+  },
+  {
+    "id": "mrci6scf548g",
+    "ts": 1783540877055,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb5919ff48aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb5919ff48aeb7",
+    "tag": "unknown",
+    "note": "3s on, 4 flashes"
+  },
+  {
+    "id": "mrci4r52wl5i",
+    "ts": 1783540782182,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59193048aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59193048aeb7",
+    "tag": "unknown",
+    "note": "3s on, 4 flashes (tested several times, consistently 6)"
+  },
+  {
+    "id": "mrci3brm8ynd",
+    "ts": 1783540715602,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59191448aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59191448aeb7",
+    "tag": "unknown",
+    "note": "3s on, 6 flashes"
+  },
+  {
+    "id": "mrci250g3w2k",
+    "ts": 1783540660192,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190148aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190148aeb7",
+    "tag": "unknown",
+    "note": "3s on, 6 flashes"
+  },
+  {
+    "id": "mrci09trld0i",
+    "ts": 1783540573119,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190048aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "3s on, 6 flashes"
+  },
+  {
+    "id": "mrck6talj5ti",
+    "ts": 1783544237517,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00070fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00070fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "21 flashes, ~11-11.5sec on. seems to be different flash pattern each pass."
+  },
+  {
+    "id": "mrck4c0cl08i",
+    "ts": 1783544121805,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00030fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00030fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for ~4.5-5 sec. 9 flashes."
+  },
+  {
+    "id": "mrck1vwf2ss6",
+    "ts": 1783544007615,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "3s on, 6 flashes, seems to be different flash pattern each pass"
+  },
+  {
+    "id": "mrck09haj6qu",
+    "ts": 1783543931902,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59191048aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59191048aeb7",
+    "tag": "animation_change",
+    "note": "3s on, 6 flashes, seems to be different flash pattern each pass"
+  },
+  {
+    "id": "mrcjyziwkuu3",
+    "ts": 1783543872344,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190848aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190848aeb7",
+    "tag": "animation_change",
+    "note": "3s on, 6 flashes, seems to be different flash pattern each pass"
+  },
+  {
+    "id": "mrcjy88b3z9o",
+    "ts": 1783543836971,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190448aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190448aeb7",
+    "tag": "animation_change",
+    "note": "3s on, 6 flashes, seems to be different flash pattern each pass"
+  },
+  {
+    "id": "mrcjx9yz8s4b",
+    "ts": 1783543792571,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190048aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190048aeb7",
+    "tag": "animation_change",
+    "note": "3s on, 6 flashes, seems to be different flash pattern each pass"
+  },
+  {
+    "id": "mrcjvpepl4z3",
+    "ts": 1783543719265,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb30190220aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb30190220aeb7",
+    "tag": "animation_change",
+    "note": "solid on for 3s, all leds"
+  },
+  {
+    "id": "mrcjv3lvnrjs",
+    "ts": 1783543691011,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbbff1902ffaeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbbff1902ffaeb7",
+    "tag": "animation_change",
+    "note": "solid on for 3s, all leds"
+  },
+  {
+    "id": "mrcjsv7vtjrp",
+    "ts": 1783543586827,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbabbff1902ffaeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbff1902ffaeb7",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrcjrzvezlh3",
+    "ts": 1783543546202,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb00190200aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb00190200aeb7",
+    "tag": "animation_change",
+    "note": "solid on for 3s, all leds"
+  },
+  {
+    "id": "mrcjqrwyn9nd",
+    "ts": 1783543489234,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "tag": "animation_change",
+    "note": "On for 3s, flashes 6 times, all leds flash in unison\n\nseems to adjust the brightness curve as the strobe fades out compared across other byte sweep"
+  },
+  {
+    "id": "mrcjqhd76i7v",
+    "ts": 1783543475563,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "tag": "animation_change",
+    "note": "On for 3s, flashes 6 times, all leds flash in unison\n\nseems to adjust the brightness curve as the strobe fades out compared across other byte sweep"
+  },
+  {
+    "id": "mrcjq7uw6f61",
+    "ts": 1783543463240,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "tag": "animation_change",
+    "note": "On for 3s, flashes 6 times, all leds flash in unison\n\nseems to adjust the brightness curve as the strobe fades out compared across other byte sweep"
+  },
+  {
+    "id": "mrcjhw7x066r",
+    "ts": 1783543074909,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e005f0fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e005f0fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for ~46s, flashes 46 times, not in sync"
+  },
+  {
+    "id": "mrckuuetpwhf",
+    "ts": 1783545358709,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00820fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00820fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "~4-6 flashes, on for 15s, fade is very slow (~1.0 s)"
+  },
+  {
+    "id": "mrckslqthvu9",
+    "ts": 1783545254165,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "~0.25s fade time"
+  },
+  {
+    "id": "mrckr08d6ib6",
+    "ts": 1783545179629,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb959191448ae00",
+    "origBytes": "e200e90e000f0fbbb1a4aeb959191448ae00",
+    "tag": "animation_change",
+    "note": "~25s on"
+  },
+  {
+    "id": "mrckplertv5i",
+    "ts": 1783545113763,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb959191448aeb0",
+    "origBytes": "e200e90e000f0fbbb1a4aeb959191448aeb0",
+    "tag": "animation_change",
+    "note": "~25s on"
+  },
+  {
+    "id": "mrcknxkybx2g",
+    "ts": 1783545036226,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00060fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00060fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for 9s, ~18 flashes"
+  },
+  {
+    "id": "mrckikdzmn94",
+    "ts": 1783544785847,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00040fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00040fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for ~6s, 12 flashes"
+  },
+
+  {
+    "id": "mrckuuetpwhf",
+    "ts": 1783545358709,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00820fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00820fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "~4-6 flashes, on for 15s, fade is very slow (~1.0 s)"
+  },
+  {
+    "id": "mrckslqthvu9",
+    "ts": 1783545254165,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "~0.25s fade time"
+  },
+  {
+    "id": "mrckr08d6ib6",
+    "ts": 1783545179629,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb959191448ae00",
+    "origBytes": "e200e90e000f0fbbb1a4aeb959191448ae00",
+    "tag": "animation_change",
+    "note": "~25s on"
+  },
+  {
+    "id": "mrckplertv5i",
+    "ts": 1783545113763,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb959191448aeb0",
+    "origBytes": "e200e90e000f0fbbb1a4aeb959191448aeb0",
+    "tag": "animation_change",
+    "note": "~25s on"
+  },
+  {
+    "id": "mrcknxkybx2g",
+    "ts": 1783545036226,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00060fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00060fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for 9s, ~18 flashes"
+  },
+  {
+    "id": "mrckikdzmn94",
+    "ts": 1783544785847,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00040fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00040fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for ~6s, 12 flashes"
+  },
+  {
+    "id": "mrctnzvhw23x",
+    "ts": 1783560155741,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00320fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00320fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for ~3-4s, as it progresses fade out slows down"
+  },
+  {
+    "id": "mrctlm1y8x01",
+    "ts": 1783560044518,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for 3s, 7 flashes, ~0.25 fade time"
+  },
+  {
+    "id": "mrctl9nqul2m",
+    "ts": 1783560028454,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for 3s, 7 flashes, ~0.25 fade time"
+  },
+  {
+    "id": "mrctkgfd37i1",
+    "ts": 1783559990569,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00120fbbbbbbbbbb59190248aeb7",
+    "tag": "animation_change",
+    "note": "On for 3s, 6 flashes, ~0.25 fade time"
+  },
+  {
+    "id": "mrctic0a9jip",
+    "ts": 1783559891530,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb959191448ffb0",
+    "origBytes": "e200e90e000f0fbbb1a4aeb959191448ffb0",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrcti768bcjz",
+    "ts": 1783559885264,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb959191448d0b0",
+    "origBytes": "e200e90e000f0fbbb1a4aeb959191448d0b0",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrcti1dt1ubo",
+    "ts": 1783559877761,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb95919144850b0",
+    "origBytes": "e200e90e000f0fbbb1a4aeb95919144850b0",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrcthu2r9ohe",
+    "ts": 1783559868291,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e000f0fbbb1a4aeb95919144800b0",
+    "origBytes": "e200e90e000f0fbbb1a4aeb95919144800b0",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrcth56o07wl",
+    "ts": 1783559836032,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248d0b7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248d0b7",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrctgxddkyw3",
+    "ts": 1783559825905,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb5919024850b7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb5919024850b7",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrctgp4rvn1p",
+    "ts": 1783559815227,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb5919024800b7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb5919024800b7",
+    "tag": "ignored",
+    "note": ""
+  },
+  {
+    "id": "mrcter5ulh9r",
+    "ts": 1783559724546,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59500248aeb7",
+    "tag": "unknown",
+    "note": "All 5 flash in unison, linear fading curve"
+  },
+  {
+    "id": "mrcte1hn55yd",
+    "ts": 1783559691275,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "Linear fading curve"
+  },
+  {
+    "id": "mrctd29w59gj",
+    "ts": 1783559645636,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "origBytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "tag": "unknown",
+    "note": "6 flashes"
+  },
+  {
+    "id": "mrctcv1omjh8",
+    "ts": 1783559636268,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "origBytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "tag": "unknown",
+    "note": "On for 3s, 4 flashes"
+  },
+  {
+    "id": "mrctcej1i1jh",
+    "ts": 1783559614861,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "origBytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "tag": "unknown",
+    "note": "On for 3s, 5 flashes"
+  },
+  {
+    "id": "mrctbud9dr6p",
+    "ts": 1783559588733,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "origBytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "tag": "unknown",
+    "note": "On for 3s, 4 flashes"
+  },
+  {
+    "id": "mrctbj90iefp",
+    "ts": 1783559574324,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "origBytes": "e200e90e00120fbbb5a4b5a4590a0148aeb0",
+    "tag": "unknown",
+    "note": "7 flashes"
+  },
+  {
+    "id": "mrctab80mlmm",
+    "ts": 1783559517264,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, 6 flashes"
+  },
+  {
+    "id": "mrct9mbtdlh2",
+    "ts": 1783559485001,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, 6 flashes"
+  },
+  {
+    "id": "mrct8h0odnvu",
+    "ts": 1783559431464,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00020fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "On for 3s, 6 flashes"
+  },
+  {
+    "id": "mrct6mdcuot2",
+    "ts": 1783559345088,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00010fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00010fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "On for 1.5s, 3 flashes"
+  },
+  {
+    "id": "mrct5u3eg0gj",
+    "ts": 1783559308442,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00010fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00010fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "On for 1.5s, 3 flashes"
+  },
+  {
+    "id": "mrct4c7586d1",
+    "ts": 1783559238593,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90e00010fbbbbbbbbbb59190248aeb7",
+    "origBytes": "e200e90e00010fbbbbbbbbbb59190248aeb7",
+    "tag": "unknown",
+    "note": "On for 1.5s, 3 flashes"
+  },
+  {
+    "id": "mrp4p8ggv8in",
+    "ts": 1784304283408,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e00020fb1b0b3afaf59190248aeb0",
+    "origBytes": "e90e00020fb1b0b3afaf59190248aeb0",
+    "tag": "unknown",
+    "note": "two colors, yellow & off-white\n~5s total time"
+  },
+  {
+    "id": "mrp4nxypl26j",
+    "ts": 1784304223153,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e007bd255000000d25800000078b0",
+    "origBytes": "e90e007bd255000000d25800000078b0",
+    "tag": "unknown",
+    "note": "wand goes black, which tells me its receiving commands but we're missing something"
+  },
+  {
+    "id": "mrp4n6f32hib",
+    "ts": 1784304187455,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e0011d255000000d25800000078b0",
+    "origBytes": "e90e0011d255000000d25800000078b0",
+    "tag": "unknown",
+    "note": "wand goes black, which tells me its receiving commands but we're missing something"
+  },
+  {
+    "id": "mrp4m71v80c7",
+    "ts": 1784304141619,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e0021d255000000d25800000078b0",
+    "origBytes": "e90e0021d255000000d25800000078b0",
+    "tag": "unknown",
+    "note": "wand goes black, which tells me its receiving commands but we're missing something"
+  },
+  {
+    "id": "mrp4lvvvx865",
+    "ts": 1784304127147,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e005f0fbbbbbbbbbb59190248aeb0",
+    "origBytes": "e90e005f0fbbbbbbbbbb59190248aeb0",
+    "tag": "unknown",
+    "note": "slow flash/strobe. all white. ~0.5s strobe fade time\n\ntotal time: ~48s"
+  },
+  {
+    "id": "mrp4k1z3379u",
+    "ts": 1784304041727,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e001fd255000000d25800000078b0",
+    "origBytes": "e90e001fd255000000d25800000078b0",
+    "tag": "unknown",
+    "note": "wand goes black, which tells me its receiving commands but we're missing something"
+  },
+  {
+    "id": "mrp4janf32hj",
+    "ts": 1784304006315,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e00110fa3a3a3a3a359190248aeb0",
+    "origBytes": "e90e00110fa3a3a3a3a359190248aeb0",
+    "tag": "unknown",
+    "note": "blue strobe, ~6s total time"
+  },
+  {
+    "id": "mrp4im5t5qxi",
+    "ts": 1784303974577,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e00160fb1b1b1b1b159190248aeb0",
+    "origBytes": "e90e00160fb1b1b1b1b159190248aeb0",
+    "tag": "unknown",
+    "note": "yellow, normal strobe\nnot repeatable pattern\n~12s total run time"
+  },
+  {
+    "id": "mrp4gsrcd31g",
+    "ts": 1784303889816,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e00110fb1b1b1b1b159190248aeb0",
+    "origBytes": "e90e00110fb1b1b1b1b159190248aeb0",
+    "tag": "unknown",
+    "note": "~6s total time\nyellow\nquick strobe, not repeateable"
+  },
+  {
+    "id": "mrp4g1hnhnua",
+    "ts": 1784303854475,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e0023d255000000d25800000078b0",
+    "origBytes": "e90e0023d255000000d25800000078b0",
+    "tag": "unknown",
+    "note": "wand goes black, which tells me its receiving commands but we're missing something"
+  },
+  {
+    "id": "mrp4forwjwxk",
+    "ts": 1784303837996,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e005f0fbbbbbbbbbb59190248aeb0",
+    "origBytes": "e90e005f0fbbbbbbbbbb59190248aeb0",
+    "tag": "unknown",
+    "note": "very slow strobe effect, doesn't seem like a repeatable pattern, ~48s total time\n\nfades are ~0.5s"
+  },
+  {
+    "id": "mrp4cwqkotoa",
+    "ts": 1784303708348,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e00120fbbbbbbbbbb59190248aeb0",
+    "origBytes": "e90e00120fbbbbbbbbbb59190248aeb0",
+    "tag": "unknown",
+    "note": "~6s total time\nstrobe effect\nall white"
+  },
+  {
+    "id": "mrp4brkzra3r",
+    "ts": 1784303655011,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e0011d255000000d25800000078b0",
+    "origBytes": "e90e0011d255000000d25800000078b0",
+    "tag": "unknown",
+    "note": "wand goes black, which tells me its receiving commands but we're missing something"
+  },
+  {
+    "id": "mrp4b6syzcfl",
+    "ts": 1784303628082,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90e00130fb4b5b5b1b3590ffb48aeb0",
+    "origBytes": "e90e00130fb4b5b5b1b3590ffb48aeb0",
+    "tag": "unknown",
+    "note": "Seems to be ~7.5s to 9.0s (maybe the fade rate is changing it?)\nSW: top two segments are yellow, bottom two are red, hand is red\nPattern does not seem repeatable"
+  },
+  {
+    "id": "mrp48e0q0mpm",
+    "ts": 1784303497466,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e90e00010fb1b1b1b1b159190248aeb0",
+    "origBytes": "e90e00010fb1b1b1b1b159190248aeb0",
+    "tag": "unknown",
+    "note": "Burst via /show: 20 reps, 6000ms dwell"
+  }
+]
