@@ -20,5 +20,8 @@ void processDisneyPayloadQueue();
 
 // Add/update ESP-NOW peer + optional reflected pair message to scanner.
 void transportSetScannerMac(const uint8_t mac[6]);
+// Called from loop(): re-sends the reflected pair message during the pairing window
+// so a channel-sweeping scanner can catch it. No-op outside the window.
+void transportPairResendTick();
 bool transportParseMacString(const char* str, uint8_t out[6]);
 String transportMacToString(const uint8_t mac[6]);

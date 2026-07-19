@@ -94,6 +94,25 @@ static bool ensureEspNowPeer(const uint8_t mac[6]) {
   return true;
 }
 
+static unsigned long pairResendUntilMs = 0;
+static unsigned long lastPairSendMs = 0;
+
+static void sendPairMessage() {
+  EspNowPairMsg msg = {};
+  msg.magic = ESPNOW_PAIR_MAGIC;
+  uint8_t myMac[6];
+  WiFi.macAddress(myMac);
+  memcpy(msg.logicMac, myMac, 6);
+  // Tell the scanner which Wi-Fi channel to lock onto (our STA channel). ESP-NOW only
+  // works when both radios are on the same channel; the scanner has no AP to follow.
+  msg.channel = (uint8_t)WiFi.channel();
+  esp_err_t err = esp_now_send(scannerPeerMac, (const uint8_t*)&msg, sizeof(msg));
+  lastPairSendMs = millis();
+  Serial.printf("[ESP-NOW] pair msg to %s ch=%u: %s\n",
+                transportMacToString(scannerPeerMac).c_str(),
+                (unsigned)msg.channel, err == ESP_OK ? "ok" : "fail");
+}
+
 void transportSetScannerMac(const uint8_t mac[6]) {
   memcpy(scannerPeerMac, mac, 6);
   scannerPeerConfigured = true;
@@ -109,16 +128,20 @@ void transportSetScannerMac(const uint8_t mac[6]) {
 
   if (!ensureEspNowPeer(scannerPeerMac)) return;
 
-  // Reflected pairing: send our STA MAC to the scanner so it can store pairedLogicMac.
-  EspNowPairMsg msg = {};
-  msg.magic = ESPNOW_PAIR_MAGIC;
-  uint8_t myMac[6];
-  WiFi.macAddress(myMac);
-  memcpy(msg.logicMac, myMac, 6);
-  esp_err_t err = esp_now_send(scannerPeerMac, (const uint8_t*)&msg, sizeof(msg));
-  Serial.printf("[ESP-NOW] pair msg to %s: %s\n",
-                transportMacToString(scannerPeerMac).c_str(),
-                err == ESP_OK ? "ok" : "fail");
+  // Reflected pairing: send our STA MAC + channel so the scanner can store both. Repeat
+  // for a few seconds (loop tick) so a channel-sweeping scanner catches it.
+  sendPairMessage();
+  pairResendUntilMs = millis() + 8000;  // ~2 full scanner sweep cycles
+}
+
+void transportPairResendTick() {
+  if (pairResendUntilMs == 0) return;
+  if (millis() >= pairResendUntilMs) {
+    pairResendUntilMs = 0;
+    Serial.println("[ESP-NOW] pairing window closed");
+    return;
+  }
+  if (millis() - lastPairSendMs >= 250) sendPairMessage();
 }
 
 void payloadTransportInit() {

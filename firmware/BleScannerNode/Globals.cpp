@@ -18,6 +18,7 @@ unsigned long scanRepeatSummaryMs = 0;
 
 uint8_t pairedLogicMac[6] = {0};
 bool logicPeerConfigured = false;
+uint8_t pairedChannel = 0;   // Wi-Fi channel of the logic board (0 = unknown)
 
 uint32_t espNowSendOk = 0;
 uint32_t espNowSendFail = 0;

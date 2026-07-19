@@ -94,4 +94,5 @@ enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
 struct EspNowPairMsg {
   uint32_t magic;
   uint8_t  logicMac[6];
+  uint8_t  channel;      // logic board's current Wi-Fi channel; scanner locks onto it
 } __attribute__((packed));

@@ -19,6 +19,7 @@ extern unsigned long scanRepeatSummaryMs;
 
 extern uint8_t pairedLogicMac[6];
 extern bool logicPeerConfigured;
+extern uint8_t pairedChannel;
 
 extern uint32_t espNowSendOk;
 extern uint32_t espNowSendFail;

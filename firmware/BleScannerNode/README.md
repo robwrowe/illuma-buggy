@@ -20,9 +20,18 @@ Same as StrollerController on this hardware:
 
 1. Flash scanner node — it advertises as `IllumaScan` (manufacturer data `49 53` + MAC) until paired.
 2. On logic board (Dual-Board mode): use app discovery or `set_scanner_mac` with scanner MAC.
-3. Logic board sends reflected ESP-NOW pair message; scanner stores `pairedLogicMac` and stops advertising.
+3. Logic board re-sends a reflected ESP-NOW pair message (its MAC + **Wi-Fi channel**) for ~8s.
+   While unpaired the scanner **sweeps Wi-Fi channels** (1–13) so it catches that message
+   regardless of the router/AP channel, then locks onto the logic board's channel, persists
+   `pairedLogicMac` + `pairedChan` to NVS, and stops advertising.
 
-Manual fallback on scanner serial @ 115200:
+ESP-NOW only works when both radios share a Wi-Fi channel. The logic board follows its AP's
+channel (STA); the scanner has no AP, so it locks onto the channel from the pair message and
+restores it on boot. Caveat: if the AP uses auto-channel and later changes, re-pair (or pin
+the AP to a fixed channel).
+
+Manual fallback on scanner serial @ 115200 (note: manual `pair` does not carry a channel —
+use app discovery so the channel is synced):
 
 ```
 pair AA:BB:CC:DD:EE:FF

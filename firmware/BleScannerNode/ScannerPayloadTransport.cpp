@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include "ScannerAdvertise.h"
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <WiFi.h>
 #include <string.h>
 
@@ -25,11 +26,26 @@ bool scannerParseMacString(const char* str, uint8_t out[6]) {
   return true;
 }
 
+static void lockChannel(uint8_t ch) {
+  if (ch < 1 || ch > 14) return;
+  esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+}
+
 static bool ensureEspNowPeer(const uint8_t mac[6]) {
-  if (esp_now_is_peer_exist(mac)) return true;
+  if (esp_now_is_peer_exist(mac)) {
+    // Peer may exist from a stale channel; keep it aligned with the locked channel.
+    if (pairedChannel >= 1 && pairedChannel <= 14) {
+      esp_now_peer_info_t cur = {};
+      if (esp_now_get_peer(mac, &cur) == ESP_OK && cur.channel != pairedChannel) {
+        cur.channel = pairedChannel;
+        esp_now_mod_peer(&cur);
+      }
+    }
+    return true;
+  }
   esp_now_peer_info_t peer = {};
   memcpy(peer.peer_addr, mac, 6);
-  peer.channel = 0;
+  peer.channel = (pairedChannel >= 1 && pairedChannel <= 14) ? pairedChannel : 0;
   peer.encrypt = false;
   esp_err_t err = esp_now_add_peer(&peer);
   if (err != ESP_OK) {
@@ -39,15 +55,31 @@ static bool ensureEspNowPeer(const uint8_t mac[6]) {
   return true;
 }
 
-void scannerSetLogicMac(const uint8_t mac[6]) {
+void scannerSetLogicMac(const uint8_t mac[6], uint8_t channel) {
   memcpy(pairedLogicMac, mac, 6);
   logicPeerConfigured = true;
+  if (channel >= 1 && channel <= 14) {
+    pairedChannel = channel;
+    lockChannel(pairedChannel);
+  }
   prefs.begin("config", false);
   prefs.putBytes("pairedLogicMac", pairedLogicMac, 6);
+  prefs.putUChar("pairedChan", pairedChannel);
   prefs.end();
   ensureEspNowPeer(pairedLogicMac);
   scannerAdvertiseStop();
-  Serial.printf("[Pair] logic board MAC = %s\n", scannerMacToString(pairedLogicMac).c_str());
+  Serial.printf("[Pair] logic board MAC = %s ch=%u\n",
+                scannerMacToString(pairedLogicMac).c_str(), (unsigned)pairedChannel);
+}
+
+void scannerChannelSweepTick() {
+  if (logicPeerConfigured) return;
+  static unsigned long lastHopMs = 0;
+  static uint8_t ch = 1;
+  if (millis() - lastHopMs < 300) return;
+  lastHopMs = millis();
+  lockChannel(ch);
+  if (++ch > 13) ch = 1;
 }
 
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -57,7 +89,7 @@ static void onEspNowRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
   EspNowPairMsg msg;
   memcpy(&msg, data, sizeof(msg));
   if (msg.magic != ESPNOW_PAIR_MAGIC) return;
-  scannerSetLogicMac(msg.logicMac);
+  scannerSetLogicMac(msg.logicMac, msg.channel);
 }
 #else
 static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
@@ -66,7 +98,7 @@ static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
   EspNowPairMsg msg;
   memcpy(&msg, data, sizeof(msg));
   if (msg.magic != ESPNOW_PAIR_MAGIC) return;
-  scannerSetLogicMac(msg.logicMac);
+  scannerSetLogicMac(msg.logicMac, msg.channel);
 }
 #endif
 
@@ -84,10 +116,12 @@ void scannerTransportInit() {
   esp_now_register_recv_cb(onEspNowRecv);
 
   if (logicPeerConfigured) {
+    if (pairedChannel >= 1 && pairedChannel <= 14) lockChannel(pairedChannel);
     ensureEspNowPeer(pairedLogicMac);
-    Serial.printf("[ESP-NOW] paired to logic %s\n", scannerMacToString(pairedLogicMac).c_str());
+    Serial.printf("[ESP-NOW] paired to logic %s ch=%u\n",
+                  scannerMacToString(pairedLogicMac).c_str(), (unsigned)pairedChannel);
   } else {
-    Serial.println("[ESP-NOW] unpaired — listening for reflected pair from logic board");
+    Serial.println("[ESP-NOW] unpaired — sweeping channels for reflected pair from logic board");
   }
 }
 

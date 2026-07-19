@@ -21,9 +21,10 @@ void processScannerSerial() {
   } else if (line == "status") {
     uint8_t myMac[6];
     WiFi.macAddress(myMac);
-    Serial.printf("[Status] paired=%s logic=%s espnow tx-queued ok/fail=%u/%u scanlog=%s\n",
+    Serial.printf("[Status] paired=%s logic=%s ch=%u espnow tx-queued ok/fail=%u/%u scanlog=%s\n",
                   logicPeerConfigured ? "yes" : "no",
                   logicPeerConfigured ? scannerMacToString(pairedLogicMac).c_str() : "(none)",
+                  (unsigned)pairedChannel,
                   espNowSendOk, espNowSendFail,
                   bleScanLogEnabled ? "on" : "off");
     Serial.println("[Status] (ok=frames queued for TX; compare vs logic board 'rx' count)");
@@ -40,11 +41,13 @@ void processScannerSerial() {
   } else if (line == "unpair") {
     logicPeerConfigured = false;
     memset(pairedLogicMac, 0, 6);
+    pairedChannel = 0;
     prefs.begin("config", false);
     prefs.remove("pairedLogicMac");
+    prefs.remove("pairedChan");
     prefs.end();
     scannerAdvertiseInit();
-    Serial.println("[Serial] Unpaired — advertising for discovery");
+    Serial.println("[Serial] Unpaired — advertising + sweeping channels for discovery");
   } else if (line == "scanlog on") {
     bleScanLogEnabled = true;
     Serial.println("[Serial] Scan log ON");

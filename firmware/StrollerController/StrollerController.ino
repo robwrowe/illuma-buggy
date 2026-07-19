@@ -137,6 +137,7 @@ void processPendingCommands() {
 
 void loop() {
   processParsedPacketQueue();
+  transportPairResendTick();
   processSerialCommands();
   processBleCmdQueue();
   processPendingCommands();

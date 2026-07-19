@@ -29,6 +29,7 @@ void setup() {
       prefs.getBytes("pairedLogicMac", pairedLogicMac, 6);
       logicPeerConfigured = true;
     }
+    pairedChannel = prefs.getUChar("pairedChan", 0);
   }
   prefs.end();
 
@@ -61,6 +62,7 @@ void loop() {
   processScannerSerial();
   if (!logicPeerConfigured) {
     scannerAdvertiseRefresh();
+    scannerChannelSweepTick();
   }
   delay(10);
 }
