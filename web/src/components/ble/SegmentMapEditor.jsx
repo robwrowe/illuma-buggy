@@ -91,13 +91,23 @@ function PresetVarRows({ vars, onChange }) {
   );
 }
 
-function SegmentRowEditor({ segment, presets, onChange, onDelete }) {
+function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions = [], onChange, onDelete }) {
   const seg = normalizeSegment(segment);
   const set = (patch) => onChange({ ...seg, ...patch });
   const presetOpts = (presets || []).map((p) => ({
     value: p.id,
     label: p.name,
     searchText: p.name,
+  }));
+  const fxOpts = (effectOptions || []).map((e) => ({
+    value: String(e.id),
+    label: e.name,
+    searchText: `${e.id} ${e.name}`,
+  }));
+  const palOpts = (paletteOptions || []).map((p) => ({
+    value: String(p.id),
+    label: p.name,
+    searchText: `${p.id} ${p.name}`,
   }));
 
   return (
@@ -176,22 +186,22 @@ function SegmentRowEditor({ segment, presets, onChange, onDelete }) {
       </SimpleGrid>
 
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
-        <Field label="fx">
-          <NumberInput
-            size="xs"
-            value={seg.fx}
-            onChange={(v) => set({ fx: v === '' || v == null ? -1 : (parseInt(v, 10) || 0) })}
-            hideControls
-            styles={{ input: { fontFamily: 'monospace' } }}
+        <Field label="Effect">
+          <SearchableSelect
+            value={seg.fx >= 0 ? String(seg.fx) : ''}
+            onChange={(v) => set({ fx: v === '' ? -1 : parseInt(v, 10) })}
+            options={fxOpts}
+            placeholder="(default — Solid)"
+            allowEmpty
           />
         </Field>
-        <Field label="pal">
-          <NumberInput
-            size="xs"
-            value={seg.pal}
-            onChange={(v) => set({ pal: v === '' || v == null ? -1 : (parseInt(v, 10) || 0) })}
-            hideControls
-            styles={{ input: { fontFamily: 'monospace' } }}
+        <Field label="Palette">
+          <SearchableSelect
+            value={seg.pal >= 0 ? String(seg.pal) : ''}
+            onChange={(v) => set({ pal: v === '' ? -1 : parseInt(v, 10) })}
+            options={palOpts}
+            placeholder="(none)"
+            allowEmpty
           />
         </Field>
       </SimpleGrid>
@@ -263,7 +273,9 @@ function SegmentRowEditor({ segment, presets, onChange, onDelete }) {
   );
 }
 
-export function SegmentMapEditor({ mb, presets = [], wledIp = '', onChange }) {
+export function SegmentMapEditor({
+  mb, presets = [], wledIp = '', effectOptions = [], paletteOptions = [], onChange,
+}) {
   const mapping = normalizeMbMapping(mb);
   const maps = mapping.segmentMaps || [];
   const [selectedId, setSelectedId] = useState(maps[0]?.id || null);
@@ -444,6 +456,8 @@ export function SegmentMapEditor({ mb, presets = [], wledIp = '', onChange }) {
                 key={seg.id || i}
                 segment={seg}
                 presets={presets}
+                effectOptions={effectOptions}
+                paletteOptions={paletteOptions}
                 onChange={(next) => {
                   const segments = [...(selected.segments || [])];
                   segments[i] = next;

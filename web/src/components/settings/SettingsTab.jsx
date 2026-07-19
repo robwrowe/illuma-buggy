@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Checkbox,
   Group,
@@ -24,6 +24,7 @@ import { AppButton, AppCard } from '../shared/styles';
 import { MB_COLOR_NAMES, MB_PAL_RANDOM } from '../../lib/ble/mbConstants';
 import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
 import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
+import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
 
 export function SettingsTab({ data, update }) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
@@ -31,6 +32,8 @@ export function SettingsTab({ data, update }) {
   const savedColors = data.savedColors || [];
   const [bleTab, setBleTab] = useState('rules');
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
+  const [segFxOptions, setSegFxOptions] = useState(() => loadCachedWledCatalog().effects);
+  const [segPalOptions, setSegPalOptions] = useState(() => loadCachedWledCatalog().palettes);
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
   const setMb = (patch) => update({ mbMapping: normalizeMbMapping({ ...mb, ...patch }) });
   const setMbColor = (idx, hex) => {
@@ -40,6 +43,16 @@ export function SettingsTab({ data, update }) {
     colors[idx] = v;
     setMb({ colors });
   };
+
+  useEffect(() => {
+    if (bleTab !== 'segmentMaps') return;
+    const ip = wledIp.trim();
+    if (!ip) return;
+    fetchWledCatalog(ip).then(({ effects, palettes }) => {
+      setSegFxOptions(effects);
+      setSegPalOptions(palettes);
+    }).catch(() => { /* keep cache / last known */ });
+  }, [bleTab, wledIp]);
 
   return (
     <ScrollArea h="100%">
@@ -137,12 +150,14 @@ export function SettingsTab({ data, update }) {
                 w={140}
                 styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
               />
-              <Text size="xs" c="dimmed">Used by Import from WLED (same LAN / StrollerNet)</Text>
+              <Text size="xs" c="dimmed">Import + effect/palette names (same LAN / StrollerNet)</Text>
             </Group>
             <SegmentMapEditor
               mb={mb}
               presets={presets}
               wledIp={wledIp}
+              effectOptions={segFxOptions}
+              paletteOptions={segPalOptions}
               onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
             />
           </>

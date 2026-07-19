@@ -499,9 +499,14 @@ function RuleCard({
             />
           </Field>
           {onEditMaps && (
-            <AppButton size="compact-xs" variant="default" onClick={onEditMaps}>
-              Edit maps in Segment Maps tab
-            </AppButton>
+            <Stack gap={4}>
+              <AppButton size="compact-xs" variant="default" onClick={onEditMaps}>
+                Edit segments →
+              </AppButton>
+              <Text size="xs" c="dimmed">
+                Assign effects / palettes on each segment in the Segment Maps tab.
+              </Text>
+            </Stack>
           )}
 
           <Paper p="sm" withBorder bg="var(--surface2)">
