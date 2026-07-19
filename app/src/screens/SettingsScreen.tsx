@@ -654,9 +654,9 @@ export default function SettingsScreen() {
               />
             </View>
             <TouchableOpacity
-              style={s.dataBtn}
+              style={[s.dataBtn, !scannerMac.trim() && { opacity: 0.4 }]}
               onPress={saveScannerMacManual}
-              disabled={!isConnected || !scannerMac.trim()}
+              disabled={!scannerMac.trim()}
             >
               <IconBluetooth size={16} color={colors.primary} />
               <Text style={s.dataBtnText}>Save scanner MAC to board</Text>

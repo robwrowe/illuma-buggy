@@ -11,6 +11,8 @@ BoardRole boardRole = BoardRole::STANDALONE;
 uint8_t scannerPeerMac[6] = {0};
 bool scannerPeerConfigured = false;
 unsigned long lastScannerPacketMs = 0;
+uint32_t espNowRxCount = 0;
+uint32_t espNowRxRejected = 0;
 
 static ParsedPacketJob parsedJob = {};
 static portMUX_TYPE parsedJobMux = portMUX_INITIALIZER_UNLOCKED;
@@ -54,7 +56,6 @@ static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 #endif
 
 void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len) {
-  (void)mac;
   if (!data || len <= 0) return;
 
   // Reflected pairing is scanner-side; logic board only receives ParsedDisneyPacket.
@@ -62,10 +63,19 @@ void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len) 
     ParsedDisneyPacket pkt;
     memcpy(&pkt, data, sizeof(pkt));
     lastScannerPacketMs = millis();
+    espNowRxCount++;
+    // Positive proof the packet came over ESP-NOW (scanner) rather than local BLE.
+    if (bleScanLogEnabled) {
+      Serial.printf("[ESP-NOW] rx #%lu kind=%u op=0x%04X raw=%u from %s\n",
+                    (unsigned long)espNowRxCount, (unsigned)pkt.kind,
+                    (unsigned)pkt.opcode, (unsigned)pkt.rawLen,
+                    mac ? transportMacToString(mac).c_str() : "?");
+    }
     queueParsedPacket(pkt);
     return;
   }
 
+  espNowRxRejected++;
   Serial.printf("[ESP-NOW] Ignoring len=%d (expected %u)\n",
                 len, (unsigned)sizeof(ParsedDisneyPacket));
 }

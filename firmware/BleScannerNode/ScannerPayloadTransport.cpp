@@ -94,6 +94,16 @@ void scannerTransportInit() {
 void scannerTransportSend(const ParsedDisneyPacket& pkt) {
   if (!logicPeerConfigured) return;
   esp_err_t err = esp_now_send(pairedLogicMac, (const uint8_t*)&pkt, sizeof(pkt));
+  // NOTE: ESP_OK means the frame was queued for TX, not that the logic board
+  // received it. Compare this ok count against the logic board's [ESP-NOW] rx
+  // count (serial `status`) to gauge over-the-air delivery.
   if (err == ESP_OK) espNowSendOk++;
   else espNowSendFail++;
+  if (bleScanLogEnabled) {
+    Serial.printf("[ESP-NOW] tx kind=%u op=0x%04X -> %s (%s, ok/fail=%lu/%lu)\n",
+                  (unsigned)pkt.kind, (unsigned)pkt.opcode,
+                  scannerMacToString(pairedLogicMac).c_str(),
+                  err == ESP_OK ? "queued" : "ERR",
+                  (unsigned long)espNowSendOk, (unsigned long)espNowSendFail);
+  }
 }

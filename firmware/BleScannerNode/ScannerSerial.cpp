@@ -21,11 +21,12 @@ void processScannerSerial() {
   } else if (line == "status") {
     uint8_t myMac[6];
     WiFi.macAddress(myMac);
-    Serial.printf("[Status] paired=%s logic=%s espnow ok/fail=%u/%u scanlog=%s\n",
+    Serial.printf("[Status] paired=%s logic=%s espnow tx-queued ok/fail=%u/%u scanlog=%s\n",
                   logicPeerConfigured ? "yes" : "no",
                   logicPeerConfigured ? scannerMacToString(pairedLogicMac).c_str() : "(none)",
                   espNowSendOk, espNowSendFail,
                   bleScanLogEnabled ? "on" : "off");
+    Serial.println("[Status] (ok=frames queued for TX; compare vs logic board 'rx' count)");
     Serial.printf("[Status] scanner MAC=%s\n", scannerMacToString(myMac).c_str());
   } else if (line.startsWith("pair ")) {
     String macStr = line.substring(5);

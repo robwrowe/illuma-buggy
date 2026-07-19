@@ -6,6 +6,8 @@ extern BoardRole boardRole;
 extern uint8_t scannerPeerMac[6];
 extern bool scannerPeerConfigured;
 extern unsigned long lastScannerPacketMs;
+extern uint32_t espNowRxCount;      // valid ParsedDisneyPackets received over ESP-NOW
+extern uint32_t espNowRxRejected;   // ESP-NOW frames dropped (wrong length)
 
 void payloadTransportInit();
 void transportSendParsedPacket(const ParsedDisneyPacket& pkt);
