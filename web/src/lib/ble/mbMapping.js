@@ -6,7 +6,37 @@ const CMP_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte']);
 const MB_SEG_KEY_SET = new Set(MB_SEG_KEYS);
 const BLEND_MODES = new Set(['normal', 'add']);
 const COOLDOWN_RESET_MODES = new Set(['onMatch', 'fixed']);
-const START_TRANSITION_TYPES = new Set(['fade', 'instant']);
+
+/** WLED v16 state.`bs` transition styles (FX.h TRANSITION_*), plus Illuma `instant`. */
+export const WLED_START_TRANSITIONS = [
+  { value: 'fade', label: 'Fade', bs: 0x00 },
+  { value: 'fairyDust', label: 'Fairy Dust', bs: 0x01 },
+  { value: 'swipeRight', label: 'Swipe right', bs: 0x02 },
+  { value: 'swipeLeft', label: 'Swipe left', bs: 0x03 },
+  { value: 'pushRight', label: 'Push right', bs: 0x10 },
+  { value: 'pushLeft', label: 'Push left', bs: 0x11 },
+  { value: 'outsideIn', label: 'Outside-in', bs: 0x04 },
+  { value: 'insideOut', label: 'Inside-out', bs: 0x05 },
+  { value: 'swipeUp', label: 'Swipe up (2D)', bs: 0x06 },
+  { value: 'swipeDown', label: 'Swipe down (2D)', bs: 0x07 },
+  { value: 'openH', label: 'Open horizontal (2D)', bs: 0x08 },
+  { value: 'openV', label: 'Open vertical (2D)', bs: 0x09 },
+  { value: 'swipeTL', label: 'Swipe TL (2D)', bs: 0x0A },
+  { value: 'swipeTR', label: 'Swipe TR (2D)', bs: 0x0B },
+  { value: 'swipeBR', label: 'Swipe BR (2D)', bs: 0x0C },
+  { value: 'swipeBL', label: 'Swipe BL (2D)', bs: 0x0D },
+  { value: 'circularOut', label: 'Circular out (2D)', bs: 0x0E },
+  { value: 'circularIn', label: 'Circular in (2D)', bs: 0x0F },
+  { value: 'pushUp', label: 'Push up (2D)', bs: 0x12 },
+  { value: 'pushDown', label: 'Push down (2D)', bs: 0x13 },
+  { value: 'pushTL', label: 'Push TL (2D)', bs: 0x14 },
+  { value: 'pushTR', label: 'Push TR (2D)', bs: 0x15 },
+  { value: 'pushBR', label: 'Push BR (2D)', bs: 0x16 },
+  { value: 'pushBL', label: 'Push BL (2D)', bs: 0x17 },
+  { value: 'instant', label: 'Instant', bs: 0x00 },
+];
+
+const START_TRANSITION_TYPES = new Set(WLED_START_TRANSITIONS.map((t) => t.value));
 
 export function shortRuleId() {
   return `r${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;

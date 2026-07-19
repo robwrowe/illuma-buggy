@@ -28,6 +28,7 @@ import {
   createEmptyStartTransition,
   normalizeMbMapping,
   reindexRulePriorities,
+  WLED_START_TRANSITIONS,
 } from '../../lib/ble/mbMapping';
 import {
   bytesToHex,
@@ -564,10 +565,11 @@ function RuleCard({
                     ...rule,
                     startTransition: { ...startTransition, type },
                   })}
-                  options={[
-                    { value: 'fade', label: 'fade' },
-                    { value: 'instant', label: 'instant' },
-                  ]}
+                  options={WLED_START_TRANSITIONS.map((t) => ({
+                    value: t.value,
+                    label: t.label,
+                    searchText: `${t.label} ${t.value}`,
+                  }))}
                   allowEmpty={false}
                 />
               </Field>

@@ -6,6 +6,8 @@ bool sendToWLEDForBleEffect(const String& jsonBody);
 bool sendToWLEDForBleSolid(const String& jsonBody);
 String getFromWLED(const String& path);
 String injectWledTransition(const String& jsonBody, unsigned long transitionMs);
+/** Same as above; when blendingStyle >= 0 also injects WLED v16 `"bs"` (transition style). */
+String injectWledTransition(const String& jsonBody, unsigned long transitionMs, int blendingStyle);
 String compactWledStateForSave(const String& full);
 void snapshotWledBaseline();
 void loadWledBaselineFromNvs();

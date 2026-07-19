@@ -498,13 +498,45 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   String presetId = rule["presetId"] | "";
   JsonArray extracts = rule["extract"].as<JsonArray>();
 
-  // startTransition
+  // startTransition — WLED v16 blending style (`bs`) + duration
   unsigned long startTransMs = bleEffectTransitionMs;
+  int blendingStyle = 0; // TRANSITION_FADE
+  bool hasStartTr = false;
   JsonObject startTr = rule["startTransition"].as<JsonObject>();
   if (!startTr.isNull()) {
+    hasStartTr = true;
     const char* ttype = startTr["type"] | "fade";
-    if (strcmp(ttype, "instant") == 0) startTransMs = 0;
-    else if (startTr.containsKey("timeMs")) startTransMs = (unsigned long)(startTr["timeMs"] | 0);
+    if (strcmp(ttype, "instant") == 0) {
+      startTransMs = 0;
+      blendingStyle = 0;
+    } else {
+      if (startTr.containsKey("timeMs")) startTransMs = (unsigned long)(startTr["timeMs"] | 0);
+      // Map Illuma type strings → WLED TRANSITION_* (FX.h)
+      if      (strcmp(ttype, "fairyDust") == 0)     blendingStyle = 0x01;
+      else if (strcmp(ttype, "swipeRight") == 0)    blendingStyle = 0x02;
+      else if (strcmp(ttype, "swipeLeft") == 0)     blendingStyle = 0x03;
+      else if (strcmp(ttype, "outsideIn") == 0)     blendingStyle = 0x04;
+      else if (strcmp(ttype, "insideOut") == 0)     blendingStyle = 0x05;
+      else if (strcmp(ttype, "swipeUp") == 0)       blendingStyle = 0x06;
+      else if (strcmp(ttype, "swipeDown") == 0)     blendingStyle = 0x07;
+      else if (strcmp(ttype, "openH") == 0)         blendingStyle = 0x08;
+      else if (strcmp(ttype, "openV") == 0)         blendingStyle = 0x09;
+      else if (strcmp(ttype, "swipeTL") == 0)       blendingStyle = 0x0A;
+      else if (strcmp(ttype, "swipeTR") == 0)       blendingStyle = 0x0B;
+      else if (strcmp(ttype, "swipeBR") == 0)       blendingStyle = 0x0C;
+      else if (strcmp(ttype, "swipeBL") == 0)       blendingStyle = 0x0D;
+      else if (strcmp(ttype, "circularOut") == 0)   blendingStyle = 0x0E;
+      else if (strcmp(ttype, "circularIn") == 0)    blendingStyle = 0x0F;
+      else if (strcmp(ttype, "pushRight") == 0)     blendingStyle = 0x10;
+      else if (strcmp(ttype, "pushLeft") == 0)      blendingStyle = 0x11;
+      else if (strcmp(ttype, "pushUp") == 0)        blendingStyle = 0x12;
+      else if (strcmp(ttype, "pushDown") == 0)      blendingStyle = 0x13;
+      else if (strcmp(ttype, "pushTL") == 0)        blendingStyle = 0x14;
+      else if (strcmp(ttype, "pushTR") == 0)        blendingStyle = 0x15;
+      else if (strcmp(ttype, "pushBR") == 0)        blendingStyle = 0x16;
+      else if (strcmp(ttype, "pushBL") == 0)        blendingStyle = 0x17;
+      else                                          blendingStyle = 0x00; // fade
+    }
   }
 
   saveWledStateForOverride();
@@ -686,7 +718,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   disableAllSplitSegments();
   delay(80);
   String body = preparePresetApplyPayload(wledJson);
-  bool ok = sendToWLED(injectWledTransition(body, startTransMs), 8000, 2);
+  bool ok = sendToWLED(
+    injectWledTransition(body, startTransMs, hasStartTr ? blendingStyle : -1),
+    8000, 2);
   if (!ok) {
     Serial.println("[Rule] WLED apply failed");
     return;
