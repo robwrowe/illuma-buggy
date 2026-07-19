@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Checkbox,
   Group,
@@ -16,34 +16,21 @@ import { DefaultPresetField } from '../ble/DefaultPresetField';
 import { RandomPoolEditor } from '../ble/RandomPoolEditor';
 import { RuleEditor } from '../ble/RuleEditor';
 import { SegmentMapEditor } from '../ble/SegmentMapEditor';
-import { WledSegEditor } from '../ble/WledSegEditor';
 import { ColorInput } from '../shared/ColorInput';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
-import { webBleBoard } from '../../lib/ble/chunking';
-import { MB_COLOR_NAMES, MB_PAL_RANDOM, MB_SEGMENT_META, MB_SEGMENT_SIM_COMMAND } from '../../lib/ble/mbConstants';
-import { DEFAULT_MB_MAPPING, normalizeMbMapping, withSegRefDefaults } from '../../lib/ble/mbMapping';
-import { DEFAULT_DATA, generateId, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
-import { buildFiveCornerPreview, buildPresetLayoutPayload, buildSegmentHighlightPreview, fetchWledSegmentsFromIp, postWledState, pruneRefsToSnapshot } from '../../lib/wled/capture';
-import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
+import { MB_COLOR_NAMES, MB_PAL_RANDOM } from '../../lib/ble/mbConstants';
+import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
+import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
 
 export function SettingsTab({ data, update }) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const presets = data.presets || [];
   const savedColors = data.savedColors || [];
-  const mbLayouts = data.mbSegmentLayouts || [];
-  const activeLayoutId = data.mbActiveSegmentLayoutId || mbLayouts[0]?.id;
-  const activeLayout = mbLayouts.find(l => l.id === activeLayoutId) || mbLayouts[0];
-  const mbSegments = activeLayout?.segments || mb.segments;
   const [bleTab, setBleTab] = useState('rules');
   const [wledIp, setWledIp] = useState(() => localStorage.getItem('wled-ip') || '4.3.2.1');
-  const [wledPreviewErr, setWledPreviewErr] = useState('');
-  const [segSnapshots, setSegSnapshots] = useState({});
-  const [segCaptureId, setSegCaptureId] = useState(null);
-  const [segFxOptions, setSegFxOptions] = useState(() => loadCachedWledCatalog().effects);
-  const [segPalOptions, setSegPalOptions] = useState(() => loadCachedWledCatalog().palettes);
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
   const setMb = (patch) => update({ mbMapping: normalizeMbMapping({ ...mb, ...patch }) });
   const setMbColor = (idx, hex) => {
@@ -52,102 +39,6 @@ export function SettingsTab({ data, update }) {
     if (!/^#[0-9a-fA-F]{6}$/.test(v)) return;
     colors[idx] = v;
     setMb({ colors });
-  };
-
-  const updateActiveLayoutSegments = (segKey, refs) => {
-    if (!activeLayout) {
-      setMb({ segments: { ...mb.segments, [segKey]: refs.map(withSegRefDefaults) } });
-      return;
-    }
-    const nextSegs = { ...activeLayout.segments, [segKey]: refs.map(withSegRefDefaults) };
-    const nextLayouts = mbLayouts.map(l => l.id === activeLayout.id ? { ...l, segments: nextSegs } : l);
-    update({
-      mbSegmentLayouts: nextLayouts,
-      mbMapping: normalizeMbMapping({ ...mb, segments: nextSegs }),
-    });
-  };
-
-  const switchMbLayout = async (layoutId) => {
-    const layout = mbLayouts.find(l => l.id === layoutId);
-    if (!layout) return;
-    update({
-      mbActiveSegmentLayoutId: layoutId,
-      mbMapping: normalizeMbMapping({ ...mb, segments: layout.segments }),
-    });
-    const idx = mbLayouts.findIndex(l => l.id === layoutId);
-    if (webBleBoard.connected && idx >= 0) {
-      try { await webBleBoard.send({ type: 'mb_layout_switch', index: idx }); } catch { }
-    }
-  };
-
-  const addMbLayout = () => {
-    const name = prompt('Layout name:', 'New layout');
-    if (!name?.trim()) return;
-    const id = generateId();
-    const segments = JSON.parse(JSON.stringify(activeLayout?.segments || mb.segments));
-    update({
-      mbSegmentLayouts: [...mbLayouts, { id, name: name.trim(), createdAt: Date.now(), segments }],
-      mbActiveSegmentLayoutId: id,
-      mbMapping: normalizeMbMapping({ ...mb, segments }),
-    });
-  };
-
-  useEffect(() => {
-    if (bleTab !== 'segments') return;
-    const ip = wledIp.trim();
-    if (!ip) return;
-    fetchWledCatalog(ip).then(({ effects, palettes }) => {
-      setSegFxOptions(effects);
-      setSegPalOptions(palettes);
-    }).catch(() => { });
-  }, [bleTab, wledIp]);
-
-  const setSeg = (id, refs) => updateActiveLayoutSegments(id, refs);
-
-  const sendStripPreview = async (payload) => {
-    setWledPreviewErr('');
-    const ip = wledIp.trim();
-    if (!ip) { setWledPreviewErr('Enter a WLED IP to preview on the strip.'); return; }
-    localStorage.setItem('wled-ip', ip);
-    try {
-      await postWledState(ip, payload);
-    } catch {
-      setWledPreviewErr(`Could not reach WLED at ${ip}. Join StrollerNet or the same LAN as the controller.`);
-    }
-  };
-
-  const previewSegment = (segId) => sendStripPreview(buildSegmentHighlightPreview(mbSegments, segId));
-  const previewFiveCorners = () => sendStripPreview(buildFiveCornerPreview(mbSegments));
-
-  const applyDefaultLayout = async () => {
-    setWledPreviewErr('');
-    const preset = presets.find(p => p.id === mb.defaultPresetId);
-    if (!preset) { setWledPreviewErr('Set a default zone preset on the Rules tab first.'); return; }
-    const payload = buildPresetLayoutPayload(preset, data.customSegmentLayouts);
-    if (!payload) { setWledPreviewErr('Link a segment layout to that preset or save segments in the preset.'); return; }
-    await sendStripPreview(payload);
-  };
-
-  const captureSegSnapshot = async (regionId) => {
-    setSegCaptureId(regionId);
-    setWledPreviewErr('');
-    try {
-      const ip = wledIp.trim();
-      if (!ip) throw new Error('Enter WLED IP');
-      localStorage.setItem('wled-ip', ip);
-      const segments = await fetchWledSegmentsFromIp(ip);
-      if (!segments.length) throw new Error('No active segments in WLED state');
-      setSegSnapshots(prev => ({ ...prev, [regionId]: segments }));
-      const pruned = pruneRefsToSnapshot(segments, mb.segments[regionId]);
-      const cur = mb.segments[regionId] || [];
-      if (pruned.length !== cur.length || pruned.some((r, i) => r.id !== cur[i]?.id)) {
-        setSeg(regionId, pruned);
-      }
-    } catch (e) {
-      setWledPreviewErr(e.message || 'Could not read WLED segments');
-    } finally {
-      setSegCaptureId(null);
-    }
   };
 
   return (
@@ -232,11 +123,29 @@ export function SettingsTab({ data, update }) {
         )}
 
         {bleTab === 'segmentMaps' && (
-          <SegmentMapEditor
-            mb={mb}
-            presets={presets}
-            onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
-          />
+          <>
+            <Group gap="sm" mb="xs" wrap="wrap" align="center">
+              <Text size="xs" fw={600} c="dimmed">WLED IP</Text>
+              <TextInput
+                value={wledIp}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setWledIp(v);
+                  if (v.trim()) localStorage.setItem('wled-ip', v.trim());
+                }}
+                placeholder="4.3.2.1"
+                w={140}
+                styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+              />
+              <Text size="xs" c="dimmed">Used by Import from WLED (same LAN / StrollerNet)</Text>
+            </Group>
+            <SegmentMapEditor
+              mb={mb}
+              presets={presets}
+              wledIp={wledIp}
+              onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
+            />
+          </>
         )}
 
         {bleTab === 'sw' && (
@@ -333,58 +242,6 @@ export function SettingsTab({ data, update }) {
                 </Paper>
               ))}
             </SimpleGrid>
-          </>
-        )}
-
-        {bleTab === 'segments' && (
-          <>
-            <Text size="xs" c="dimmed" lh={1.5}>
-              Per region: assign WLED segments manually (id + start/stop LED) or Capture from the strip and tick segments to add.
-            </Text>
-            <Group gap="xs" mb="sm" wrap="wrap">
-              {mbLayouts.map(l => (
-                <AppButton
-                  key={l.id}
-                  variant={l.id === activeLayoutId ? 'primary' : 'default'}
-                  size="compact-sm"
-                  onClick={() => switchMbLayout(l.id)}
-                >
-                  {l.name}
-                </AppButton>
-              ))}
-              <AppButton variant="default" size="compact-sm" onClick={addMbLayout}>+ New Layout</AppButton>
-            </Group>
-            <Group gap="sm" mb="sm" wrap="wrap" align="center">
-              <Text size="xs" fw={600} c="dimmed">WLED IP</Text>
-              <TextInput
-                value={wledIp}
-                onChange={(e) => { setWledIp(e.target.value); setWledPreviewErr(''); }}
-                placeholder="4.3.2.1"
-                w={140}
-                styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
-              />
-              <AppButton variant="default" size="compact-sm" onClick={applyDefaultLayout}>
-                Apply default preset layout
-              </AppButton>
-            </Group>
-            {wledPreviewErr && <Text size="xs" c="red" mb="xs">{wledPreviewErr}</Text>}
-            {MB_SEGMENT_META.map(({ id, label, hint }) => (
-              <WledSegEditor key={id} label={label} hint={hint}
-                simCommand={MB_SEGMENT_SIM_COMMAND[id]}
-                snapshot={segSnapshots[id] || []}
-                captureLoading={segCaptureId === id}
-                canCapture={!!wledIp.trim()}
-                onCapture={() => captureSegSnapshot(id)}
-                refs={mbSegments[id]} onChange={refs => setSeg(id, refs)}
-                onTest={() => previewSegment(id)}
-                effectOptions={segFxOptions}
-                paletteOptions={segPalOptions} />
-            ))}
-            <Stack pt="sm" mt="xs" style={{ borderTop: '1px solid var(--border)' }}>
-              <AppButton variant="primary" size="compact-sm" onClick={previewFiveCorners}>
-                Preview 5 corners
-              </AppButton>
-            </Stack>
           </>
         )}
 

@@ -103,43 +103,6 @@ function migrateShowModeDefaults<T extends Record<string, unknown>>(data: T): T 
   };
 }
 
-export interface MbSegmentLayout {
-  id: string;
-  name: string;
-  createdAt: number;
-  segments: Record<string, SegRefWithMeta[]>;
-}
-
-export function buildMbKeyedSegmentsFromMapping(
-  mbMapping: { segments?: Record<string, Partial<SegRefWithMeta>[]> } | undefined,
-  segmentIds: string[],
-  defaultSegments: Record<string, Partial<SegRefWithMeta>[]>,
-): Record<string, SegRefWithMeta[]> {
-  const segments: Record<string, SegRefWithMeta[]> = {};
-  for (const id of segmentIds) {
-    const src = mbMapping?.segments?.[id] || defaultSegments[id] || [];
-    segments[id] = src.map(r => withSegRefDefaults(r));
-  }
-  return segments;
-}
-
-export function ensureMbSegmentLayouts<T extends Record<string, unknown>>(data: T): T {
-  if (Array.isArray(data.mbSegmentLayouts) && (data.mbSegmentLayouts as unknown[]).length) return data;
-  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const mbSegs = (data.mbMapping as { segments?: Record<string, Partial<SegRefWithMeta>[]> } | undefined)?.segments;
-  const segments: Record<string, SegRefWithMeta[]> = {};
-  if (mbSegs) {
-    for (const [key, refs] of Object.entries(mbSegs)) {
-      segments[key] = (refs || []).map(r => withSegRefDefaults(r));
-    }
-  }
-  return {
-    ...data,
-    mbSegmentLayouts: [{ id, name: 'Default', createdAt: Date.now(), segments }],
-    mbActiveSegmentLayoutId: data.mbActiveSegmentLayoutId || id,
-  } as T;
-}
-
 function migrateWandLabDefaults<T extends Record<string, unknown>>(data: T): T {
   if (data.wandLab) return data;
   return { ...data, wandLab: { simIp: '', log: [] } satisfies WandLabConfig };
@@ -162,6 +125,8 @@ export function migrateConfig(raw: Record<string, unknown> | null | undefined): 
       .map(l => normalizeSegmentLayout(l as CustomSegmentLayout))
       .filter(Boolean);
   }
-  data = ensureMbSegmentLayouts(data);
+  // Drop legacy region-keyed layout list (superseded by mbMapping.segmentMaps).
+  delete data.mbSegmentLayouts;
+  delete data.mbActiveSegmentLayoutId;
   return data;
 }

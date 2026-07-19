@@ -157,7 +157,7 @@ export interface DeviceStatus {
 
 import {
   migrateConfig, CURRENT_CONFIG_VERSION,
-  type ParkConfig, type ShowModeConfig, type WandLabConfig, type MbSegmentLayout,
+  type ParkConfig, type ShowModeConfig, type WandLabConfig,
 } from '../utils/configMigration';
 import {
   MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
@@ -176,7 +176,7 @@ import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
   finalizeWledSegmentPayload,
 } from '../utils/segmentLayouts';
-import { normalizeZonePolygon, generateId } from '../utils/utils';
+import { normalizeZonePolygon } from '../utils/utils';
 import {
   DEFAULT_SHOW_SETTINGS,
   normalizeShowBinding,
@@ -185,8 +185,6 @@ import {
   type ShowSettings,
   type ShowInstanceOverride,
 } from '../utils/showBindings';
-import { ensureMbSegmentLayouts } from '../utils/configMigration';
-import type { WledSegRef } from '../utils/mbConfig';
 
 export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
 export {
@@ -196,7 +194,7 @@ export {
 } from '../utils/segmentLayouts';
 export { fetchWledSegmentsFromDevice } from '../utils/bleBoardSync';
 
-export type { ParkConfig, ShowModeConfig, MbSegmentLayout } from '../utils/configMigration';
+export type { ParkConfig, ShowModeConfig } from '../utils/configMigration';
 export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
 export {
   DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
@@ -363,12 +361,6 @@ interface AppState {
   ftbPresetId: string;
   setFtbPresetId: (id: string) => void;
   wandLab: WandLabConfig;
-  mbSegmentLayouts: MbSegmentLayout[];
-  mbActiveSegmentLayoutId: string | null;
-  switchMbSegmentLayout: (id: string) => void;
-  hydrateMbMappingFromActiveLayout: () => void;
-  addMbSegmentLayout: (name: string) => void;
-  updateActiveLayoutSegments: (segId: string, refs: import('../utils/mbConfig').WledSegRef[]) => void;
 
   // BLE packet capture (parade / show recording)
   bleCaptureActive:       boolean;
@@ -559,56 +551,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   showProtectsZones:      false,
   ftbPresetId:            '',
   wandLab:                DEFAULT_WAND_LAB,
-  mbSegmentLayouts:       [],
-  mbActiveSegmentLayoutId: null,
-
-  switchMbSegmentLayout: (id) => {
-    const s = get();
-    const layout = s.mbSegmentLayouts.find(l => l.id === id);
-    if (!layout) return;
-    const segments = JSON.parse(JSON.stringify(layout.segments)) as Record<string, WledSegRef[]>;
-    set({
-      mbActiveSegmentLayoutId: id,
-      mbMapping: { ...s.mbMapping, segments },
-    });
-    get().saveToStorage();
-  },
-
-  hydrateMbMappingFromActiveLayout: () => {
-    const s = get();
-    const layout = (s.mbActiveSegmentLayoutId
-      ? s.mbSegmentLayouts.find(l => l.id === s.mbActiveSegmentLayoutId)
-      : undefined) ?? s.mbSegmentLayouts[0];
-    if (!layout) return;
-    const segments = JSON.parse(JSON.stringify(layout.segments)) as Record<string, WledSegRef[]>;
-    set({ mbMapping: { ...s.mbMapping, segments } });
-  },
-
-  addMbSegmentLayout: (name) => {
-    const s = get();
-    const id = generateId();
-    const segments = JSON.parse(JSON.stringify(s.mbMapping.segments)) as Record<string, WledSegRef[]>;
-    const layout: MbSegmentLayout = { id, name: name.trim() || 'Layout', createdAt: Date.now(), segments };
-    set({
-      mbSegmentLayouts: [...s.mbSegmentLayouts, layout],
-      mbActiveSegmentLayoutId: id,
-    });
-    get().saveToStorage();
-  },
-
-  updateActiveLayoutSegments: (segId, refs) => {
-    const s = get();
-    const segments = { ...s.mbMapping.segments, [segId]: refs };
-    const mbMapping = { ...s.mbMapping, segments };
-    const activeId = s.mbActiveSegmentLayoutId;
-    const mbSegmentLayouts = activeId
-      ? s.mbSegmentLayouts.map(l => l.id === activeId
-        ? { ...l, segments: { ...l.segments, [segId]: refs } }
-        : l)
-      : s.mbSegmentLayouts;
-    set({ mbMapping, mbSegmentLayouts });
-    get().saveToStorage();
-  },
 
   // Presets
   setPresets: (presets) => set({ presets }),
@@ -908,7 +850,6 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'customPalettes','savedColors','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
                     'showInstanceOverrides','ftbPresetId','wandLab',
-                    'mbSegmentLayouts','mbActiveSegmentLayoutId',
                     'wledEffects','wledPalettes','wledFxData'];
       const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
@@ -925,23 +866,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         }
       });
+      void AsyncStorage.multiRemove(['mbSegmentLayouts', 'mbActiveSegmentLayoutId']);
       const mbMapping = normalizeMbMapping(d.mbMapping);
-      const mbBoot = ensureMbSegmentLayouts({
-        mbMapping,
-        mbSegmentLayouts: d.mbSegmentLayouts ?? [],
-        mbActiveSegmentLayoutId: d.mbActiveSegmentLayoutId ?? null,
-      });
-      const bootLayouts = (mbBoot.mbSegmentLayouts as MbSegmentLayout[]) ?? [];
-      const bootActiveId = (mbBoot.mbActiveSegmentLayoutId as string | null) ?? null;
-      const bootActiveLayout = (bootActiveId
-        ? bootLayouts.find(l => l.id === bootActiveId)
-        : undefined) ?? bootLayouts[0];
-      const hydratedMbMapping = bootActiveLayout
-        ? {
-          ...mbMapping,
-          segments: JSON.parse(JSON.stringify(bootActiveLayout.segments)) as Record<string, WledSegRef[]>,
-        }
-        : mbMapping;
       set({
         presets:            (d.presets ?? []).map((p: Preset) => normalizePreset(p)),
         zones:              (d.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
@@ -965,7 +891,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         boardRole:          (d.boardRole as BoardRoleMode) ?? 'standalone',
         scannerMac:         (d.scannerMac as string) ?? '',
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
-        mbMapping:          hydratedMbMapping,
+        mbMapping,
         recallState:        d.recallState        ?? DEFAULT_RECALL,
         customPalettes:     (d.customPalettes ?? []).map((p: CustomPalette) => normalizeCustomPalette(p)),
         savedColors:        d.savedColors ?? [],
@@ -991,8 +917,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         showInstanceOverrides: d.showInstanceOverrides ?? {},
         ftbPresetId:        d.ftbPresetId        ?? '',
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
-        mbSegmentLayouts:   (mbBoot.mbSegmentLayouts as MbSegmentLayout[]) ?? [],
-        mbActiveSegmentLayoutId: (mbBoot.mbActiveSegmentLayoutId as string | null) ?? null,
       });
     } catch (e) { console.error('[Store] Load error:', e); }
   },
@@ -1044,8 +968,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['showInstanceOverrides', JSON.stringify(s.showInstanceOverrides)],
         ['ftbPresetId',        JSON.stringify(s.ftbPresetId)],
         ['wandLab',            JSON.stringify(s.wandLab)],
-        ['mbSegmentLayouts',   JSON.stringify(s.mbSegmentLayouts)],
-        ['mbActiveSegmentLayoutId', JSON.stringify(s.mbActiveSegmentLayoutId)],
       ]);
     } catch (e) { console.error('[Store] Save error:', e); }
   },
@@ -1143,7 +1065,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       showBindings: s.showBindings, showSettings: s.showSettings,
       showInstanceOverrides: s.showInstanceOverrides,
       ftbPresetId: s.ftbPresetId, wandLab: s.wandLab,
-      mbSegmentLayouts: s.mbSegmentLayouts, mbActiveSegmentLayoutId: s.mbActiveSegmentLayoutId,
     };
   },
 
@@ -1185,8 +1106,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       showInstanceOverrides: (m.showInstanceOverrides as Record<string, ShowInstanceOverride>) ?? {},
       ftbPresetId:        (m.ftbPresetId as string) ?? '',
       wandLab:            (m.wandLab as WandLabConfig) ?? DEFAULT_WAND_LAB,
-      mbSegmentLayouts:   (m.mbSegmentLayouts as MbSegmentLayout[]) ?? [],
-      mbActiveSegmentLayoutId: (m.mbActiveSegmentLayoutId as string) ?? null,
     });
     get().saveToStorage();
   },

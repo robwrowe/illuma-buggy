@@ -1,6 +1,6 @@
-import { buildMbKeyedSegmentsFromMapping, migrateWandLabDefaults, normalizeMbMapping, withSegRefDefaults } from './ble/mbMapping';
+import { migrateWandLabDefaults, normalizeMbMapping, withSegRefDefaults } from './ble/mbMapping';
 import { normalizeTags } from './tags';
-import { DEFAULT_DATA, compareVersions, generateId, normalizeHex, normalizeZoneRecord } from './utils';
+import { DEFAULT_DATA, compareVersions, normalizeHex, normalizeZoneRecord } from './utils';
 
 export function loadAppData(stored) {
   const merged = stored ? { ...DEFAULT_DATA, ...stored } : { ...DEFAULT_DATA };
@@ -19,14 +19,9 @@ export function loadAppData(stored) {
   merged.showSettings = { ...DEFAULT_DATA.showSettings, ...(merged.showSettings || {}) };
   merged.showInstanceOverrides = merged.showInstanceOverrides || {};
   merged.wandLab = merged.wandLab || DEFAULT_DATA.wandLab;
-  if (!merged.mbSegmentLayouts?.length) {
-    const id = generateId();
-    merged.mbSegmentLayouts = [{
-      id, name: 'Default', createdAt: Date.now(),
-      segments: buildMbKeyedSegmentsFromMapping(merged.mbMapping),
-    }];
-    merged.mbActiveSegmentLayoutId = merged.mbActiveSegmentLayoutId || id;
-  }
+  // Drop legacy region-keyed layout list (superseded by mbMapping.segmentMaps).
+  delete merged.mbSegmentLayouts;
+  delete merged.mbActiveSegmentLayoutId;
   return merged;
 }
 
@@ -74,17 +69,6 @@ export function migrateShowModeDefaults(data) {
   };
 }
 
-export function migrateMbSegmentLayouts(data) {
-  if (Array.isArray(data.mbSegmentLayouts) && data.mbSegmentLayouts.length) return data;
-  const id = generateId();
-  const segments = buildMbKeyedSegmentsFromMapping(data.mbMapping);
-  return {
-    ...data,
-    mbSegmentLayouts: [{ id, name: 'Default', createdAt: Date.now(), segments }],
-    mbActiveSegmentLayoutId: data.mbActiveSegmentLayoutId || id,
-  };
-}
-
 export function migrateConfig(raw) {
   if (!raw) return loadAppData(null);
   let data = { ...raw };
@@ -97,7 +81,6 @@ export function migrateConfig(raw) {
     data = migrateWandLabDefaults(data);
     data.version = CURRENT_VERSION;
   }
-  data = migrateMbSegmentLayouts(data);
   return loadAppData(data);
 }
 

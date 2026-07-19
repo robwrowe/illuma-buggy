@@ -118,7 +118,6 @@ export const DEFAULT_DATA = {
   starlightEnabled: true, starlightTimeoutSec: 15,
   magicBandEnabled: true, magicBandTimeoutSec: 15,
   customPalettes: [], paletteSets: [], customSegmentLayouts: [], savedColors: [],
-  mbSegmentLayouts: [], mbActiveSegmentLayoutId: null,
   showModeConfig: {
     parade: { pre: '', live: '', post: '' },
     fireworks: { pre: '', live: '', post: '' },

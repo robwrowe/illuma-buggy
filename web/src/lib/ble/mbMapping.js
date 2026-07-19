@@ -73,6 +73,62 @@ export function createEmptySegment(overrides = {}) {
   };
 }
 
+/** RGB array from WLED `col[i]` → `#rrggbb`, or '' if missing. */
+export function rgbArrayToHex(rgb) {
+  if (!Array.isArray(rgb) || rgb.length < 3) return '';
+  const clamp = (n) => Math.max(0, Math.min(255, Number(n) || 0));
+  return `#${[rgb[0], rgb[1], rgb[2]].map((n) => clamp(n).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Map a live WLED segment (from fetchWledSegmentsFromIp) into a segment-map entry. */
+export function wledSegmentToSegmentMapSegment(raw) {
+  const colSrc = Array.isArray(raw?.col) ? raw.col : [];
+  return createEmptySegment({
+    wledSegId: Number(raw?.id ?? 0),
+    start: Number(raw?.start ?? 0),
+    stop: Number(raw?.stop ?? 0),
+    grp: raw?.grp ?? 1,
+    spc: raw?.spc ?? 0,
+    of: raw?.of ?? 0,
+    rev: !!raw?.rev,
+    mi: !!raw?.mi,
+    blend: raw?.bm === 1 ? 'add' : 'normal',
+    fx: raw?.fx ?? -1,
+    pal: raw?.pal ?? -1,
+    sx: raw?.sx ?? 128,
+    ix: raw?.ix ?? 128,
+    colors: [0, 1, 2].map((i) => rgbArrayToHex(colSrc[i])),
+  });
+}
+
+/**
+ * Merge imported WLED segments into a map: update by wledSegId (preserve mask/preset
+ * fields), append new ones. Returns { segments, updated, added }.
+ */
+export function mergeImportedSegmentsIntoMap(existingSegments, importedSegments) {
+  const merged = [...(existingSegments || [])];
+  let updated = 0;
+  let added = 0;
+  (importedSegments || []).forEach((seg) => {
+    const idx = merged.findIndex((s) => s.wledSegId === seg.wledSegId);
+    if (idx >= 0) {
+      merged[idx] = {
+        ...merged[idx],
+        ...seg,
+        id: merged[idx].id,
+        maskAssignment: merged[idx].maskAssignment,
+        presetId: merged[idx].presetId,
+        presetVariables: merged[idx].presetVariables,
+      };
+      updated += 1;
+    } else {
+      merged.push(seg);
+      added += 1;
+    }
+  });
+  return { segments: merged, updated, added };
+}
+
 export function createEmptySegmentMap(overrides = {}) {
   return {
     id: shortSegmentMapId(),
@@ -157,26 +213,6 @@ export function normalizeParadeDetection(raw) {
     beaconOpcodeHexPrefix: prefix || d.beaconOpcodeHexPrefix,
     rssiThreshold: Number.isFinite(raw?.rssiThreshold) ? Number(raw.rssiThreshold) : d.rssiThreshold,
     cooldownSec: Number.isFinite(raw?.cooldownSec) ? Math.max(1, Number(raw.cooldownSec)) : d.cooldownSec,
-  };
-}
-
-export function buildMbKeyedSegmentsFromMapping(mbMapping) {
-  const segments = {};
-  const mb = mbMapping || DEFAULT_MB_MAPPING;
-  MB_SEGMENT_META.forEach(({ id }) => {
-    segments[id] = (mb.segments?.[id] || DEFAULT_MB_MAPPING.segments[id] || []).map(withSegRefDefaults);
-  });
-  return segments;
-}
-
-export function mbLayoutSetBlePayload(data) {
-  const layouts = data.mbSegmentLayouts || [];
-  const activeId = data.mbActiveSegmentLayoutId || layouts[0]?.id;
-  const activeIdx = Math.max(0, layouts.findIndex(l => l.id === activeId));
-  return {
-    type: 'mb_layout_set',
-    layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
-    active: activeIdx,
   };
 }
 

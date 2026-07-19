@@ -18,11 +18,13 @@ import { MB_SEGMENT_META } from '../../lib/ble/mbConstants';
 import {
   createEmptySegment,
   createEmptySegmentMap,
+  mergeImportedSegmentsIntoMap,
   normalizeMbMapping,
   normalizeSegment,
   normalizeSegmentMap,
+  wledSegmentToSegmentMapSegment,
 } from '../../lib/ble/mbMapping';
-
+import { fetchWledSegmentsFromIp } from '../../lib/wled/capture';
 const MASK_OPTS = [
   { value: 'ignore', label: 'ignore', searchText: 'ignore' },
   ...MB_SEGMENT_META.map((s) => ({
@@ -261,11 +263,14 @@ function SegmentRowEditor({ segment, presets, onChange, onDelete }) {
   );
 }
 
-export function SegmentMapEditor({ mb, presets = [], onChange }) {
+export function SegmentMapEditor({ mb, presets = [], wledIp = '', onChange }) {
   const mapping = normalizeMbMapping(mb);
   const maps = mapping.segmentMaps || [];
   const [selectedId, setSelectedId] = useState(maps[0]?.id || null);
   const selected = maps.find((m) => m.id === selectedId) || maps[0] || null;
+  const [importing, setImporting] = useState(false);
+  const [importErr, setImportErr] = useState('');
+  const [importMsg, setImportMsg] = useState('');
 
   const setMaps = (nextMaps) => {
     onChange({ ...mapping, segmentMaps: nextMaps.map(normalizeSegmentMap) });
@@ -297,6 +302,56 @@ export function SegmentMapEditor({ mb, presets = [], onChange }) {
     setMaps(next);
     if (selectedId === id) setSelectedId(next[0]?.id || null);
   };
+
+  const importFromWled = async () => {
+    if (!selected) return;
+    setImportErr('');
+    setImportMsg('');
+    setImporting(true);
+    try {
+      const ip = (wledIp || '').trim();
+      if (!ip) throw new Error('Enter a WLED IP above');
+      localStorage.setItem('wled-ip', ip);
+      const rawSegs = await fetchWledSegmentsFromIp(ip);
+      const imported = rawSegs.map(wledSegmentToSegmentMapSegment);
+      const { segments, updated, added } = mergeImportedSegmentsIntoMap(selected.segments, imported);
+      updateMap(selected.id, { segments });
+      setImportMsg(
+        updated || added
+          ? `${updated} updated, ${added} added`
+          : `${imported.length} segment${imported.length === 1 ? '' : 's'} imported`,
+      );
+    } catch (e) {
+      setImportErr(e?.message || 'Could not read WLED state');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const replaceFromWled = async () => {
+    if (!selected) return;
+    if (!window.confirm('Replace all segments in this map with the live WLED strip? Mask assignments and presets will be lost.')) {
+      return;
+    }
+    setImportErr('');
+    setImportMsg('');
+    setImporting(true);
+    try {
+      const ip = (wledIp || '').trim();
+      if (!ip) throw new Error('Enter a WLED IP above');
+      localStorage.setItem('wled-ip', ip);
+      const rawSegs = await fetchWledSegmentsFromIp(ip);
+      const imported = rawSegs.map(wledSegmentToSegmentMapSegment);
+      updateMap(selected.id, { segments: imported.length ? imported : [createEmptySegment()] });
+      setImportMsg(`Replaced with ${imported.length} segment${imported.length === 1 ? '' : 's'}`);
+    } catch (e) {
+      setImportErr(e?.message || 'Could not read WLED state');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const canImport = !!(wledIp || '').trim() && !!selected && !importing;
 
   return (
     <Stack gap="md">
@@ -343,7 +398,7 @@ export function SegmentMapEditor({ mb, presets = [], onChange }) {
               <TextInput value={selected.id} disabled styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }} />
             </Field>
           </SimpleGrid>
-          <Group gap="xs" mb="md">
+          <Group gap="xs" mb="md" wrap="wrap">
             <AppButton size="compact-xs" variant="default" onClick={() => duplicateMap(selected)}>
               Duplicate
             </AppButton>
@@ -353,6 +408,36 @@ export function SegmentMapEditor({ mb, presets = [], onChange }) {
           </Group>
 
           <SectionHead>Segments</SectionHead>
+          <Group gap="xs" mb="sm" wrap="wrap">
+            <AppButton
+              size="compact-sm"
+              variant="primary"
+              disabled={!canImport}
+              onClick={importFromWled}
+            >
+              {importing ? 'Importing…' : '↻ Import from WLED'}
+            </AppButton>
+            <AppButton
+              size="compact-sm"
+              variant="default"
+              disabled={!canImport}
+              onClick={replaceFromWled}
+            >
+              Replace from WLED
+            </AppButton>
+            <AppButton
+              size="compact-sm"
+              variant="default"
+              onClick={() => updateMap(selected.id, {
+                segments: [...(selected.segments || []), createEmptySegment()],
+              })}
+            >
+              Add segment
+            </AppButton>
+          </Group>
+          {importErr && <Text size="xs" c="red" mb="xs">{importErr}</Text>}
+          {importMsg && !importErr && <Text size="xs" c="dimmed" mb="xs">{importMsg}</Text>}
+
           <Stack gap="sm">
             {(selected.segments || []).map((seg, i) => (
               <SegmentRowEditor
@@ -371,16 +456,6 @@ export function SegmentMapEditor({ mb, presets = [], onChange }) {
               />
             ))}
           </Stack>
-          <AppButton
-            mt="sm"
-            size="compact-sm"
-            variant="default"
-            onClick={() => updateMap(selected.id, {
-              segments: [...(selected.segments || []), createEmptySegment()],
-            })}
-          >
-            Add segment
-          </AppButton>
         </AppCard>
       )}
     </Stack>

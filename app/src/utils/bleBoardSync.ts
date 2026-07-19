@@ -1,5 +1,5 @@
 /**
- * Board sync helpers — mirror web/index.html presetWledForBoard + mb_layout_set payloads.
+ * Board sync helpers — preset apply + MB mapping push (set_mb_rules).
  */
 
 import { AppState } from 'react-native';
@@ -9,11 +9,9 @@ import type { Preset, RecallState, PresetMemory } from '../stores/store';
 import { buildRecallPayload } from '../stores/store';
 import type { CustomSegmentLayout, WledSegmentDef } from './segmentLayouts';
 import { buildRecalledSegmentsFromPreset, finalizeWledSegmentPayload, parseWledStateSegments } from './segmentLayouts';
-import type { MbSegmentLayout } from './configMigration';
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
-import { buildMbLayoutWledPayload, buildDisableAllSplitSegmentsPayload } from './mbSegmentPreview';
-import type { MbSegmentId, WledSegRef, MbMappingConfig } from './mbConfig';
+import type { MbMappingConfig } from './mbConfig';
 import { collectMappingPresetIds, mbMappingToBlePayload } from './mbConfig';
 
 const BOARD_PRESET_MEMORY: PresetMemory = {
@@ -149,63 +147,6 @@ export function presetWledForBoard(
   return out;
 }
 
-export function resolveActiveLayoutIndex(
-  layouts: MbSegmentLayout[],
-  activeLayoutId: string | null,
-): number {
-  if (!layouts.length) return 0;
-  if (activeLayoutId) {
-    const idx = layouts.findIndex(l => l.id === activeLayoutId);
-    if (idx >= 0) return idx;
-  }
-  return 0;
-}
-
-export function mbLayoutSetBlePayload(
-  layouts: MbSegmentLayout[],
-  activeLayoutId: string | null,
-): object {
-  return {
-    type: 'mb_layout_set',
-    layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
-    active: resolveActiveLayoutIndex(layouts, activeLayoutId),
-  };
-}
-
-/** Push MB segment layouts and activate the saved layout (matches manual layout switch). */
-export async function pushMbSegmentLayoutsToBoard(
-  layouts: MbSegmentLayout[],
-  activeLayoutId: string | null,
-  mbMapping: { segments?: Record<string, WledSegRef[]> },
-): Promise<void> {
-  if (!bleService.isConnected()) return;
-  const activeIdx = resolveActiveLayoutIndex(layouts, activeLayoutId);
-
-  // Tear down stale WLED segment splits before applying new geometry.
-  await bleService.sendWledRaw(buildDisableAllSplitSegmentsPayload());
-  await delay(500);
-  if (!bleService.isConnected()) return;
-
-  if (layouts.length > 0) {
-    await bleService.sendMbLayoutSet(layouts, activeIdx);
-    await delay(1000);
-    if (!bleService.isConnected()) return;
-    await bleService.sendMbLayoutSwitch(activeIdx);
-    await delay(600);
-  }
-  if (!bleService.isConnected()) return;
-  await bleService.sendMbMappingConfig(mbMapping);
-  await delay(500);
-  if (!bleService.isConnected()) return;
-  const wledPayload = buildMbLayoutWledPayload(
-    (mbMapping.segments ?? {}) as Record<MbSegmentId, WledSegRef[]>,
-  );
-  if (wledPayload) {
-    await bleService.sendWledRaw(wledPayload);
-    await delay(400);
-  }
-}
-
 let catalogRefreshInFlight: Promise<void> | null = null;
 
 /** Manual Library refresh only — never auto-run on connect (floods BLE ~130 chunks). */
@@ -301,7 +242,7 @@ export async function syncPresetsToBoard(
   }
 }
 
-/** Show-mode config only — MB layouts are pushed via pushMbSegmentLayoutsToBoard. */
+/** Show-mode config push. */
 export async function pushHeavyBoardConfig(
   showModeConfig: object,
 ): Promise<void> {

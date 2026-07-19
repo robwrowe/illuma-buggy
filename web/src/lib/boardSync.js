@@ -1,5 +1,5 @@
 import { BLE_SEND_DELAY_MS, webBleBoard } from './ble/chunking';
-import { mbLayoutSetBlePayload, mbMappingToBlePayload, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
+import { mbMappingToBlePayload, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
 import { DEFAULT_DATA } from './utils';
 
 export const BOARD_SYNC_LS_KEY = 'illuma-buggy-board-sync';
@@ -76,12 +76,6 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
     });
     sent.push(`MB rules (${(mb.rules || []).length})`);
     await delay(BLE_SEND_DELAY_MS);
-    if ((data.mbSegmentLayouts || []).length > 0) {
-      onProgress?.('Sending MB segment layouts…');
-      await webBleBoard.send(mbLayoutSetBlePayload(data));
-      sent.push(`${data.mbSegmentLayouts.length} MB layout${data.mbSegmentLayouts.length === 1 ? '' : 's'}`);
-      await delay(BLE_SEND_DELAY_MS);
-    }
   }
 
   if (opts.overrideMode) {

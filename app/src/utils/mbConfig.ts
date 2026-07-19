@@ -140,6 +140,10 @@ export interface MbMappingConfig {
   swAnimations: Record<SwAnimationKey, MbEffectMapping>;
   patterns: Record<MbPatternKey, MbEffectMapping>;
   segments: Record<MbSegmentId, WledSegRef[]>;
+  /** Part 5 rule engine — opaque; authored in web tool, pushed via set_mb_rules */
+  rules?: unknown[];
+  /** Part 5 shareable segment maps — opaque; authored in web tool */
+  segmentMaps?: unknown[];
   /** Parade route beacon detection (firmware MbRuleEngine) */
   paradeDetection?: ParadeDetectionConfig;
 }
@@ -540,6 +544,12 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
     animations, swAnimations, patterns, segments,
     paradeDetection: normalizeParadeDetection(raw.paradeDetection),
   };
+  if (Array.isArray((raw as { rules?: unknown }).rules)) {
+    base.rules = (raw as { rules: unknown[] }).rules;
+  }
+  if (Array.isArray((raw as { segmentMaps?: unknown }).segmentMaps)) {
+    base.segmentMaps = (raw as { segmentMaps: unknown[] }).segmentMaps;
+  }
   return mirrorEffectClassesToLegacy(base);
 }
 
@@ -605,6 +615,8 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
     swAnimations,
     patterns,
     segments: synced.segments,
+    ...(Array.isArray(synced.rules) ? { rules: synced.rules } : {}),
+    ...(Array.isArray(synced.segmentMaps) ? { segmentMaps: synced.segmentMaps } : {}),
     paradeDetection: normalizeParadeDetection(synced.paradeDetection),
   };
 }

@@ -11,7 +11,6 @@ import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
 import { resetBoardSyncStatus } from '../utils/boardSyncState';
 import { saveBleDeviceId } from '../utils/locationRuntimeBridge';
 import { dismissBleDisconnectedNotification, notifyBleDisconnected } from './strollerNotification';
-import type { MbSegmentLayout } from '../utils/configMigration';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
 export const SERVICE_UUID     = '12345678-1234-1234-1234-123456789abc';
@@ -391,17 +390,7 @@ class BLEService {
     return this.send(msg);
   }
   sendMbMappingConfig(payload: object) {
-    return this.send({ type: 'mb_mapping_config', mapping: payload });
-  }
-  sendMbLayoutSet(layouts: MbSegmentLayout[], activeIndex: number) {
-    return this.send({
-      type: 'mb_layout_set',
-      layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
-      active: activeIndex,
-    });
-  }
-  sendMbLayoutSwitch(index: number) {
-    return this.send({ type: 'mb_layout_switch', index });
+    return this.send({ type: 'set_mb_rules', mapping: payload });
   }
   sendShowModeConfig(config: { parade: { pre: string; live: string }; fireworks: { pre: string; live: string; post: string } }) {
     return this.send({ type: 'show_mode_config', ...config });

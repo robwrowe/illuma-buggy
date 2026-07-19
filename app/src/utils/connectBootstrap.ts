@@ -10,8 +10,6 @@ import {
   ensurePresetOnBoard,
   mbMappingEssentialPayload,
   pushHeavyBoardConfig,
-  pushMbSegmentLayoutsToBoard,
-  resolveActiveLayoutIndex,
 } from './bleBoardSync';
 import { collectMappingPresetIds } from './mbConfig';
 import { normalizeScannerMacInput } from './scannerDiscovery';
@@ -25,7 +23,6 @@ import {
   setBoardSyncPhase,
   setBoardSyncPresetProgress,
   setBoardSyncReady,
-  type BoardSyncMeta,
 } from './boardSyncState';
 import {
   markAllPresetsSynced,
@@ -39,8 +36,6 @@ const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 interface BoardStatusSnapshot {
   boardPresetCount: number;
-  mbLayoutActive: number;
-  mbLayoutCount: number;
   mbMappingLoaded: boolean;
   boardRole: string;
   scannerMac: string;
@@ -73,8 +68,6 @@ function requestBoardStatus(timeoutMs = 8000): Promise<BoardStatusSnapshot | nul
       unsub();
       resolve({
         boardPresetCount: Number(msg.preset_count ?? 0),
-        mbLayoutActive: Number(msg.mb_layout_active ?? 0),
-        mbLayoutCount: Number(msg.mb_layout_count ?? 0),
         mbMappingLoaded: msg.mb_mapping_loaded !== false,
         boardRole: String(msg.board_role ?? ''),
         scannerMac: String(msg.scanner_mac ?? ''),
@@ -102,8 +95,6 @@ function getFingerprint() {
   return computeBoardConfigFingerprint({
     presets: s.presets,
     mbMapping: s.mbMapping,
-    mbSegmentLayouts: s.mbSegmentLayouts,
-    mbActiveSegmentLayoutId: s.mbActiveSegmentLayoutId,
     showModeConfig: s.showModeConfig,
     starlightEnabled: s.starlightEnabled,
     magicBandEnabled: s.magicBandEnabled,
@@ -123,36 +114,24 @@ async function reconcileBoardRole(
   token: number,
   status: BoardStatusSnapshot | null,
 ): Promise<void> {
-  if (!status) return;
+  if (!status || !bleService.isConnected() || token !== bootstrapToken) return;
   const s = useAppStore.getState();
-
-  if (status.boardRole && status.boardRole !== s.boardRole) {
-    console.log(`[Bootstrap] Board role mismatch (board=${status.boardRole} app=${s.boardRole}) — pushing`);
-    await bleService.sendBoardRole(s.boardRole);
+  const wantRole = s.boardRole;
+  const haveRole = status.boardRole;
+  if (wantRole && haveRole !== wantRole) {
+    console.log(`[Bootstrap] Board role mismatch (board=${haveRole || '(none)'} app=${wantRole}) — pushing`);
+    await bleService.sendBoardRole(wantRole);
     await delay(300);
-    if (!bleService.isConnected() || token !== bootstrapToken) return;
   }
-
-  if (s.boardRole === 'logic_board' && s.scannerMac.trim()) {
-    const want = normalizeScannerMacInput(s.scannerMac) ?? s.scannerMac.trim().toUpperCase();
-    const have = (status.scannerMac || '').trim().toUpperCase();
+  if (wantRole === 'logic_board') {
+    const want = normalizeScannerMacInput(s.scannerMac);
+    const have = normalizeScannerMacInput(status.scannerMac);
     if (want && want !== have) {
       console.log(`[Bootstrap] Scanner MAC mismatch (board=${have || '(none)'} app=${want}) — pushing`);
       await bleService.sendScannerMac(want);
       await delay(300);
     }
   }
-}
-
-function layoutMatchesBoard(
-  meta: BoardSyncMeta | null,
-  status: BoardStatusSnapshot,
-  activeLayoutIdx: number,
-): boolean {
-  if (!meta?.mbLayoutCount) return false;
-  return meta.mbLayoutCount === status.mbLayoutCount
-    && meta.mbLayoutActive === status.mbLayoutActive
-    && meta.mbLayoutActive === activeLayoutIdx;
 }
 
 function shouldForceMappingPresetSync(
@@ -173,7 +152,6 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
     backgroundBusy: false,
   });
 
-  useAppStore.getState().hydrateMbMappingFromActiveLayout();
   const s = useAppStore.getState();
 
   await bleService.sendSwConfig(s.starlightEnabled, s.starlightTimeoutSec * 1000);
@@ -268,45 +246,6 @@ async function syncMissingPresets(token: number, boardIds: Set<string>): Promise
   }
 }
 
-async function runLayoutPush(token: number): Promise<BoardStatusSnapshot | null> {
-  setBoardSyncPhase('layouts', 'Syncing segment layouts & MB mapping…', {
-    commandsReady: true,
-    backgroundBusy: true,
-  });
-  const s = useAppStore.getState();
-
-  await ensureMappingPresetsOnBoard(
-    s.mbMapping,
-    s.presets,
-    s.recallState,
-    s.customSegmentLayouts,
-  ).catch((e) => {
-    console.warn('[Bootstrap] Mapping preset sync failed:', e);
-    return false;
-  });
-  if (!bleService.isConnected() || token !== bootstrapToken) return null;
-
-  await pushMbSegmentLayoutsToBoard(
-    s.mbSegmentLayouts,
-    s.mbActiveSegmentLayoutId,
-    mbMappingEssentialPayload(
-      useAppStore.getState().mbMapping,
-      s.presets,
-      s.recallState,
-      s.customSegmentLayouts,
-    ),
-  ).catch((e) => console.warn('[Bootstrap] MB layout push failed:', e));
-  if (!bleService.isConnected() || token !== bootstrapToken) return null;
-
-  // pushMbSegmentLayoutsToBoard writes raw WLED segment geometry without going through
-  // the override system — if a zone preset was live when this background sync ran, its
-  // segments/colors just got stomped by the MB layout geometry. Force-restore it.
-  const { reapplyCurrentZoneForced } = await import('./zoneLocationCore');
-  reapplyCurrentZoneForced('post-layout-sync');
-
-  return requestBoardStatus();
-}
-
 function markSessionReadyAndStatus(
   mode: 'quick' | 'full',
   detail: string,
@@ -343,8 +282,6 @@ async function runBackgroundSync(
   fingerprint: string,
   mode: 'quick' | 'full',
   opts: {
-    needsLayout: boolean;
-    activeLayoutIdx: number;
     status: BoardStatusSnapshot | null;
     requestedFullSync: boolean;
   },
@@ -352,12 +289,6 @@ async function runBackgroundSync(
   // Let the post-connect zone re-apply finish before background board work.
   await delay(mode === 'quick' ? 5000 : 8000);
   if (!bleService.isConnected() || token !== bootstrapToken) return;
-
-  let status = opts.status;
-  if (opts.needsLayout) {
-    status = await runLayoutPush(token);
-    if (!bleService.isConnected() || token !== bootstrapToken) return;
-  }
 
   const s = useAppStore.getState();
   const phoneCount = s.presets.length;
@@ -384,11 +315,7 @@ async function runBackgroundSync(
     await pushHeavyBoardConfig(s.showModeConfig);
   }
 
-  const finalStatus = status ?? await requestBoardStatus();
-  await persistPresetSyncCache(fingerprint, presetVerifyOk, finalStatus ? {
-    active: finalStatus.mbLayoutActive,
-    count: finalStatus.mbLayoutCount,
-  } : undefined);
+  await persistPresetSyncCache(fingerprint, presetVerifyOk);
 
   markBoardSyncBackgroundBusy(false);
   setBoardSyncPresetProgress(0, 0);
@@ -410,7 +337,7 @@ export async function runConnectBootstrap(): Promise<void> {
   await delay(600);
   if (!bleService.isConnected() || token !== bootstrapToken) return;
 
-  // Manual sync mode: skip all essential-config/mapping/layout/preset push.
+  // Manual sync mode: skip all essential-config/mapping/preset push.
   // Board runs entirely off its own NVS. User must tap "Sync board config".
   if (useAppStore.getState().syncMode === 'manual' && !forceFullSync) {
     markSessionReadyAndStatus('quick', 'Ready — manual sync (using board NVS)');
@@ -424,10 +351,6 @@ export async function runConnectBootstrap(): Promise<void> {
   forceFullSync = false;
 
   const s = useAppStore.getState();
-  const resolvedLayoutIdx = resolveActiveLayoutIndex(
-    s.mbSegmentLayouts,
-    s.mbActiveSegmentLayoutId,
-  );
 
   // Restore last-known on-board preset ids so reconnect skips preset_list unless forced.
   if (meta?.syncedPresetIds?.length) {
@@ -474,14 +397,6 @@ export async function runConnectBootstrap(): Promise<void> {
     });
     if (!bleService.isConnected() || token !== bootstrapToken) return;
   }
-  // MB layout push can stomp live segments/colors. Keep reconnect bootstrap stable by
-  // only pushing layouts on explicit full-sync requests from the user.
-  const needsLayout = requestedFullSync
-    && !layoutMatchesBoard(
-      meta,
-      status ?? { boardPresetCount: 0, mbLayoutActive: 0, mbLayoutCount: 0, mbMappingLoaded: false },
-      resolvedLayoutIdx,
-    );
 
   const phoneCount = s.presets.length;
   const boardCount = status?.boardPresetCount ?? 0;
@@ -489,15 +404,11 @@ export async function runConnectBootstrap(): Promise<void> {
     && mappingSyncOk
     && meta?.syncedPresetIds?.length
     && phoneCount > 0
-    && boardCount >= phoneCount
-    && !needsLayout;
+    && boardCount >= phoneCount;
 
   if (canTrustQuick) {
     markAllPresetsSynced(s.presets.map(p => p.id));
-    await persistPresetSyncCache(fingerprint, false, status ? {
-      active: status.mbLayoutActive,
-      count: status.mbLayoutCount,
-    } : undefined);
+    await persistPresetSyncCache(fingerprint, false);
     markSessionReadyAndStatus('quick', 'Ready — reconnected (board up to date)', mappingSyncOk);
     return;
   }
@@ -509,8 +420,6 @@ export async function runConnectBootstrap(): Promise<void> {
   );
 
   void runBackgroundSync(token, fingerprint, useQuick ? 'quick' : 'full', {
-    needsLayout,
-    activeLayoutIdx: resolvedLayoutIdx,
     status,
     requestedFullSync,
   }).catch((e) => console.warn('[Bootstrap] Background sync failed:', e));

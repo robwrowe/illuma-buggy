@@ -9,7 +9,6 @@ export function BleMappingTabBar({ active, onChange }) {
     { id: 'mb', label: 'MagicBand' },
     { id: 'show', label: 'Show Mode' },
     { id: 'colors', label: 'MB Colors' },
-    { id: 'segments', label: 'Segments' },
     { id: 'general', label: 'General' },
   ];
   return (
