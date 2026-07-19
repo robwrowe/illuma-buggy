@@ -1,6 +1,7 @@
 #include "WiFiManager.h"
 #include "Globals.h"
 #include "WledClient.h"
+#include "PayloadTransport.h"
 
 void connectToWLED(bool force) {
   if (!force && WiFi.status() == WL_CONNECTED) {
@@ -30,6 +31,9 @@ void connectToWLED(bool force) {
   }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+    // WiFi.disconnect(true) above tore down ESP-NOW — bring it back up on the now-stable
+    // STA channel so the scanner pair beacon / packet receive work (dual-board mode).
+    transportEnsureEspNow();
     delay(500);
     snapshotWledBaseline();
     ensureWledPowerOn();

@@ -103,6 +103,7 @@ static bool ensureEspNowPeer(const uint8_t mac[6]) {
 
 static unsigned long lastPairSendMs = 0;
 static bool localScanFallbackActive = false;
+static bool espNowReady = false;
 
 static void sendPairMessage() {
   EspNowPairMsg msg = {};
@@ -133,9 +134,10 @@ void transportSetScannerMac(const uint8_t mac[6]) {
     return;
   }
 
-  ensureEspNowPeer(scannerPeerMac);
-  // The loop-driven pair beacon (transportPairResendTick) does the actual pairing once
-  // WiFi is up, so the advertised channel is the stable AP channel.
+  // Peer is (re)added by transportEnsureEspNow() after WiFi connects; add now only if
+  // ESP-NOW is already up. The loop-driven pair beacon does the actual pairing once WiFi
+  // is connected so the advertised channel is the stable AP channel.
+  if (espNowReady) ensureEspNowPeer(scannerPeerMac);
   Serial.println("[ESP-NOW] scanner MAC set — beaconing pair on stable channel");
 }
 
@@ -145,9 +147,9 @@ static bool scannerLinkAlive() {
 
 void transportPairResendTick() {
   if (boardRole != BoardRole::LOGIC_BOARD || !scannerPeerConfigured) return;
-  // Only beacon once WiFi is connected, so the channel we advertise is the stable AP
-  // channel the scanner must lock onto (not the transient boot-time channel).
-  if (WiFi.status() != WL_CONNECTED) return;
+  // Only beacon once WiFi is connected (so the advertised channel is the stable AP
+  // channel) and ESP-NOW has been (re)initialized after that connect.
+  if (WiFi.status() != WL_CONNECTED || !espNowReady) return;
   if (scannerLinkAlive()) return;  // packets flowing — already paired & healthy
   // Beacon faster than the scanner's per-channel dwell so a beacon is guaranteed to land
   // while the scanner is sitting on our channel during its sweep.
@@ -181,25 +183,35 @@ void payloadTransportInit() {
     return;
   }
 
-  // ESP-NOW requires WIFI_STA; coexist with WLED station connection.
+  // Defer ESP-NOW bring-up until WiFi is connected. connectToWLED() calls
+  // WiFi.disconnect(true), which powers off the WiFi driver and tears down ESP-NOW, so
+  // any init done here would be dead by the time we need it. transportEnsureEspNow() is
+  // (re)called after every successful WiFi connect instead.
+  Serial.println("[ESP-NOW] LOGIC_BOARD — ESP-NOW inits after WiFi connects");
+}
+
+void transportEnsureEspNow() {
+  if (boardRole != BoardRole::LOGIC_BOARD) return;
+
   if (WiFi.getMode() != WIFI_STA && WiFi.getMode() != WIFI_AP_STA) {
     WiFi.mode(WIFI_STA);
   }
 
+  // Deinit first to clear any stale state left after WiFi.disconnect(true) tore the
+  // driver down; then a fresh init binds ESP-NOW to the now-connected STA channel.
+  espNowReady = false;
+  esp_now_deinit();
   esp_err_t err = esp_now_init();
   if (err != ESP_OK) {
-    // Already initialized is fine on some cores; retry register anyway.
-    Serial.printf("[ESP-NOW] init result: %d (continuing)\n", (int)err);
+    Serial.printf("[ESP-NOW] init failed: %d\n", (int)err);
+    return;
   }
   esp_now_register_recv_cb(onEspNowRecv);
-
-  if (scannerPeerConfigured) {
-    ensureEspNowPeer(scannerPeerMac);
-    Serial.printf("[ESP-NOW] LOGIC_BOARD peer %s\n",
-                  transportMacToString(scannerPeerMac).c_str());
-  } else {
-    Serial.println("[ESP-NOW] LOGIC_BOARD — waiting for scanner MAC");
-  }
+  if (scannerPeerConfigured) ensureEspNowPeer(scannerPeerMac);
+  espNowReady = true;
+  Serial.printf("[ESP-NOW] ready ch=%u peer=%s\n",
+                (unsigned)WiFi.channel(),
+                scannerPeerConfigured ? transportMacToString(scannerPeerMac).c_str() : "(none)");
 }
 
 void transportSendParsedPacket(const ParsedDisneyPacket& pkt) {

@@ -10,6 +10,9 @@ extern uint32_t espNowRxCount;      // valid ParsedDisneyPackets received over E
 extern uint32_t espNowRxRejected;   // ESP-NOW frames dropped (wrong length)
 
 void payloadTransportInit();
+// (Re)initialize ESP-NOW on the logic board. Must be called after every successful WiFi
+// connect, because WiFi.disconnect(true) in connectToWLED() tears the ESP-NOW stack down.
+void transportEnsureEspNow();
 void transportSendParsedPacket(const ParsedDisneyPacket& pkt);
 void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len);
 void processParsedPacketQueue();
