@@ -48,6 +48,8 @@
 #define DISNEY_PAYLOAD_MAX 64
 #define PARSED_PACKET_MAX_PALETTES 5
 #define PARSED_PACKET_RAW_MAX 32
+/** ESP-NOW → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
+#define PARSED_PACKET_QUEUE_DEPTH 32
 #define BLE_CMD_BUF_SIZE 8192
 
 // ESP-NOW pairing magic ("PAIR" little-endian)

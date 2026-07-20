@@ -6,8 +6,9 @@ extern BoardRole boardRole;
 extern uint8_t scannerPeerMac[6];
 extern bool scannerPeerConfigured;
 extern unsigned long lastScannerPacketMs;
-extern uint32_t espNowRxCount;      // valid ParsedDisneyPackets received over ESP-NOW
-extern uint32_t espNowRxRejected;   // ESP-NOW frames dropped (wrong length)
+extern uint32_t espNowRxCount;         // valid ParsedDisneyPackets received over ESP-NOW
+extern uint32_t espNowRxRejected;      // ESP-NOW frames dropped (wrong length)
+extern uint32_t parsedPacketDropCount; // ring buffer overflows (oldest dropped)
 
 void payloadTransportInit();
 // (Re)initialize ESP-NOW on the logic board. Must be called after every successful WiFi

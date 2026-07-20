@@ -20,14 +20,29 @@ bool scannerPeerConfigured = false;
 unsigned long lastScannerPacketMs = 0;
 uint32_t espNowRxCount = 0;
 uint32_t espNowRxRejected = 0;
+uint32_t parsedPacketDropCount = 0;
 
-static ParsedPacketJob parsedJob = {};
+struct ParsedPacketQueue {
+  ParsedDisneyPacket items[PARSED_PACKET_QUEUE_DEPTH];
+  volatile uint8_t head = 0;
+  volatile uint8_t tail = 0;
+  volatile uint8_t count = 0;
+};
+static ParsedPacketQueue parsedQueue;
 static portMUX_TYPE parsedJobMux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t lastLoggedDropCount = 0;
 
 static void queueParsedPacket(const ParsedDisneyPacket& pkt) {
   portENTER_CRITICAL(&parsedJobMux);
-  parsedJob.pkt = pkt;
-  parsedJob.pending = true;
+  if (parsedQueue.count >= PARSED_PACKET_QUEUE_DEPTH) {
+    // Drop oldest so we stay closest to real-time once loop() catches up.
+    parsedQueue.head = (uint8_t)((parsedQueue.head + 1) % PARSED_PACKET_QUEUE_DEPTH);
+    parsedQueue.count--;
+    parsedPacketDropCount++;
+  }
+  parsedQueue.items[parsedQueue.tail] = pkt;
+  parsedQueue.tail = (uint8_t)((parsedQueue.tail + 1) % PARSED_PACKET_QUEUE_DEPTH);
+  parsedQueue.count++;
   portEXIT_CRITICAL(&parsedJobMux);
 }
 
@@ -234,17 +249,27 @@ void transportSendParsedPacket(const ParsedDisneyPacket& pkt) {
 }
 
 void processParsedPacketQueue() {
-  if (!parsedJob.pending) return;
-  ParsedDisneyPacket pkt;
-  portENTER_CRITICAL(&parsedJobMux);
-  if (!parsedJob.pending) {
-    portEXIT_CRITICAL(&parsedJobMux);
-    return;
+  if (parsedPacketDropCount != lastLoggedDropCount) {
+    Serial.printf("[ESP-NOW] parsed packet drops=%lu (queue full; oldest discarded)\n",
+                  (unsigned long)parsedPacketDropCount);
+    lastLoggedDropCount = parsedPacketDropCount;
   }
-  pkt = parsedJob.pkt;
-  parsedJob.pending = false;
-  portEXIT_CRITICAL(&parsedJobMux);
-  applyParsedDisneyPacket(pkt);
+
+  // Drain everything currently queued so a backlog from a stalled loop()
+  // iteration is processed promptly once loop() resumes.
+  while (true) {
+    ParsedDisneyPacket pkt;
+    portENTER_CRITICAL(&parsedJobMux);
+    if (parsedQueue.count == 0) {
+      portEXIT_CRITICAL(&parsedJobMux);
+      break;
+    }
+    pkt = parsedQueue.items[parsedQueue.head];
+    parsedQueue.head = (uint8_t)((parsedQueue.head + 1) % PARSED_PACKET_QUEUE_DEPTH);
+    parsedQueue.count--;
+    portEXIT_CRITICAL(&parsedJobMux);
+    applyParsedDisneyPacket(pkt);
+  }
 }
 
 void queueDisneyPayload(const uint8_t* payload, size_t plen) {

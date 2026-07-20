@@ -63,11 +63,11 @@ bool sendToWLEDForBleSolid(const String& jsonBody) {
   return sendToWLED(injectWledTransition(jsonBody, 0));
 }
 
-String getFromWLED(const String& path) {
+String getFromWLED(const String& path, int timeoutMs) {
   if (WiFi.status() != WL_CONNECTED) return "";
   HTTPClient http;
   http.begin("http://" + wledIp + ":" + String(wledPort) + path);
-  http.setTimeout(5000);
+  http.setTimeout(timeoutMs > 0 ? timeoutMs : 5000);
   int code = http.GET();
   String body = "";
   if (code == 200) {

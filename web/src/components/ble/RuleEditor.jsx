@@ -7,6 +7,7 @@ import {
   Paper,
   SegmentedControl,
   SimpleGrid,
+  Slider,
   Stack,
   Switch,
   Text,
@@ -24,6 +25,7 @@ import {
   createEmptyExtractTarget,
   createEmptyMatchGroup,
   createEmptyRule,
+  createEmptyRuleEffect,
   createEmptyRuleTiming,
   createEmptyStartTransition,
   normalizeMbMapping,
@@ -113,6 +115,11 @@ function ConditionLeafEditor({ node, onChange, onDelete }) {
             placeholder="E100E90C"
             styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
           />
+          {/^8301/i.test(node.value || '') && (
+            <Text size="xs" c="orange" mt={4}>
+              Payloads are already stripped of the 83 01 CID prefix before rules evaluate them — omit it here (e.g. use E100E905, not 8301E100E905).
+            </Text>
+          )}
         </Field>
       )}
       {node.type === 'length' && (
@@ -424,10 +431,13 @@ function RuleCard({
   onMove,
   presets,
   segmentMaps,
+  effectOptions = [],
+  paletteOptions = [],
   onEditMaps,
 }) {
   const timing = rule.timing || createEmptyRuleTiming();
   const startTransition = rule.startTransition || createEmptyStartTransition();
+  const effect = rule.effect || createEmptyRuleEffect();
   const presetOpts = presets.map((p) => ({ value: p.id, label: p.name, searchText: p.name }));
   const mapOpts = (segmentMaps || []).map((m) => ({
     value: m.id,
@@ -439,6 +449,16 @@ function RuleCard({
     value: s.id,
     label: `${s.id} · ${s.start}-${s.stop}`,
     searchText: `${s.id} ${s.start} ${s.stop}`,
+  }));
+  const fxOpts = (effectOptions || []).map((e) => ({
+    value: String(e.id),
+    label: e.name,
+    searchText: `${e.id} ${e.name}`,
+  }));
+  const palOpts = (paletteOptions || []).map((p) => ({
+    value: String(p.id),
+    label: p.name,
+    searchText: `${p.id} ${p.name}`,
   }));
 
   return (
@@ -489,6 +509,64 @@ function RuleCard({
               allowEmpty
             />
           </Field>
+          {!rule.presetId && (
+            <Stack gap="xs" mt="xs">
+              <Checkbox
+                label="Set a global effect (no preset)"
+                checked={!!effect.enabled}
+                onChange={(e) => onChange({
+                  ...rule,
+                  effect: { ...(rule.effect || createEmptyRuleEffect()), enabled: e.target.checked },
+                })}
+              />
+              {effect.enabled && (
+                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+                  <Field label="Effect">
+                    <SearchableSelect
+                      value={effect.fx >= 0 ? String(effect.fx) : ''}
+                      onChange={(v) => onChange({
+                        ...rule,
+                        effect: { ...effect, fx: v === '' ? -1 : parseInt(v, 10) },
+                      })}
+                      options={fxOpts}
+                      placeholder="(Solid)"
+                      allowEmpty
+                    />
+                  </Field>
+                  <Field label="Palette">
+                    <SearchableSelect
+                      value={effect.pal >= 0 ? String(effect.pal) : ''}
+                      onChange={(v) => onChange({
+                        ...rule,
+                        effect: { ...effect, pal: v === '' ? -1 : parseInt(v, 10) },
+                      })}
+                      options={palOpts}
+                      placeholder="(none)"
+                      allowEmpty
+                    />
+                  </Field>
+                  <Field label="Speed">
+                    <Slider
+                      min={0}
+                      max={255}
+                      value={effect.sx ?? 128}
+                      onChange={(v) => onChange({ ...rule, effect: { ...effect, sx: v } })}
+                      size="xs"
+                    />
+                  </Field>
+                  <Field label="Intensity">
+                    <Slider
+                      min={0}
+                      max={255}
+                      value={effect.ix ?? 128}
+                      onChange={(v) => onChange({ ...rule, effect: { ...effect, ix: v } })}
+                      size="xs"
+                    />
+                  </Field>
+                </SimpleGrid>
+              )}
+            </Stack>
+          )}
           <Field label="Segment map">
             <SearchableSelect
               value={rule.segmentMapId || ''}
@@ -801,7 +879,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
   );
 }
 
-export function RuleEditor({ mb, presets = [], onChange, onEditMaps }) {
+export function RuleEditor({ mb, presets = [], effectOptions = [], paletteOptions = [], onChange, onEditMaps }) {
   const mapping = normalizeMbMapping(mb);
   const rules = mapping.rules || [];
   const segmentMaps = mapping.segmentMaps || [];
@@ -880,6 +958,8 @@ export function RuleEditor({ mb, presets = [], onChange, onEditMaps }) {
           onMove={(delta) => moveRule(index, delta)}
           presets={presets}
           segmentMaps={segmentMaps}
+          effectOptions={effectOptions}
+          paletteOptions={paletteOptions}
           onEditMaps={onEditMaps}
         />
       ))}

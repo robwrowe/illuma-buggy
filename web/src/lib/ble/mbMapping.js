@@ -181,6 +181,10 @@ export function createEmptyStartTransition() {
   return { type: 'fade', timeMs: 400 };
 }
 
+export function createEmptyRuleEffect() {
+  return { enabled: false, fx: -1, pal: -1, sx: 128, ix: 128 };
+}
+
 export function createEmptyRule(overrides = {}) {
   return {
     id: shortRuleId(),
@@ -191,6 +195,7 @@ export function createEmptyRule(overrides = {}) {
     extract: [],
     presetId: '',
     segmentMapId: '',
+    effect: createEmptyRuleEffect(),
     timing: createEmptyRuleTiming(),
     startTransition: createEmptyStartTransition(),
     ...overrides,
@@ -455,6 +460,18 @@ export function normalizeStartTransition(raw) {
   };
 }
 
+export function normalizeRuleEffect(raw) {
+  const d = createEmptyRuleEffect();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  return {
+    enabled: !!raw.enabled,
+    fx: Number.isFinite(raw.fx) ? Number(raw.fx) : d.fx,
+    pal: Number.isFinite(raw.pal) ? Number(raw.pal) : d.pal,
+    sx: Number.isFinite(raw.sx) ? Math.min(255, Math.max(0, Number(raw.sx))) : d.sx,
+    ix: Number.isFinite(raw.ix) ? Math.min(255, Math.max(0, Number(raw.ix))) : d.ix,
+  };
+}
+
 export function normalizeMbRule(raw, index = 0) {
   const d = createEmptyRule();
   if (!raw || typeof raw !== 'object') {
@@ -469,6 +486,7 @@ export function normalizeMbRule(raw, index = 0) {
     extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],
     presetId: typeof raw.presetId === 'string' ? raw.presetId : '',
     segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
+    effect: normalizeRuleEffect(raw.effect),
     timing: normalizeRuleTiming(raw.timing),
     startTransition: normalizeStartTransition(raw.startTransition),
   };

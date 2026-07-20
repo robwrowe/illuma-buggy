@@ -45,7 +45,7 @@ export function SettingsTab({ data, update }) {
   };
 
   useEffect(() => {
-    if (bleTab !== 'segmentMaps') return;
+    if (bleTab !== 'segmentMaps' && bleTab !== 'rules') return;
     const ip = wledIp.trim();
     if (!ip) return;
     fetchWledCatalog(ip).then(({ effects, palettes }) => {
@@ -130,6 +130,8 @@ export function SettingsTab({ data, update }) {
           <RuleEditor
             mb={mb}
             presets={presets}
+            effectOptions={segFxOptions}
+            paletteOptions={segPalOptions}
             onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
             onEditMaps={() => setBleTab('segmentMaps')}
           />

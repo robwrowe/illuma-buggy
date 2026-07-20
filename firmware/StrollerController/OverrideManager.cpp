@@ -252,7 +252,9 @@ void pollLiveWledState() {
   unsigned long now = millis();
   if (now - lastLiveStatePollMs < LIVE_STATE_POLL_MS) return;
   lastLiveStatePollMs = now;
-  String state = getFromWLED("/json/state");
+  // Background poll: fail fast so a slow/unreachable WLED cannot stall loop()
+  // and starve the ESP-NOW → rule-engine packet queue.
+  String state = getFromWLED("/json/state", 500);
   if (state.length() > 0) {
     liveWledState = compactWledStateForSave(state);
     Serial.printf("[WLED] Live state poll (%u bytes)\n", (unsigned)liveWledState.length());

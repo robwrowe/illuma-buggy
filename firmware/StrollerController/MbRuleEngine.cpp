@@ -319,11 +319,16 @@ static void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b) {
   b = (uint8_t)((nib(hex[5]) << 4) | nib(hex[6]));
 }
 
-static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap) {
+/** Seed WLED segs from a segment map. When hasRuleEffect, rule.effect fills gaps
+ *  for fx/pal/sx/ix that the segment itself does not set (more-specific wins). */
+static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
+                                   JsonObject ruleEffect, bool hasRuleEffect) {
   wled["on"] = true;
   JsonArray segs = wled.createNestedArray("seg");
   JsonArray defs = segMap["segments"].as<JsonArray>();
   if (defs.isNull()) return;
+  int fallbackFx = hasRuleEffect ? (ruleEffect["fx"] | 0) : 0;
+  if (fallbackFx < 0) fallbackFx = 0;
   for (JsonVariant v : defs) {
     if (!v.is<JsonObject>()) continue;
     JsonObject def = v.as<JsonObject>();
@@ -337,12 +342,25 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap) {
     seg["rev"] = def["rev"] | false;
     seg["mi"] = def["mi"] | false;
     seg["on"] = true;
+    // Web stores blend as "normal" | "add"; WLED uses bm 0 | 1.
+    {
+      const char* blend = def["blend"] | "normal";
+      if (def.containsKey("bm")) seg["bm"] = def["bm"] | 0;
+      else seg["bm"] = (strcmp(blend, "add") == 0) ? 1 : 0;
+    }
     int fx = def["fx"] | -1;
-    seg["fx"] = fx >= 0 ? fx : 0;
+    seg["fx"] = fx >= 0 ? fx : fallbackFx;
     if (def.containsKey("sx")) seg["sx"] = def["sx"];
+    else if (hasRuleEffect && ruleEffect.containsKey("sx")) seg["sx"] = ruleEffect["sx"];
     if (def.containsKey("ix")) seg["ix"] = def["ix"];
+    else if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
     int pal = def["pal"] | -1;
-    if (pal >= 0) seg["pal"] = pal;
+    if (pal >= 0) {
+      seg["pal"] = pal;
+    } else if (hasRuleEffect) {
+      int rpal = ruleEffect["pal"] | -1;
+      if (rpal >= 0) seg["pal"] = rpal;
+    }
 
     // Static colors from map (empty string = untouched)
     JsonArray colors = def["colors"].as<JsonArray>();
@@ -498,6 +516,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   String presetId = rule["presetId"] | "";
   JsonArray extracts = rule["extract"].as<JsonArray>();
 
+  // Lightweight rule-level effect (ignored when a preset is set — preset wins).
+  JsonObject ruleEffect = rule["effect"].as<JsonObject>();
+  bool hasRuleEffect = presetId.length() == 0
+                    && !ruleEffect.isNull()
+                    && (ruleEffect["enabled"] | false);
+
   // startTransition — WLED v16 blending style (`bs`) + duration
   unsigned long startTransMs = bleEffectTransitionMs;
   int blendingStyle = 0; // TRANSITION_FADE
@@ -560,7 +584,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   if (!segMap.isNull()) {
     if (!haveWled) {
-      seedWledFromSegmentMap(wled.as<JsonObject>(), segMap);
+      seedWledFromSegmentMap(wled.as<JsonObject>(), segMap, ruleEffect, hasRuleEffect);
       haveWled = true;
     } else {
       // Ensure geometry segments from map exist so extract targets can resolve.
@@ -581,7 +605,16 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     seg0["id"] = 0;
     seg0["start"] = 0;
     seg0["stop"] = STRIP_LED_COUNT;
-    seg0["fx"] = 0;
+    if (hasRuleEffect) {
+      int fx = ruleEffect["fx"] | 0;
+      seg0["fx"] = fx >= 0 ? fx : 0;
+      if (ruleEffect.containsKey("sx")) seg0["sx"] = ruleEffect["sx"];
+      if (ruleEffect.containsKey("ix")) seg0["ix"] = ruleEffect["ix"];
+      int pal = ruleEffect["pal"] | -1;
+      if (pal >= 0) seg0["pal"] = pal;
+    } else {
+      seg0["fx"] = 0;
+    }
     haveWled = true;
   }
 

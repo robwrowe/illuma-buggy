@@ -81,11 +81,6 @@ struct __attribute__((packed)) ParsedDisneyPacket {
   uint32_t         capturedAtMs;
 };
 
-struct ParsedPacketJob {
-  ParsedDisneyPacket pkt;
-  volatile bool pending;
-};
-
 enum class BoardRole : uint8_t { STANDALONE = 0, LOGIC_BOARD = 1 };
 
 enum OverrideSource { NONE, ZONE, MANUAL, SHOW_MODE, BLE_MAGIC, BLE_STARLIGHT };
