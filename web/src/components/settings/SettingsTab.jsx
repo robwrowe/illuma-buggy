@@ -16,6 +16,7 @@ import { DefaultPresetField } from '../ble/DefaultPresetField';
 import { RandomPoolEditor } from '../ble/RandomPoolEditor';
 import { RuleEditor } from '../ble/RuleEditor';
 import { SegmentMapEditor } from '../ble/SegmentMapEditor';
+import { TimingModelEditor } from '../ble/TimingModelEditor';
 import { ColorInput } from '../shared/ColorInput';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
@@ -45,7 +46,7 @@ export function SettingsTab({ data, update }) {
   };
 
   useEffect(() => {
-    if (bleTab !== 'segmentMaps' && bleTab !== 'rules') return;
+    if (bleTab !== 'segmentMaps' && bleTab !== 'rules' && bleTab !== 'timingModels') return;
     const ip = wledIp.trim();
     if (!ip) return;
     fetchWledCatalog(ip).then(({ effects, palettes }) => {
@@ -134,6 +135,7 @@ export function SettingsTab({ data, update }) {
             paletteOptions={segPalOptions}
             onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
             onEditMaps={() => setBleTab('segmentMaps')}
+            onEditTimingModels={() => setBleTab('timingModels')}
           />
         )}
 
@@ -163,6 +165,14 @@ export function SettingsTab({ data, update }) {
               onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
             />
           </>
+        )}
+
+        {bleTab === 'timingModels' && (
+          <TimingModelEditor
+            mb={mb}
+            effectOptions={segFxOptions}
+            onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
+          />
         )}
 
         {bleTab === 'sw' && (

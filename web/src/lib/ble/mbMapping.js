@@ -173,7 +173,130 @@ export function createEmptyRuleTiming() {
     offset: 5,
     cooldownSec: 10,
     cooldownResetMode: 'onMatch',
+    timingModelId: '',
   };
+}
+
+export function shortTimingModelId() {
+  return `tm${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+/** Matches Config.h MB_TIMING_* defaults — used when timingModelId is empty. */
+export const DEFAULT_TIMING_MODEL_VALUES = {
+  multNormal: 1.6,
+  multScaler: 3.0,
+  multExtended: 7.6,
+  t0FallbackSec: 3.0,
+  fadeStepSec: 0.5,
+  fadeCurve: 'linear',
+};
+
+export function createEmptyStrobeEffect(overrides = {}) {
+  return {
+    enabled: false,
+    fx: 23, // classic WLED "Strobe"; web picker can override
+    flashRateNormalHz: 2.0,
+    flashRateScalerHz: 1.0,
+    flashRateExtendedHz: 0.35,
+    ...overrides,
+  };
+}
+
+export function createEmptyTimingModel(overrides = {}) {
+  return {
+    id: shortTimingModelId(),
+    name: 'New timing model',
+    ...DEFAULT_TIMING_MODEL_VALUES,
+    strobeEffect: createEmptyStrobeEffect(),
+    ...overrides,
+  };
+}
+
+/** Built-in models seeded into DEFAULT_MB_MAPPING. */
+export function defaultTimingModels() {
+  return [
+    createEmptyTimingModel({
+      id: 'tm_default',
+      name: 'E9 05/09 standard',
+      ...DEFAULT_TIMING_MODEL_VALUES,
+      strobeEffect: createEmptyStrobeEffect(),
+    }),
+    createEmptyTimingModel({
+      id: 'tm_e90e',
+      name: 'E9 0E strobe',
+      multNormal: 1.5,
+      multScaler: 3.0,
+      multExtended: 7.6,
+      t0FallbackSec: 3.0,
+      fadeStepSec: 0.25,
+      fadeCurve: 'linear',
+      strobeEffect: createEmptyStrobeEffect({
+        enabled: true,
+        fx: 23,
+        flashRateNormalHz: 2.0,
+        flashRateScalerHz: 1.0,
+        flashRateExtendedHz: 0.35,
+      }),
+    }),
+  ];
+}
+
+const FADE_CURVES = new Set(['linear', 'decelerating']);
+
+export function normalizeStrobeEffect(raw) {
+  const d = createEmptyStrobeEffect();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  const clampHz = (v, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return fallback;
+    return Math.min(50, Math.max(0.05, n));
+  };
+  return {
+    enabled: !!raw.enabled,
+    fx: Number.isFinite(raw.fx) ? Math.max(0, Math.floor(Number(raw.fx))) : d.fx,
+    flashRateNormalHz: clampHz(raw.flashRateNormalHz, d.flashRateNormalHz),
+    flashRateScalerHz: clampHz(raw.flashRateScalerHz, d.flashRateScalerHz),
+    flashRateExtendedHz: clampHz(raw.flashRateExtendedHz, d.flashRateExtendedHz),
+  };
+}
+
+export function normalizeTimingModel(raw, index = 0) {
+  const d = createEmptyTimingModel({ name: `Timing model ${index + 1}` });
+  if (!raw || typeof raw !== 'object') return d;
+  const clampPos = (v, fallback) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : shortTimingModelId(),
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : d.name,
+    multNormal: clampPos(raw.multNormal, d.multNormal),
+    multScaler: clampPos(raw.multScaler, d.multScaler),
+    multExtended: clampPos(raw.multExtended, d.multExtended),
+    t0FallbackSec: clampPos(raw.t0FallbackSec, d.t0FallbackSec),
+    fadeStepSec: clampPos(raw.fadeStepSec, d.fadeStepSec),
+    fadeCurve: FADE_CURVES.has(raw.fadeCurve) ? raw.fadeCurve : 'linear',
+    strobeEffect: normalizeStrobeEffect(raw.strobeEffect),
+  };
+}
+
+/** Resolve timing model by id; empty/missing → null (firmware/web use hardcoded defaults). */
+export function findTimingModel(timingModels, timingModelId) {
+  if (!timingModelId || typeof timingModelId !== 'string') return null;
+  const list = Array.isArray(timingModels) ? timingModels : [];
+  return list.find((m) => m.id === timingModelId) || null;
+}
+
+/**
+ * WLED Strobe: cycleTime_ms = (255 - sx) * 20 → sx = 255 - 50 / flashRateHz.
+ * @param {number} flashRateHz
+ * @returns {number} sx 0–255
+ */
+export function strobeSxFromFlashRateHz(flashRateHz) {
+  const hz = Number(flashRateHz);
+  if (!Number.isFinite(hz) || hz <= 0) return 128;
+  const sx = Math.round(255 - 50 / hz);
+  return Math.min(255, Math.max(0, sx));
 }
 
 export function createEmptyStartTransition() {
@@ -314,6 +437,7 @@ export const DEFAULT_MB_MAPPING = {
   version: 1,
   rules: [],
   segmentMaps: [],
+  timingModels: defaultTimingModels(),
   defaultPresetId: '',
   colors: [...DEFAULT_MB_WLED_COLORS],
   randomPool: {
@@ -556,6 +680,7 @@ export function normalizeRuleTiming(raw) {
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : d.offset,
     cooldownSec: Number.isFinite(raw.cooldownSec) ? Math.max(0, Number(raw.cooldownSec)) : d.cooldownSec,
     cooldownResetMode: COOLDOWN_RESET_MODES.has(raw.cooldownResetMode) ? raw.cooldownResetMode : d.cooldownResetMode,
+    timingModelId: typeof raw.timingModelId === 'string' ? raw.timingModelId : '',
   };
 }
 
@@ -626,11 +751,16 @@ export function normalizeMbMapping(raw) {
   const rulesSrc = Array.isArray(raw.rules) ? raw.rules : [];
   const rules = rulesSrc.map((r, i) => normalizeMbRule(r, i));
   const segmentMaps = (raw.segmentMaps || []).map(normalizeSegmentMap);
+  const timingModelsSrc = Array.isArray(raw.timingModels) ? raw.timingModels : [];
+  const timingModels = timingModelsSrc.length > 0
+    ? timingModelsSrc.map((m, i) => normalizeTimingModel(m, i))
+    : defaultTimingModels();
 
   return {
     version: 1,
     rules,
     segmentMaps,
+    timingModels,
     defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
     colors,
     randomPool: normalizeRandomPool(raw.randomPool),
@@ -655,6 +785,7 @@ export function mbMappingToBlePayload(config) {
     version: 1,
     rules: synced.rules,
     segmentMaps: synced.segmentMaps,
+    timingModels: synced.timingModels,
     defaultPresetId: synced.defaultPresetId || '',
     colors,
     randomPool: {

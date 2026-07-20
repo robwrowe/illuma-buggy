@@ -432,15 +432,22 @@ function RuleCard({
   onMove,
   presets,
   segmentMaps,
+  timingModels = [],
   effectOptions = [],
   paletteOptions = [],
   onEditMaps,
+  onEditTimingModels,
 }) {
   const timing = rule.timing || createEmptyRuleTiming();
   const startTransition = rule.startTransition || createEmptyStartTransition();
   const effect = rule.effect || createEmptyRuleEffect();
   const presetOpts = presets.map((p) => ({ value: p.id, label: p.name, searchText: p.name }));
   const mapOpts = (segmentMaps || []).map((m) => ({
+    value: m.id,
+    label: m.name || m.id,
+    searchText: `${m.name || ''} ${m.id}`,
+  }));
+  const timingModelOpts = (timingModels || []).map((m) => ({
     value: m.id,
     label: m.name || m.id,
     searchText: `${m.name || ''} ${m.id}`,
@@ -637,6 +644,24 @@ function RuleCard({
                 />
               </Field>
             </SimpleGrid>
+            <Field label="Timing model" mt="xs">
+              <SearchableSelect
+                value={timing.timingModelId || ''}
+                onChange={(timingModelId) => onChange({
+                  ...rule,
+                  timing: { ...timing, timingModelId },
+                })}
+                placeholder="(firmware default — E9 05/09)"
+                options={timingModelOpts}
+                allowEmpty
+                disabled={!timing.enabled}
+              />
+            </Field>
+            {onEditTimingModels && (
+              <AppButton size="compact-xs" variant="default" mt={4} onClick={onEditTimingModels}>
+                Edit timing models →
+              </AppButton>
+            )}
             <Text size="xs" c="dimmed" mt="xs" mb={4}>
               During black hold: onMatch restarts the effect; fixed ignores re-triggers
             </Text>
@@ -725,7 +750,7 @@ function RuleCard({
   );
 }
 
-function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
+function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels }) {
   const [paste, setPaste] = useState('');
   const [status, setStatus] = useState('');
   const [packets, setPackets] = useState([]);
@@ -735,6 +760,12 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
     () => (rules || []).find((r) => r.id === selectedRuleId) || null,
     [rules, selectedRuleId],
   );
+
+  const modelFor = (rule) => {
+    const id = rule?.timing?.timingModelId;
+    if (!id) return null;
+    return (timingModels || []).find((m) => m.id === id) || null;
+  };
 
   const runPreview = () => {
     const hexes = hexPacketsFromPaste(paste);
@@ -761,6 +792,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
           timing = computeTimingLifecycle(
             bytes[Number(selectedRule.timing.offset ?? 0)],
             selectedRule.timing.cooldownSec ?? 10,
+            modelFor(selectedRule),
           );
         }
         return {
@@ -777,6 +809,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
           colors,
           extractFromRule: selectedRule,
           segmentMaps,
+          timingModels,
         });
         return {
           hex: prev.hex,
@@ -797,6 +830,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
         timing = computeTimingLifecycle(
           bytes[Number(first.timing.offset ?? 0)],
           first.timing.cooldownSec ?? 10,
+          modelFor(first),
         );
       }
       return {
@@ -861,6 +895,10 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
                 {' · '}black hold {p.timing.cooldownSec}s
                 {p.timing.extended ? ' · extended' : ''}
                 {p.timing.scaler ? ' · scaler' : ''}
+                {p.timing.fadeCurve === 'decelerating' ? ' · fade≈non-linear' : ''}
+                {p.timing.strobe
+                  ? ` · strobe ${p.timing.strobe.flashRateHz.toFixed(2)} Hz → fx=${p.timing.strobe.fx} sx=${p.timing.strobe.sx}`
+                  : ''}
               </Text>
             )}
             {(p.extracts || []).length > 0 && (
@@ -896,10 +934,13 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
   );
 }
 
-export function RuleEditor({ mb, presets = [], effectOptions = [], paletteOptions = [], onChange, onEditMaps }) {
+export function RuleEditor({
+  mb, presets = [], effectOptions = [], paletteOptions = [], onChange, onEditMaps, onEditTimingModels,
+}) {
   const mapping = normalizeMbMapping(mb);
   const rules = mapping.rules || [];
   const segmentMaps = mapping.segmentMaps || [];
+  const timingModels = mapping.timingModels || [];
   const [expandedId, setExpandedId] = useState(rules[0]?.id || null);
 
   const setRules = (nextRules, { reindex = false } = {}) => {
@@ -975,9 +1016,11 @@ export function RuleEditor({ mb, presets = [], effectOptions = [], paletteOption
           onMove={(delta) => moveRule(index, delta)}
           presets={presets}
           segmentMaps={segmentMaps}
+          timingModels={timingModels}
           effectOptions={effectOptions}
           paletteOptions={paletteOptions}
           onEditMaps={onEditMaps}
+          onEditTimingModels={onEditTimingModels}
         />
       ))}
 
@@ -986,6 +1029,7 @@ export function RuleEditor({ mb, presets = [], effectOptions = [], paletteOption
         colors={mapping.colors}
         selectedRuleId={expandedId}
         segmentMaps={segmentMaps}
+        timingModels={timingModels}
       />
     </Stack>
   );

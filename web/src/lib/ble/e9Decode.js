@@ -190,29 +190,60 @@ export function decodeTimingByte(byte) {
   return { raw: b, t, fadeBits, scaler, extended };
 }
 
+/** WLED Strobe: cycleTime_ms = (255 - sx) * 20 → sx = 255 - 50 / flashRateHz. */
+export function strobeSxFromFlashRateHz(flashRateHz) {
+  const hz = Number(flashRateHz);
+  if (!Number.isFinite(hz) || hz <= 0) return 128;
+  const sx = Math.round(255 - 50 / hz);
+  return Math.min(255, Math.max(0, sx));
+}
+
 /**
- * On / fade / cooldown lifecycle from a timing byte + rule cooldownSec.
- * Formulas (lab confirmed):
- *   onSec: extended → (t===0 ? 3 : 7.6*t); else scaler → 3.0*t; else → (t===0 ? 3 : 1.6*t)
- *   fadeSec: fadeBits * 0.5
+ * On / fade / cooldown lifecycle from a timing byte + optional timing model + rule cooldownSec.
+ * When model is null/undefined, uses the same hardcoded defaults as firmware Config.h.
  * @param {number} byte
  * @param {number} [cooldownSec=10]
+ * @param {object|null} [model] normalized timing model (or null for firmware defaults)
  */
-export function computeTimingLifecycle(byte, cooldownSec = 10) {
+export function computeTimingLifecycle(byte, cooldownSec = 10, model = null) {
   const decoded = decodeTimingByte(byte);
   const { t, fadeBits, scaler, extended } = decoded;
+  const m = model && typeof model === 'object' ? model : null;
+  const multNormal = Number.isFinite(m?.multNormal) ? Number(m.multNormal) : 1.6;
+  const multScaler = Number.isFinite(m?.multScaler) ? Number(m.multScaler) : 3.0;
+  const multExtended = Number.isFinite(m?.multExtended) ? Number(m.multExtended) : 7.6;
+  const t0Fallback = Number.isFinite(m?.t0FallbackSec) ? Number(m.t0FallbackSec) : 3.0;
+  const fadeStepSec = Number.isFinite(m?.fadeStepSec) ? Number(m.fadeStepSec) : 0.5;
+  const fadeCurve = m?.fadeCurve === 'decelerating' ? 'decelerating' : 'linear';
+
   let onSec;
-  if (extended) onSec = t === 0 ? 3 : 7.6 * t;
-  else if (scaler) onSec = 3.0 * t;
-  else onSec = t === 0 ? 3 : 1.6 * t;
-  const fadeSec = fadeBits * 0.5;
+  if (extended) onSec = t === 0 ? t0Fallback : multExtended * t;
+  else if (scaler) onSec = t === 0 ? t0Fallback : multScaler * t;
+  else onSec = t === 0 ? t0Fallback : multNormal * t;
+  const fadeSec = fadeBits * fadeStepSec;
   const cooldown = Number.isFinite(cooldownSec) ? Math.max(0, Number(cooldownSec)) : 10;
+
+  let strobe = null;
+  const se = m?.strobeEffect;
+  if (se?.enabled) {
+    let hz = se.flashRateNormalHz ?? 2;
+    if (extended) hz = se.flashRateExtendedHz ?? 0.35;
+    else if (scaler) hz = se.flashRateScalerHz ?? 1;
+    strobe = {
+      fx: Number.isFinite(se.fx) ? se.fx : 23,
+      sx: strobeSxFromFlashRateHz(hz),
+      flashRateHz: hz,
+    };
+  }
+
   return {
     ...decoded,
     onSec,
     fadeSec,
+    fadeCurve,
     cooldownSec: cooldown,
     totalSec: onSec + fadeSec + cooldown,
+    strobe,
   };
 }
 
@@ -321,7 +352,11 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
   let timing = null;
   if (extractRule?.timing?.enabled && bytes.length > Number(extractRule.timing.offset ?? 0)) {
     const offset = Number(extractRule.timing.offset ?? 0);
-    timing = computeTimingLifecycle(bytes[offset], extractRule.timing.cooldownSec ?? 10);
+    const timingModels = Array.isArray(opts.timingModels) ? opts.timingModels : [];
+    const model = extractRule.timing.timingModelId
+      ? timingModels.find((m) => m.id === extractRule.timing.timingModelId) || null
+      : null;
+    timing = computeTimingLifecycle(bytes[offset], extractRule.timing.cooldownSec ?? 10, model);
   }
   return {
     hex,

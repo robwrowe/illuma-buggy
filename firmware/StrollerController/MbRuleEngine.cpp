@@ -180,32 +180,93 @@ static bool looksLikeWand(const uint8_t* payload, size_t plen) {
 }
 
 // Lab-confirmed timing-byte decode (docs/ble-packets-details/timing-byte.md).
-// bit7 is a misnamed "always-on" — it is extended timeout (7.6×t), not indefinite hold.
+// bit7 is a misnamed "always-on" — it is extended timeout, not indefinite hold.
 struct TimingDecode {
   unsigned long onTimeMs;
   unsigned long fadeMs;
   bool extended;
+  bool scaler;
 };
 
-static TimingDecode decodeTimingByte(uint8_t b) {
+static JsonObject findTimingModelById(const char* modelId) {
+  JsonObject empty;
+  if (!modelId || !modelId[0]) return empty;
+  JsonArray models = gRulesDoc["timingModels"].as<JsonArray>();
+  if (models.isNull()) return empty;
+  for (JsonVariant v : models) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject m = v.as<JsonObject>();
+    if (strcmp(m["id"] | "", modelId) == 0) return m;
+  }
+  return empty;
+}
+
+static TimingDecode decodeTimingByte(uint8_t b, JsonObject model) {
   uint8_t t = b & 0x0F;
   bool scaler = (b >> 6) & 1;
   bool extended = (b >> 7) & 1;
   uint8_t fadeBits = (b >> 4) & 0x03;
+  float multNormal   = model.isNull() ? MB_TIMING_MULT_NORMAL
+                                      : (float)(model["multNormal"] | MB_TIMING_MULT_NORMAL);
+  float multScaler   = model.isNull() ? MB_TIMING_MULT_SCALER
+                                      : (float)(model["multScaler"] | MB_TIMING_MULT_SCALER);
+  float multExtended = model.isNull() ? MB_TIMING_MULT_EXTENDED
+                                      : (float)(model["multExtended"] | MB_TIMING_MULT_EXTENDED);
+  float t0Fallback   = model.isNull() ? MB_TIMING_T0_FALLBACK_SEC
+                                      : (float)(model["t0FallbackSec"] | MB_TIMING_T0_FALLBACK_SEC);
+  float fadeStepSec  = model.isNull() ? (MB_TIMING_FADE_STEP_MS / 1000.0f)
+                                      : (float)(model["fadeStepSec"] | (MB_TIMING_FADE_STEP_MS / 1000.0f));
   float onSec;
   if (extended) {
-    // Unconfirmed for t=0 under extended; use same 3s fallback as scaler=0.
-    onSec = (t == 0) ? MB_TIMING_T0_FALLBACK_SEC : (MB_TIMING_MULT_EXTENDED * (float)t);
+    onSec = (t == 0) ? t0Fallback : (multExtended * (float)t);
   } else if (scaler) {
-    onSec = (t == 0) ? MB_TIMING_T0_FALLBACK_SEC : (MB_TIMING_MULT_SCALER * (float)t);
+    onSec = (t == 0) ? t0Fallback : (multScaler * (float)t);
   } else {
-    onSec = (t == 0) ? MB_TIMING_T0_FALLBACK_SEC : (MB_TIMING_MULT_NORMAL * (float)t);
+    onSec = (t == 0) ? t0Fallback : (multNormal * (float)t);
   }
   TimingDecode out;
   out.onTimeMs = (unsigned long)(onSec * 1000.0f + 0.5f);
-  out.fadeMs = (unsigned long)fadeBits * MB_TIMING_FADE_STEP_MS;
+  out.fadeMs = (unsigned long)(fadeBits * fadeStepSec * 1000.0f + 0.5f);
   out.extended = extended;
+  out.scaler = scaler;
   return out;
+}
+
+/** WLED Strobe: cycleTime_ms = (255 - sx) * 20 → sx = 255 - 50/hz. */
+static int strobeSxFromHz(float hz) {
+  if (hz <= 0.01f) return 128;
+  int sx = (int)lroundf(255.0f - (50.0f / hz));
+  if (sx < 0) sx = 0;
+  if (sx > 255) sx = 255;
+  return sx;
+}
+
+static void applyStrobeFromTimingModel(JsonObject wled, JsonObject model, uint8_t timingByte) {
+  if (model.isNull()) return;
+  JsonObject strobe = model["strobeEffect"].as<JsonObject>();
+  if (strobe.isNull() || !(strobe["enabled"] | false)) return;
+
+  TimingDecode td = decodeTimingByte(timingByte, model);
+  float hz = (float)(strobe["flashRateNormalHz"] | 2.0);
+  if (td.extended) hz = (float)(strobe["flashRateExtendedHz"] | 0.35);
+  else if (td.scaler) hz = (float)(strobe["flashRateScalerHz"] | 1.0);
+  int sx = strobeSxFromHz(hz);
+  int fx = strobe["fx"] | 23;
+
+  JsonArray segs = wled["seg"].as<JsonArray>();
+  if (segs.isNull() || segs.size() == 0) {
+    wled["fx"] = fx;
+    wled["sx"] = sx;
+    return;
+  }
+  for (JsonObject seg : segs) {
+    int stop = seg["stop"] | 0;
+    int start = seg["start"] | 0;
+    if (stop <= start) continue;
+    seg["fx"] = fx;
+    seg["sx"] = sx;
+  }
+  Serial.printf("[Rule] strobe fx=%d sx=%d (%.2f Hz)\n", fx, sx, hz);
 }
 
 static JsonObject findSegmentMapById(const char* mapId) {
@@ -513,7 +574,9 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   }
   uint8_t offset = (uint8_t)(timing["offset"] | 5);
   uint8_t byte = (payload && offset < plen) ? payload[offset] : 0;
-  TimingDecode td = decodeTimingByte(byte);
+  const char* timingModelId = timing["timingModelId"] | "";
+  JsonObject timingModel = findTimingModelById(timingModelId);
+  TimingDecode td = decodeTimingByte(byte, timingModel);
   int cooldownSec = timing["cooldownSec"] | 10;
   if (cooldownSec < 0) cooldownSec = 0;
   const char* mode = timing["cooldownResetMode"] | "onMatch";
@@ -526,9 +589,10 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   mbRuleCooldownMs = (unsigned long)cooldownSec * 1000UL;
   mbRulePhase = MB_RULE_ON;
   mbRulePhaseDeadlineMs = millis() + td.onTimeMs;
-  Serial.printf("[Rule] timing ON %lums fade=%lums blackHold=%lums mode=%s byte=0x%02X\n",
+  Serial.printf("[Rule] timing ON %lums fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X\n",
                 td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
-                mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch", byte);
+                mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
+                timingModelId[0] ? timingModelId : "(default)", byte);
 }
 
 void resetMbRuleLifecycle() {
@@ -871,6 +935,16 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     }
   }
 
+  // Timing-model strobe: set WLED Strobe fx/sx from flash-rate bits on the timing byte.
+  if (timingEn && payload && plen > 0) {
+    JsonObject timingObj = rule["timing"].as<JsonObject>();
+    const char* tmId = timingObj.isNull() ? "" : (timingObj["timingModelId"] | "");
+    JsonObject tm = findTimingModelById(tmId);
+    uint8_t tOff = timingObj.isNull() ? 5 : (uint8_t)(timingObj["offset"] | 5);
+    uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
+    applyStrobeFromTimingModel(wled.as<JsonObject>(), tm, tByte);
+  }
+
   if (wled.overflowed()) {
     Serial.println("[Rule] WLED doc overflowed while building — abort apply");
     return;
@@ -927,17 +1001,19 @@ void applyMbRulesJson(JsonObject doc) {
   // Reuse colors / segments / randomPool / defaultPresetId via existing mapper
   applyMbMappingJson(doc);
 
-  // Cache rules[] / segmentMaps[] when either is present — colors-only pushes must not wipe them.
-  if (doc.containsKey("rules") || doc.containsKey("segmentMaps")) {
+  // Cache rules[] / segmentMaps[] / timingModels[] when any are present —
+  // colors-only pushes must not wipe them.
+  if (doc.containsKey("rules") || doc.containsKey("segmentMaps") || doc.containsKey("timingModels")) {
     String raw;
     serializeJson(doc, raw);
-    // If only segmentMaps arrived without rules, merge onto existing cache
+    // If only maps/models arrived without rules, merge onto existing cache
     if (!doc.containsKey("rules") && gRulesDoc.containsKey("rules")) {
       DynamicJsonDocument merged(32768);
       String existing;
       serializeJson(gRulesDoc, existing);
       if (!deserializeJson(merged, existing)) {
-        merged["segmentMaps"] = doc["segmentMaps"];
+        if (doc.containsKey("segmentMaps")) merged["segmentMaps"] = doc["segmentMaps"];
+        if (doc.containsKey("timingModels")) merged["timingModels"] = doc["timingModels"];
         if (doc.containsKey("paradeDetection")) merged["paradeDetection"] = doc["paradeDetection"];
         if (doc.containsKey("defaultPresetId")) merged["defaultPresetId"] = doc["defaultPresetId"];
         gRulesDoc.clear();
@@ -995,9 +1071,11 @@ void applyMbRulesJson(JsonObject doc) {
 
   JsonArray rules = rulesArray();
   JsonArray maps = gRulesDoc["segmentMaps"].as<JsonArray>();
-  Serial.printf("[Rules] loaded rules=%u maps=%u defaultPreset=%s parade=%d prefix=%s rssi>=%d cooldown=%lums\n",
+  JsonArray tms = gRulesDoc["timingModels"].as<JsonArray>();
+  Serial.printf("[Rules] loaded rules=%u maps=%u timingModels=%u defaultPreset=%s parade=%d prefix=%s rssi>=%d cooldown=%lums\n",
                 rules.isNull() ? 0u : (unsigned)rules.size(),
                 maps.isNull() ? 0u : (unsigned)maps.size(),
+                tms.isNull() ? 0u : (unsigned)tms.size(),
                 bleDefaultPresetId.c_str(), paradeDetectEnabled ? 1 : 0,
                 paradeBeaconPrefix, paradeRssiThreshold, paradeCooldownMs);
 }
