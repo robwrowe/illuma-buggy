@@ -292,45 +292,128 @@ export function formatExtractTargetLabel(target, segmentMap) {
 }
 
 /**
+ * Decoded timing-derived scalar (Hz or seconds) for timing* extract sources.
+ * Mirrors firmware resolveTimingDerivedValue.
+ * @param {object|null} rule
+ * @param {number[]} payloadBytes
+ * @param {object[]} [timingModels]
+ * @param {string} [source='timingFlashRate']
+ * @returns {number}
+ */
+export function resolveTimingDerivedValue(rule, payloadBytes, timingModels = [], source = 'timingFlashRate') {
+  const timing = rule?.timing;
+  if (!timing?.enabled) return 0;
+  const model = timing.timingModelId
+    ? (Array.isArray(timingModels) ? timingModels.find((m) => m.id === timing.timingModelId) : null) || null
+    : null;
+  const offset = Number(timing.offset ?? 5);
+  const bytes = Array.isArray(payloadBytes) ? payloadBytes : [];
+  const byte = offset < bytes.length ? bytes[offset] : 0;
+
+  if (source === 'timingFlashRate') {
+    return resolveFlashRateHz(rule, payloadBytes, timingModels);
+  }
+  if (source === 'timingOnSec' || source === 'timingFadeSec') {
+    const life = computeTimingLifecycle(byte, timing.cooldownSec ?? 10, model);
+    return source === 'timingOnSec' ? life.onSec : life.fadeSec;
+  }
+  return 0;
+}
+
+/**
+ * Decoded flash rate (Hz) from rule timing byte + timing model rates.
+ * @param {object|null} rule
+ * @param {number[]} payloadBytes
+ * @param {object[]} [timingModels]
+ * @returns {number}
+ */
+export function resolveFlashRateHz(rule, payloadBytes, timingModels = []) {
+  const timing = rule?.timing;
+  if (!timing?.enabled) return 0;
+  const model = timing.timingModelId
+    ? (Array.isArray(timingModels) ? timingModels.find((m) => m.id === timing.timingModelId) : null) || null
+    : null;
+  const offset = Number(timing.offset ?? 5);
+  const bytes = Array.isArray(payloadBytes) ? payloadBytes : [];
+  const byte = offset < bytes.length ? bytes[offset] : 0;
+  const { scaler, extended } = decodeTimingByte(byte);
+  const se = model?.strobeEffect;
+  let hz = Number.isFinite(se?.flashRateNormalHz) ? Number(se.flashRateNormalHz) : 2;
+  if (extended) {
+    hz = Number.isFinite(se?.flashRateExtendedHz) ? Number(se.flashRateExtendedHz) : 0.35;
+  } else if (scaler) {
+    hz = Number.isFinite(se?.flashRateScalerHz) ? Number(se.flashRateScalerHz) : 1;
+  }
+  return hz;
+}
+
+/**
  * Preview extract slots: raw bit value + mapped (palette index or curve output).
  * @param {number[]} payloadBytes
  * @param {object[]} extracts
  * @param {string[]} [colors]
  * @param {object|null} [segmentMap]
- * @returns {{ name: string, raw: number, mapped: number|null, paletteIndex?: number, rgb?: [number,number,number]|null, targets: object[], targetLabels: string[] }[]}
+ * @param {{ rule?: object|null, timingModels?: object[] }} [opts]
  */
-export function previewExtracts(payloadBytes, extracts, colors, segmentMap = null) {
+export function previewExtracts(payloadBytes, extracts, colors, segmentMap = null, opts = {}) {
   if (!Array.isArray(extracts)) return [];
+  const rule = opts.rule || null;
+  const timingModels = Array.isArray(opts.timingModels) ? opts.timingModels : [];
   return extracts.map((ex) => {
     const name = ex?.name || '';
-    const offset = Number(ex?.offset ?? 0);
-    const bitStart = Number(ex?.bitStart ?? 0);
-    const bitCount = Number(ex?.bitCount ?? 8);
-    const raw = extractBits(payloadBytes, offset, bitStart, bitCount);
+    const source = ex?.source || 'payloadBits';
+    const isTiming = source === 'timingFlashRate' || source === 'timingOnSec' || source === 'timingFadeSec';
     const targets = Array.isArray(ex?.targets) ? ex.targets : [];
-    let mapped = raw;
+    let raw = 0;
+    let derivedValue;
+    let mapped;
     let paletteIndex;
     let rgb = null;
+    const paletteMap = isTiming ? false : !!ex?.paletteMap;
 
-    if (ex?.paletteMap) {
-      paletteIndex = raw & 0x1f;
-      mapped = paletteIndex;
-      if (Array.isArray(colors) && colors[paletteIndex]) {
-        const hex = colors[paletteIndex];
-        if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
-          rgb = [
-            parseInt(hex.slice(1, 3), 16),
-            parseInt(hex.slice(3, 5), 16),
-            parseInt(hex.slice(5, 7), 16),
-          ];
-        }
+    if (isTiming) {
+      derivedValue = resolveTimingDerivedValue(rule, payloadBytes, timingModels, source);
+      raw = derivedValue;
+      mapped = derivedValue;
+      if (ex?.curve && typeof ex.curve === 'object') {
+        mapped = applyCurve(derivedValue, ex.curve);
       }
-    } else if (ex?.curve && typeof ex.curve === 'object') {
-      mapped = applyCurve(raw, ex.curve);
+    } else {
+      const offset = Number(ex?.offset ?? 0);
+      const bitStart = Number(ex?.bitStart ?? 0);
+      const bitCount = Number(ex?.bitCount ?? 8);
+      raw = extractBits(payloadBytes, offset, bitStart, bitCount);
+      mapped = raw;
+      if (paletteMap) {
+        paletteIndex = raw & 0x1f;
+        mapped = paletteIndex;
+        if (Array.isArray(colors) && colors[paletteIndex]) {
+          const hex = colors[paletteIndex];
+          if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+            rgb = [
+              parseInt(hex.slice(1, 3), 16),
+              parseInt(hex.slice(3, 5), 16),
+              parseInt(hex.slice(5, 7), 16),
+            ];
+          }
+        }
+      } else if (ex?.curve && typeof ex.curve === 'object') {
+        mapped = applyCurve(raw, ex.curve);
+      }
     }
 
     const targetLabels = targets.map((t) => formatExtractTargetLabel(t, segmentMap));
-    return { name, raw, mapped, paletteIndex, rgb, targets, targetLabels };
+    return {
+      name,
+      source,
+      raw,
+      mapped,
+      ...(derivedValue != null ? { derivedValue, flashRateHz: source === 'timingFlashRate' ? derivedValue : undefined } : {}),
+      paletteIndex,
+      rgb,
+      targets,
+      targetLabels,
+    };
   });
 }
 
@@ -361,7 +444,10 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
     ? segmentMaps.find((m) => m.id === extractRule.segmentMapId) || null
     : null;
   const extracts = extractRule
-    ? previewExtracts(bytes, extractRule.extract || [], opts.colors, segmentMap)
+    ? previewExtracts(bytes, extractRule.extract || [], opts.colors, segmentMap, {
+      rule: extractRule,
+      timingModels: opts.timingModels,
+    })
     : [];
   let timing = null;
   if (extractRule?.timing?.enabled && bytes.length > Number(extractRule.timing.offset ?? 0)) {

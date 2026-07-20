@@ -70,11 +70,64 @@ export function createEmptyExtractTarget(kind = 'maskColor') {
 export function createEmptyExtract(name = '') {
   return {
     name,
+    source: 'payloadBits',
     offset: 0,
     bitStart: 0,
     bitCount: 5,
     paletteMap: true,
     targets: [{ kind: 'maskColor', mask: 'all' }],
+  };
+}
+
+/** Timing-derived extract sources (not packet bits). */
+export const TIMING_DERIVED_SOURCES = [
+  { value: 'timingFlashRate', label: 'Flash rate (Hz)', unit: 'Hz', defaultField: 'sx', defaultCurve: 'reciprocal' },
+  { value: 'timingOnSec', label: 'On-time (sec)', unit: 's', defaultField: 'ix', defaultCurve: 'linear' },
+  { value: 'timingFadeSec', label: 'Fade duration (sec)', unit: 's', defaultField: 'c1', defaultCurve: 'linear' },
+];
+
+export const TIMING_DERIVED_SOURCE_SET = new Set(TIMING_DERIVED_SOURCES.map((s) => s.value));
+
+export function isTimingDerivedSource(source) {
+  return TIMING_DERIVED_SOURCE_SET.has(source);
+}
+
+/** Common WLED segment numeric fields + freeform for unknown/usermod params. */
+export const SEGMENT_FIELD_PRESETS = [
+  { value: 'sx', label: 'sx (speed)' },
+  { value: 'ix', label: 'ix (intensity)' },
+  { value: 'c1', label: 'c1 (custom 1)' },
+  { value: 'c2', label: 'c2 (custom 2)' },
+  { value: 'c3', label: 'c3 (custom 3)' },
+  { value: 'o1', label: 'o1 (option 1)' },
+  { value: 'o2', label: 'o2 (option 2)' },
+  { value: 'o3', label: 'o3 (option 3)' },
+];
+
+/**
+ * Pre-built extract that wires a timing-derived value → segmentField.
+ * Lives in rule.extract[] (same schema as packet extracts).
+ */
+export function createEmptyTimingParamBinding(source = 'timingFlashRate') {
+  const meta = TIMING_DERIVED_SOURCES.find((s) => s.value === source) || TIMING_DERIVED_SOURCES[0];
+  const reciprocal = meta.defaultCurve === 'reciprocal';
+  return {
+    name: meta.value === 'timingFlashRate' ? 'flashRate' : meta.value === 'timingOnSec' ? 'onTime' : 'fadeTime',
+    source: meta.value,
+    offset: 0,
+    bitStart: 0,
+    bitCount: 8,
+    paletteMap: false,
+    curve: {
+      type: reciprocal ? 'reciprocal' : 'linear',
+      inMin: 0,
+      inMax: reciprocal ? 50 : 60,
+      outMin: 0,
+      outMax: 255,
+      exponent: 2,
+      outScale: 50,
+    },
+    targets: [{ kind: 'segmentField', segmentId: '', field: meta.defaultField }],
   };
 }
 
@@ -560,16 +613,21 @@ export function normalizeExtractTarget(raw) {
   return createEmptyExtractTarget('maskColor');
 }
 
+const EXTRACT_SOURCES = new Set(['payloadBits', ...TIMING_DERIVED_SOURCE_SET]);
+
 export function normalizeExtract(raw) {
   if (!raw || typeof raw !== 'object') return createEmptyExtract();
-  const paletteMap = !!raw.paletteMap;
+  const source = EXTRACT_SOURCES.has(raw.source) ? raw.source : 'payloadBits';
+  const isTiming = isTimingDerivedSource(source);
+  const paletteMap = isTiming ? false : !!raw.paletteMap;
   const curve = paletteMap ? null : normalizeCurve(raw.curve);
   // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
   const targets = Array.isArray(raw.targets)
     ? raw.targets.map(normalizeExtractTarget)
-    : [createEmptyExtractTarget('maskColor')];
+    : [createEmptyExtractTarget(isTiming ? 'segmentField' : 'maskColor')];
   return {
     name: typeof raw.name === 'string' ? raw.name : '',
+    source,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
     bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,

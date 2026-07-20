@@ -29,8 +29,12 @@ import {
   createEmptyRuleEffect,
   createEmptyRuleTiming,
   createEmptyStartTransition,
+  createEmptyTimingParamBinding,
+  isTimingDerivedSource,
   normalizeMbMapping,
   reindexRulePriorities,
+  SEGMENT_FIELD_PRESETS,
+  TIMING_DERIVED_SOURCES,
   WLED_START_TRANSITIONS,
 } from '../../lib/ble/mbMapping';
 import {
@@ -305,11 +309,23 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
                 allowEmpty
               />
             </Field>
-            <Field label="Field">
+            <Field label="WLED field">
+              <Group gap={4} mb={4} wrap="wrap">
+                {SEGMENT_FIELD_PRESETS.map((p) => (
+                  <AppButton
+                    key={p.value}
+                    size="compact-xs"
+                    variant={target.field === p.value ? 'primary' : 'default'}
+                    onClick={() => onChange({ ...target, kind: 'segmentField', field: p.value })}
+                  >
+                    {p.value}
+                  </AppButton>
+                ))}
+              </Group>
               <TextInput
                 value={target.field || ''}
-                onChange={(e) => onChange({ ...target, kind: 'segmentField', field: e.target.value })}
-                placeholder="sx"
+                onChange={(e) => onChange({ ...target, kind: 'segmentField', field: e.target.value.trim() })}
+                placeholder="sx, ix, c1… or any usermod field"
                 styles={{ input: { fontFamily: 'monospace' } }}
               />
             </Field>
@@ -320,8 +336,185 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
   );
 }
 
-function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
+function TimingParamBindingEditor({
+  extract, segmentOpts, ruleTiming, timingModelOpts = [], onTimingChange, onEditTimingModels, onChange, onDelete,
+}) {
   const set = (patch) => onChange({ ...extract, ...patch });
+  const source = isTimingDerivedSource(extract.source) ? extract.source : 'timingFlashRate';
+  const meta = TIMING_DERIVED_SOURCES.find((s) => s.value === source) || TIMING_DERIVED_SOURCES[0];
+  const curve = extract.curve || createEmptyTimingParamBinding(source).curve;
+  const target = (Array.isArray(extract.targets) && extract.targets[0])
+    ? extract.targets[0]
+    : { kind: 'segmentField', segmentId: '', field: meta.defaultField };
+  const timingConfigured = !!(ruleTiming?.enabled && ruleTiming?.timingModelId);
+  const isReciprocal = curve.type === 'reciprocal';
+
+  const setSource = (next) => {
+    const nextBinding = createEmptyTimingParamBinding(next);
+    onChange({
+      ...nextBinding,
+      name: extract.name || nextBinding.name,
+      targets: [{
+        kind: 'segmentField',
+        segmentId: target.segmentId || '',
+        field: nextBinding.targets[0].field,
+      }],
+    });
+  };
+
+  const setTarget = (patch) => {
+    set({
+      targets: [{ ...target, kind: 'segmentField', ...patch }],
+      paletteMap: false,
+      source,
+    });
+  };
+
+  return (
+    <Paper p="xs" withBorder bg="var(--bg)">
+      <Group justify="space-between" mb="xs" wrap="wrap">
+        <Text size="xs" fw={700}>Timing → param</Text>
+        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Remove</AppButton>
+      </Group>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+        <Field label="Timing model">
+          <SearchableSelect
+            value={ruleTiming?.timingModelId || ''}
+            onChange={(timingModelId) => {
+              onTimingChange?.({
+                ...(ruleTiming || {}),
+                enabled: true,
+                timingModelId,
+              });
+            }}
+            placeholder="Select timing model…"
+            options={timingModelOpts}
+            allowEmpty
+          />
+        </Field>
+        <Field label="Decoded value">
+          <SearchableSelect
+            value={source}
+            onChange={setSource}
+            options={TIMING_DERIVED_SOURCES.map((s) => ({
+              value: s.value,
+              label: s.label,
+              searchText: `${s.label} ${s.value}`,
+            }))}
+            allowEmpty={false}
+          />
+        </Field>
+        {!timingConfigured && (
+          <Text size="xs" c="orange" style={{ gridColumn: '1 / -1' }}>
+            Pick a timing model — flash rate / on-time / fade come from that model&apos;s formulas. Without one, values read as 0.
+            {onEditTimingModels ? (
+              <>
+                {' '}
+                <Text
+                  span
+                  size="xs"
+                  c="blue"
+                  style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={onEditTimingModels}
+                >
+                  Edit timing models
+                </Text>
+              </>
+            ) : null}
+          </Text>
+        )}
+        <Field label="Name (optional)">
+          <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder={meta.label} />
+        </Field>
+        <Field label="Segment">
+          <SearchableSelect
+            value={target.segmentId || ''}
+            onChange={(segmentId) => setTarget({ segmentId })}
+            options={segmentOpts}
+            placeholder="(pick segment from map)"
+            allowEmpty
+          />
+        </Field>
+        <Field label="WLED field">
+          <Group gap={4} mb={4} wrap="wrap">
+            {SEGMENT_FIELD_PRESETS.map((p) => (
+              <AppButton
+                key={p.value}
+                size="compact-xs"
+                variant={target.field === p.value ? 'primary' : 'default'}
+                onClick={() => setTarget({ field: p.value })}
+              >
+                {p.value}
+              </AppButton>
+            ))}
+          </Group>
+          <TextInput
+            value={target.field || ''}
+            onChange={(e) => setTarget({ field: e.target.value.trim() })}
+            placeholder="sx, ix, c1… or any usermod field"
+            styles={{ input: { fontFamily: 'monospace' } }}
+          />
+        </Field>
+      </SimpleGrid>
+      <Text size="xs" c="dimmed" mt="xs" mb={4}>
+        Curve maps the decoded {meta.unit} value onto the field (0–255 typical). Reciprocal is for flash-rate→speed; linear for durations or unknown params.
+      </Text>
+      <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
+        <Field label="Curve">
+          <SearchableSelect
+            value={curve.type || 'linear'}
+            onChange={(type) => set({ curve: { ...curve, type } })}
+            options={[
+              { value: 'linear', label: 'linear' },
+              { value: 'exponential', label: 'exponential' },
+              { value: 'reciprocal', label: 'reciprocal (rate→param)' },
+            ]}
+            allowEmpty={false}
+          />
+        </Field>
+        <Field label={`${meta.unit} min`}>
+          <NumberInput
+            value={curve.inMin ?? 0}
+            decimalScale={2}
+            onChange={(v) => set({ curve: { ...curve, inMin: Number(v) || 0 } })}
+          />
+        </Field>
+        <Field label={`${meta.unit} max`}>
+          <NumberInput
+            value={curve.inMax ?? 50}
+            decimalScale={2}
+            onChange={(v) => set({ curve: { ...curve, inMax: Number(v) || 0 } })}
+          />
+        </Field>
+        <Field label="outMin">
+          <NumberInput value={curve.outMin ?? 0} onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })} />
+        </Field>
+        <Field label="outMax">
+          <NumberInput value={curve.outMax ?? 255} onChange={(v) => set({ curve: { ...curve, outMax: Number(v) || 0 } })} />
+        </Field>
+        {curve.type === 'exponential' && (
+          <Field label="exponent">
+            <NumberInput value={curve.exponent ?? 2} step={0.1} onChange={(v) => set({ curve: { ...curve, exponent: Number(v) || 2 } })} />
+          </Field>
+        )}
+        {isReciprocal && (
+          <Field label="outScale">
+            <NumberInput
+              value={curve.outScale ?? 50}
+              step={1}
+              min={0.01}
+              decimalScale={2}
+              onChange={(v) => set({ curve: { ...curve, outScale: Number(v) || 50 } })}
+            />
+          </Field>
+        )}
+      </SimpleGrid>
+    </Paper>
+  );
+}
+
+function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
+  const set = (patch) => onChange({ ...extract, ...patch, source: 'payloadBits' });
   const targets = Array.isArray(extract.targets) ? extract.targets : [];
   const curve = extract.curve || {
     type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
@@ -331,9 +524,13 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
   return (
     <Paper p="xs" withBorder bg="var(--surface2)">
       <Group justify="space-between" mb="xs">
-        <Text size="xs" fw={600}>Extract</Text>
+        <Text size="xs" fw={600}>Packet extract</Text>
         <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
       </Group>
+      <Text size="xs" c="dimmed" mb="xs">
+        Reads bits from the packet. For flash rate / on-time → segment fields, use{' '}
+        <strong>Timing → Add timing → param binding</strong> above (not this section).
+      </Text>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
         <Field label="Name">
           <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />
@@ -355,7 +552,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
         onChange={(e) => {
           const paletteMap = e.target.checked;
           if (paletteMap) {
-            const rest = { ...extract };
+            const rest = { ...extract, source: 'payloadBits' };
             delete rest.curve;
             onChange({ ...rest, paletteMap: true });
           } else {
@@ -379,10 +576,18 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
               />
             </Field>
             <Field label={isReciprocal ? 'Hz min (clamp)' : 'inMin'}>
-              <NumberInput value={curve.inMin ?? 0} onChange={(v) => set({ curve: { ...curve, inMin: parseInt(v, 10) || 0 } })} />
+              <NumberInput
+                value={curve.inMin ?? 0}
+                decimalScale={isReciprocal ? 2 : 0}
+                onChange={(v) => set({ curve: { ...curve, inMin: Number(v) || 0 } })}
+              />
             </Field>
             <Field label={isReciprocal ? 'Hz max (clamp)' : 'inMax'}>
-              <NumberInput value={curve.inMax ?? 15} onChange={(v) => set({ curve: { ...curve, inMax: parseInt(v, 10) || 0 } })} />
+              <NumberInput
+                value={curve.inMax ?? 15}
+                decimalScale={isReciprocal ? 2 : 0}
+                onChange={(v) => set({ curve: { ...curve, inMax: Number(v) || 0 } })}
+              />
             </Field>
             <Field label="outMin">
               <NumberInput value={curve.outMin ?? 0} onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })} />
@@ -409,10 +614,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
           </SimpleGrid>
           {isReciprocal && (
             <Text size="xs" c="dimmed" lh={1.45}>
-              Reciprocal treats the extracted bits as a rate (Hz), not a normalized bit range.
-              Formula: <code style={{ fontFamily: 'monospace' }}>out = outMax − outScale / Hz</code>.
-              WLED Strobe uses outScale=50 (cycle = 20 ms/unit). Leave at 50 unless targeting a different effect formula.
-              Point a segmentField target at sx / ix / c1–c3 / o1–o3 as needed.
+              Reciprocal treats extracted bits as a rate (Hz). For timing-model flash rate, use the Timing bindings section instead.
             </Text>
           )}
         </Stack>
@@ -633,8 +835,9 @@ function RuleCard({
           <Paper p="sm" withBorder bg="var(--surface2)">
             <Text size="sm" fw={700} mb="xs">Timing</Text>
             <Text size="xs" c="dimmed" mb="xs">
-              On-time and fade-out come from the packet timing byte. Cooldown is how long
-              lights stay black after fade-out, before restoring the previous look.
+              On-time and fade-out come from the packet timing byte (how long the effect runs).
+              Cooldown is how long lights stay black after fade-out. Bind flash rate / on-time /
+              fade to segment fields (sx, ix, …) in the section at the bottom of this card.
             </Text>
             <Switch
               label="Use packet timing byte"
@@ -674,9 +877,9 @@ function RuleCard({
                 value={timing.timingModelId || ''}
                 onChange={(timingModelId) => onChange({
                   ...rule,
-                  timing: { ...timing, timingModelId },
+                  timing: { ...timing, enabled: true, timingModelId },
                 })}
-                placeholder="(firmware default — E9 05/09)"
+                placeholder="Select timing model (e.g. E9 0E strobe)…"
                 options={timingModelOpts}
                 allowEmpty
                 disabled={!timing.enabled}
@@ -703,6 +906,53 @@ function RuleCard({
                 { label: 'fixed', value: 'fixed' },
               ]}
             />
+
+            <Text size="sm" fw={700} mt="md" mb={4}>Wire timing values → segment fields</Text>
+            <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
+              Duration (on / fade / black hold) is controlled above. Use bindings here to push
+              decoded flash rate, on-time, or fade duration through a curve into any segment
+              param (sx, ix, c1–c3, o1–o3, or a custom usermod field).
+            </Text>
+            <Stack gap="xs">
+              {(rule.extract || [])
+                .map((ex, i) => ({ ex, i }))
+                .filter(({ ex }) => isTimingDerivedSource(ex.source))
+                .map(({ ex, i }) => (
+                  <TimingParamBindingEditor
+                    key={i}
+                    extract={ex}
+                    segmentOpts={segmentOpts}
+                    ruleTiming={timing}
+                    timingModelOpts={timingModelOpts}
+                    onEditTimingModels={onEditTimingModels}
+                    onTimingChange={(nextTiming) => onChange({
+                      ...rule,
+                      timing: { ...timing, ...nextTiming },
+                    })}
+                    onChange={(next) => {
+                      const extract = [...(rule.extract || [])];
+                      extract[i] = next;
+                      onChange({ ...rule, extract });
+                    }}
+                    onDelete={() => onChange({
+                      ...rule,
+                      extract: (rule.extract || []).filter((_, j) => j !== i),
+                    })}
+                  />
+                ))}
+            </Stack>
+            <AppButton
+              mt="xs"
+              size="compact-sm"
+              variant="primary"
+              onClick={() => onChange({
+                ...rule,
+                timing: { ...timing, enabled: true },
+                extract: [...(rule.extract || []), createEmptyTimingParamBinding('timingFlashRate')],
+              })}
+            >
+              Add timing → param binding
+            </AppButton>
           </Paper>
 
           <Paper p="sm" withBorder bg="var(--surface2)">
@@ -743,21 +993,28 @@ function RuleCard({
             onChange={(match) => onChange({ ...rule, match })}
           />
 
-          <SectionHead>Extracts</SectionHead>
+          <SectionHead>Packet extracts</SectionHead>
+          <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
+            Pull values from packet bytes (palette colors, bit fields). Timing→param bindings
+            live under the Timing section above.
+          </Text>
           <Stack gap="xs">
-            {(rule.extract || []).map((ex, i) => (
-              <ExtractRowEditor
-                key={i}
-                extract={ex}
-                segmentOpts={segmentOpts}
-                onChange={(next) => {
-                  const extract = [...(rule.extract || [])];
-                  extract[i] = next;
-                  onChange({ ...rule, extract });
-                }}
-                onDelete={() => onChange({ ...rule, extract: (rule.extract || []).filter((_, j) => j !== i) })}
-              />
-            ))}
+            {(rule.extract || [])
+              .map((ex, i) => ({ ex, i }))
+              .filter(({ ex }) => !isTimingDerivedSource(ex.source))
+              .map(({ ex, i }) => (
+                <ExtractRowEditor
+                  key={i}
+                  extract={ex}
+                  segmentOpts={segmentOpts}
+                  onChange={(next) => {
+                    const extract = [...(rule.extract || [])];
+                    extract[i] = next;
+                    onChange({ ...rule, extract });
+                  }}
+                  onDelete={() => onChange({ ...rule, extract: (rule.extract || []).filter((_, j) => j !== i) })}
+                />
+              ))}
           </Stack>
           <AppButton
             size="compact-sm"
@@ -767,7 +1024,7 @@ function RuleCard({
               extract: [...(rule.extract || []), createEmptyExtract(`field${(rule.extract || []).length + 1}`)],
             })}
           >
-            Add extract
+            Add packet extract
           </AppButton>
         </Stack>
       )}
@@ -810,7 +1067,10 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
           && selectedRule.match
           && previewPacketAgainstRules(bytes, [selectedRule]).matched;
         const extracts = matched
-          ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule))
+          ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule), {
+            rule: selectedRule,
+            timingModels,
+          })
           : [];
         let timing = null;
         if (matched && selectedRule.timing?.enabled && bytes.length > Number(selectedRule.timing.offset ?? 0)) {
@@ -841,14 +1101,20 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
           matched: prev.matchingRules.length > 0,
           ruleNames: prev.matchingRules.map((m) => m.rule.name),
           extracts: selectedRule
-            ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule))
+            ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule), {
+              rule: selectedRule,
+              timingModels,
+            })
             : prev.extracts,
           timing: prev.timing,
         };
       }
       const first = findMatchingRule(bytes, rules);
       const extracts = first
-        ? previewExtracts(bytes, first.extract || [], colors, mapFor(first))
+        ? previewExtracts(bytes, first.extract || [], colors, mapFor(first), {
+          rule: first,
+          timingModels,
+        })
         : [];
       let timing = null;
       if (first?.timing?.enabled && bytes.length > Number(first.timing.offset ?? 0)) {
@@ -933,8 +1199,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
                     <Group gap="xs" wrap="wrap">
                       <Text size="xs" fw={600}>{ex.name || `ex${j}`}:</Text>
                       <Text size="xs" ff="monospace">
-                        raw={ex.raw}
-                        {ex.paletteIndex != null ? ` → pal ${ex.paletteIndex}` : ` → ${typeof ex.mapped === 'number' ? ex.mapped.toFixed?.(2) ?? ex.mapped : ex.mapped}`}
+                        {ex.derivedValue != null
+                          ? `${ex.source || 'timing'}: ${Number(ex.derivedValue).toFixed(2)} → ${typeof ex.mapped === 'number' ? ex.mapped.toFixed?.(2) ?? ex.mapped : ex.mapped}`
+                          : `raw=${ex.raw}${ex.paletteIndex != null ? ` → pal ${ex.paletteIndex}` : ` → ${typeof ex.mapped === 'number' ? ex.mapped.toFixed?.(2) ?? ex.mapped : ex.mapped}`}`}
                       </Text>
                       {ex.rgb && (
                         <Paper

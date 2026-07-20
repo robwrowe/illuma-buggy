@@ -11,7 +11,8 @@ uint32_t extractBits(const uint8_t* payload, size_t plen, uint8_t byteOffset,
                      uint8_t bitStart, uint8_t bitCount);
 
 // outScale used by RECIPROCAL only (default 50 = WLED Strobe: sx = outMax - 50/hz).
-float applyCurve(uint32_t rawValue, uint32_t inMin, uint32_t inMax,
+// rawValue/inMin/inMax are float so timingFlashRate can pass fractional Hz (e.g. 0.35).
+float applyCurve(float rawValue, float inMin, float inMax,
                  float outMin, float outMax, CurveType type, float exponent,
                  float outScale = 50.0f);
 

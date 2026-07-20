@@ -33,18 +33,18 @@ uint32_t extractBits(const uint8_t* payload, size_t plen, uint8_t byteOffset,
   return (uint32_t)((byte >> bitStart) & mask);
 }
 
-float applyCurve(uint32_t rawValue, uint32_t inMin, uint32_t inMax,
+float applyCurve(float rawValue, float inMin, float inMax,
                  float outMin, float outMax, CurveType type, float exponent,
                  float outScale) {
-  if (inMax == inMin) return outMin;
-  uint32_t v = rawValue;
+  if (fabsf(inMax - inMin) < 1e-6f) return outMin;
+  float v = rawValue;
   if (v < inMin) v = inMin;
   if (v > inMax) v = inMax;
 
   if (type == CurveType::RECIPROCAL) {
     // rawValue is a rate/frequency (e.g. Hz); inMin/inMax clamp it.
     // out = outMax - outScale/hz  (WLED Strobe: sx = 255 - 50/hz when outScale=50).
-    float hz = (float)v;
+    float hz = v;
     if (hz <= 0.01f) return outMax;
     float scale = (outScale > 0.0f) ? outScale : 50.0f;
     float out = outMax - (scale / hz);
@@ -53,7 +53,7 @@ float applyCurve(uint32_t rawValue, uint32_t inMin, uint32_t inMax,
     return out;
   }
 
-  float t = (float)(v - inMin) / (float)(inMax - inMin);
+  float t = (v - inMin) / (inMax - inMin);
   if (type == CurveType::EXPONENTIAL) {
     if (exponent <= 0.0f) exponent = 2.0f;
     t = powf(t, exponent);
@@ -255,15 +255,59 @@ static int strobeSxFromHz(float hz) {
   return sx;
 }
 
-static void applyStrobeFromTimingModel(JsonObject wled, JsonObject model, uint8_t timingByte) {
+/** Shared by applyStrobeFromTimingModel + timing* extract sources. */
+static float resolveFlashRateHz(const JsonObject& rule, const uint8_t* payload, size_t plen) {
+  JsonObject timingObj = rule["timing"].as<JsonObject>();
+  if (timingObj.isNull() || !(timingObj["enabled"] | false)) return 0.0f;
+  const char* tmId = timingObj["timingModelId"] | "";
+  JsonObject tm = findTimingModelById(tmId);
+  uint8_t tOff = (uint8_t)(timingObj["offset"] | 5);
+  uint8_t tByte = (payload && tOff < plen) ? payload[tOff] : 0;
+  TimingDecode td = decodeTimingByte(tByte, tm);
+  JsonObject strobe = tm.isNull() ? JsonObject() : tm["strobeEffect"].as<JsonObject>();
+  float hz = strobe.isNull() ? 2.0f : (float)(strobe["flashRateNormalHz"] | 2.0);
+  if (td.extended) hz = strobe.isNull() ? 0.35f : (float)(strobe["flashRateExtendedHz"] | 0.35);
+  else if (td.scaler) hz = strobe.isNull() ? 1.0f : (float)(strobe["flashRateScalerHz"] | 1.0);
+  return hz;
+}
+
+/** Decoded timing-derived scalar for extract sources (Hz or seconds). */
+static float resolveTimingDerivedValue(const JsonObject& rule, const uint8_t* payload,
+                                       size_t plen, const char* source) {
+  if (!source) return 0.0f;
+  if (strcmp(source, "timingFlashRate") == 0) {
+    return resolveFlashRateHz(rule, payload, plen);
+  }
+  JsonObject timingObj = rule["timing"].as<JsonObject>();
+  if (timingObj.isNull() || !(timingObj["enabled"] | false)) return 0.0f;
+  const char* tmId = timingObj["timingModelId"] | "";
+  JsonObject tm = findTimingModelById(tmId);
+  uint8_t tOff = (uint8_t)(timingObj["offset"] | 5);
+  uint8_t tByte = (payload && tOff < plen) ? payload[tOff] : 0;
+  TimingDecode td = decodeTimingByte(tByte, tm);
+  if (strcmp(source, "timingOnSec") == 0) return td.onTimeMs / 1000.0f;
+  if (strcmp(source, "timingFadeSec") == 0) return td.fadeMs / 1000.0f;
+  return 0.0f;
+}
+
+static bool isTimingDerivedSource(const char* source) {
+  if (!source) return false;
+  return strcmp(source, "timingFlashRate") == 0
+      || strcmp(source, "timingOnSec") == 0
+      || strcmp(source, "timingFadeSec") == 0;
+}
+
+static void applyStrobeFromTimingModel(JsonObject wled, const JsonObject& rule,
+                                       const uint8_t* payload, size_t plen) {
+  JsonObject timingObj = rule["timing"].as<JsonObject>();
+  if (timingObj.isNull()) return;
+  const char* tmId = timingObj["timingModelId"] | "";
+  JsonObject model = findTimingModelById(tmId);
   if (model.isNull()) return;
   JsonObject strobe = model["strobeEffect"].as<JsonObject>();
   if (strobe.isNull() || !(strobe["enabled"] | false)) return;
 
-  TimingDecode td = decodeTimingByte(timingByte, model);
-  float hz = (float)(strobe["flashRateNormalHz"] | 2.0);
-  if (td.extended) hz = (float)(strobe["flashRateExtendedHz"] | 0.35);
-  else if (td.scaler) hz = (float)(strobe["flashRateScalerHz"] | 1.0);
+  float hz = resolveFlashRateHz(rule, payload, plen);
   int sx = strobeSxFromHz(hz);
   int fx = strobe["fx"] | 23;
 
@@ -827,14 +871,23 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     for (JsonVariant ev : extracts) {
       if (!ev.is<JsonObject>()) continue;
       JsonObject ex = ev.as<JsonObject>();
-      uint8_t offset = (uint8_t)(ex["offset"] | 0);
-      uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
-      uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
-      uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
-
+      const char* source = ex["source"] | "payloadBits";
+      uint32_t raw = 0;
+      float derivedValue = -1.0f;  // sentinel: not a timing-derived extract
       bool paletteMap = ex["paletteMap"] | false;
+
+      if (isTimingDerivedSource(source)) {
+        derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
+        paletteMap = false;
+      } else {
+        uint8_t offset = (uint8_t)(ex["offset"] | 0);
+        uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
+        uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
+        raw = extractBits(payload, plen, offset, bitStart, bitCount);
+      }
+
       uint8_t r = 0, g = 0, b = 0;
-      float mapped = (float)raw;
+      float mapped = (derivedValue >= 0.0f) ? derivedValue : (float)raw;
       if (paletteMap) {
         uint8_t pal = (uint8_t)(raw & 0x1F);
         paletteToRGB(pal, r, g, b);
@@ -847,15 +900,16 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         else if (strcmp(ctype, "reciprocal") == 0) ct = CurveType::RECIPROCAL;
         float expv = curve["exponent"] | 2.0f;
         float outScale = curve["outScale"] | 50.0f;
-        mapped = applyCurve(raw,
-                            (uint32_t)(curve["inMin"] | 0),
-                            (uint32_t)(curve["inMax"] | 15),
+        float curveRaw = (derivedValue >= 0.0f) ? derivedValue : (float)raw;
+        mapped = applyCurve(curveRaw,
+                            (float)(curve["inMin"] | 0),
+                            (float)(curve["inMax"] | 15),
                             (float)(curve["outMin"] | 0),
                             (float)(curve["outMax"] | 255),
                             ct, expv, outScale);
         uint8_t pal = (uint8_t)((uint32_t)lroundf(mapped) & 0x1F);
         paletteToRGB(pal, r, g, b);
-      } else {
+      } else if (derivedValue < 0.0f) {
         uint8_t pal = (uint8_t)(raw & 0x1F);
         paletteToRGB(pal, r, g, b);
       }
@@ -954,12 +1008,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   // Timing-model strobe: set WLED Strobe fx/sx from flash-rate bits on the timing byte.
   if (timingEn && payload && plen > 0) {
-    JsonObject timingObj = rule["timing"].as<JsonObject>();
-    const char* tmId = timingObj.isNull() ? "" : (timingObj["timingModelId"] | "");
-    JsonObject tm = findTimingModelById(tmId);
-    uint8_t tOff = timingObj.isNull() ? 5 : (uint8_t)(timingObj["offset"] | 5);
-    uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
-    applyStrobeFromTimingModel(wled.as<JsonObject>(), tm, tByte);
+    applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
   }
 
   if (wled.overflowed()) {
