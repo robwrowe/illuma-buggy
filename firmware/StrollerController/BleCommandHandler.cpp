@@ -21,7 +21,7 @@
 void handleBLECommand(const String& msg) {
   size_t cap = msg.length() + 512;
   if (cap < 4096) cap = 4096;
-  if (cap > 32768) cap = 32768;
+  if (cap > BLE_JSON_DOC_SIZE) cap = BLE_JSON_DOC_SIZE;
   DynamicJsonDocument doc(cap);
   DeserializationError err = deserializeJson(doc, msg);
   if (err) {

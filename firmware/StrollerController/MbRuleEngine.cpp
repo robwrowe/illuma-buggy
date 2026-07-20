@@ -15,7 +15,7 @@
 #include <ctype.h>
 
 // Cached rules document — refreshed by applyMbRulesJson / loadMbRulesFromJson.
-static DynamicJsonDocument gRulesDoc(32768);
+static DynamicJsonDocument gRulesDoc(BLE_JSON_DOC_SIZE);
 
 static JsonArray rulesArray() {
   return gRulesDoc["rules"].as<JsonArray>();
@@ -1074,7 +1074,7 @@ void applyMbRulesJson(JsonObject doc) {
     serializeJson(doc, raw);
     // If only maps/models arrived without rules, merge onto existing cache
     if (!doc.containsKey("rules") && gRulesDoc.containsKey("rules")) {
-      DynamicJsonDocument merged(32768);
+      DynamicJsonDocument merged(BLE_JSON_DOC_SIZE);
       String existing;
       serializeJson(gRulesDoc, existing);
       if (!deserializeJson(merged, existing)) {
@@ -1150,7 +1150,7 @@ void loadMbRulesFromJson() {
   bleDefaultPresetId = "";
   const String& src = mbRulesJson.length() > 0 ? mbRulesJson : mbMappingJson;
   if (src.length() == 0) return;
-  DynamicJsonDocument doc(32768);
+  DynamicJsonDocument doc(BLE_JSON_DOC_SIZE);
   DeserializationError err = deserializeJson(doc, src);
   if (err) {
     Serial.printf("[Rules] JSON parse failed: %s (%u bytes)\n", err.c_str(), (unsigned)src.length());
@@ -1161,7 +1161,7 @@ void loadMbRulesFromJson() {
 
 bool mbRulesJsonUsable(const String& json) {
   if (json.length() == 0) return false;
-  DynamicJsonDocument doc(32768);
+  DynamicJsonDocument doc(BLE_JSON_DOC_SIZE);
   DeserializationError err = deserializeJson(doc, json);
   if (err) return false;
   JsonArray rules = doc["rules"].as<JsonArray>();

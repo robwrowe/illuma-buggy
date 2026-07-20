@@ -50,7 +50,9 @@
 #define PARSED_PACKET_RAW_MAX 32
 /** ESP-NOW → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
 #define PARSED_PACKET_QUEUE_DEPTH 32
-#define BLE_CMD_BUF_SIZE 8192
+#define BLE_CMD_BUF_SIZE 65536
+/** ArduinoJson pool for BLE command parse + cached rules document (must track BLE_CMD_BUF_SIZE). */
+#define BLE_JSON_DOC_SIZE 65536
 /** Depth for complete BLE commands (reconnect burst is ~5–8; leave headroom). */
 #define BLE_CMD_QUEUE_DEPTH 24
 /** Max commands handled per loop() — empty a full burst in ~2 iterations. */
