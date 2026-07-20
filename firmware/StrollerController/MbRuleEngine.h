@@ -24,6 +24,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 // Load/parse the rules document (rules + segmentMaps + colors + paradeDetection + …).
 void applyMbRulesJson(JsonObject root);
 void loadMbRulesFromJson();
+/** True when JSON parses and contains at least one entry in `rules[]`. */
+bool mbRulesJsonUsable(const String& json);
 
 // Parade beacon detection (separate from effect rules).
 void checkParadeBeacon(const uint8_t* payload, size_t plen, int rssi);

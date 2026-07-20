@@ -281,8 +281,13 @@ static void setSegColorSlot(JsonObject segObj, int colorSlot, uint8_t r, uint8_t
   segObj["pal"] = WLED_PAL_COLORS_ONLY;
   JsonArray col = segObj["col"].as<JsonArray>();
   if (col.isNull()) col = segObj.createNestedArray("col");
+  if (col.isNull()) return;  // document full — do not spin
+  // ArduinoJson returns a null array when the pool is exhausted; size() stays
+  // unchanged → an unbounded while would hang loop() forever (BLE queue fills).
   while ((int)col.size() <= colorSlot) {
+    size_t before = col.size();
     JsonArray rgb = col.createNestedArray();
+    if (rgb.isNull() || col.size() <= before) return;
     rgb.add(0); rgb.add(0); rgb.add(0);
   }
   JsonArray rgb = col[colorSlot].as<JsonArray>();
@@ -564,7 +569,13 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   }
 
   saveWledStateForOverride();
-  DynamicJsonDocument wled(16384);
+  // Use the same cap as restore payloads — segment maps + extracts need headroom.
+  // A failed alloc (capacity 0) + setSegColorSlot used to infinite-loop and stall loop().
+  DynamicJsonDocument wled(WLED_RESTORE_JSON_CAP);
+  if (wled.capacity() < 2048) {
+    Serial.println("[Rule] WLED doc alloc failed — abort apply");
+    return;
+  }
   bool haveWled = false;
 
   if (presetId.length() > 0) {
@@ -745,6 +756,11 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     }
   }
 
+  if (wled.overflowed()) {
+    Serial.println("[Rule] WLED doc overflowed while building — abort apply");
+    return;
+  }
+
   String wledJson;
   serializeJson(wled, wledJson);
   Serial.printf("[Rule] posting WLED (%u bytes)\n", (unsigned)wledJson.length());
@@ -752,9 +768,10 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   // preparePresetApplyPayload already folds inactive segments into one POST —
   // do not call disableAllSplitSegments() first (extra HTTP that can stall loop).
   String body = preparePresetApplyPayload(wledJson);
+  // Fail fast under scan load — long POST timeouts starve bleCmdQueue.
   bool ok = sendToWLED(
     injectWledTransition(body, startTransMs, hasStartTr ? blendingStyle : -1),
-    2500, 1);
+    1200, 0);
   if (!ok) {
     Serial.println("[Rule] WLED apply failed");
     return;
@@ -876,6 +893,15 @@ void loadMbRulesFromJson() {
     return;
   }
   applyMbRulesJson(doc.as<JsonObject>());
+}
+
+bool mbRulesJsonUsable(const String& json) {
+  if (json.length() == 0) return false;
+  DynamicJsonDocument doc(32768);
+  DeserializationError err = deserializeJson(doc, json);
+  if (err) return false;
+  JsonArray rules = doc["rules"].as<JsonArray>();
+  return !rules.isNull() && rules.size() > 0;
 }
 
 // Public accessor used by DisneyPayloadHandlers

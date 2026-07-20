@@ -121,7 +121,9 @@ void processBleCmdQueue() {
   if (bleCmdQueue == nullptr) return;
   PendingBleCmd item;
   int drained = 0;
-  while (drained < 4 && xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
+  // Drain enough that bootstrap (status + config) cannot fill a depth-12 queue
+  // while a single rule apply is in flight.
+  while (drained < 8 && xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
     if (item.data) {
       handleBLECommand(String(item.data));
       free(item.data);

@@ -56,16 +56,11 @@ void saveWledStateForOverride() {
     }
   }
 
-  if (liveWledState.length() == 0) {
-    String state = getFromWLED("/json/state");
-    if (state.length() > 0) {
-      liveWledState = compactWledStateForSave(state);
-      lastLiveStatePollMs = millis();
-      Serial.printf("[WLED] Sync state poll (%u bytes)\n", (unsigned)liveWledState.length());
-    }
-  }
-
-  // Cache only — prefer live/sync poll over stale boot baseline.
+  // Do NOT synchronously poll WLED here — this runs on the hot rule-apply /
+  // override path under active BLE/ESP-NOW load. A blocking GET (default 5s)
+  // stalls loop(), starves the packet queue, and can hang long enough that
+  // "[Rule] posting WLED" never appears. Use whatever is already cached
+  // (liveWledState from the periodic poll, or the boot baseline).
   if (liveWledState.length() > 0) {
     savedWledState = liveWledState;
     Serial.printf("[Override] Saved snapshot (%u bytes, preset_fallback=%s)\n",

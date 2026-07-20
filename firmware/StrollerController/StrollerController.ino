@@ -44,20 +44,38 @@ void setup() {
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
   mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
   // Prefer SPIFFS for large rules JSON; migrate leftover NVS blobs once.
+  // Discard corrupt/empty blobs so a truncated legacy file doesn't look like a
+  // successful load (rules=0) and block a clean "waiting for push" state.
   mbRulesFsBegin();
   mbRulesJson = mbRulesFsLoad();
   bool rulesOnFs = mbRulesJson.length() > 0;
+  bool discardNvsRules = false;
+  if (rulesOnFs && !mbRulesJsonUsable(mbRulesJson)) {
+    Serial.printf("[Rules] discarded invalid/empty rules file (%u bytes) — waiting for push\n",
+                  (unsigned)mbRulesJson.length());
+    mbRulesFsClear();
+    mbRulesJson = "";
+    rulesOnFs = false;
+  }
   if (!rulesOnFs) {
-    mbRulesJson = nvsGetLargeString(prefs, "mbRules", "");
-    if (mbRulesJson.length() == 0) {
-      mbRulesJson = nvsGetLargeString(prefs, "mbMapping", "");
+    String fromNvs = nvsGetLargeString(prefs, "mbRules", "");
+    if (fromNvs.length() == 0) {
+      fromNvs = nvsGetLargeString(prefs, "mbMapping", "");
     }
-    if (mbRulesJson.length() > 0) {
-      Serial.printf("[FS] migrating %u bytes from NVS → SPIFFS\n",
-                    (unsigned)mbRulesJson.length());
-      rulesOnFs = mbRulesFsSave(mbRulesJson);
-      if (!rulesOnFs) {
-        Serial.println("[FS] migrate failed — keeping NVS copy for this boot");
+    if (fromNvs.length() > 0) {
+      if (mbRulesJsonUsable(fromNvs)) {
+        mbRulesJson = fromNvs;
+        Serial.printf("[FS] migrating %u bytes from NVS → SPIFFS\n",
+                      (unsigned)mbRulesJson.length());
+        rulesOnFs = mbRulesFsSave(mbRulesJson);
+        if (!rulesOnFs) {
+          Serial.println("[FS] migrate failed — keeping NVS copy for this boot");
+        }
+      } else {
+        Serial.printf("[Rules] discarded invalid/empty NVS blob (%u bytes) — waiting for push\n",
+                      (unsigned)fromNvs.length());
+        mbRulesJson = "";
+        discardNvsRules = true;
       }
     }
   }
@@ -83,8 +101,9 @@ void setup() {
   }
   prefs.end();
 
-  // Drop legacy NVS rule blobs only after SPIFFS has a good copy.
-  if (rulesOnFs) {
+  // Drop legacy NVS rule blobs after SPIFFS has a good copy, or when the NVS
+  // blob was junk we refused to migrate.
+  if (rulesOnFs || discardNvsRules) {
     prefs.begin("config", false);
     nvsRemoveLargeString(prefs, "mbRules");
     nvsRemoveLargeString(prefs, "mbMapping");
@@ -121,7 +140,7 @@ void setup() {
 
   // Create command queue (10 slots)
   cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
-  bleCmdQueue = xQueueCreate(6, sizeof(PendingBleCmd));
+  bleCmdQueue = xQueueCreate(12, sizeof(PendingBleCmd));
 
   xTaskCreatePinnedToCore(
     [](void*) { connectToWLED(); vTaskDelete(NULL); },
@@ -168,12 +187,13 @@ void processPendingCommands() {
 }
 
 void loop() {
+  // BLE first — app preset fire / status must not wait behind ESP-NOW rule applies.
+  processBleCmdQueue();
+  processPendingCommands();
   processParsedPacketQueue();
   transportPairResendTick();
   serviceScannerFallback();
   processSerialCommands();
-  processBleCmdQueue();
-  processPendingCommands();
   serviceWandTx();
 
   // Auto-clear Starlight Wand override after timeout
@@ -211,7 +231,9 @@ void loop() {
     wledWasConnected = false;
   } else if (!wledWasConnected) {
     wledWasConnected = true;
+    delay(300);  // let AP/WLED settle after STA join
     snapshotWledBaseline();
+    ensureWledPowerOn();
   } else {
     pollLiveWledState();
   }

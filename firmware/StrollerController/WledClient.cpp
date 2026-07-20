@@ -122,7 +122,8 @@ String compactWledStateForSave(const String& full) {
 }
 
 void snapshotWledBaseline() {
-  String state = getFromWLED("/json/state");
+  // Short timeout — this runs on loop() and must not stall BLE / ESP-NOW drain.
+  String state = getFromWLED("/json/state", 800);
   if (state.length() == 0) {
     Serial.println("[WLED] Baseline snapshot failed (GET /json/state)");
     return;
