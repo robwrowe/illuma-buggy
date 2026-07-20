@@ -34,6 +34,7 @@ import {
   normalizeMbMapping,
   reindexRulePriorities,
   SEGMENT_FIELD_PRESETS,
+  shortRuleId,
   TIMING_DERIVED_SOURCES,
   WLED_START_TRANSITIONS,
 } from '../../lib/ble/mbMapping';
@@ -95,6 +96,41 @@ function hexPacketsFromPaste(raw) {
   }
   const hex = stripCompanyId(parsed.hex || '');
   return hex.length >= 4 ? [hex] : [];
+}
+
+/** Collapsed-by-default section used across the rule editor. */
+function CollapsibleBlock({
+  title,
+  summary,
+  defaultOpen = false,
+  headerRight,
+  children,
+  paperProps = {},
+  titleSize = 'sm',
+  titleFw = 700,
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Paper p="sm" withBorder bg="var(--surface2)" {...paperProps}>
+      <Group justify="space-between" mb={open ? 'xs' : 0} wrap="wrap" gap="xs">
+        <Group gap="xs" style={{ flex: 1, minWidth: 0 }}>
+          <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
+            {open ? '▾' : '▸'}
+          </AppButton>
+          <Text size={titleSize} fw={titleFw} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {title}
+          </Text>
+          {!open && summary ? (
+            <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {summary}
+            </Text>
+          ) : null}
+        </Group>
+        {headerRight}
+      </Group>
+      {open ? children : null}
+    </Paper>
+  );
 }
 
 function ConditionLeafEditor({ node, onChange, onDelete }) {
@@ -179,6 +215,8 @@ function ConditionLeafEditor({ node, onChange, onDelete }) {
 }
 
 function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
+  const [open, setOpen] = useState(false); // collapsed by default
+
   if (node?.type) {
     return <ConditionLeafEditor node={node} onChange={onChange} onDelete={onDelete} />;
   }
@@ -193,6 +231,13 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
     onChange({ ...node, children: children.filter((_, j) => j !== i) });
   };
 
+  const leafCount = children.filter((c) => c?.type).length;
+  const groupCount = children.filter((c) => c && !c.type).length;
+  const summaryParts = [];
+  if (leafCount) summaryParts.push(`${leafCount} condition${leafCount === 1 ? '' : 's'}`);
+  if (groupCount) summaryParts.push(`${groupCount} group${groupCount === 1 ? '' : 's'}`);
+  const summary = summaryParts.length ? summaryParts.join(', ') : 'empty';
+
   return (
     <Paper
       p="sm"
@@ -202,50 +247,62 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
         borderColor: node.mode === 'some' ? 'var(--mantine-color-orange-5)' : 'var(--border)',
       }}
     >
-      <Group justify="space-between" mb="xs" wrap="wrap">
+      <Group justify="space-between" mb={open ? 'xs' : 0} wrap="wrap">
         <Group gap="xs">
+          <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
+            {open ? '▾' : '▸'}
+          </AppButton>
           <Badge size="sm" variant="light" color={node.mode === 'some' ? 'orange' : 'violet'}>
             {node.mode === 'some' ? 'OR (some)' : 'AND (all)'}
           </Badge>
-          <AppButton
-            size="compact-xs"
-            variant="default"
-            onClick={() => onChange({ ...node, mode: node.mode === 'some' ? 'all' : 'some' })}
-          >
-            Toggle AND/OR
-          </AppButton>
+          {!open && (
+            <Text size="xs" c="dimmed">{summary}</Text>
+          )}
+          {open && (
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              onClick={() => onChange({ ...node, mode: node.mode === 'some' ? 'all' : 'some' })}
+            >
+              Toggle AND/OR
+            </AppButton>
+          )}
         </Group>
         {onDelete && (
           <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete group</AppButton>
         )}
       </Group>
-      <Stack gap="xs">
-        {children.map((child, i) => (
-          <ConditionGroupEditor
-            key={i}
-            node={child}
-            depth={depth + 1}
-            onChange={(n) => setChild(i, n)}
-            onDelete={() => removeChild(i)}
-          />
-        ))}
-      </Stack>
-      <Group gap="xs" mt="xs">
-        <AppButton
-          size="compact-xs"
-          variant="default"
-          onClick={() => onChange({ ...node, children: [...children, createEmptyCondition('hexPrefix')] })}
-        >
-          Add condition
-        </AppButton>
-        <AppButton
-          size="compact-xs"
-          variant="default"
-          onClick={() => onChange({ ...node, children: [...children, createEmptyMatchGroup('all')] })}
-        >
-          Add nested group
-        </AppButton>
-      </Group>
+      {open && (
+        <>
+          <Stack gap="xs">
+            {children.map((child, i) => (
+              <ConditionGroupEditor
+                key={i}
+                node={child}
+                depth={depth + 1}
+                onChange={(n) => setChild(i, n)}
+                onDelete={() => removeChild(i)}
+              />
+            ))}
+          </Stack>
+          <Group gap="xs" mt="xs">
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              onClick={() => onChange({ ...node, children: [...children, createEmptyCondition('hexPrefix')] })}
+            >
+              Add condition
+            </AppButton>
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              onClick={() => onChange({ ...node, children: [...children, createEmptyMatchGroup('all')] })}
+            >
+              Add nested group
+            </AppButton>
+          </Group>
+        </>
+      )}
     </Paper>
   );
 }
@@ -520,13 +577,22 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
     type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
   };
   const isReciprocal = curve.type === 'reciprocal';
+  const title = extract.name?.trim() ? extract.name.trim() : 'Packet extract';
+  const summary = [
+    `off ${extract.offset ?? 0}`,
+    extract.paletteMap ? 'palette' : (curve.type || 'curve'),
+    `${targets.length} target${targets.length === 1 ? '' : 's'}`,
+  ].join(' · ');
 
   return (
-    <Paper p="xs" withBorder bg="var(--surface2)">
-      <Group justify="space-between" mb="xs">
-        <Text size="xs" fw={600}>Packet extract</Text>
-        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
-      </Group>
+    <CollapsibleBlock
+      title={title}
+      titleSize="xs"
+      titleFw={600}
+      summary={summary}
+      paperProps={{ p: 'xs', bg: 'var(--surface2)' }}
+      headerRight={<AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>}
+    >
       <Text size="xs" c="dimmed" mb="xs">
         Reads bits from the packet. For flash rate / on-time → segment fields, use{' '}
         <strong>Timing → Add timing → param binding</strong> above (not this section).
@@ -620,33 +686,41 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
         </Stack>
       )}
 
-      <Text size="xs" fw={600} mt="sm" mb={4}>Targets</Text>
-      <Stack gap="xs">
-        {targets.map((t, i) => (
-          <TargetRowEditor
-            key={i}
-            target={t}
-            segmentOpts={segmentOpts}
-            onChange={(next) => {
-              const copy = [...targets];
-              copy[i] = next;
-              set({ targets: copy });
-            }}
-            onDelete={() => set({ targets: targets.filter((_, j) => j !== i) })}
-          />
-        ))}
-      </Stack>
-      <AppButton
-        mt="xs"
-        size="compact-xs"
-        variant="default"
-        onClick={() => set({ targets: [...targets, createEmptyExtractTarget('maskColor')] })}
+      <CollapsibleBlock
+        title="Targets"
+        titleSize="xs"
+        titleFw={600}
+        summary={`${targets.length} target${targets.length === 1 ? '' : 's'}`}
+        paperProps={{ p: 'xs', mt: 'sm', bg: 'var(--bg)' }}
       >
-        Add target
-      </AppButton>
-    </Paper>
+        <Stack gap="xs">
+          {targets.map((t, i) => (
+            <TargetRowEditor
+              key={i}
+              target={t}
+              segmentOpts={segmentOpts}
+              onChange={(next) => {
+                const copy = [...targets];
+                copy[i] = next;
+                set({ targets: copy });
+              }}
+              onDelete={() => set({ targets: targets.filter((_, j) => j !== i) })}
+            />
+          ))}
+        </Stack>
+        <AppButton
+          mt="xs"
+          size="compact-xs"
+          variant="default"
+          onClick={() => set({ targets: [...targets, createEmptyExtractTarget('maskColor')] })}
+        >
+          Add target
+        </AppButton>
+      </CollapsibleBlock>
+    </CollapsibleBlock>
   );
 }
+
 
 function RuleCard({
   rule,
@@ -656,6 +730,7 @@ function RuleCard({
   onToggle,
   onChange,
   onDelete,
+  onDuplicate,
   onMove,
   presets,
   segmentMaps,
@@ -712,6 +787,7 @@ function RuleCard({
         <Group gap={4}>
           <AppButton size="compact-xs" variant="default" disabled={index === 0} onClick={() => onMove(-1)}>↑</AppButton>
           <AppButton size="compact-xs" variant="default" disabled={index >= total - 1} onClick={() => onMove(1)}>↓</AppButton>
+          <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>Duplicate</AppButton>
           <AppButton size="compact-xs" variant="danger" onClick={onDelete}>Delete</AppButton>
         </Group>
       </Group>
@@ -832,8 +908,12 @@ function RuleCard({
             />
           )}
 
-          <Paper p="sm" withBorder bg="var(--surface2)">
-            <Text size="sm" fw={700} mb="xs">Timing</Text>
+          <CollapsibleBlock
+            title="Timing"
+            summary={timing.enabled
+              ? `on · hold ${timing.cooldownSec ?? 10}s${timing.timingModelId ? ` · ${timingModelOpts.find((m) => m.value === timing.timingModelId)?.label || timing.timingModelId}` : ''}`
+              : 'off'}
+          >
             <Text size="xs" c="dimmed" mb="xs">
               On-time and fade-out come from the packet timing byte (how long the effect runs).
               Cooldown is how long lights stay black after fade-out. Bind flash rate / on-time /
@@ -953,10 +1033,12 @@ function RuleCard({
             >
               Add timing → param binding
             </AppButton>
-          </Paper>
+          </CollapsibleBlock>
 
-          <Paper p="sm" withBorder bg="var(--surface2)">
-            <Text size="sm" fw={700} mb="xs">Start transition</Text>
+          <CollapsibleBlock
+            title="Start transition"
+            summary={`${startTransition.type || 'fade'}${startTransition.type === 'instant' ? '' : ` · ${startTransition.timeMs ?? 400}ms`}`}
+          >
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               <Field label="Type">
                 <SearchableSelect
@@ -985,7 +1067,7 @@ function RuleCard({
                 />
               </Field>
             </SimpleGrid>
-          </Paper>
+          </CollapsibleBlock>
 
           <SectionHead>Match conditions</SectionHead>
           <ConditionGroupEditor
@@ -993,39 +1075,44 @@ function RuleCard({
             onChange={(match) => onChange({ ...rule, match })}
           />
 
-          <SectionHead>Packet extracts</SectionHead>
-          <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
-            Pull values from packet bytes (palette colors, bit fields). Timing→param bindings
-            live under the Timing section above.
-          </Text>
-          <Stack gap="xs">
-            {(rule.extract || [])
-              .map((ex, i) => ({ ex, i }))
-              .filter(({ ex }) => !isTimingDerivedSource(ex.source))
-              .map(({ ex, i }) => (
-                <ExtractRowEditor
-                  key={i}
-                  extract={ex}
-                  segmentOpts={segmentOpts}
-                  onChange={(next) => {
-                    const extract = [...(rule.extract || [])];
-                    extract[i] = next;
-                    onChange({ ...rule, extract });
-                  }}
-                  onDelete={() => onChange({ ...rule, extract: (rule.extract || []).filter((_, j) => j !== i) })}
-                />
-              ))}
-          </Stack>
-          <AppButton
-            size="compact-sm"
-            variant="default"
-            onClick={() => onChange({
-              ...rule,
-              extract: [...(rule.extract || []), createEmptyExtract(`field${(rule.extract || []).length + 1}`)],
-            })}
+          <CollapsibleBlock
+            title="Packet extracts"
+            summary={`${(rule.extract || []).filter((ex) => !isTimingDerivedSource(ex.source)).length} extract(s)`}
           >
-            Add packet extract
-          </AppButton>
+            <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
+              Pull values from packet bytes (palette colors, bit fields). Timing→param bindings
+              live under the Timing section above.
+            </Text>
+            <Stack gap="xs">
+              {(rule.extract || [])
+                .map((ex, i) => ({ ex, i }))
+                .filter(({ ex }) => !isTimingDerivedSource(ex.source))
+                .map(({ ex, i }) => (
+                  <ExtractRowEditor
+                    key={i}
+                    extract={ex}
+                    segmentOpts={segmentOpts}
+                    onChange={(next) => {
+                      const extract = [...(rule.extract || [])];
+                      extract[i] = next;
+                      onChange({ ...rule, extract });
+                    }}
+                    onDelete={() => onChange({ ...rule, extract: (rule.extract || []).filter((_, j) => j !== i) })}
+                  />
+                ))}
+            </Stack>
+            <AppButton
+              size="compact-sm"
+              variant="default"
+              mt="xs"
+              onClick={() => onChange({
+                ...rule,
+                extract: [...(rule.extract || []), createEmptyExtract(`field${(rule.extract || []).length + 1}`)],
+              })}
+            >
+              Add packet extract
+            </AppButton>
+          </CollapsibleBlock>
         </Stack>
       )}
     </AppCard>
@@ -1254,6 +1341,21 @@ export function RuleEditor({
     setExpandedId(item.id);
   };
 
+  const duplicateRule = (rule, index) => {
+    let copy;
+    try {
+      copy = JSON.parse(JSON.stringify(rule));
+    } catch {
+      copy = { ...rule };
+    }
+    copy.id = shortRuleId();
+    copy.name = `${rule.name || `Rule ${index + 1}`} (copy)`;
+    const next = [...rules];
+    next.splice(index + 1, 0, copy);
+    setRules(next, { reindex: true });
+    setExpandedId(copy.id);
+  };
+
   const addRule = () => {
     const rule = createEmptyRule({
       name: `Rule ${rules.length + 1}`,
@@ -1305,6 +1407,7 @@ export function RuleEditor({
             setRules(rules.filter((r) => r.id !== rule.id), { reindex: true });
             if (expandedId === rule.id) setExpandedId(null);
           }}
+          onDuplicate={() => duplicateRule(rule, index)}
           onMove={(delta) => moveRule(index, delta)}
           presets={presets}
           segmentMaps={segmentMaps}

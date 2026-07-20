@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Group,
   Paper,
@@ -9,6 +10,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { SearchableSelect } from '../shared/SearchableSelect';
+import { AppButton } from '../shared/styles';
 import {
   createEmptySegmentOverride,
   extractDrivenKeysForSegment,
@@ -199,6 +201,60 @@ function PropCell({
  * Per-segment property source table for a rule.
  * Modes: Default (rule.effect), Stored (segment map), Custom (rule-only), Extracted (via extract targets).
  */
+function SegmentOverrideRow({
+  seg,
+  ov,
+  driven,
+  effectOptions,
+  paletteOptions,
+  onChangeOv,
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Paper p="xs" withBorder bg="var(--bg)">
+      <Group justify="space-between" mb={open ? 'xs' : 0} wrap="wrap" gap="xs">
+        <Group gap="xs">
+          <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
+            {open ? '▾' : '▸'}
+          </AppButton>
+          <Text size="xs" fw={700} ff="monospace">
+            {seg.id}
+            <Text span size="xs" c="dimmed" ff="monospace"> · {seg.start}-{seg.stop}</Text>
+          </Text>
+          {!open && (
+            <Text size="xs" c="dimmed">{PROP_COLS.length} properties</Text>
+          )}
+        </Group>
+      </Group>
+      {open && (
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
+          {PROP_COLS.map((col) => {
+            const extracted = driven.has(col.key);
+            const entry = getPropEntry(ov, col.key);
+            return (
+              <PropCell
+                key={col.key}
+                propKey={col.key}
+                label={col.label}
+                colorSlot={col.colorSlot}
+                entry={entry}
+                extracted={extracted}
+                storedSeg={seg}
+                effectOptions={effectOptions}
+                paletteOptions={paletteOptions}
+                onChange={(nextEntry) => {
+                  if (extracted) return;
+                  onChangeOv(setPropEntry(ov, col.key, nextEntry));
+                }}
+              />
+            );
+          })}
+        </SimpleGrid>
+      )}
+    </Paper>
+  );
+}
+
 export function SegmentOverrideTable({
   segments = [],
   segmentOverrides = {},
@@ -207,6 +263,7 @@ export function SegmentOverrideTable({
   paletteOptions = [],
   onChange,
 }) {
+  const [open, setOpen] = useState(false);
   const overrides = normalizeSegmentOverrides(segmentOverrides);
 
   if (!segments.length) return null;
@@ -218,50 +275,44 @@ export function SegmentOverrideTable({
 
   return (
     <Paper p="sm" withBorder bg="var(--surface2)">
-      <Text size="sm" fw={700} mb={4}>Per-segment sources</Text>
-      <Text size="xs" c="dimmed" mb="sm">
-        Choose where each property comes from for this rule only. Custom values stay on the rule —
-        they do not edit the shared segment map. Extracted fields are set via extract targets below.
-      </Text>
-      <Stack gap="sm">
-        {segments.map((seg) => {
-          const driven = extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '');
-          const ov = overrides[seg.id] || createEmptySegmentOverride();
-          return (
-            <Paper key={seg.id} p="xs" withBorder bg="var(--bg)">
-              <Group justify="space-between" mb="xs" wrap="wrap">
-                <Text size="xs" fw={700} ff="monospace">
-                  {seg.id}
-                  <Text span size="xs" c="dimmed" ff="monospace"> · {seg.start}-{seg.stop}</Text>
-                </Text>
-              </Group>
-              <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="sm">
-                {PROP_COLS.map((col) => {
-                  const extracted = driven.has(col.key);
-                  const entry = getPropEntry(ov, col.key);
-                  return (
-                    <PropCell
-                      key={col.key}
-                      propKey={col.key}
-                      label={col.label}
-                      colorSlot={col.colorSlot}
-                      entry={entry}
-                      extracted={extracted}
-                      storedSeg={seg}
-                      effectOptions={effectOptions}
-                      paletteOptions={paletteOptions}
-                      onChange={(nextEntry) => {
-                        if (extracted) return;
-                        setSegOverride(seg.id, setPropEntry(ov, col.key, nextEntry));
-                      }}
-                    />
-                  );
-                })}
-              </SimpleGrid>
-            </Paper>
-          );
-        })}
-      </Stack>
+      <Group justify="space-between" mb={open ? 'xs' : 0} wrap="wrap" gap="xs">
+        <Group gap="xs">
+          <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
+            {open ? '▾' : '▸'}
+          </AppButton>
+          <Text size="sm" fw={700}>Per-segment sources</Text>
+          {!open && (
+            <Text size="xs" c="dimmed">
+              {segments.length} segment{segments.length === 1 ? '' : 's'}
+            </Text>
+          )}
+        </Group>
+      </Group>
+      {open && (
+        <>
+          <Text size="xs" c="dimmed" mb="sm">
+            Choose where each property comes from for this rule only. Custom values stay on the rule —
+            they do not edit the shared segment map. Extracted fields are set via extract targets below.
+          </Text>
+          <Stack gap="sm">
+            {segments.map((seg) => {
+              const driven = extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '');
+              const ov = overrides[seg.id] || createEmptySegmentOverride();
+              return (
+                <SegmentOverrideRow
+                  key={seg.id}
+                  seg={seg}
+                  ov={ov}
+                  driven={driven}
+                  effectOptions={effectOptions}
+                  paletteOptions={paletteOptions}
+                  onChangeOv={(nextOv) => setSegOverride(seg.id, nextOv)}
+                />
+              );
+            })}
+          </Stack>
+        </>
+      )}
     </Paper>
   );
 }
