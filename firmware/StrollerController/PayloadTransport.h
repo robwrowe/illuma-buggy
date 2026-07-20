@@ -32,5 +32,7 @@ void transportPairResendTick();
 // Called from loop(): if the scanner stays silent, fall back to local BLE scanning on the
 // logic board; stop the local scan once the scanner is delivering packets again.
 void serviceScannerFallback();
+/** Apply boardRole immediately (start/stop local scan, ESP-NOW) — no reboot required. */
+void applyBoardRoleRuntime();
 bool transportParseMacString(const char* str, uint8_t out[6]);
 String transportMacToString(const uint8_t mac[6]);

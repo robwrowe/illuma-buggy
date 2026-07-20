@@ -134,8 +134,11 @@ export class WebBleBoard {
   _onNotify(event) {
     this.notifyBuffer += new TextDecoder().decode(event.target.value);
     try {
-      JSON.parse(this.notifyBuffer);
+      const msg = JSON.parse(this.notifyBuffer);
       this.notifyBuffer = '';
+      if (msg?.type === 'chunk_sync_failed') {
+        console.error('[BLE] chunk_sync_failed', msg);
+      }
     } catch {
       if (this.notifyBuffer.length > 65536) this.notifyBuffer = '';
     }

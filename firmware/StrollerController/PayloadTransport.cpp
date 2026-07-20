@@ -80,6 +80,20 @@ static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len) {
   if (!data || len <= 0) return;
 
+  // When a scanner peer is configured, ignore frames from other MACs so a stale /
+  // wrong peer (or another board) cannot keep lastScannerPacketMs "alive" and
+  // block local-scan fallback.
+  if (scannerPeerConfigured && mac && memcmp(mac, scannerPeerMac, 6) != 0) {
+    espNowRxRejected++;
+    if (espNowRxRejected <= 5 || (espNowRxRejected % 100) == 0) {
+      Serial.printf("[ESP-NOW] ignore non-peer %s (want %s) rejected=%lu\n",
+                    transportMacToString(mac).c_str(),
+                    transportMacToString(scannerPeerMac).c_str(),
+                    (unsigned long)espNowRxRejected);
+    }
+    return;
+  }
+
   const char* typeLabel = "other";
   if (len == (int)sizeof(ParsedDisneyPacket)) typeLabel = "scan";
   else if (len == (int)sizeof(EspNowPairMsg)) typeLabel = "pair";
@@ -172,9 +186,9 @@ void transportPairResendTick() {
   // channel) and ESP-NOW has been (re)initialized after that connect.
   if (WiFi.status() != WL_CONNECTED || !espNowReady) return;
   if (scannerLinkAlive()) return;  // packets flowing — already paired & healthy
-  // Beacon faster than the scanner's per-channel dwell so a beacon is guaranteed to land
-  // while the scanner is sitting on our channel during its sweep.
-  if (millis() - lastPairSendMs >= 200) sendPairMessage();
+  // While on local-scan fallback, beacon slowly (pairing still useful) — don't flood serial.
+  unsigned long interval = localScanFallbackActive ? 5000UL : 200UL;
+  if (millis() - lastPairSendMs >= interval) sendPairMessage();
 }
 
 void serviceScannerFallback() {
@@ -193,9 +207,28 @@ void serviceScannerFallback() {
     }
   } else if (scannerLinkAlive()) {
     Serial.println("[Fallback] Scanner back online — stopping local BLE scan");
-    NimBLEDevice::getScan()->stop();
+    stopBLEScan();
     localScanFallbackActive = false;
   }
+}
+
+/** Switch scan / ESP-NOW behavior immediately when boardRole changes (no reboot). */
+void applyBoardRoleRuntime() {
+  if (boardRole == BoardRole::STANDALONE) {
+    localScanFallbackActive = false;
+    lastScannerPacketMs = 0;
+    startBLEScan();
+    Serial.println("[Role] STANDALONE — local BLE scan active (no reboot needed)");
+    return;
+  }
+
+  // LOGIC_BOARD: stop local scan; ESP-NOW + pair beacon / fallback take over.
+  stopBLEScan();
+  localScanFallbackActive = false;
+  lastScannerPacketMs = 0;
+  payloadTransportInit();
+  if (WiFi.status() == WL_CONNECTED) transportEnsureEspNow();
+  Serial.println("[Role] LOGIC_BOARD — local scan off; ESP-NOW / 20s fallback");
 }
 
 void payloadTransportInit() {

@@ -41,6 +41,10 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
 
 void startBLEScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
+  if (scan->isScanning()) {
+    Serial.println("[BLE] Scanner already running");
+    return;
+  }
   scan->setScanCallbacks(new DisneyBLEScanCallbacks(), true);
   scan->setActiveScan(true);
   scan->setInterval(80);
@@ -50,4 +54,11 @@ void startBLEScan() {
   Serial.println("[BLE] Scanner started (active, continuous, no dedup)");
   Serial.printf("[BLE] Scan logging: %s (WAND-CAST / WAND-IDLE / MB+ / PING)\n",
                 bleScanLogEnabled ? "ON" : "OFF");
+}
+
+void stopBLEScan() {
+  NimBLEScan* scan = NimBLEDevice::getScan();
+  if (!scan->isScanning()) return;
+  scan->stop();
+  Serial.println("[BLE] Scanner stopped");
 }

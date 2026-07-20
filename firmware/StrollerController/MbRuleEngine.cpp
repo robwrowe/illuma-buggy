@@ -747,13 +747,14 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   String wledJson;
   serializeJson(wled, wledJson);
+  Serial.printf("[Rule] posting WLED (%u bytes)\n", (unsigned)wledJson.length());
   ensureWledPowerOn();
-  disableAllSplitSegments();
-  delay(80);
+  // preparePresetApplyPayload already folds inactive segments into one POST —
+  // do not call disableAllSplitSegments() first (extra HTTP that can stall loop).
   String body = preparePresetApplyPayload(wledJson);
   bool ok = sendToWLED(
     injectWledTransition(body, startTransMs, hasStartTr ? blendingStyle : -1),
-    8000, 2);
+    2500, 1);
   if (!ok) {
     Serial.println("[Rule] WLED apply failed");
     return;
@@ -869,8 +870,9 @@ void loadMbRulesFromJson() {
   const String& src = mbRulesJson.length() > 0 ? mbRulesJson : mbMappingJson;
   if (src.length() == 0) return;
   DynamicJsonDocument doc(32768);
-  if (deserializeJson(doc, src)) {
-    Serial.println("[Rules] JSON parse failed");
+  DeserializationError err = deserializeJson(doc, src);
+  if (err) {
+    Serial.printf("[Rules] JSON parse failed: %s (%u bytes)\n", err.c_str(), (unsigned)src.length());
     return;
   }
   applyMbRulesJson(doc.as<JsonObject>());

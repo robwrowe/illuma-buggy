@@ -19,6 +19,8 @@
 #include "SerialConsole.h"
 #include "WandTx.h"
 #include "DebugLog.h"
+#include "NvsLargeString.h"
+#include "MbRulesStore.h"
 
 void setup() {
   Serial.begin(115200);
@@ -41,9 +43,25 @@ void setup() {
   if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
   mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
-  mbRulesJson         = prefs.getString("mbRules", "");
-  mbMappingJson       = prefs.getString("mbMapping", "");
-  if (mbRulesJson.length() == 0 && mbMappingJson.length() > 0) mbRulesJson = mbMappingJson;
+  // Prefer SPIFFS for large rules JSON; migrate leftover NVS blobs once.
+  mbRulesFsBegin();
+  mbRulesJson = mbRulesFsLoad();
+  bool rulesOnFs = mbRulesJson.length() > 0;
+  if (!rulesOnFs) {
+    mbRulesJson = nvsGetLargeString(prefs, "mbRules", "");
+    if (mbRulesJson.length() == 0) {
+      mbRulesJson = nvsGetLargeString(prefs, "mbMapping", "");
+    }
+    if (mbRulesJson.length() > 0) {
+      Serial.printf("[FS] migrating %u bytes from NVS → SPIFFS\n",
+                    (unsigned)mbRulesJson.length());
+      rulesOnFs = mbRulesFsSave(mbRulesJson);
+      if (!rulesOnFs) {
+        Serial.println("[FS] migrate failed — keeping NVS copy for this boot");
+      }
+    }
+  }
+  mbMappingJson = mbRulesJson;
   mbLayoutsJson       = prefs.getString("mbLayouts", "");
   mbActiveLayoutIdx   = prefs.getUChar("mbActiveLayout", 0);
   showLookParadePre     = prefs.getString("showParaPre", "");
@@ -64,6 +82,14 @@ void setup() {
     }
   }
   prefs.end();
+
+  // Drop legacy NVS rule blobs only after SPIFFS has a good copy.
+  if (rulesOnFs) {
+    prefs.begin("config", false);
+    nvsRemoveLargeString(prefs, "mbRules");
+    nvsRemoveLargeString(prefs, "mbMapping");
+    prefs.end();
+  }
   loadMbMappingDefaults();
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
   loadMbRulesFromJson();
@@ -73,6 +99,8 @@ void setup() {
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
                 bleScanLogEnabled, mbChaseSpeed, mbChaseThickness, bleEffectTransitionMs,
                 (unsigned)boardRole);
+  Serial.printf("[NVS] mbRules=%u bytes mbMapping=%u bytes\n",
+                (unsigned)mbRulesJson.length(), (unsigned)mbMappingJson.length());
 
   prefs.begin("presets", false);
   prefs.end();

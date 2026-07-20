@@ -160,7 +160,11 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     JsonObject rule = rules[matchIdx].as<JsonObject>();
     Serial.printf("[Rule] match idx=%d name=%s\n", matchIdx, rule["name"] | "");
     applyMatchedRule(rule, payload, plen);
-    rememberMbEffect(payload, plen);
+    // Only dedupe after a successful apply (setOverride). Failed/hung applies must be
+    // eligible to retry on the next advert.
+    if (currentOverride == BLE_MAGIC || currentOverride == BLE_STARLIGHT) {
+      rememberMbEffect(payload, plen);
+    }
     return;
   }
 

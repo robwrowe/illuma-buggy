@@ -684,6 +684,8 @@ class BLEService {
       console.log(
         `[BLE] ← ack ${action}${msg.id ? ` id=${msg.id}` : ''} ${ok ? 'ok' : `FAIL${msg.reason ? ` (${msg.reason})` : ''}`}`,
       );
+    } else if (msg.type === 'chunk_sync_failed') {
+      console.error('[BLE] ← chunk_sync_failed', msg);
     } else if (msg.type === 'error') {
       console.warn('[BLE] ← error', msg.msg);
     }

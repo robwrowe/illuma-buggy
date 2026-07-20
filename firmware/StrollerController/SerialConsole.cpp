@@ -188,8 +188,8 @@ void processSerialCommands() {
       prefs.begin("config", false);
       prefs.putUChar("boardRole", (uint8_t)boardRole);
       prefs.end();
-      payloadTransportInit();
-      Serial.printf("[Serial] boardRole=%s — reboot to apply BLE scan on/off\n",
+      applyBoardRoleRuntime();
+      Serial.printf("[Serial] boardRole=%s applied live\n",
                     boardRole == BoardRole::LOGIC_BOARD ? "logic_board" : "standalone");
     } else {
       Serial.println("[Serial] usage: role standalone|logic");

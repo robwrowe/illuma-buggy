@@ -69,11 +69,14 @@ void processBleCmdChunk(int seq, bool last, const String& data) {
   if (seq == 0) resetCmdChunkBuffer();
   if (seq != cmdChunkNextSeq) {
     Serial.printf("[BLE] Chunk seq mismatch (got %d, expected %d)\n", seq, cmdChunkNextSeq);
+    bleNotify(String("{\"type\":\"chunk_sync_failed\",\"expectedSeq\":") +
+              String(cmdChunkNextSeq) + ",\"gotSeq\":" + String(seq) + "}");
     resetCmdChunkBuffer();
     return;
   }
   if (cmdChunkBuffer.length() + data.length() > 32768) {
     Serial.println("[BLE] Chunk buffer overflow, aborting");
+    bleNotify("{\"type\":\"chunk_sync_failed\",\"reason\":\"overflow\"}");
     resetCmdChunkBuffer();
     return;
   }
@@ -127,6 +130,32 @@ void processBleCmdQueue() {
   }
 }
 
+/** Cheap gate: chunk envelopes always contain this exact type token (JSON.stringify). */
+static bool looksLikeChunkEnvelope(const String& val) {
+  return val.indexOf("\"type\":\"ble_cmd_chunk\"") >= 0;
+}
+
+/**
+ * Reassemble ble_cmd_chunk envelopes on the write callback — string append only,
+ * no WLED/network. Must not go through bleCmdQueue (depth 6 cannot absorb a large
+ * sync's fragment flood). Fully assembled commands still enqueue via processBleCmdChunk.
+ */
+static void handleChunkEnvelopeDirect(const String& val) {
+  // Envelope is ≤ BLE_MAX_WRITE_BYTES (512); leave headroom for ArduinoJson copies.
+  StaticJsonDocument<1536> doc;
+  DeserializationError err = deserializeJson(doc, val);
+  if (err) {
+    Serial.printf("[BLE] Chunk envelope parse error: %s\n", err.c_str());
+    return;
+  }
+  const char* type = doc["type"] | "";
+  if (strcmp(type, "ble_cmd_chunk") != 0) {
+    enqueueBleCommand(val);
+    return;
+  }
+  processBleCmdChunk(doc["seq"].as<int>(), doc["last"].as<bool>(), doc["data"].as<String>());
+}
+
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     bleConnected = true;
@@ -146,6 +175,13 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
     String val = chr->getValue().c_str();
     if (val.length() <= 120) Serial.printf("[BLE] Received: %s\n", val.c_str());
     else Serial.printf("[BLE] Received %u bytes\n", (unsigned)val.length());
+
+    // Chunk envelopes: reassemble synchronously so fragments are never dropped by
+    // queue pressure. Only the completed command (or a non-chunked write) is queued.
+    if (looksLikeChunkEnvelope(val)) {
+      handleChunkEnvelopeDirect(val);
+      return;
+    }
     enqueueBleCommand(val);
   }
 };

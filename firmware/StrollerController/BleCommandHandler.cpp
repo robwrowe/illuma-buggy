@@ -13,6 +13,9 @@
 #include "WandTx.h"
 #include "PayloadTransport.h"
 #include "Config.h"
+#include "NvsLargeString.h"
+#include "DisneyBleScan.h"
+#include "MbRulesStore.h"
 #include <WiFi.h>
 
 void handleBLECommand(const String& msg) {
@@ -331,23 +334,35 @@ void handleBLECommand(const String& msg) {
                        : doc.as<JsonObject>();
     if (!mapping.isNull()) {
       bool hasRules = mapping.containsKey("rules") || mapping.containsKey("segmentMaps");
+      bool persisted = false;
       if (hasRules) {
         serializeJson(mapping, mbRulesJson);
         mbMappingJson = mbRulesJson;
+        persisted = mbRulesFsSave(mbRulesJson);
+        // Free NVS — rules no longer live there (was overflowing the 20KB partition).
         prefs.begin("config", false);
-        prefs.putString("mbRules", mbRulesJson);
-        prefs.putString("mbMapping", mbRulesJson);
+        nvsRemoveLargeString(prefs, "mbRules");
+        nvsRemoveLargeString(prefs, "mbMapping");
         prefs.end();
       } else {
         serializeJson(mapping, mbMappingJson);
+        mbRulesJson = mbMappingJson;
+        persisted = mbRulesFsSave(mbMappingJson);
         prefs.begin("config", false);
-        prefs.putString("mbMapping", mbMappingJson);
+        nvsRemoveLargeString(prefs, "mbRules");
+        nvsRemoveLargeString(prefs, "mbMapping");
         prefs.end();
       }
       mbMappingLoadedFromNvs = true;
       applyMbRulesJson(mapping);
-      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes)\n",
-                    hasRules ? 1 : 0, (unsigned)(hasRules ? mbRulesJson.length() : mbMappingJson.length()));
+      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes, fs=%s)\n",
+                    hasRules ? 1 : 0,
+                    (unsigned)(hasRules ? mbRulesJson.length() : mbMappingJson.length()),
+                    persisted ? "ok" : "FAIL");
+      if (!persisted) {
+        bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":false,\"reason\":\"fs_persist\"}");
+        return;
+      }
     }
     bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");
   }
@@ -427,11 +442,10 @@ void handleBLECommand(const String& msg) {
     prefs.begin("config", false);
     prefs.putUChar("boardRole", (uint8_t)boardRole);
     prefs.end();
-    payloadTransportInit();
+    applyBoardRoleRuntime();
     bleNotify(String("{\"type\":\"ack\",\"action\":\"set_board_role\",\"role\":\"") +
               (boardRole == BoardRole::LOGIC_BOARD ? "logic_board" : "standalone") + "\"}");
-    Serial.printf("[Config] boardRole=%u (reboot recommended to apply scan on/off)\n",
-                  (unsigned)boardRole);
+    Serial.printf("[Config] boardRole=%u applied live\n", (unsigned)boardRole);
   }
   else if (type == "set_scanner_mac") {
     String macStr = doc["mac"] | "";
