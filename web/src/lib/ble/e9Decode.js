@@ -47,7 +47,7 @@ export function extractBits(payload, offset, bitStart, bitCount) {
 
 /**
  * @param {number} rawValue
- * @param {{ type?: string, inMin?: number, inMax?: number, outMin?: number, outMax?: number, exponent?: number }} curve
+ * @param {{ type?: string, inMin?: number, inMax?: number, outMin?: number, outMax?: number, exponent?: number, outScale?: number }} curve
  */
 export function applyCurve(rawValue, curve = {}) {
   const inMin = Number(curve.inMin ?? 0);
@@ -58,6 +58,20 @@ export function applyCurve(rawValue, curve = {}) {
   let v = Number(rawValue) || 0;
   if (v < inMin) v = inMin;
   if (v > inMax) v = inMax;
+
+  if (curve.type === 'reciprocal') {
+    // rawValue is a rate/frequency (e.g. Hz); inMin/inMax clamp it.
+    // out = outMax - outScale/hz  (WLED Strobe: sx = 255 - 50/hz when outScale=50).
+    const hz = v;
+    if (hz <= 0.01) return outMax;
+    let outScale = Number(curve.outScale ?? 50);
+    if (!(outScale > 0)) outScale = 50;
+    let out = outMax - outScale / hz;
+    if (out < outMin) out = outMin;
+    if (out > outMax) out = outMax;
+    return out;
+  }
+
   let t = (v - inMin) / (inMax - inMin);
   if (curve.type === 'exponential') {
     let exponent = Number(curve.exponent ?? 2);

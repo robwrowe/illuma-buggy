@@ -34,11 +34,25 @@ uint32_t extractBits(const uint8_t* payload, size_t plen, uint8_t byteOffset,
 }
 
 float applyCurve(uint32_t rawValue, uint32_t inMin, uint32_t inMax,
-                 float outMin, float outMax, CurveType type, float exponent) {
+                 float outMin, float outMax, CurveType type, float exponent,
+                 float outScale) {
   if (inMax == inMin) return outMin;
   uint32_t v = rawValue;
   if (v < inMin) v = inMin;
   if (v > inMax) v = inMax;
+
+  if (type == CurveType::RECIPROCAL) {
+    // rawValue is a rate/frequency (e.g. Hz); inMin/inMax clamp it.
+    // out = outMax - outScale/hz  (WLED Strobe: sx = 255 - 50/hz when outScale=50).
+    float hz = (float)v;
+    if (hz <= 0.01f) return outMax;
+    float scale = (outScale > 0.0f) ? outScale : 50.0f;
+    float out = outMax - (scale / hz);
+    if (out < outMin) out = outMin;
+    if (out > outMax) out = outMax;
+    return out;
+  }
+
   float t = (float)(v - inMin) / (float)(inMax - inMin);
   if (type == CurveType::EXPONENTIAL) {
     if (exponent <= 0.0f) exponent = 2.0f;
@@ -828,14 +842,17 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       } else if (ex.containsKey("curve")) {
         JsonObject curve = ex["curve"].as<JsonObject>();
         const char* ctype = curve["type"] | "linear";
-        CurveType ct = (strcmp(ctype, "exponential") == 0) ? CurveType::EXPONENTIAL : CurveType::LINEAR;
+        CurveType ct = CurveType::LINEAR;
+        if (strcmp(ctype, "exponential") == 0) ct = CurveType::EXPONENTIAL;
+        else if (strcmp(ctype, "reciprocal") == 0) ct = CurveType::RECIPROCAL;
         float expv = curve["exponent"] | 2.0f;
+        float outScale = curve["outScale"] | 50.0f;
         mapped = applyCurve(raw,
                             (uint32_t)(curve["inMin"] | 0),
                             (uint32_t)(curve["inMax"] | 15),
                             (float)(curve["outMin"] | 0),
                             (float)(curve["outMax"] | 255),
-                            ct, expv);
+                            ct, expv, outScale);
         uint8_t pal = (uint8_t)((uint32_t)lroundf(mapped) & 0x1F);
         paletteToRGB(pal, r, g, b);
       } else {

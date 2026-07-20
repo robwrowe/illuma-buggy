@@ -323,7 +323,10 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
 function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
   const set = (patch) => onChange({ ...extract, ...patch });
   const targets = Array.isArray(extract.targets) ? extract.targets : [];
-  const curve = extract.curve || { type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2 };
+  const curve = extract.curve || {
+    type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
+  };
+  const isReciprocal = curve.type === 'reciprocal';
 
   return (
     <Paper p="xs" withBorder bg="var(--surface2)">
@@ -361,36 +364,58 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
         }}
       />
       {!extract.paletteMap && (
-        <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs" mt="xs">
-          <Field label="Curve">
-            <SearchableSelect
-              value={curve.type || 'linear'}
-              onChange={(type) => set({ curve: { ...curve, type } })}
-              options={[
-                { value: 'linear', label: 'linear' },
-                { value: 'exponential', label: 'exponential' },
-              ]}
-              allowEmpty={false}
-            />
-          </Field>
-          <Field label="inMin">
-            <NumberInput value={curve.inMin ?? 0} onChange={(v) => set({ curve: { ...curve, inMin: parseInt(v, 10) || 0 } })} />
-          </Field>
-          <Field label="inMax">
-            <NumberInput value={curve.inMax ?? 15} onChange={(v) => set({ curve: { ...curve, inMax: parseInt(v, 10) || 0 } })} />
-          </Field>
-          <Field label="outMin">
-            <NumberInput value={curve.outMin ?? 0} onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })} />
-          </Field>
-          <Field label="outMax">
-            <NumberInput value={curve.outMax ?? 255} onChange={(v) => set({ curve: { ...curve, outMax: Number(v) || 0 } })} />
-          </Field>
-          {curve.type === 'exponential' && (
-            <Field label="exponent">
-              <NumberInput value={curve.exponent ?? 2} step={0.1} onChange={(v) => set({ curve: { ...curve, exponent: Number(v) || 2 } })} />
+        <Stack gap="xs" mt="xs">
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
+            <Field label="Curve">
+              <SearchableSelect
+                value={curve.type || 'linear'}
+                onChange={(type) => set({ curve: { ...curve, type } })}
+                options={[
+                  { value: 'linear', label: 'linear' },
+                  { value: 'exponential', label: 'exponential' },
+                  { value: 'reciprocal', label: 'reciprocal (rate→param)' },
+                ]}
+                allowEmpty={false}
+              />
             </Field>
+            <Field label={isReciprocal ? 'Hz min (clamp)' : 'inMin'}>
+              <NumberInput value={curve.inMin ?? 0} onChange={(v) => set({ curve: { ...curve, inMin: parseInt(v, 10) || 0 } })} />
+            </Field>
+            <Field label={isReciprocal ? 'Hz max (clamp)' : 'inMax'}>
+              <NumberInput value={curve.inMax ?? 15} onChange={(v) => set({ curve: { ...curve, inMax: parseInt(v, 10) || 0 } })} />
+            </Field>
+            <Field label="outMin">
+              <NumberInput value={curve.outMin ?? 0} onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })} />
+            </Field>
+            <Field label="outMax">
+              <NumberInput value={curve.outMax ?? 255} onChange={(v) => set({ curve: { ...curve, outMax: Number(v) || 0 } })} />
+            </Field>
+            {curve.type === 'exponential' && (
+              <Field label="exponent">
+                <NumberInput value={curve.exponent ?? 2} step={0.1} onChange={(v) => set({ curve: { ...curve, exponent: Number(v) || 2 } })} />
+              </Field>
+            )}
+            {isReciprocal && (
+              <Field label="outScale">
+                <NumberInput
+                  value={curve.outScale ?? 50}
+                  step={1}
+                  min={0.01}
+                  decimalScale={2}
+                  onChange={(v) => set({ curve: { ...curve, outScale: Number(v) || 50 } })}
+                />
+              </Field>
+            )}
+          </SimpleGrid>
+          {isReciprocal && (
+            <Text size="xs" c="dimmed" lh={1.45}>
+              Reciprocal treats the extracted bits as a rate (Hz), not a normalized bit range.
+              Formula: <code style={{ fontFamily: 'monospace' }}>out = outMax − outScale / Hz</code>.
+              WLED Strobe uses outScale=50 (cycle = 20 ms/unit). Leave at 50 unless targeting a different effect formula.
+              Point a segmentField target at sx / ix / c1–c3 / o1–o3 as needed.
+            </Text>
           )}
-        </SimpleGrid>
+        </Stack>
       )}
 
       <Text size="xs" fw={600} mt="sm" mb={4}>Targets</Text>

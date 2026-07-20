@@ -507,9 +507,14 @@ export function findMbSegIdConflicts(mapping) {
   return conflicts;
 }
 
+const CURVE_TYPES = new Set(['linear', 'exponential', 'reciprocal']);
+
 function normalizeCurve(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const type = raw.type === 'exponential' ? 'exponential' : 'linear';
+  const type = CURVE_TYPES.has(raw.type) ? raw.type : 'linear';
+  const outScale = Number.isFinite(raw.outScale) && Number(raw.outScale) > 0
+    ? Number(raw.outScale)
+    : 50;
   return {
     type,
     inMin: Number.isFinite(raw.inMin) ? Number(raw.inMin) : 0,
@@ -517,6 +522,7 @@ function normalizeCurve(raw) {
     outMin: Number.isFinite(raw.outMin) ? Number(raw.outMin) : 0,
     outMax: Number.isFinite(raw.outMax) ? Number(raw.outMax) : 255,
     exponent: Number.isFinite(raw.exponent) ? Number(raw.exponent) : 2,
+    outScale,
   };
 }
 
