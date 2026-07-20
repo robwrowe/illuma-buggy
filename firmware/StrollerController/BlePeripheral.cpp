@@ -104,7 +104,10 @@ void enqueueBleCommand(const String& msg) {
   memcpy(buf, msg.c_str(), msg.length() + 1);
   PendingBleCmd item = { buf };
   if (xQueueSend(bleCmdQueue, &item, 0) != pdTRUE) {
-    Serial.println("[BLE] Command queue full");
+    static uint32_t bleCmdDropCount = 0;
+    bleCmdDropCount++;
+    Serial.printf("[BLE] Command queue full (depth=%u, dropped=%lu)\n",
+                  (unsigned)BLE_CMD_QUEUE_DEPTH, (unsigned long)bleCmdDropCount);
     free(buf);
   }
 }
@@ -121,9 +124,8 @@ void processBleCmdQueue() {
   if (bleCmdQueue == nullptr) return;
   PendingBleCmd item;
   int drained = 0;
-  // Drain enough that bootstrap (status + config) cannot fill a depth-12 queue
-  // while a single rule apply is in flight.
-  while (drained < 8 && xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
+  while (drained < BLE_CMD_DRAIN_PER_LOOP &&
+         xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
     if (item.data) {
       handleBLECommand(String(item.data));
       free(item.data);
@@ -139,7 +141,7 @@ static bool looksLikeChunkEnvelope(const String& val) {
 
 /**
  * Reassemble ble_cmd_chunk envelopes on the write callback — string append only,
- * no WLED/network. Must not go through bleCmdQueue (depth 6 cannot absorb a large
+ * no WLED/network. Must not go through bleCmdQueue (depth cannot absorb a large
  * sync's fragment flood). Fully assembled commands still enqueue via processBleCmdChunk.
  */
 static void handleChunkEnvelopeDirect(const String& val) {

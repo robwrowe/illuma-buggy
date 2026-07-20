@@ -51,6 +51,10 @@
 /** ESP-NOW → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
 #define PARSED_PACKET_QUEUE_DEPTH 32
 #define BLE_CMD_BUF_SIZE 8192
+/** Depth for complete BLE commands (reconnect burst is ~5–8; leave headroom). */
+#define BLE_CMD_QUEUE_DEPTH 24
+/** Max commands handled per loop() — empty a full burst in ~2 iterations. */
+#define BLE_CMD_DRAIN_PER_LOOP 12
 
 // ESP-NOW pairing magic ("PAIR" little-endian)
 #define ESPNOW_PAIR_MAGIC 0x52494150u

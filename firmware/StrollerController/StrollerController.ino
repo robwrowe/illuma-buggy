@@ -140,7 +140,7 @@ void setup() {
 
   // Create command queue (10 slots)
   cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
-  bleCmdQueue = xQueueCreate(12, sizeof(PendingBleCmd));
+  bleCmdQueue = xQueueCreate(BLE_CMD_QUEUE_DEPTH, sizeof(PendingBleCmd));
 
   xTaskCreatePinnedToCore(
     [](void*) { connectToWLED(); vTaskDelete(NULL); },
