@@ -1,10 +1,9 @@
-import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool } from './mbConstants';
+import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId } from './mbConstants';
 import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
 
 const BYTE_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
 const CMP_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte']);
 const MB_SEG_KEY_SET = new Set(MB_SEG_KEYS);
-const BLEND_MODES = new Set(['normal', 'add']);
 const COOLDOWN_RESET_MODES = new Set(['onMatch', 'fixed']);
 
 /** WLED v16 state.`bs` transition styles (FX.h TRANSITION_*), plus Illuma `instant`. */
@@ -90,7 +89,7 @@ export function createEmptySegment(overrides = {}) {
     of: 0,
     rev: false,
     mi: false,
-    blend: 'normal',
+    blend: 'top',
     fx: -1,
     sx: 128,
     ix: 128,
@@ -122,7 +121,7 @@ export function wledSegmentToSegmentMapSegment(raw) {
     of: raw?.of ?? 0,
     rev: !!raw?.rev,
     mi: !!raw?.mi,
-    blend: raw?.bm === 1 ? 'add' : 'normal',
+    blend: bmToBlendModeId(raw?.bm ?? 0),
     fx: raw?.fx ?? -1,
     pal: raw?.pal ?? -1,
     sx: raw?.sx ?? 128,
@@ -185,6 +184,114 @@ export function createEmptyRuleEffect() {
   return { enabled: false, fx: -1, pal: -1, sx: 128, ix: 128 };
 }
 
+/** Per-property source modes for rule.segmentOverrides. */
+export const SEG_OVERRIDE_MODES = ['default', 'stored', 'custom', 'extract'];
+export const SEG_OVERRIDE_PROPS = ['fx', 'pal', 'sx', 'ix', 'blend'];
+
+export function createEmptyPropOverride(mode = 'stored') {
+  return { mode };
+}
+
+export function createEmptySegmentOverride() {
+  return {
+    fx: createEmptyPropOverride('stored'),
+    pal: createEmptyPropOverride('stored'),
+    sx: createEmptyPropOverride('stored'),
+    ix: createEmptyPropOverride('stored'),
+    blend: createEmptyPropOverride('stored'),
+    colors: [
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+    ],
+  };
+}
+
+function normalizeCustomHex(value) {
+  if (typeof value !== 'string') return '';
+  const raw = value.trim();
+  if (!raw) return '';
+  if (/^#?[0-9a-fA-F]{6}$/.test(raw)) {
+    return `#${raw.replace(/^#/, '').toLowerCase()}`;
+  }
+  return '';
+}
+
+export function normalizePropOverride(raw, { color = false } = {}) {
+  const mode = SEG_OVERRIDE_MODES.includes(raw?.mode) ? raw.mode : 'stored';
+  const out = { mode };
+  if (mode !== 'custom') return out;
+  if (color) {
+    const hex = normalizeCustomHex(raw?.value);
+    if (hex) out.value = hex;
+    return out;
+  }
+  if (raw?.value === undefined || raw?.value === null) return out;
+  if (typeof raw.value === 'number' && Number.isFinite(raw.value)) {
+    out.value = raw.value;
+  } else if (typeof raw.value === 'string') {
+    out.value = raw.value;
+  } else if (typeof raw.value === 'boolean') {
+    out.value = raw.value;
+  }
+  return out;
+}
+
+/** Normalize rule.segmentOverrides keyed by segment local id. */
+export function normalizeSegmentOverrides(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([segId, ov]) => {
+    if (!segId || typeof segId !== 'string' || !ov || typeof ov !== 'object') return;
+    const n = createEmptySegmentOverride();
+    SEG_OVERRIDE_PROPS.forEach((prop) => {
+      if (ov[prop]) {
+        n[prop] = normalizePropOverride(ov[prop]);
+        if (prop === 'blend' && n[prop].mode === 'custom') {
+          n[prop] = { mode: 'custom', value: normalizeBlendModeId(n[prop].value) };
+        }
+      }
+    });
+    if (Array.isArray(ov.colors)) {
+      n.colors = [0, 1, 2].map((i) => normalizePropOverride(ov.colors[i], { color: true }));
+    }
+    out[segId] = n;
+  });
+  return out;
+}
+
+/**
+ * Keys driven by extract targets for a segment: 'fx'|'pal'|'sx'|'ix'|'blend'|'colors.0'|…
+ * Used by the override table to show Extracted as read-only.
+ */
+export function extractDrivenKeysForSegment(extracts, segId, segMaskAssignment = '') {
+  const keys = new Set();
+  if (!segId || !Array.isArray(extracts)) return keys;
+  extracts.forEach((ex) => {
+    const targets = Array.isArray(ex?.targets)
+      ? ex.targets
+      : (ex?.target && typeof ex.target === 'object' ? [ex.target] : []);
+    targets.forEach((t) => {
+      if (!t || typeof t !== 'object') return;
+      if (t.kind === 'segmentColor' && t.segmentId === segId) {
+        const slot = Number.isFinite(t.colorSlot) ? Math.min(2, Math.max(0, Number(t.colorSlot))) : 0;
+        keys.add(`colors.${slot}`);
+      } else if (t.kind === 'segmentField' && t.segmentId === segId) {
+        const field = typeof t.field === 'string' ? t.field.trim() : '';
+        if (field === 'bm') keys.add('blend');
+        else if (SEG_OVERRIDE_PROPS.includes(field) || field === 'fx' || field === 'pal') keys.add(field);
+        else if (field) keys.add(field);
+      } else if (t.kind === 'maskColor' || t.kind === 'color') {
+        const mask = t.mask || t.segment || 'all';
+        if (mask === 'all' || (segMaskAssignment && mask === segMaskAssignment)) {
+          keys.add('colors.0');
+        }
+      }
+    });
+  });
+  return keys;
+}
+
 export function createEmptyRule(overrides = {}) {
   return {
     id: shortRuleId(),
@@ -198,6 +305,7 @@ export function createEmptyRule(overrides = {}) {
     effect: createEmptyRuleEffect(),
     timing: createEmptyRuleTiming(),
     startTransition: createEmptyStartTransition(),
+    segmentOverrides: {},
     ...overrides,
   };
 }
@@ -416,7 +524,7 @@ export function normalizeSegment(raw) {
     of: Number.isFinite(raw.of) ? Number(raw.of) : d.of,
     rev: !!raw.rev,
     mi: !!raw.mi,
-    blend: BLEND_MODES.has(raw.blend) ? raw.blend : 'normal',
+    blend: normalizeBlendModeId(raw.blend ?? raw.bm),
     fx: Number.isFinite(raw.fx) ? Number(raw.fx) : d.fx,
     sx: Number.isFinite(raw.sx) ? Math.min(255, Math.max(0, Number(raw.sx))) : d.sx,
     ix: Number.isFinite(raw.ix) ? Math.min(255, Math.max(0, Number(raw.ix))) : d.ix,
@@ -489,6 +597,7 @@ export function normalizeMbRule(raw, index = 0) {
     effect: normalizeRuleEffect(raw.effect),
     timing: normalizeRuleTiming(raw.timing),
     startTransition: normalizeStartTransition(raw.startTransition),
+    segmentOverrides: normalizeSegmentOverrides(raw.segmentOverrides),
   };
 }
 

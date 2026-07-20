@@ -121,13 +121,15 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
       payload, plen);
   }
 
-  // MB effect dedupe — timed rule lifecycle still needs repeat matches to reset ON phase
+  // MB effect dedupe — timed rule lifecycle still needs repeat matches to reset ON
+  // phase, but must NOT rebuild/POST WLED on every advert (starves the packet queue).
   if (mbEffectIsRepeatAdvert(payload, plen)) {
     if (mbRulePhase != MB_RULE_IDLE && magicBandEnabled) {
       JsonArray rules = mbRulesJsonArray();
       int matchIdx = findMatchingRule(payload, plen, rules);
       if (matchIdx >= 0) {
-        applyMatchedRule(rules[matchIdx].as<JsonObject>(), payload, plen);
+        onTimedRuleRepeatMatch(rules[matchIdx].as<JsonObject>(), payload, plen);
+        touchOverrideIdleTimer(BLE_MAGIC);
         return;
       }
     }

@@ -18,6 +18,7 @@ import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
+import { SegmentOverrideTable } from './SegmentOverrideTable';
 import { MB_SEGMENT_META } from '../../lib/ble/mbConstants';
 import {
   createEmptyCondition,
@@ -582,13 +583,27 @@ function RuleCard({
                 Edit segments →
               </AppButton>
               <Text size="xs" c="dimmed">
-                Assign effects / palettes on each segment in the Segment Maps tab.
+                Geometry and map defaults live in Segment Maps. Per-rule sources are below.
               </Text>
             </Stack>
+          )}
+          {selectedMap && (
+            <SegmentOverrideTable
+              segments={selectedMap.segments || []}
+              segmentOverrides={rule.segmentOverrides || {}}
+              extracts={rule.extract || []}
+              effectOptions={effectOptions}
+              paletteOptions={paletteOptions}
+              onChange={(segmentOverrides) => onChange({ ...rule, segmentOverrides })}
+            />
           )}
 
           <Paper p="sm" withBorder bg="var(--surface2)">
             <Text size="sm" fw={700} mb="xs">Timing</Text>
+            <Text size="xs" c="dimmed" mb="xs">
+              On-time and fade-out come from the packet timing byte. Cooldown is how long
+              lights stay black after fade-out, before restoring the previous look.
+            </Text>
             <Switch
               label="Use packet timing byte"
               checked={!!timing.enabled}
@@ -610,7 +625,7 @@ function RuleCard({
                   disabled={!timing.enabled}
                 />
               </Field>
-              <Field label="Cooldown (sec)">
+              <Field label="Black hold / cooldown (sec)">
                 <NumberInput
                   value={timing.cooldownSec ?? 10}
                   onChange={(v) => onChange({
@@ -622,7 +637,9 @@ function RuleCard({
                 />
               </Field>
             </SimpleGrid>
-            <Text size="xs" c="dimmed" mt="xs" mb={4}>Cooldown reset mode</Text>
+            <Text size="xs" c="dimmed" mt="xs" mb={4}>
+              During black hold: onMatch restarts the effect; fixed ignores re-triggers
+            </Text>
             <SegmentedControl
               fullWidth
               value={timing.cooldownResetMode === 'fixed' ? 'fixed' : 'onMatch'}
@@ -841,7 +858,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps }) {
                 timing 0x{p.timing.raw.toString(16).padStart(2, '0')}
                 {' '}→ on {p.timing.onSec.toFixed(1)}s
                 {' · '}fade {p.timing.fadeSec.toFixed(1)}s
-                {' · '}cooldown {p.timing.cooldownSec}s
+                {' · '}black hold {p.timing.cooldownSec}s
                 {p.timing.extended ? ' · extended' : ''}
                 {p.timing.scaler ? ' · scaler' : ''}
               </Text>

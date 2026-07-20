@@ -324,8 +324,32 @@ static void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b) {
   b = (uint8_t)((nib(hex[5]) << 4) | nib(hex[6]));
 }
 
+/** WLED v16 seg.bm from Illuma blend id (legacy "normal" → Top). */
+static uint8_t blendModeToBm(const char* blend) {
+  if (!blend || !blend[0]) return 0;
+  if (strcmp(blend, "top") == 0 || strcmp(blend, "normal") == 0) return 0;
+  if (strcmp(blend, "bottom") == 0 || strcmp(blend, "none") == 0) return 1;
+  if (strcmp(blend, "add") == 0) return 2;
+  if (strcmp(blend, "subtract") == 0) return 3;
+  if (strcmp(blend, "difference") == 0) return 4;
+  if (strcmp(blend, "average") == 0) return 5;
+  if (strcmp(blend, "multiply") == 0) return 6;
+  if (strcmp(blend, "divide") == 0) return 7;
+  if (strcmp(blend, "lighten") == 0) return 8;
+  if (strcmp(blend, "darken") == 0) return 9;
+  if (strcmp(blend, "screen") == 0) return 10;
+  if (strcmp(blend, "overlay") == 0) return 11;
+  if (strcmp(blend, "hardLight") == 0) return 12;
+  if (strcmp(blend, "softLight") == 0) return 13;
+  if (strcmp(blend, "dodge") == 0) return 14;
+  if (strcmp(blend, "burn") == 0) return 15;
+  if (strcmp(blend, "stencil") == 0) return 32;
+  return 0;
+}
+
 /** Seed WLED segs from a segment map. When hasRuleEffect, rule.effect fills gaps
- *  for fx/pal/sx/ix that the segment itself does not set (more-specific wins). */
+ *  for fx/pal/sx/ix that the segment itself does not set. Per-rule segmentOverrides
+ *  (custom/default) are applied afterward via applySegmentOverridesOntoWled. */
 static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
                                    JsonObject ruleEffect, bool hasRuleEffect) {
   wled["on"] = true;
@@ -347,11 +371,10 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
     seg["rev"] = def["rev"] | false;
     seg["mi"] = def["mi"] | false;
     seg["on"] = true;
-    // Web stores blend as "normal" | "add"; WLED uses bm 0 | 1.
     {
-      const char* blend = def["blend"] | "normal";
+      const char* blend = def["blend"] | "top";
       if (def.containsKey("bm")) seg["bm"] = def["bm"] | 0;
-      else seg["bm"] = (strcmp(blend, "add") == 0) ? 1 : 0;
+      else seg["bm"] = blendModeToBm(blend);
     }
     int fx = def["fx"] | -1;
     seg["fx"] = fx >= 0 ? fx : fallbackFx;
@@ -367,7 +390,6 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
       if (rpal >= 0) seg["pal"] = rpal;
     }
 
-    // Static colors from map (empty string = untouched)
     JsonArray colors = def["colors"].as<JsonArray>();
     if (!colors.isNull()) {
       for (int i = 0; i < 3 && i < (int)colors.size(); i++) {
@@ -379,7 +401,6 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
       }
     }
 
-    // Optional per-segment preset baseline
     const char* presetId = def["presetId"] | "";
     if (presetId && presetId[0]) {
       String preset = getPreset(presetId);
@@ -400,6 +421,87 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
       }
     }
     applyPresetVariables(seg, def["presetVariables"].as<JsonObject>());
+  }
+}
+
+/** Apply rule.segmentOverrides custom/default modes onto seeded WLED segs.
+ *  stored/extract/missing leave the map (or preset) seed alone; extracts run later. */
+static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
+                                          JsonObject ruleEffect, bool hasRuleEffect,
+                                          JsonObject segmentOverrides) {
+  if (segmentOverrides.isNull() || segMap.isNull()) return;
+  JsonArray defs = segMap["segments"].as<JsonArray>();
+  if (defs.isNull()) return;
+  int fallbackFx = hasRuleEffect ? (ruleEffect["fx"] | 0) : 0;
+  if (fallbackFx < 0) fallbackFx = 0;
+
+  for (JsonVariant v : defs) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject def = v.as<JsonObject>();
+    const char* localId = def["id"] | "";
+    if (!localId[0] || !segmentOverrides.containsKey(localId)) continue;
+    JsonObject ov = segmentOverrides[localId].as<JsonObject>();
+    if (ov.isNull()) continue;
+    JsonObject seg = ensureWledSegByLocalId(wled, def);
+
+    if (ov.containsKey("fx") && ov["fx"].is<JsonObject>()) {
+      const char* mode = ov["fx"]["mode"] | "stored";
+      if (strcmp(mode, "custom") == 0) {
+        int fx = ov["fx"]["value"] | 0;
+        seg["fx"] = fx >= 0 ? fx : 0;
+      } else if (strcmp(mode, "default") == 0) {
+        seg["fx"] = fallbackFx;
+      }
+    }
+    if (ov.containsKey("pal") && ov["pal"].is<JsonObject>()) {
+      const char* mode = ov["pal"]["mode"] | "stored";
+      if (strcmp(mode, "custom") == 0) {
+        int pal = ov["pal"]["value"] | -1;
+        if (pal >= 0) seg["pal"] = pal;
+      } else if (strcmp(mode, "default") == 0 && hasRuleEffect) {
+        int rpal = ruleEffect["pal"] | -1;
+        if (rpal >= 0) seg["pal"] = rpal;
+      }
+    }
+    if (ov.containsKey("sx") && ov["sx"].is<JsonObject>()) {
+      const char* mode = ov["sx"]["mode"] | "stored";
+      if (strcmp(mode, "custom") == 0) seg["sx"] = ov["sx"]["value"] | 128;
+      else if (strcmp(mode, "default") == 0) {
+        if (hasRuleEffect && ruleEffect.containsKey("sx")) seg["sx"] = ruleEffect["sx"];
+        else seg["sx"] = 128;
+      }
+    }
+    if (ov.containsKey("ix") && ov["ix"].is<JsonObject>()) {
+      const char* mode = ov["ix"]["mode"] | "stored";
+      if (strcmp(mode, "custom") == 0) seg["ix"] = ov["ix"]["value"] | 128;
+      else if (strcmp(mode, "default") == 0) {
+        if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
+        else seg["ix"] = 128;
+      }
+    }
+    if (ov.containsKey("blend") && ov["blend"].is<JsonObject>()) {
+      const char* mode = ov["blend"]["mode"] | "stored";
+      if (strcmp(mode, "custom") == 0) {
+        if (ov["blend"]["value"].is<int>()) seg["bm"] = ov["blend"]["value"] | 0;
+        else seg["bm"] = blendModeToBm(ov["blend"]["value"] | "top");
+      } else if (strcmp(mode, "default") == 0) {
+        seg["bm"] = 0;
+      }
+    }
+    JsonArray ovColors = ov["colors"].as<JsonArray>();
+    if (!ovColors.isNull()) {
+      for (int i = 0; i < 3 && i < (int)ovColors.size(); i++) {
+        if (!ovColors[i].is<JsonObject>()) continue;
+        JsonObject cOv = ovColors[i].as<JsonObject>();
+        const char* cmode = cOv["mode"] | "stored";
+        if (strcmp(cmode, "custom") != 0) continue;
+        const char* hex = cOv["value"] | "";
+        if (!hex || !hex[0]) continue;
+        uint8_t r, g, b;
+        parseHexColor(hex, r, g, b);
+        setSegColorSlot(seg, i, r, g, b);
+      }
+    }
   }
 }
 
@@ -424,7 +526,7 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   mbRuleCooldownMs = (unsigned long)cooldownSec * 1000UL;
   mbRulePhase = MB_RULE_ON;
   mbRulePhaseDeadlineMs = millis() + td.onTimeMs;
-  Serial.printf("[Rule] timing ON %lums fade=%lums cooldown=%lums mode=%s byte=0x%02X\n",
+  Serial.printf("[Rule] timing ON %lums fade=%lums blackHold=%lums mode=%s byte=0x%02X\n",
                 td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
                 mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch", byte);
 }
@@ -454,13 +556,13 @@ void serviceMbRuleLifecycle() {
     return;
   }
   if (mbRulePhase == MB_RULE_FADE) {
-    Serial.printf("[Rule] FADE→COOLDOWN cooldownMs=%lu\n", mbRuleCooldownMs);
+    Serial.printf("[Rule] FADE→BLACK_HOLD holdMs=%lu\n", mbRuleCooldownMs);
     mbRulePhase = MB_RULE_COOLDOWN;
     mbRulePhaseDeadlineMs = millis() + (mbRuleCooldownMs > 0 ? mbRuleCooldownMs : 1);
     return;
   }
   if (mbRulePhase == MB_RULE_COOLDOWN) {
-    Serial.println("[Rule] COOLDOWN→restore");
+    Serial.println("[Rule] BLACK_HOLD→restore");
     // Already black from FADE — restore without a second dip-to-black.
     unsigned long savedFade = bleEffectTransitionMs;
     bleEffectTransitionMs = 0;
@@ -507,12 +609,16 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   bool timingEn = !timing.isNull() && (timing["enabled"] | false);
   const char* ruleId = rule["id"] | "";
 
-  // Same timed rule mid-lifecycle: fixed cooldown = no re-apply; else reset ON after apply.
+  // Same timed rule mid-lifecycle: fixed cooldown = no re-apply; else refresh ON only
+  // (do not rebuild/POST WLED — that was flooding loop with empty/repeat POSTs).
   if (timingEn && mbRulePhase != MB_RULE_IDLE && ruleId[0] &&
       strcmp(mbActiveRuleId, ruleId) == 0) {
     if (mbRulePhase == MB_RULE_COOLDOWN && mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) {
       return;
     }
+    onTimedRuleRepeatMatch(rule, payload, plen);
+    touchOverrideIdleTimer(src);
+    return;
   }
 
   const char* mapId = rule["segmentMapId"] | "";
@@ -526,6 +632,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   bool hasRuleEffect = presetId.length() == 0
                     && !ruleEffect.isNull()
                     && (ruleEffect["enabled"] | false);
+  // Default-mode overrides may still reference rule.effect even when a preset is set.
+  bool ruleEffectEnabled = !ruleEffect.isNull() && (ruleEffect["enabled"] | false);
+  JsonObject segmentOverrides = rule["segmentOverrides"].as<JsonObject>();
 
   // startTransition — WLED v16 blending style (`bs`) + duration
   unsigned long startTransMs = bleEffectTransitionMs;
@@ -595,7 +704,10 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   if (!segMap.isNull()) {
     if (!haveWled) {
-      seedWledFromSegmentMap(wled.as<JsonObject>(), segMap, ruleEffect, hasRuleEffect);
+      // as<JsonObject>() on an empty doc is null — writes are discarded and
+      // serializeJson yields "null" (4 bytes). to<JsonObject>() creates the root.
+      JsonObject wledObj = wled.to<JsonObject>();
+      seedWledFromSegmentMap(wledObj, segMap, ruleEffect, hasRuleEffect);
       haveWled = true;
     } else {
       // Ensure geometry segments from map exist so extract targets can resolve.
@@ -607,6 +719,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         }
       }
     }
+    // custom/default overrides beat map (and preset geometry); extracts still win later.
+    applySegmentOverridesOntoWled(
+      wled.as<JsonObject>(), segMap, ruleEffect, ruleEffectEnabled, segmentOverrides);
   }
 
   if (!haveWled) {
@@ -763,6 +878,11 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   String wledJson;
   serializeJson(wled, wledJson);
+  if (wledJson.length() < 8 || wledJson == "null") {
+    Serial.printf("[Rule] abort apply — empty WLED payload (%u bytes: %s)\n",
+                  (unsigned)wledJson.length(), wledJson.c_str());
+    return;
+  }
   Serial.printf("[Rule] posting WLED (%u bytes)\n", (unsigned)wledJson.length());
   ensureWledPowerOn();
   // preparePresetApplyPayload already folds inactive segments into one POST —

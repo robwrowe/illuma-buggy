@@ -174,6 +174,63 @@ export const MB_PATTERN_META = [
 
 export const STRIP_LED_COUNT = 100;
 
+/**
+ * WLED v16 segment blend modes (`seg.bm`).
+ * See https://kno.wled.ge/features/effects/ — Overlay section.
+ * `id` is stored on segment maps / rule overrides; `bm` is sent to WLED.
+ * `normal` is accepted as an alias of `top` for older configs.
+ */
+export const WLED_SEG_BLEND_MODES = [
+  { id: 'top', bm: 0, label: 'Top / Default', aliases: ['normal'] },
+  { id: 'bottom', bm: 1, label: 'Bottom / None', aliases: ['none'] },
+  { id: 'add', bm: 2, label: 'Add' },
+  { id: 'subtract', bm: 3, label: 'Subtract' },
+  { id: 'difference', bm: 4, label: 'Difference' },
+  { id: 'average', bm: 5, label: 'Average' },
+  { id: 'multiply', bm: 6, label: 'Multiply' },
+  { id: 'divide', bm: 7, label: 'Divide' },
+  { id: 'lighten', bm: 8, label: 'Lighten' },
+  { id: 'darken', bm: 9, label: 'Darken' },
+  { id: 'screen', bm: 10, label: 'Screen' },
+  { id: 'overlay', bm: 11, label: 'Overlay' },
+  { id: 'hardLight', bm: 12, label: 'Hard Light' },
+  { id: 'softLight', bm: 13, label: 'Soft Light' },
+  { id: 'dodge', bm: 14, label: 'Dodge' },
+  { id: 'burn', bm: 15, label: 'Burn' },
+  { id: 'stencil', bm: 32, label: 'Stencil' },
+];
+
+export function normalizeBlendModeId(raw) {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const byBm = WLED_SEG_BLEND_MODES.find((m) => m.bm === Number(raw));
+    return byBm ? byBm.id : 'top';
+  }
+  if (typeof raw !== 'string' || !raw.trim()) return 'top';
+  const key = raw.trim();
+  const hit = WLED_SEG_BLEND_MODES.find(
+    (m) => m.id === key || (m.aliases && m.aliases.includes(key)),
+  );
+  return hit ? hit.id : 'top';
+}
+
+export function blendModeIdToBm(id) {
+  const hit = WLED_SEG_BLEND_MODES.find(
+    (m) => m.id === id || (m.aliases && m.aliases.includes(id)),
+  );
+  return hit ? hit.bm : 0;
+}
+
+export function bmToBlendModeId(bm) {
+  const hit = WLED_SEG_BLEND_MODES.find((m) => m.bm === Number(bm));
+  return hit ? hit.id : 'top';
+}
+
+export const BLEND_MODE_SELECT_OPTS = WLED_SEG_BLEND_MODES.map((m) => ({
+  value: m.id,
+  label: m.label,
+  searchText: `${m.label} ${m.id} bm${m.bm}`,
+}));
+
 export const MB_SEGMENT_SIM_COMMAND = {
   all: 'test all', inner: 'test inner', outer: 'test outer',
   topLeft: 'test topLeft', topRight: 'test topRight',

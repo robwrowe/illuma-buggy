@@ -14,7 +14,7 @@ import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
-import { MB_SEGMENT_META } from '../../lib/ble/mbConstants';
+import { MB_SEGMENT_META, BLEND_MODE_SELECT_OPTS } from '../../lib/ble/mbConstants';
 import {
   createEmptySegment,
   createEmptySegmentMap,
@@ -32,11 +32,6 @@ const MASK_OPTS = [
     label: s.label,
     searchText: `${s.id} ${s.label}`,
   })),
-];
-
-const BLEND_OPTS = [
-  { value: 'normal', label: 'normal' },
-  { value: 'add', label: 'add' },
 ];
 
 function PresetVarRows({ vars, onChange }) {
@@ -169,9 +164,9 @@ function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
         <Field label="Blend">
           <SearchableSelect
-            value={seg.blend || 'normal'}
+            value={seg.blend || 'top'}
             onChange={(blend) => set({ blend })}
-            options={BLEND_OPTS}
+            options={BLEND_MODE_SELECT_OPTS}
             allowEmpty={false}
           />
         </Field>
