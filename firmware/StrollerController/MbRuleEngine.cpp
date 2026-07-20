@@ -729,19 +729,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   JsonObject timing = rule["timing"].as<JsonObject>();
   bool timingEn = !timing.isNull() && (timing["enabled"] | false);
-  const char* ruleId = rule["id"] | "";
 
-  // Same timed rule mid-lifecycle: fixed cooldown = no re-apply; else refresh ON only
-  // (do not rebuild/POST WLED — that was flooding loop with empty/repeat POSTs).
-  if (timingEn && mbRulePhase != MB_RULE_IDLE && ruleId[0] &&
-      strcmp(mbActiveRuleId, ruleId) == 0) {
-    if (mbRulePhase == MB_RULE_COOLDOWN && mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) {
-      return;
-    }
-    onTimedRuleRepeatMatch(rule, payload, plen);
-    touchOverrideIdleTimer(src);
-    return;
-  }
+  // Payload-identity dedup already happened in applyParsedDisneyPacket() /
+  // mbEffectIsRepeatAdvert() before this function was called. A payload only
+  // reaches here if it's new or the first match — never a true byte-identical
+  // repeat. Do not short-circuit on mbActiveRuleId alone (that skipped WLED
+  // rebuilds when the same rule matched a different packet).
 
   const char* mapId = rule["segmentMapId"] | "";
   JsonObject segMap = findSegmentMapById(mapId);
