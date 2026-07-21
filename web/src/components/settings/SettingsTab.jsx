@@ -47,6 +47,10 @@ export function SettingsTab({ data, update }) {
   };
 
   useEffect(() => {
+    if (bleTab === 'device' || bleTab === 'sw' || bleTab === 'mb') setBleTab('rules');
+  }, [bleTab]);
+
+  useEffect(() => {
     if (bleTab !== 'segmentMaps' && bleTab !== 'rules' && bleTab !== 'timingModels') return;
     const ip = wledIp.trim();
     if (!ip) return;
@@ -66,66 +70,8 @@ export function SettingsTab({ data, update }) {
 
         <BleMappingTabBar active={bleTab} onChange={setBleTab} />
 
-        {(bleTab === 'rules' || bleTab === 'sw' || bleTab === 'mb') && (
+        {(bleTab === 'rules') && (
           <DefaultPresetField mb={mb} presets={presets} onChange={setMb} />
-        )}
-
-        {bleTab === 'device' && (
-          <>
-            <Text size="xs" c="dimmed" lh={1.5}>
-              Pushed via <strong>📡 Board</strong> or Android app on connect. Timeout = idle seconds since last BLE effect (<code style={{ fontFamily: 'monospace' }}>0</code> = never).
-            </Text>
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-              <Field label="Starlight Wand enabled">
-                <Checkbox
-                  label="Listen for wand casts & SW animations"
-                  checked={data.starlightEnabled !== false}
-                  onChange={(e) => update({ starlightEnabled: e.target.checked })}
-                />
-              </Field>
-              <Field label="SW auto-clear (sec)">
-                <NumberInput
-                  min={0}
-                  max={600}
-                  value={data.starlightTimeoutSec ?? 15}
-                  onChange={(v) => update({ starlightTimeoutSec: Math.max(0, parseInt(v, 10) || 0) })}
-                  styles={{ input: { fontFamily: 'monospace' } }}
-                />
-              </Field>
-              <Field label="MagicBand+ enabled">
-                <Checkbox
-                  label="Listen for E9 show / guest commands"
-                  checked={data.magicBandEnabled !== false}
-                  onChange={(e) => update({ magicBandEnabled: e.target.checked })}
-                />
-              </Field>
-              <Field label="MB+ auto-clear (sec)">
-                <NumberInput
-                  min={0}
-                  max={600}
-                  value={data.magicBandTimeoutSec ?? 15}
-                  onChange={(v) => update({ magicBandTimeoutSec: Math.max(0, parseInt(v, 10) || 0) })}
-                  styles={{ input: { fontFamily: 'monospace' } }}
-                />
-              </Field>
-              <Field label="Effect fade (ms)">
-                <NumberInput
-                  min={0}
-                  max={5000}
-                  value={data.bleEffectTransitionMs ?? 700}
-                  onChange={(v) => update({ bleEffectTransitionMs: Math.max(0, parseInt(v, 10) || 0) })}
-                  styles={{ input: { fontFamily: 'monospace' } }}
-                />
-              </Field>
-              <Field label="MagicBand five-point mode">
-                <Checkbox
-                  label="4 corners + center (legacy)"
-                  checked={data.magicBandFivePoint !== false}
-                  onChange={(e) => update({ magicBandFivePoint: e.target.checked })}
-                />
-              </Field>
-            </SimpleGrid>
-          </>
         )}
 
         {bleTab === 'rules' && (
@@ -174,29 +120,6 @@ export function SettingsTab({ data, update }) {
             effectOptions={segFxOptions}
             onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
           />
-        )}
-
-        {bleTab === 'sw' && (
-          <AppCard>
-            <Text fw={700} size="sm" mb="xs">Starlight Wand</Text>
-            <Text size="xs" c="dimmed" lh={1.5}>
-              Wand casts and SW FX packets are matched by the <strong>Rules</strong> tab (hex prefixes like <code style={{ fontFamily: 'monospace' }}>CF0B</code> / <code style={{ fontFamily: 'monospace' }}>CF9B</code>).
-              Device enable/timeout remains under <strong>Device</strong>. Test with Wand Lab or WandSimulator.
-            </Text>
-          </AppCard>
-        )}
-
-        {bleTab === 'mb' && (
-          <AppCard>
-            <Text fw={700} size="sm" mb="xs">MagicBand+ mapping</Text>
-            <Text size="xs" c="dimmed" lh={1.5} mb="sm">
-              Per-opcode / effect-class editors are replaced by the ordered <strong>Rules</strong> engine.
-              Use Rules for hexPrefix / byte / bits conditions, palette extracts, and presets.
-            </Text>
-            <AppButton size="compact-sm" variant="primary" onClick={() => setBleTab('rules')}>
-              Open Rules
-            </AppButton>
-          </AppCard>
         )}
 
         {bleTab === 'show' && (() => {
@@ -286,6 +209,15 @@ export function SettingsTab({ data, update }) {
                 }}
                 placeholder="Pure black (no preset)"
                 options={presets.map(p => ({ value: p.id, label: p.name, searchText: p.name }))} />
+            </Field>
+            <Field label="Effect fade (ms)">
+              <NumberInput
+                min={0}
+                max={5000}
+                value={data.bleEffectTransitionMs ?? 700}
+                onChange={(v) => update({ bleEffectTransitionMs: Math.max(0, parseInt(v, 10) || 0) })}
+                styles={{ input: { fontFamily: 'monospace' } }}
+              />
             </Field>
             <SectionHead>Recall State</SectionHead>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mb="lg">
