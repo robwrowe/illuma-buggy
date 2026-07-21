@@ -1,14 +1,22 @@
 /**
  * MagicBand+ E9xx broadcast packet parser (Tier 1 confirmed decodes + Tier 2 fallback).
- * All protocol intelligence lives here — firmware stays command-driven.
+ * Decode/display only — WLED decisions live in firmware MbRuleEngine.
  */
 
-import type { MbMappingConfig, MbEffectClassKey } from './mbConfig';
 import { MB_COLOR_NAMES } from './mbConfig';
 
 export const STANDARD_COLOR_MASK = 0b101; // bits 7-5 — "normal color" mask
 
 export type E9Tier = 1 | 2;
+
+/** Decode-time class label for capture display (not a mapping system). */
+export type E9AnimationClass =
+  | 'singleColor'
+  | 'dualColor'
+  | 'sixBitColor'
+  | 'fivePositionPalette'
+  | 'fivePositionFlash'
+  | 'unclassified';
 
 export type E909Position = 'topLeft' | 'bottomLeft' | 'bottomRight' | 'topRight' | 'center';
 export type E90EPosition = 'center' | 'upperRight' | 'bottomRight' | 'bottomLeft' | 'upperLeft';
@@ -32,7 +40,7 @@ export interface ParsedE9Base {
   tier: E9Tier;
   opcode: number;
   opcodeHex: string;
-  animationClass: MbEffectClassKey;
+  animationClass: E9AnimationClass;
   rawHex: string;
   payloadLen: number;
   /** Tier 2 signature for per-packet mapping */
@@ -237,7 +245,7 @@ export function tier2Signature(payload: number[], opcode: number): string {
   return `${opcodeToHex(opcode)}:${payload.length}:${simpleStructuralHash(payload, opcode)}`;
 }
 
-function baseFields(payload: number[], opcode: number, tier: E9Tier, animClass: MbEffectClassKey, quality: ParsedE9Base['decodeQuality'], reason?: string): ParsedE9Base {
+function baseFields(payload: number[], opcode: number, tier: E9Tier, animClass: E9AnimationClass, quality: ParsedE9Base['decodeQuality'], reason?: string): ParsedE9Base {
   const hex = bytesToHex(payload);
   return {
     tier,
@@ -425,28 +433,6 @@ export function parseE9Packet(input: number[] | string): ParsedE9 | null {
       return tier2(bytes, opcode, 'Not an E9 show opcode');
     }
   }
-}
-
-// ── Effect class resolution ──────────────────────────────────────────────────
-
-export function resolveEffectClassMapping(
-  parsed: ParsedE9,
-  config: MbMappingConfig,
-): { presetId: string; useMbColors: boolean } | null {
-  const ec = config.effectClasses;
-  if (!ec) return null;
-
-  if (parsed.tier === 2 || parsed.animationClass === 'unclassified') {
-    const opKey = parsed.opcodeHex;
-    const perOpcode = ec.unclassifiedOpcodes?.[opKey];
-    if (perOpcode?.presetId) return { presetId: perOpcode.presetId, useMbColors: perOpcode.useMbColors };
-    if (ec.unclassified.presetId) return { presetId: ec.unclassified.presetId, useMbColors: ec.unclassified.useMbColors };
-    return null;
-  }
-
-  const cls = ec[parsed.animationClass];
-  if (cls?.presetId) return { presetId: cls.presetId, useMbColors: cls.useMbColors };
-  return null;
 }
 
 export function paletteIndexToHex(idx: number, colors: string[]): string {

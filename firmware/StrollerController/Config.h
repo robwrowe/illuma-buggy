@@ -7,14 +7,11 @@
 
 // LED strip / WLED
 #define STRIP_LED_COUNT 100
-#define WLED_CHASE_FX   28
-#define WLED_MB_PAL_SLOT 0
 #define WLED_PAL_COLORS_ONLY 5
 #define WLED_RESTORE_JSON_CAP 24576
 
 // MagicBand mapping limits
 #define MB_MAX_SEG_REFS 8
-#define MB_MAX_COLOR_SLOTS 16
 #define MB_SEG_KEY_COUNT 16
 #define MB_MAX_LAYOUTS 6
 #define MB_WLED_MAX_SEG 16
@@ -45,7 +42,6 @@
 
 
 // Starlight wand
-#define SW_ANIM_COUNT 10
 #define WAND_CAST_LEN 13
 
 // Disney / BLE buffers

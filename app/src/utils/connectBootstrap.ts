@@ -195,7 +195,7 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
   await delay(500);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
-  // Mapped presets (wand cast, MB animations) must exist on board NVS.
+  // Mapped default preset must exist on board NVS (rules may reference more — see collectMappingPresetIds).
   const mappingSyncOk = await ensureMappingPresetsOnBoard(
     s.mbMapping,
     s.presets,

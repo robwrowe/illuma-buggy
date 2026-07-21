@@ -195,10 +195,9 @@ export {
 export { fetchWledSegmentsFromDevice } from '../utils/bleBoardSync';
 
 export type { ParkConfig, ShowModeConfig } from '../utils/configMigration';
-export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
+export type { MbMappingConfig, MbSegmentId, WledSegRef } from '../utils/mbConfig';
 export {
-  DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
-  SW_ANIMATION_META,
+  DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META,
   normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
 

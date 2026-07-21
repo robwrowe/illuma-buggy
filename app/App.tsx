@@ -23,7 +23,6 @@ import IconBolt from "@tabler/icons-react-native/dist/esm/icons/IconBolt";
 
 import { bleService } from "./src/services/BLEService";
 import { useAppStore } from "./src/stores/store";
-import { applyParsedE9Mapping } from "./src/utils/e9MbEffect";
 import { runConnectBootstrap, cancelConnectBootstrap } from "./src/utils/connectBootstrap";
 import { useZoneManager } from "./src/hooks/useZoneManager";
 import { useCaptureAutomation } from "./src/hooks/useCaptureAutomation";
@@ -235,19 +234,6 @@ export default function App() {
           len: msg.len as number,
         });
       }
-      if (msg.type === "ble_e9") {
-        const hex = String(msg.hex ?? "");
-        if (hex.length > 0 && bleService.isConnected()) {
-          const s = useAppStore.getState();
-          void applyParsedE9Mapping(
-            hex,
-            s.mbMapping,
-            s.presets,
-            s.recallState,
-            s.customSegmentLayouts,
-          );
-        }
-      }
       if (msg.type === "unknown_anim") {
         appendBleCapturePacket({
           boardTs: msg.ts as number,
@@ -259,17 +245,6 @@ export default function App() {
           func: String(msg.func ?? ""),
           label: String(msg.label ?? ""),
         });
-        const hex = String(msg.hex ?? "");
-        if (hex.length > 0) {
-          const s = useAppStore.getState();
-          void applyParsedE9Mapping(
-            hex,
-            s.mbMapping,
-            s.presets,
-            s.recallState,
-            s.customSegmentLayouts,
-          );
-        }
       }
       if (msg.type === "ble_capture") {
         const event = String(msg.event ?? "");

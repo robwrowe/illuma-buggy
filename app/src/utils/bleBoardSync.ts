@@ -24,28 +24,14 @@ const BOARD_RECALL: RecallState = {
 
 export { clearBoardPresetSyncCache } from './blePresetCache';
 
-/** MB mapping for BLE — embeds wand (and other SW) preset wled so cast works without NVS. */
+/** MB mapping for BLE — colors, segments, rules, segmentMaps, paradeDetection. */
 export function mbMappingEssentialPayload(
   mbMapping: MbMappingConfig,
-  presets: Preset[],
-  recall: RecallState,
-  layouts: CustomSegmentLayout[],
+  _presets: Preset[],
+  _recall: RecallState,
+  _layouts: CustomSegmentLayout[],
 ): object {
-  const payload = mbMappingToBlePayload(mbMapping) as Record<string, unknown>;
-  const swAnimations = {
-    ...(payload.swAnimations as Record<string, { presetId?: string; colorSlots?: number[]; wled?: object }>),
-  };
-  for (const [key, mapping] of Object.entries(mbMapping.swAnimations ?? {})) {
-    if (!mapping?.presetId) continue;
-    const preset = presets.find(p => p.id === mapping.presetId);
-    if (!preset) continue;
-    swAnimations[key] = {
-      presetId: mapping.presetId,
-      colorSlots: mapping.colorSlots ?? [],
-      wled: presetWledForBoard(preset, layouts, recall),
-    };
-  }
-  return { ...payload, swAnimations };
+  return mbMappingToBlePayload(mbMapping);
 }
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -99,7 +85,7 @@ export async function ensurePresetOnBoard(
   return ok;
 }
 
-/** Sync presets referenced in MB/SW mapping (wand cast, animations, etc.) to board NVS. */
+/** Sync presets referenced in MB mapping (defaultPresetId) to board NVS. */
 export async function ensureMappingPresetsOnBoard(
   mbMapping: MbMappingConfig,
   presets: Preset[],

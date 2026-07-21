@@ -1,7 +1,6 @@
 #include "MbMapping.h"
 #include "Globals.h"
 #include "ColorPalette.h"
-#include "PresetStore.h"
 
 void loadMbMappingDefaults() {
   memcpy(mbWledColors, MB_DEFAULT_COLORS, sizeof(mbWledColors));
@@ -23,9 +22,6 @@ void loadMbMappingDefaults() {
       mbLayouts[0].segMaps[i].refs[1] = { 3, 65, 100 };
     }
   }
-  for (int i = 0; i < 8; i++) { mbAnimMap[i].presetId = ""; mbAnimMap[i].wledPayload = ""; mbAnimMap[i].colorSlotCount = 0; }
-  for (int i = 0; i < SW_ANIM_COUNT; i++) { swAnimMap[i].presetId = ""; swAnimMap[i].wledPayload = ""; swAnimMap[i].colorSlotCount = 0; }
-  for (int i = 0; i < 5; i++) { mbPatMap[i].presetId = ""; mbPatMap[i].wledPayload = ""; mbPatMap[i].colorSlotCount = 0; }
   loadMbRandomPoolDefaults();
 }
 
@@ -65,27 +61,6 @@ void applyMbMappingJson(JsonObject doc) {
       parseSegMapArray(segs[MB_SEG_KEYS[i]].as<JsonArray>(), mbLayouts[0].segMaps[i]);
     }
   }
-  if (doc.containsKey("animations")) {
-    JsonObject anims = doc["animations"];
-    for (int i = 0; i < 8; i++) {
-      if (anims.containsKey(MB_ANIM_KEYS[i])) parseEffectMap(anims[MB_ANIM_KEYS[i]], mbAnimMap[i]);
-    }
-  }
-  if (doc.containsKey("swAnimations")) {
-    JsonObject swAnims = doc["swAnimations"];
-    for (int i = 0; i < SW_ANIM_COUNT; i++) {
-      if (swAnims.containsKey(SW_ANIM_KEYS[i])) parseEffectMap(swAnims[SW_ANIM_KEYS[i]], swAnimMap[i]);
-    }
-  } else if (doc.containsKey("animations")) {
-    JsonObject anims = doc["animations"];
-    if (anims.containsKey("wand")) parseEffectMap(anims["wand"], swAnimMap[9]);
-  }
-  if (doc.containsKey("patterns")) {
-    JsonObject pats = doc["patterns"];
-    for (int i = 0; i < 5; i++) {
-      if (pats.containsKey(MB_PAT_KEYS[i])) parseEffectMap(pats[MB_PAT_KEYS[i]], mbPatMap[i]);
-    }
-  }
   loadMbRandomPoolDefaults();
   if (doc.containsKey("randomPool")) {
     JsonObject rp = doc["randomPool"];
@@ -109,21 +84,6 @@ void applyMbMappingJson(JsonObject doc) {
         mbRandomCustom[mbRandomCustomCount][2] = (uint8_t)rgb[2].as<int>();
         mbRandomCustomCount++;
       }
-    }
-  }
-}
-
-void parseEffectMap(JsonObject obj, MbEffectMap& out) {
-  out.presetId = obj["presetId"] | "";
-  out.wledPayload = "";
-  if (obj.containsKey("wled")) {
-    serializeJson(obj["wled"], out.wledPayload);
-  }
-  out.colorSlotCount = 0;
-  if (obj.containsKey("colorSlots")) {
-    for (JsonVariant v : obj["colorSlots"].as<JsonArray>()) {
-      if (out.colorSlotCount >= MB_MAX_COLOR_SLOTS) break;
-      out.colorSlots[out.colorSlotCount++] = (uint8_t)(v.as<int>() & 0x1F);
     }
   }
 }
@@ -178,35 +138,9 @@ void loadMbLayoutsFromJson() {
   if (mbActiveLayoutIdx >= mbLayoutCount) mbActiveLayoutIdx = 0;
 }
 
-String resolveEffectPresetId(const MbEffectMap& map) {
-  if (map.presetId.length() > 0) return map.presetId;
-  return bleDefaultPresetId;
-}
-
 int mbSegKeyIndex(const char* key) {
   for (int i = 0; i < MB_SEG_KEY_COUNT; i++) if (strcmp(key, MB_SEG_KEYS[i]) == 0) return i;
   return -1;
-}
-
-bool loadEffectMapWled(const MbEffectMap& map, DynamicJsonDocument& wled) {
-  if (map.wledPayload.length() > 0) {
-    if (deserializeJson(wled, map.wledPayload)) return false;
-    Serial.printf("[BLE] Using embedded wled (%u bytes, preset=%s)\n",
-                  (unsigned)map.wledPayload.length(),
-                  map.presetId.length() ? map.presetId.c_str() : "(inline)");
-    return true;
-  }
-  String presetId = resolveEffectPresetId(map);
-  if (presetId.length() == 0) return false;
-  String preset = getPreset(presetId);
-  if (preset.length() == 0) {
-    Serial.printf("[BLE] Preset not found on board: %s\n", presetId.c_str());
-    return false;
-  }
-  DynamicJsonDocument doc(12288);
-  if (deserializeJson(doc, preset)) return false;
-  if (deserializeJson(wled, doc["wled"])) return false;
-  return true;
 }
 
 MbSegMap& activeMbSegMap(int keyIdx) {
@@ -217,4 +151,3 @@ MbSegMap& activeMbSegMap(int keyIdx) {
   uint8_t idx = mbActiveLayoutIdx < mbLayoutCount ? mbActiveLayoutIdx : 0;
   return mbLayouts[idx].segMaps[keyIdx];
 }
-

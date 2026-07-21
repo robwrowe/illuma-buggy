@@ -1,13 +1,10 @@
 #include "DisneyPayloadHandlers.h"
 #include "Globals.h"
 #include "DisneyBleFilter.h"
-#include "MbEffects.h"
 #include "MbPacketDecode.h"
-#include "MbMapping.h"
 #include "MbRuleEngine.h"
 #include "SwEffects.h"
 #include "OverrideManager.h"
-#include "ColorPalette.h"
 #include "BlePeripheral.h"
 #include "DebugLog.h"
 #include "PresetStore.h"
@@ -26,49 +23,6 @@ static bool looksLikeWandPayload(const uint8_t* payload, size_t plen) {
   if (memcmp(payload, WAND_CAST_SIG, 6) == 0) return true;
   if (plen >= 2 && payload[0] == 0xCF && payload[1] == 0x9B) return true;
   return false;
-}
-
-void notifyWandPalette(uint8_t paletteIdx, OverrideSource src) {
-  // Hard lockout: MagicBand+ owns the strip — wand must not interrupt.
-  if (currentOverride == BLE_MAGIC) return;
-
-  uint8_t r, g, b;
-  paletteToRGB(paletteIdx, r, g, b);
-  if (!canTakeOverride(src)) {
-    if (src == BLE_STARLIGHT) bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
-    return;
-  }
-  uint8_t pals[1] = { paletteIdx };
-  int wandIdx = -1;
-  for (int i = 0; i < SW_ANIM_COUNT; i++) {
-    if (strcmp("wand", SW_ANIM_KEYS[i]) == 0) { wandIdx = i; break; }
-  }
-  if (wandIdx >= 0) {
-    Serial.printf("[Wand] map preset=%s embedded=%u bytes\n",
-                  swAnimMap[wandIdx].presetId.c_str(),
-                  (unsigned)swAnimMap[wandIdx].wledPayload.length());
-  }
-  if (applySwAnimationKey("wand", pals, 1, src)) {
-    if (src == BLE_STARLIGHT) {
-      bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
-                ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-    }
-    Serial.printf("[Wand] Applied SW animation preset (palette %u)\n", paletteIdx);
-    return;
-  }
-  if (applyMbAnimationKey("wand", pals, 1, src)) {
-    if (src == BLE_STARLIGHT) {
-      bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
-                ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-    }
-    return;
-  }
-  Serial.printf("[Wand] No preset on board for SW/MB wand — solid fallback (palette %u)\n", paletteIdx);
-  applyMbSegmentSolid("all", paletteIdx, src);
-  if (src == BLE_STARLIGHT) {
-    bleNotify("{\"type\":\"sw_color\",\"palette\":" + String(paletteIdx) +
-              ",\"r\":" + String(r) + ",\"g\":" + String(g) + ",\"b\":" + String(b) + "}");
-  }
 }
 
 bool mbEffectIsRepeatAdvert(const uint8_t* payload, size_t plen) {

@@ -13,11 +13,6 @@ const char* MB_SEG_KEYS[] = {
   "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
   "band0", "band1", "band2", "band3", "band4", "band5", "band6", "band7"
 };
-const char* MB_ANIM_KEYS[] = { "E90C", "E90E", "E90F", "E910", "E911", "E912", "E913", "wand" };
-const char* MB_PAT_KEYS[]  = { "3", "4", "5", "8", "B" };
-const char* SW_ANIM_KEYS[] = {
-  "rainbow", "blink", "palette5", "flash", "sparkle", "pulse", "circle", "fade", "fade2", "wand"
-};
 
 const uint8_t MB_DEFAULT_COLORS[32][3] = {
   {0,255,255},{153,0,255},{0,0,255},{0,0,128},{0,102,255},{204,68,255},{204,153,255},{119,0,204},
@@ -142,10 +137,6 @@ MbSegmentLayout mbLayouts[MB_MAX_LAYOUTS];
 uint8_t mbLayoutCount = 0;
 uint8_t mbActiveLayoutIdx = 0;
 String  mbLayoutsJson = "";
-MbEffectMap mbAnimMap[8];
-MbEffectMap swAnimMap[SW_ANIM_COUNT];
-MbEffectMap mbPatMap[5];
-
 unsigned long lastWifiRetry = 0;
 volatile bool wifiConnectInProgress = false;
 

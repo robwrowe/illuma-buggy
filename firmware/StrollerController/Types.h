@@ -20,22 +20,9 @@ struct WledSegRef {
 
 struct MbSegMap { WledSegRef refs[MB_MAX_SEG_REFS]; uint8_t count; };
 
-struct MbEffectMap {
-  String presetId;
-  String wledPayload;
-  uint8_t colorSlots[MB_MAX_COLOR_SLOTS];
-  uint8_t colorSlotCount;
-};
-
 struct MbSegmentLayout {
   char name[24];
   MbSegMap segMaps[MB_SEG_KEY_COUNT];
-};
-
-struct SwFxSignature {
-  const char* key;
-  const uint8_t* data;
-  size_t len;
 };
 
 struct PendingCmd {
@@ -84,7 +71,6 @@ struct __attribute__((packed)) ParsedDisneyPacket {
 enum class BoardRole : uint8_t { STANDALONE = 0, LOGIC_BOARD = 1 };
 
 enum OverrideSource { NONE, ZONE, MANUAL, SHOW_MODE, BLE_MAGIC, BLE_STARLIGHT };
-enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
 enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS };
 enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
 

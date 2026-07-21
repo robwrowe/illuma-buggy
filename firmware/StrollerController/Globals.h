@@ -18,9 +18,6 @@ extern uint8_t mbChaseSpeed;
 extern uint8_t mbChaseThickness;
 
 extern const char* MB_SEG_KEYS[];
-extern const char* MB_ANIM_KEYS[];
-extern const char* MB_PAT_KEYS[];
-extern const char* SW_ANIM_KEYS[];
 extern const uint8_t MB_DEFAULT_COLORS[32][3];
 
 extern Preferences prefs;
@@ -132,10 +129,6 @@ extern MbSegmentLayout mbLayouts[MB_MAX_LAYOUTS];
 extern uint8_t mbLayoutCount;
 extern uint8_t mbActiveLayoutIdx;
 extern String  mbLayoutsJson;
-extern MbEffectMap mbAnimMap[8];
-extern MbEffectMap swAnimMap[SW_ANIM_COUNT];
-extern MbEffectMap mbPatMap[5];
-
 extern unsigned long lastWifiRetry;
 extern volatile bool wifiConnectInProgress;
 
