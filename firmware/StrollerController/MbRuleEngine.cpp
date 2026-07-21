@@ -792,24 +792,26 @@ void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size
   const char* ruleId = rule["id"] | "";
   if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
 
+  // FADE / COOLDOWN: FTB (or black hold) already turned the effect off. A same-payload
+  // match must re-POST WLED — flipping phase/deadline alone leaves the strip black.
+  if (mbRulePhase == MB_RULE_FADE) {
+    Serial.printf("[Rule] repeat during FTB — re-apply id=%s\n", ruleId);
+    applyMatchedRule(rule, payload, plen);
+    return;
+  }
   if (mbRulePhase == MB_RULE_COOLDOWN) {
     if (mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) return;
-    beginTimedRuleOnPhase(rule, payload, plen);
+    Serial.printf("[Rule] repeat during black hold — re-apply id=%s\n", ruleId);
+    applyMatchedRule(rule, payload, plen);
     return;
   }
 
-  // ON / FADE: keep alive with a short slack window — do not re-arm full on-time.
-  unsigned long slackDeadline = millis() + MB_RULE_REPEAT_SLACK_MS;
+  // ON: keep alive with a short slack window — do not rebuild WLED on every advert.
   if (mbRulePhase == MB_RULE_ON) {
+    unsigned long slackDeadline = millis() + MB_RULE_REPEAT_SLACK_MS;
     if ((long)(slackDeadline - mbRulePhaseDeadlineMs) > 0) {
       mbRulePhaseDeadlineMs = slackDeadline;
     }
-    return;
-  }
-  // MB_RULE_FADE: device still live — return to ON with slack, not a full re-arm.
-  if (mbRulePhase == MB_RULE_FADE) {
-    mbRulePhase = MB_RULE_ON;
-    mbRulePhaseDeadlineMs = slackDeadline;
   }
 }
 
