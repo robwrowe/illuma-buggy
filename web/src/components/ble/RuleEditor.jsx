@@ -29,6 +29,7 @@ import {
   createEmptyRuleEffect,
   createEmptyRuleTiming,
   createEmptyStartTransition,
+  createEmptyStopTransition,
   createEmptyTimingParamBinding,
   isTimingDerivedSource,
   normalizeMbMapping,
@@ -742,6 +743,7 @@ function RuleCard({
 }) {
   const timing = rule.timing || createEmptyRuleTiming();
   const startTransition = rule.startTransition || createEmptyStartTransition();
+  const stopTransition = rule.stopTransition || createEmptyStopTransition();
   const effect = rule.effect || createEmptyRuleEffect();
   const presetOpts = presets.map((p) => ({ value: p.id, label: p.name, searchText: p.name }));
   const mapOpts = (segmentMaps || []).map((m) => ({
@@ -1085,6 +1087,83 @@ function RuleCard({
                 />
               </Field>
             </SimpleGrid>
+          </CollapsibleBlock>
+
+          <CollapsibleBlock
+            title="Stop transition"
+            summary={stopTransition.enabled
+              ? `${stopTransition.type || 'fade'} · ${stopTransition.durationMode === 'custom' ? `${stopTransition.timeMs ?? 0}ms` : 'timing fade'}`
+              : 'off (plain FTB)'}
+          >
+            <Text size="xs" c="dimmed" mb="xs">
+              How the effect transitions out to fade-to-black. Duration defaults to the timing
+              byte&apos;s fade-out; choose Custom to override.
+            </Text>
+            <Switch
+              label="Use stop transition"
+              checked={!!stopTransition.enabled}
+              onChange={(e) => onChange({
+                ...rule,
+                stopTransition: { ...stopTransition, enabled: e.target.checked },
+              })}
+              mb="xs"
+            />
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+              <Field label="Type">
+                <SearchableSelect
+                  value={stopTransition.type || 'fade'}
+                  onChange={(type) => onChange({
+                    ...rule,
+                    stopTransition: { ...stopTransition, enabled: true, type },
+                  })}
+                  options={WLED_START_TRANSITIONS.map((t) => ({
+                    value: t.value,
+                    label: t.label,
+                    searchText: `${t.label} ${t.value}`,
+                  }))}
+                  allowEmpty={false}
+                  disabled={!stopTransition.enabled}
+                />
+              </Field>
+              <Field label="Duration">
+                <SegmentedControl
+                  fullWidth
+                  value={stopTransition.durationMode === 'custom' ? 'custom' : 'timingFade'}
+                  onChange={(durationMode) => onChange({
+                    ...rule,
+                    stopTransition: {
+                      ...stopTransition,
+                      enabled: true,
+                      durationMode,
+                      timeMs: durationMode === 'custom'
+                        ? (stopTransition.timeMs ?? 400)
+                        : stopTransition.timeMs,
+                    },
+                  })}
+                  data={[
+                    { value: 'timingFade', label: 'Timing fade' },
+                    { value: 'custom', label: 'Custom' },
+                  ]}
+                  disabled={!stopTransition.enabled || stopTransition.type === 'instant'}
+                />
+              </Field>
+            </SimpleGrid>
+            {stopTransition.enabled && stopTransition.durationMode === 'custom'
+              && stopTransition.type !== 'instant' && (
+              <Field label="timeMs" mt="xs">
+                <NumberInput
+                  value={stopTransition.timeMs ?? 400}
+                  onChange={(v) => onChange({
+                    ...rule,
+                    stopTransition: {
+                      ...stopTransition,
+                      timeMs: Math.max(0, parseInt(v, 10) || 0),
+                    },
+                  })}
+                  min={0}
+                />
+              </Field>
+            )}
           </CollapsibleBlock>
 
           <SectionHead>Match conditions</SectionHead>

@@ -182,7 +182,7 @@ bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBla
   return sendToWLED(payload, 8000, 2);
 }
 
-bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
+bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, int blendingStyle) {
   String preset = getPreset(id);
   if (preset.length() == 0) return false;
   DynamicJsonDocument doc(12288);
@@ -191,7 +191,15 @@ bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
   serializeJson(doc["wled"], wledJson);
   if (wledJson.length() == 0) return false;
   currentPresetId = id;
-  return restoreWledSnapshot(prepareWledRestorePayload(wledJson), fadeMs);
+  disableAllSplitSegments();
+  String payload = injectWledTransition(
+    buildWledRestorePayload(prepareWledRestorePayload(wledJson)),
+    fadeMs, blendingStyle);
+  return sendToWLED(payload, 8000, 2);
+}
+
+bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
+  return restorePresetWithTransitionStyled(id, fadeMs, -1);
 }
 
 void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {

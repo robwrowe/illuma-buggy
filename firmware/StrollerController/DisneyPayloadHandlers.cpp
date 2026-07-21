@@ -121,8 +121,8 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
       payload, plen);
   }
 
-  // MB effect dedupe — timed rule lifecycle still needs repeat matches to reset ON
-  // phase, but must NOT rebuild/POST WLED on every advert (starves the packet queue).
+  // MB effect dedupe — timed rule lifecycle still needs repeat matches to extend
+  // the ON deadline (slack window), but must NOT rebuild/POST WLED on every advert.
   if (mbEffectIsRepeatAdvert(payload, plen)) {
     if (mbRulePhase != MB_RULE_IDLE && magicBandEnabled) {
       JsonArray rules = mbRulesJsonArray();

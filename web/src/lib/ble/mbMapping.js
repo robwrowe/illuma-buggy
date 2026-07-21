@@ -357,6 +357,17 @@ export function createEmptyStartTransition() {
   return { type: 'fade', timeMs: 400 };
 }
 
+const STOP_DURATION_MODES = new Set(['timingFade', 'custom']);
+
+export function createEmptyStopTransition() {
+  return {
+    enabled: false,
+    type: 'fade',
+    durationMode: 'timingFade',
+    timeMs: null,
+  };
+}
+
 export function createEmptyRuleEffect() {
   return { enabled: false, fx: -1, pal: -1, sx: 128, ix: 128 };
 }
@@ -482,6 +493,7 @@ export function createEmptyRule(overrides = {}) {
     effect: createEmptyRuleEffect(),
     timing: createEmptyRuleTiming(),
     startTransition: createEmptyStartTransition(),
+    stopTransition: createEmptyStopTransition(),
     segmentOverrides: {},
     ...overrides,
   };
@@ -764,6 +776,22 @@ export function normalizeStartTransition(raw) {
   };
 }
 
+export function normalizeStopTransition(raw) {
+  const d = createEmptyStopTransition();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  let timeMs = null;
+  if (raw.timeMs !== null && raw.timeMs !== undefined && raw.timeMs !== '') {
+    const n = Number(raw.timeMs);
+    if (Number.isFinite(n) && n >= 0) timeMs = n;
+  }
+  return {
+    enabled: !!raw.enabled,
+    type: START_TRANSITION_TYPES.has(raw.type) ? raw.type : d.type,
+    durationMode: STOP_DURATION_MODES.has(raw.durationMode) ? raw.durationMode : d.durationMode,
+    timeMs,
+  };
+}
+
 export function normalizeRuleEffect(raw) {
   const d = createEmptyRuleEffect();
   if (!raw || typeof raw !== 'object') return { ...d };
@@ -793,6 +821,7 @@ export function normalizeMbRule(raw, index = 0) {
     effect: normalizeRuleEffect(raw.effect),
     timing: normalizeRuleTiming(raw.timing),
     startTransition: normalizeStartTransition(raw.startTransition),
+    stopTransition: normalizeStopTransition(raw.stopTransition),
     segmentOverrides: normalizeSegmentOverrides(raw.segmentOverrides),
   };
 }

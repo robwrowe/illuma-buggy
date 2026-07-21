@@ -624,11 +624,47 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
   }
 }
 
+/** Map Illuma start/stop transition type strings → WLED TRANSITION_* (FX.h). */
+static int blendingStyleFromTypeString(const char* ttype) {
+  if (!ttype) return 0x00;
+  if      (strcmp(ttype, "instant") == 0)     return 0;
+  else if (strcmp(ttype, "fairyDust") == 0)   return 0x01;
+  else if (strcmp(ttype, "swipeRight") == 0)  return 0x02;
+  else if (strcmp(ttype, "swipeLeft") == 0)   return 0x03;
+  else if (strcmp(ttype, "outsideIn") == 0)   return 0x04;
+  else if (strcmp(ttype, "insideOut") == 0)   return 0x05;
+  else if (strcmp(ttype, "swipeUp") == 0)     return 0x06;
+  else if (strcmp(ttype, "swipeDown") == 0)   return 0x07;
+  else if (strcmp(ttype, "openH") == 0)       return 0x08;
+  else if (strcmp(ttype, "openV") == 0)       return 0x09;
+  else if (strcmp(ttype, "swipeTL") == 0)     return 0x0A;
+  else if (strcmp(ttype, "swipeTR") == 0)     return 0x0B;
+  else if (strcmp(ttype, "swipeBR") == 0)     return 0x0C;
+  else if (strcmp(ttype, "swipeBL") == 0)     return 0x0D;
+  else if (strcmp(ttype, "circularOut") == 0) return 0x0E;
+  else if (strcmp(ttype, "circularIn") == 0)  return 0x0F;
+  else if (strcmp(ttype, "pushRight") == 0)   return 0x10;
+  else if (strcmp(ttype, "pushLeft") == 0)    return 0x11;
+  else if (strcmp(ttype, "pushUp") == 0)      return 0x12;
+  else if (strcmp(ttype, "pushDown") == 0)    return 0x13;
+  else if (strcmp(ttype, "pushTL") == 0)      return 0x14;
+  else if (strcmp(ttype, "pushTR") == 0)      return 0x15;
+  else if (strcmp(ttype, "pushBR") == 0)      return 0x16;
+  else if (strcmp(ttype, "pushBL") == 0)      return 0x17;
+  return 0x00; // fade
+}
+
+// -1 = no bs override on FTB (plain transition); set from stopTransition when enabled.
+static int mbRuleStopBlendingStyle = -1;
+
 static void sendMbRuleOff(unsigned long fadeMs) {
+  int bs = mbRuleStopBlendingStyle;  // -1 if no stopTransition configured
   if (mbFadeToBlackPresetId.length() > 0) {
-    if (restorePresetWithTransition(mbFadeToBlackPresetId, fadeMs)) return;
+    if (restorePresetWithTransitionStyled(mbFadeToBlackPresetId, fadeMs, bs)) return;
     Serial.printf("[Rule] FTB preset '%s' failed, falling back to on:false\n",
                   mbFadeToBlackPresetId.c_str());
+    bleNotify("{\"type\":\"ble_event\",\"event\":\"ftb_fallback\",\"presetId\":\"" +
+              mbFadeToBlackPresetId + "\"}");
   }
   sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
 }
@@ -657,13 +693,29 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
     fadeOverride = (long)(timing["fadeOverrideMs"] | -1);
   }
   mbRuleFadeMs = (fadeOverride >= 0) ? (unsigned long)fadeOverride : td.fadeMs;
+
+  mbRuleStopBlendingStyle = -1;
+  JsonObject stopTr = rule["stopTransition"].as<JsonObject>();
+  if (!stopTr.isNull() && (stopTr["enabled"] | false)) {
+    const char* stype = stopTr["type"] | "fade";
+    const char* durMode = stopTr["durationMode"] | "timingFade";
+    if (strcmp(stype, "instant") == 0) {
+      mbRuleFadeMs = 0;
+    } else if (strcmp(durMode, "custom") == 0 && stopTr.containsKey("timeMs")
+               && !stopTr["timeMs"].isNull()) {
+      mbRuleFadeMs = (unsigned long)(stopTr["timeMs"] | mbRuleFadeMs);
+    }
+    // else durationMode "timingFade": keep mbRuleFadeMs from timing / fadeOverrideMs
+    mbRuleStopBlendingStyle = blendingStyleFromTypeString(stype);
+  }
+
   mbRuleCooldownMs = (unsigned long)cooldownSec * 1000UL;
   mbRulePhase = MB_RULE_ON;
   mbRulePhaseDeadlineMs = millis() + td.onTimeMs;
-  Serial.printf("[Rule] timing ON %lums fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X\n",
+  Serial.printf("[Rule] timing ON %lums fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X stopBs=%d\n",
                 td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
                 mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
-                timingModelId[0] ? timingModelId : "(default)", byte);
+                timingModelId[0] ? timingModelId : "(default)", byte, mbRuleStopBlendingStyle);
 }
 
 void resetMbRuleLifecycle() {
@@ -671,6 +723,7 @@ void resetMbRuleLifecycle() {
   mbRulePhaseDeadlineMs = 0;
   mbRuleFadeMs = 0;
   mbRuleCooldownMs = 2000;
+  mbRuleStopBlendingStyle = -1;
   mbActiveRuleCooldownMode = MB_COOLDOWN_ON_MATCH;
   mbActiveRuleId[0] = '\0';
 }
@@ -709,15 +762,28 @@ void serviceMbRuleLifecycle() {
 }
 
 void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen) {
-  (void)payload; (void)plen;
   const char* ruleId = rule["id"] | "";
   if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
-  if (mbRulePhase == MB_RULE_COOLDOWN && mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) {
-    // Fixed cooldown: acknowledge only — do not mutate deadline.
+
+  if (mbRulePhase == MB_RULE_COOLDOWN) {
+    if (mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) return;
+    beginTimedRuleOnPhase(rule, payload, plen);
     return;
   }
-  // ON / FADE / onMatch-COOLDOWN: re-enter ON with fresh timing (caller re-applies visuals).
-  beginTimedRuleOnPhase(rule, payload, plen);
+
+  // ON / FADE: keep alive with a short slack window — do not re-arm full on-time.
+  unsigned long slackDeadline = millis() + MB_RULE_REPEAT_SLACK_MS;
+  if (mbRulePhase == MB_RULE_ON) {
+    if ((long)(slackDeadline - mbRulePhaseDeadlineMs) > 0) {
+      mbRulePhaseDeadlineMs = slackDeadline;
+    }
+    return;
+  }
+  // MB_RULE_FADE: device still live — return to ON with slack, not a full re-arm.
+  if (mbRulePhase == MB_RULE_FADE) {
+    mbRulePhase = MB_RULE_ON;
+    mbRulePhaseDeadlineMs = slackDeadline;
+  }
 }
 
 void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t plen) {
@@ -777,31 +843,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       blendingStyle = 0;
     } else {
       if (startTr.containsKey("timeMs")) startTransMs = (unsigned long)(startTr["timeMs"] | 0);
-      // Map Illuma type strings → WLED TRANSITION_* (FX.h)
-      if      (strcmp(ttype, "fairyDust") == 0)     blendingStyle = 0x01;
-      else if (strcmp(ttype, "swipeRight") == 0)    blendingStyle = 0x02;
-      else if (strcmp(ttype, "swipeLeft") == 0)     blendingStyle = 0x03;
-      else if (strcmp(ttype, "outsideIn") == 0)     blendingStyle = 0x04;
-      else if (strcmp(ttype, "insideOut") == 0)     blendingStyle = 0x05;
-      else if (strcmp(ttype, "swipeUp") == 0)       blendingStyle = 0x06;
-      else if (strcmp(ttype, "swipeDown") == 0)     blendingStyle = 0x07;
-      else if (strcmp(ttype, "openH") == 0)         blendingStyle = 0x08;
-      else if (strcmp(ttype, "openV") == 0)         blendingStyle = 0x09;
-      else if (strcmp(ttype, "swipeTL") == 0)       blendingStyle = 0x0A;
-      else if (strcmp(ttype, "swipeTR") == 0)       blendingStyle = 0x0B;
-      else if (strcmp(ttype, "swipeBR") == 0)       blendingStyle = 0x0C;
-      else if (strcmp(ttype, "swipeBL") == 0)       blendingStyle = 0x0D;
-      else if (strcmp(ttype, "circularOut") == 0)   blendingStyle = 0x0E;
-      else if (strcmp(ttype, "circularIn") == 0)    blendingStyle = 0x0F;
-      else if (strcmp(ttype, "pushRight") == 0)     blendingStyle = 0x10;
-      else if (strcmp(ttype, "pushLeft") == 0)      blendingStyle = 0x11;
-      else if (strcmp(ttype, "pushUp") == 0)        blendingStyle = 0x12;
-      else if (strcmp(ttype, "pushDown") == 0)      blendingStyle = 0x13;
-      else if (strcmp(ttype, "pushTL") == 0)        blendingStyle = 0x14;
-      else if (strcmp(ttype, "pushTR") == 0)        blendingStyle = 0x15;
-      else if (strcmp(ttype, "pushBR") == 0)        blendingStyle = 0x16;
-      else if (strcmp(ttype, "pushBL") == 0)        blendingStyle = 0x17;
-      else                                          blendingStyle = 0x00; // fade
+      blendingStyle = blendingStyleFromTypeString(ttype);
     }
   }
 
