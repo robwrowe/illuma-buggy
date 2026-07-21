@@ -30,6 +30,10 @@ channel (STA); the scanner has no AP, so it locks onto the channel from the pair
 restores it on boot. Caveat: if the AP uses auto-channel and later changes, re-pair (or pin
 the AP to a fixed channel).
 
+When a scanner MAC is configured, the logic board does **not** fall back to local NimBLE
+scan after silence — that re-introduces radio contention and can block ESP-NOW RX even
+while the scanner reports send-cb SUCCESS.
+
 ### Scanner-alive keepalives
 
 Classified Disney packets (`MB+`, wand casts, etc.) are always forwarded. Unclassified frames

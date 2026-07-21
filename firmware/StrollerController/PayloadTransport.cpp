@@ -254,6 +254,19 @@ void transportPairResendTick() {
 void serviceScannerFallback() {
   if (boardRole != BoardRole::LOGIC_BOARD) return;
 
+  // Dual-board with a configured scanner: never start local NimBLE scan.
+  // Fallback re-introduces WiFi/BLE contention on the logic radio and can prevent
+  // ESP-NOW RX even while the scanner reports send-cb SUCCESS — a chicken-and-egg
+  // once the 20s absent timer fires (pair beacons keep going; lastScanPacketMs stays 0).
+  if (scannerPeerConfigured) {
+    if (localScanFallbackActive) {
+      Serial.println("[Fallback] Scanner peer configured — stopping local BLE scan (ESP-NOW only)");
+      stopBLEScan();
+      localScanFallbackActive = false;
+    }
+    return;
+  }
+
   if (!localScanFallbackActive) {
     unsigned long now = millis();
     unsigned long silentFor = lastScannerPacketMs ? (now - lastScannerPacketMs) : now;
@@ -261,7 +274,7 @@ void serviceScannerFallback() {
       Serial.printf("[Fallback] lastScanPacketMs=%lu now=%lu delta=%lu threshold=%lu\n",
                     (unsigned long)lastScannerPacketMs, (unsigned long)now,
                     (unsigned long)silentFor, (unsigned long)SCANNER_ABSENT_MS);
-      Serial.println("[Fallback] Scanner silent — starting local BLE scan on logic board");
+      Serial.println("[Fallback] No scanner MAC — starting local BLE scan on logic board");
       startBLEScan();
       localScanFallbackActive = true;
     }
@@ -282,13 +295,14 @@ void applyBoardRoleRuntime() {
     return;
   }
 
-  // LOGIC_BOARD: stop local scan; ESP-NOW + pair beacon / fallback take over.
+  // LOGIC_BOARD: stop local scan; ESP-NOW + pair beacon take over (no NimBLE fallback
+  // while a scanner MAC is configured — see serviceScannerFallback).
   stopBLEScan();
   localScanFallbackActive = false;
   lastScannerPacketMs = 0;
   payloadTransportInit();
   if (WiFi.status() == WL_CONNECTED) transportEnsureEspNow();
-  Serial.println("[Role] LOGIC_BOARD — local scan off; ESP-NOW / 20s fallback");
+  Serial.println("[Role] LOGIC_BOARD — local scan off; ESP-NOW / pair beacon");
 }
 
 void payloadTransportInit() {
@@ -307,7 +321,7 @@ void payloadTransportInit() {
   // (re)called after every successful WiFi connect instead.
   Serial.println("[ESP-NOW] LOGIC_BOARD — ESP-NOW inits after WiFi connects");
   Serial.printf("[Fallback] SCANNER_ABSENT_MS=%lu SCANNER_ALIVE_MS=%lu "
-                "(local scan starts only after absent window with no ESP-NOW scan packets)\n",
+                "(local NimBLE fallback only if no scanner MAC configured)\n",
                 (unsigned long)SCANNER_ABSENT_MS, (unsigned long)SCANNER_ALIVE_MS);
 }
 

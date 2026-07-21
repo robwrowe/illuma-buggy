@@ -57,6 +57,16 @@ static bool ensureEspNowPeer(const uint8_t mac[6]) {
 }
 
 void scannerSetLogicMac(const uint8_t mac[6], uint8_t channel) {
+  if (!mac) return;
+
+  const bool sameMac = logicPeerConfigured && memcmp(pairedLogicMac, mac, 6) == 0;
+  const bool sameChan = (channel < 1 || channel > 14) || (channel == pairedChannel);
+  if (sameMac && sameChan) {
+    // Already locked — ignore pair-beacon floods (logic beacons every ~200ms while
+    // silent). Re-entering NVS/Serial from the ESP-NOW recv cb wedges BLE scan.
+    return;
+  }
+
   memcpy(pairedLogicMac, mac, 6);
   logicPeerConfigured = true;
   if (channel >= 1 && channel <= 14) {
