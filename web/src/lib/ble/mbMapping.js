@@ -456,6 +456,8 @@ export function normalizeSegmentOverrides(raw) {
   const out = {};
   Object.entries(raw).forEach(([segId, ov]) => {
     if (!segId || typeof segId !== 'string' || !ov || typeof ov !== 'object') return;
+    // UI-only meta key — never a segment id.
+    if (segId === '_meta') return;
     const n = createEmptySegmentOverride();
     SEG_OVERRIDE_PROPS.forEach((prop) => {
       if (ov[prop]) {
@@ -471,6 +473,56 @@ export function normalizeSegmentOverrides(raw) {
     out[segId] = n;
   });
   return out;
+}
+
+export const SEGMENT_SOURCE_MODES = ['global', 'perSegment'];
+
+export function normalizeSegmentSourceMode(raw) {
+  if (raw === 'global') return 'global';
+  if (raw === 'perSegment') return 'perSegment';
+  // Legacy rules without the field keep the old per-segment editor.
+  return 'perSegment';
+}
+
+/** Template used by the global sources editor (first segment, or empty defaults). */
+export function getGlobalSegmentOverrideTemplate(segments, overrides) {
+  const list = Array.isArray(segments) ? segments : [];
+  const ovs = normalizeSegmentOverrides(overrides);
+  if (!list.length) return createEmptySegmentOverride();
+  return ovs[list[0].id] || createEmptySegmentOverride();
+}
+
+/** Write the same override object onto every segment in the map. */
+export function applySegmentOverrideToAll(segments, nextOv) {
+  const list = Array.isArray(segments) ? segments : [];
+  const ov = { ...createEmptySegmentOverride(), ...(nextOv || {}) };
+  const out = {};
+  list.forEach((seg) => {
+    if (seg?.id) out[seg.id] = ov;
+  });
+  return normalizeSegmentOverrides(out);
+}
+
+/**
+ * Patch one property on the global template and replicate to all segments.
+ * @param {string} propKey 'fx'|'pal'|… or 'colors.0'
+ */
+export function patchGlobalSegmentProp(segments, overrides, propKey, entry) {
+  const template = getGlobalSegmentOverrideTemplate(segments, overrides);
+  const next = { ...createEmptySegmentOverride(), ...template };
+  if (propKey.startsWith('colors.')) {
+    const slot = Number(propKey.slice(7));
+    const colors = [...(next.colors || [
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+    ])];
+    colors[slot] = entry;
+    next.colors = colors;
+  } else {
+    next[propKey] = entry;
+  }
+  return applySegmentOverrideToAll(segments, next);
 }
 
 /**
@@ -519,6 +571,8 @@ export function createEmptyRule(overrides = {}) {
     timing: createEmptyRuleTiming(),
     startTransition: createEmptyStartTransition(),
     stopTransition: createEmptyStopTransition(),
+    /** 'global' = one fx/pal/sx/ix source for every map segment; 'perSegment' = per-row overrides. */
+    segmentSourceMode: 'global',
     segmentOverrides: {},
     ...overrides,
   };
@@ -847,6 +901,7 @@ export function normalizeMbRule(raw, index = 0) {
     timing: normalizeRuleTiming(raw.timing),
     startTransition: normalizeStartTransition(raw.startTransition),
     stopTransition: normalizeStopTransition(raw.stopTransition),
+    segmentSourceMode: normalizeSegmentSourceMode(raw.segmentSourceMode),
     segmentOverrides: normalizeSegmentOverrides(raw.segmentOverrides),
   };
 }

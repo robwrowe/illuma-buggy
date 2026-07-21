@@ -946,7 +946,8 @@ function RuleCard({
                 Edit segments →
               </AppButton>
               <Text size="xs" c="dimmed">
-                Geometry and map defaults live in Segment Maps. Per-rule sources are below.
+                Geometry and map defaults live in Segment Maps. Rule segment sources (global or
+                per-segment) are below.
               </Text>
             </Stack>
           )}
@@ -954,10 +955,11 @@ function RuleCard({
             <SegmentOverrideTable
               segments={selectedMap.segments || []}
               segmentOverrides={rule.segmentOverrides || {}}
+              segmentSourceMode={rule.segmentSourceMode}
               extracts={rule.extract || []}
               effectOptions={effectOptions}
               paletteOptions={paletteOptions}
-              onChange={(segmentOverrides) => onChange({ ...rule, segmentOverrides })}
+              onChange={(patch) => onChange({ ...rule, ...patch })}
             />
           )}
 

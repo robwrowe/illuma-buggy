@@ -12,9 +12,13 @@ import {
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { AppButton } from '../shared/styles';
 import {
+  applySegmentOverrideToAll,
   createEmptySegmentOverride,
   extractDrivenKeysForSegment,
+  getGlobalSegmentOverrideTemplate,
   normalizeSegmentOverrides,
+  normalizeSegmentSourceMode,
+  patchGlobalSegmentProp,
 } from '../../lib/ble/mbMapping';
 import { BLEND_MODE_SELECT_OPTS } from '../../lib/ble/mbConstants';
 
@@ -24,11 +28,21 @@ const MODE_OPTS = [
   { label: 'Custom', value: 'custom' },
 ];
 
-const PROP_COLS = [
+const SOURCE_SCOPE_OPTS = [
+  { label: 'Global', value: 'global' },
+  { label: 'Per-segment', value: 'perSegment' },
+];
+
+/** Properties shown in the global editor (most common). */
+const GLOBAL_PROP_COLS = [
   { key: 'fx', label: 'Effect' },
   { key: 'pal', label: 'Palette' },
   { key: 'sx', label: 'Speed' },
   { key: 'ix', label: 'Intensity' },
+];
+
+const PROP_COLS = [
+  ...GLOBAL_PROP_COLS,
   { key: 'blend', label: 'Blend' },
   { key: 'colors.0', label: 'Color 1', colorSlot: 0 },
   { key: 'colors.1', label: 'Color 2', colorSlot: 1 },
@@ -197,10 +211,6 @@ function PropCell({
   );
 }
 
-/**
- * Per-segment property source table for a rule.
- * Modes: Default (rule.effect), Stored (segment map), Custom (rule-only), Extracted (via extract targets).
- */
 function SegmentOverrideRow({
   seg,
   ov,
@@ -255,23 +265,63 @@ function SegmentOverrideRow({
   );
 }
 
+/**
+ * Segment property sources for a rule.
+ * Global: one fx/pal/sx/ix editor replicated to every map segment.
+ * Per-segment: expandable row per segment (full property set including blend/colors).
+ */
 export function SegmentOverrideTable({
   segments = [],
   segmentOverrides = {},
+  segmentSourceMode = 'global',
   extracts = [],
   effectOptions = [],
   paletteOptions = [],
   onChange,
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const overrides = normalizeSegmentOverrides(segmentOverrides);
+  const sourceMode = normalizeSegmentSourceMode(segmentSourceMode);
 
   if (!segments.length) return null;
 
-  const setSegOverride = (segId, nextOv) => {
-    const all = { ...overrides, [segId]: nextOv };
-    onChange(normalizeSegmentOverrides(all));
+  const emit = (patch) => {
+    onChange({
+      segmentSourceMode: sourceMode,
+      segmentOverrides: overrides,
+      ...patch,
+    });
   };
+
+  const setSegOverride = (segId, nextOv) => {
+    emit({
+      segmentOverrides: normalizeSegmentOverrides({ ...overrides, [segId]: nextOv }),
+    });
+  };
+
+  const setSourceMode = (nextMode) => {
+    const mode = normalizeSegmentSourceMode(nextMode);
+    if (mode === 'global') {
+      // Replicate current template (or first segment) so firmware sees identical sources.
+      const template = getGlobalSegmentOverrideTemplate(segments, overrides);
+      emit({
+        segmentSourceMode: mode,
+        segmentOverrides: applySegmentOverrideToAll(segments, template),
+      });
+      return;
+    }
+    emit({ segmentSourceMode: mode });
+  };
+
+  const template = getGlobalSegmentOverrideTemplate(segments, overrides);
+  const storedHint = segments[0];
+  const globalDriven = (() => {
+    const keys = new Set();
+    segments.forEach((seg) => {
+      extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '').forEach((k) => keys.add(k));
+    });
+    return keys;
+  })();
 
   return (
     <Paper p="sm" withBorder bg="var(--surface2)">
@@ -280,37 +330,124 @@ export function SegmentOverrideTable({
           <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
             {open ? '▾' : '▸'}
           </AppButton>
-          <Text size="sm" fw={700}>Per-segment sources</Text>
+          <Text size="sm" fw={700}>
+            {sourceMode === 'global' ? 'Segment sources' : 'Per-segment sources'}
+          </Text>
           {!open && (
             <Text size="xs" c="dimmed">
+              {sourceMode === 'global' ? 'global' : 'per-segment'}
+              {' · '}
               {segments.length} segment{segments.length === 1 ? '' : 's'}
             </Text>
           )}
         </Group>
+        <SegmentedControl
+          size="xs"
+          value={sourceMode}
+          onChange={setSourceMode}
+          data={SOURCE_SCOPE_OPTS}
+        />
       </Group>
       {open && (
         <>
-          <Text size="xs" c="dimmed" mb="sm">
-            Choose where each property comes from for this rule only. Custom values stay on the rule —
-            they do not edit the shared segment map. Extracted fields are set via extract targets below.
-          </Text>
-          <Stack gap="sm">
-            {segments.map((seg) => {
-              const driven = extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '');
-              const ov = overrides[seg.id] || createEmptySegmentOverride();
-              return (
-                <SegmentOverrideRow
-                  key={seg.id}
-                  seg={seg}
-                  ov={ov}
-                  driven={driven}
-                  effectOptions={effectOptions}
-                  paletteOptions={paletteOptions}
-                  onChangeOv={(nextOv) => setSegOverride(seg.id, nextOv)}
-                />
-              );
-            })}
-          </Stack>
+          {sourceMode === 'global' ? (
+            <>
+              <Text size="xs" c="dimmed" mb="sm">
+                Effect, palette, speed, and intensity apply to every segment in this map.
+                Switch to Per-segment for blend/colors or different values per strip.
+                Extract targets still win per field when set below.
+              </Text>
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+                {GLOBAL_PROP_COLS.map((col) => {
+                  const extracted = globalDriven.has(col.key);
+                  const entry = getPropEntry(template, col.key);
+                  return (
+                    <PropCell
+                      key={col.key}
+                      propKey={col.key}
+                      label={col.label}
+                      entry={entry}
+                      extracted={extracted}
+                      storedSeg={storedHint}
+                      effectOptions={effectOptions}
+                      paletteOptions={paletteOptions}
+                      onChange={(nextEntry) => {
+                        if (extracted) return;
+                        emit({
+                          segmentOverrides: patchGlobalSegmentProp(
+                            segments,
+                            overrides,
+                            col.key,
+                            nextEntry,
+                          ),
+                        });
+                      }}
+                    />
+                  );
+                })}
+              </SimpleGrid>
+              <Group gap="xs" mt="sm">
+                <AppButton
+                  size="compact-xs"
+                  variant="default"
+                  onClick={() => {
+                    const next = {
+                      ...createEmptySegmentOverride(),
+                      ...template,
+                      fx: { mode: 'default' },
+                      pal: { mode: 'default' },
+                      sx: { mode: 'default' },
+                      ix: { mode: 'default' },
+                    };
+                    emit({ segmentOverrides: applySegmentOverrideToAll(segments, next) });
+                  }}
+                >
+                  Use rule.effect for all four
+                </AppButton>
+                <AppButton
+                  size="compact-xs"
+                  variant="default"
+                  onClick={() => {
+                    const next = {
+                      ...createEmptySegmentOverride(),
+                      ...template,
+                      fx: { mode: 'stored' },
+                      pal: { mode: 'stored' },
+                      sx: { mode: 'stored' },
+                      ix: { mode: 'stored' },
+                    };
+                    emit({ segmentOverrides: applySegmentOverrideToAll(segments, next) });
+                  }}
+                >
+                  Use map stored for all four
+                </AppButton>
+              </Group>
+            </>
+          ) : (
+            <>
+              <Text size="xs" c="dimmed" mb="sm">
+                Choose where each property comes from for this rule only. Custom values stay on the rule —
+                they do not edit the shared segment map. Extracted fields are set via extract targets below.
+              </Text>
+              <Stack gap="sm">
+                {segments.map((seg) => {
+                  const driven = extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '');
+                  const ov = overrides[seg.id] || createEmptySegmentOverride();
+                  return (
+                    <SegmentOverrideRow
+                      key={seg.id}
+                      seg={seg}
+                      ov={ov}
+                      driven={driven}
+                      effectOptions={effectOptions}
+                      paletteOptions={paletteOptions}
+                      onChangeOv={(nextOv) => setSegOverride(seg.id, nextOv)}
+                    />
+                  );
+                })}
+              </Stack>
+            </>
+          )}
         </>
       )}
     </Paper>
