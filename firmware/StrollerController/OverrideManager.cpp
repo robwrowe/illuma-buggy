@@ -147,8 +147,19 @@ String preparePresetApplyPayload(const String& json) {
   DynamicJsonDocument doc(WLED_RESTORE_JSON_CAP);
   if (deserializeJson(doc, restored) != DeserializationError::Ok) return restored;
 
+  // GLEDOPTO relay (GPIO 18) cuts output when master power is off. Always force on
+  // in the same POST as the effect — a prior ensureWledPowerOn() can fail/timeout
+  // under BLE+scan load and leave the strip dark while seg/fx still "apply".
+  doc["on"] = true;
+
   JsonArray segs = doc["seg"].as<JsonArray>();
-  if (segs.isNull() || segs.size() == 0) return restored;
+  if (segs.isNull() || segs.size() == 0) {
+    // Brightness is app-managed — never from preset apply.
+    doc.remove("bri");
+    String out;
+    serializeJson(doc, out);
+    return out.length() ? out : restored;
+  }
 
   bool activeIds[MB_WLED_MAX_SEG] = {false};
   for (JsonObject seg : segs) {

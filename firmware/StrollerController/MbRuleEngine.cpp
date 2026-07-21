@@ -97,6 +97,13 @@ static bool compareOp(uint32_t lhs, const char* op, uint32_t rhs) {
 
 static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& leaf) {
   const char* type = leaf["type"] | "";
+  bool isWandPkt = (plen >= 2 && payload && payload[0] == 0xCF &&
+                    (payload[1] == 0x0B || payload[1] == 0x9B));
+  if (isWandPkt) {
+    Serial.printf("[RuleDbg] evaluateLeaf type=%s value=%s plen=%u p0=%02X p1=%02X\n",
+                  type, leaf["value"] | "(none)", (unsigned)plen,
+                  plen > 0 ? payload[0] : 0, plen > 1 ? payload[1] : 0);
+  }
   if (strcmp(type, "hexPrefix") == 0) {
     return matchHexPrefix(payload, plen, leaf["value"] | "");
   }
@@ -136,6 +143,12 @@ bool evaluateConditionGroup(const uint8_t* payload, size_t plen, const JsonObjec
 
   const char* mode = groupNode["mode"] | "all";
   JsonArray children = groupNode["children"].as<JsonArray>();
+  bool isWandPkt = (plen >= 2 && payload && payload[0] == 0xCF &&
+                    (payload[1] == 0x0B || payload[1] == 0x9B));
+  if (isWandPkt) {
+    Serial.printf("[RuleDbg] group mode=%s childCount=%u\n",
+                  mode, children.isNull() ? 0u : (unsigned)children.size());
+  }
   if (children.isNull() || children.size() == 0) return false;
 
   bool isAll = (strcmp(mode, "all") == 0);
@@ -175,6 +188,20 @@ int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules
       }
     }
   }
+
+  static unsigned long lastRuleDumpMs = 0;
+  if (millis() - lastRuleDumpMs > 5000) {
+    lastRuleDumpMs = millis();
+    Serial.printf("[RuleDbg] findMatchingRule: %d enabled rules loaded\n", n);
+    for (int k = 0; k < n; k++) {
+      JsonObject r = rules[idxs[k]].as<JsonObject>();
+      JsonObject m = r["match"].as<JsonObject>();
+      Serial.printf("[RuleDbg]   idx=%d prio=%d name=%s hasMatch=%d mode=%s\n",
+                    idxs[k], prios[k], r["name"] | "(no name)",
+                    !m.isNull(), m["mode"] | "(leaf/none)");
+    }
+  }
+
   for (int k = 0; k < n; k++) {
     JsonObject rule = rules[idxs[k]].as<JsonObject>();
     JsonObject match = rule["match"].as<JsonObject>();
@@ -1072,9 +1099,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
   Serial.printf("[Rule] posting WLED (%u bytes)\n", (unsigned)wledJson.length());
-  ensureWledPowerOn();
-  // preparePresetApplyPayload already folds inactive segments into one POST —
-  // do not call disableAllSplitSegments() first (extra HTTP that can stall loop).
+  // preparePresetApplyPayload forces on:true in the same POST (GLEDOPTO relay).
+  // Do not call ensureWledPowerOn() first — an extra HTTP under scan load often
+  // fails silently and is redundant once on is in the apply body.
   String body = preparePresetApplyPayload(wledJson);
   // Fail fast under scan load — long POST timeouts starve bleCmdQueue.
   bool ok = sendToWLED(
@@ -1125,22 +1152,32 @@ void applyMbRulesJson(JsonObject doc) {
       DynamicJsonDocument merged(BLE_JSON_DOC_SIZE);
       String existing;
       serializeJson(gRulesDoc, existing);
-      if (!deserializeJson(merged, existing)) {
+      DeserializationError existingErr = deserializeJson(merged, existing);
+      if (!existingErr) {
         if (doc.containsKey("segmentMaps")) merged["segmentMaps"] = doc["segmentMaps"];
         if (doc.containsKey("timingModels")) merged["timingModels"] = doc["timingModels"];
         if (doc.containsKey("paradeDetection")) merged["paradeDetection"] = doc["paradeDetection"];
         if (doc.containsKey("defaultPresetId")) merged["defaultPresetId"] = doc["defaultPresetId"];
         gRulesDoc.clear();
         serializeJson(merged, raw);
-        deserializeJson(gRulesDoc, raw);
+        DeserializationError mergeErr = deserializeJson(gRulesDoc, raw);
+        if (mergeErr) {
+          Serial.printf("[Rules] cache deserialize failed (merge writeback): %s\n", mergeErr.c_str());
+        }
       } else {
+        Serial.printf("[Rules] existing cache deserialize failed: %s — replacing with incoming doc\n",
+                      existingErr.c_str());
         gRulesDoc.clear();
-        deserializeJson(gRulesDoc, raw);
+        DeserializationError replaceErr = deserializeJson(gRulesDoc, raw);
+        if (replaceErr) {
+          Serial.printf("[Rules] cache deserialize failed (replace): %s\n", replaceErr.c_str());
+        }
       }
     } else {
       gRulesDoc.clear();
-      if (deserializeJson(gRulesDoc, raw)) {
-        Serial.println("[Rules] cache deserialize failed");
+      DeserializationError cacheErr = deserializeJson(gRulesDoc, raw);
+      if (cacheErr) {
+        Serial.printf("[Rules] cache deserialize failed: %s\n", cacheErr.c_str());
       }
     }
   } else if (doc.containsKey("paradeDetection") || doc.containsKey("defaultPresetId") ||
