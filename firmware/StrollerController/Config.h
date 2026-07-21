@@ -37,7 +37,8 @@
 #define MB_TIMING_MULT_SCALER   3.0f
 #define MB_TIMING_MULT_EXTENDED 7.6f
 #define MB_TIMING_T0_FALLBACK_SEC 3.0f
-#define MB_TIMING_FADE_STEP_MS  500UL  // fadeBits * 0.5s
+/** @deprecated Prefer timing-model fadeBitsStretchSec[]. Kept for reference only. */
+#define MB_TIMING_FADE_STEP_MS  500UL
 /** Grace after last same-rule advert before ON→FADE (not a full on-time re-arm).
  *  Does not apply during FADE/COOLDOWN — those re-apply the effect instead. */
 #define MB_RULE_REPEAT_SLACK_MS 400UL

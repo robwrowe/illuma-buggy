@@ -222,9 +222,11 @@ static bool looksLikeWand(const uint8_t* payload, size_t plen) {
 
 // Lab-confirmed timing-byte decode (docs/ble-packets-details/timing-byte.md).
 // bit7 is a misnamed "always-on" — it is extended timeout, not indefinite hold.
+// onTimeMs includes final-cycle stretch; stretchMs is the FTB duration for that last cycle
+// (not a separate post-on fade phase).
 struct TimingDecode {
   unsigned long onTimeMs;
-  unsigned long fadeMs;
+  unsigned long stretchMs;
   bool extended;
   bool scaler;
 };
@@ -255,8 +257,28 @@ static TimingDecode decodeTimingByte(uint8_t b, JsonObject model) {
                                       : (float)(model["multExtended"] | MB_TIMING_MULT_EXTENDED);
   float t0Fallback   = model.isNull() ? MB_TIMING_T0_FALLBACK_SEC
                                       : (float)(model["t0FallbackSec"] | MB_TIMING_T0_FALLBACK_SEC);
-  float fadeStepSec  = model.isNull() ? (MB_TIMING_FADE_STEP_MS / 1000.0f)
-                                      : (float)(model["fadeStepSec"] | (MB_TIMING_FADE_STEP_MS / 1000.0f));
+
+  // fadeBits stretches the final flash cycle — folded into on-time, not a separate fade
+  // phase. Null model (firmware defaults) has no stretch — matches E9 05/09 where stretch
+  // has not been observed. Prefer fadeBitsStretchSec[]; fall back to deprecated fadeStepSec.
+  float stretchSec = 0.0f;
+  if (!model.isNull()) {
+    bool stretchAppliesToExtended = model["fadeBitsStretchAppliesToExtended"] | false;
+    if (model["fadeBitsStretchSec"].is<JsonArray>()) {
+      JsonArray stretchArr = model["fadeBitsStretchSec"].as<JsonArray>();
+      if (fadeBits < stretchArr.size()) {
+        if (!extended || stretchAppliesToExtended) {
+          stretchSec = stretchArr[fadeBits].as<float>();
+          if (stretchSec < 0.0f) stretchSec = 0.0f;
+        }
+      }
+    } else if (model.containsKey("fadeStepSec") && (!extended || stretchAppliesToExtended)) {
+      // Deprecated: old fadeBits * fadeStepSec → treat as stretch amount.
+      float fadeStepSec = (float)(model["fadeStepSec"] | 0.0);
+      if (fadeStepSec > 0.0f) stretchSec = (float)fadeBits * fadeStepSec;
+    }
+  }
+
   float onSec;
   if (extended) {
     onSec = (t == 0) ? t0Fallback : (multExtended * (float)t);
@@ -265,9 +287,11 @@ static TimingDecode decodeTimingByte(uint8_t b, JsonObject model) {
   } else {
     onSec = (t == 0) ? t0Fallback : (multNormal * (float)t);
   }
+  onSec += stretchSec;
+
   TimingDecode out;
   out.onTimeMs = (unsigned long)(onSec * 1000.0f + 0.5f);
-  out.fadeMs = (unsigned long)(fadeBits * fadeStepSec * 1000.0f + 0.5f);
+  out.stretchMs = (unsigned long)(stretchSec * 1000.0f + 0.5f);
   out.extended = extended;
   out.scaler = scaler;
   return out;
@@ -313,7 +337,7 @@ static float resolveTimingDerivedValue(const JsonObject& rule, const uint8_t* pa
   uint8_t tByte = (payload && tOff < plen) ? payload[tOff] : 0;
   TimingDecode td = decodeTimingByte(tByte, tm);
   if (strcmp(source, "timingOnSec") == 0) return td.onTimeMs / 1000.0f;
-  if (strcmp(source, "timingFadeSec") == 0) return td.fadeMs / 1000.0f;
+  if (strcmp(source, "timingFadeSec") == 0) return td.stretchMs / 1000.0f;
   return 0.0f;
 }
 
@@ -719,7 +743,8 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   if (timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
     fadeOverride = (long)(timing["fadeOverrideMs"] | -1);
   }
-  mbRuleFadeMs = (fadeOverride >= 0) ? (unsigned long)fadeOverride : td.fadeMs;
+  // stretchMs drives the FTB transition during the final flash cycle (timingFade mode).
+  mbRuleFadeMs = (fadeOverride >= 0) ? (unsigned long)fadeOverride : td.stretchMs;
 
   mbRuleStopBlendingStyle = -1;
   JsonObject stopTr = rule["stopTransition"].as<JsonObject>();
@@ -732,15 +757,23 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
                && !stopTr["timeMs"].isNull()) {
       mbRuleFadeMs = (unsigned long)(stopTr["timeMs"] | mbRuleFadeMs);
     }
-    // else durationMode "timingFade": keep mbRuleFadeMs from timing / fadeOverrideMs
+    // else durationMode "timingFade": keep mbRuleFadeMs from stretch / fadeOverrideMs
     mbRuleStopBlendingStyle = blendingStyleFromTypeString(stype);
   }
 
   mbRuleCooldownMs = (unsigned long)cooldownSec * 1000UL;
   mbRulePhase = MB_RULE_ON;
-  mbRulePhaseDeadlineMs = millis() + td.onTimeMs;
-  Serial.printf("[Rule] timing ON %lums fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X stopBs=%d\n",
-                td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
+  // onTimeMs already includes stretch. Start FTB stretchMs before the end so total
+  // lit+fading time matches onTimeMs (fade IS the last cycle, not appended after).
+  unsigned long onHoldMs = td.onTimeMs;
+  if (mbRuleFadeMs > 0 && mbRuleFadeMs < onHoldMs) {
+    onHoldMs -= mbRuleFadeMs;
+  } else if (mbRuleFadeMs >= onHoldMs && onHoldMs > 0) {
+    onHoldMs = 1;
+  }
+  mbRulePhaseDeadlineMs = millis() + (onHoldMs > 0 ? onHoldMs : 1);
+  Serial.printf("[Rule] timing ON hold=%lums (totalOn=%lums) stretch/fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X stopBs=%d\n",
+                onHoldMs, td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
                 mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
                 timingModelId[0] ? timingModelId : "(default)", byte, mbRuleStopBlendingStyle);
 }

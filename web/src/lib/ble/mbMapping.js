@@ -83,7 +83,7 @@ export function createEmptyExtract(name = '') {
 export const TIMING_DERIVED_SOURCES = [
   { value: 'timingFlashRate', label: 'Flash rate (Hz)', unit: 'Hz', defaultField: 'sx', defaultCurve: 'reciprocal' },
   { value: 'timingOnSec', label: 'On-time (sec)', unit: 's', defaultField: 'ix', defaultCurve: 'linear' },
-  { value: 'timingFadeSec', label: 'Fade duration (sec)', unit: 's', defaultField: 'c1', defaultCurve: 'linear' },
+  { value: 'timingFadeSec', label: 'Final-cycle stretch (sec)', unit: 's', defaultField: 'c1', defaultCurve: 'linear' },
 ];
 
 export const TIMING_DERIVED_SOURCE_SET = new Set(TIMING_DERIVED_SOURCES.map((s) => s.value));
@@ -241,8 +241,14 @@ export const DEFAULT_TIMING_MODEL_VALUES = {
   multScaler: 3.0,
   multExtended: 7.6,
   t0FallbackSec: 3.0,
-  fadeStepSec: 0.5,
   fadeCurve: 'linear',
+  // Extra seconds added to the final flash cycle length, indexed by fadeBits (0–3).
+  // fadeBits stretches the LAST cycle (LED fades during that stretch) rather than
+  // appending a separate fade phase after on-time. 0 = no stretch.
+  fadeBitsStretchSec: [0, 0, 0, 0],
+  fadeBitsStretchAppliesToExtended: false,
+  /** @deprecated Unused in lifecycle math — prefer fadeBitsStretchSec. Kept for older saved configs. */
+  fadeStepSec: 0.5,
 };
 
 export function createEmptyStrobeEffect(overrides = {}) {
@@ -282,8 +288,12 @@ export function defaultTimingModels() {
       multScaler: 3.0,
       multExtended: 7.6,
       t0FallbackSec: 3.0,
-      fadeStepSec: 0.25,
       fadeCurve: 'linear',
+      // Lab 2026-07-21: fadeBits stretches the FINAL flash cycle (not a post-on fade).
+      // fadeBits=01 confirmed +0.5s (scaler 0/1). fadeBits=10 provisional (~+0.75–1.25s → 1.0).
+      // fadeBits=11 unconfirmed. Extended mode stretch disabled until retested.
+      fadeBitsStretchSec: [0, 0.5, 1.0, 0],
+      fadeBitsStretchAppliesToExtended: false,
       strobeEffect: createEmptyStrobeEffect({
         enabled: true,
         fx: 23,
@@ -321,6 +331,18 @@ export function normalizeTimingModel(raw, index = 0) {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
+  const normalizeStretchArr = (raw4, fallback4) => {
+    if (!Array.isArray(raw4)) return [...fallback4];
+    return [0, 1, 2, 3].map((i) => clampPos(raw4[i], fallback4[i] ?? 0));
+  };
+  // Prefer fadeBitsStretchSec; migrate deprecated fadeStepSec → [0, s, 2s, 3s] when missing.
+  let stretchFallback = d.fadeBitsStretchSec;
+  if (!Array.isArray(raw.fadeBitsStretchSec)) {
+    const step = Number(raw.fadeStepSec);
+    if (Number.isFinite(step) && step >= 0) {
+      stretchFallback = [0, step, step * 2, step * 3];
+    }
+  }
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : shortTimingModelId(),
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : d.name,
@@ -328,8 +350,11 @@ export function normalizeTimingModel(raw, index = 0) {
     multScaler: clampPos(raw.multScaler, d.multScaler),
     multExtended: clampPos(raw.multExtended, d.multExtended),
     t0FallbackSec: clampPos(raw.t0FallbackSec, d.t0FallbackSec),
-    fadeStepSec: clampPos(raw.fadeStepSec, d.fadeStepSec),
     fadeCurve: FADE_CURVES.has(raw.fadeCurve) ? raw.fadeCurve : 'linear',
+    fadeBitsStretchSec: normalizeStretchArr(raw.fadeBitsStretchSec, stretchFallback),
+    fadeBitsStretchAppliesToExtended: !!raw.fadeBitsStretchAppliesToExtended,
+    /** @deprecated Kept so older saved JSON round-trips; lifecycle uses fadeBitsStretchSec. */
+    fadeStepSec: clampPos(raw.fadeStepSec, d.fadeStepSec),
     strobeEffect: normalizeStrobeEffect(raw.strobeEffect),
   };
 }

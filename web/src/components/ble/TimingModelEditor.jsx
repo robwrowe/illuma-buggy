@@ -21,7 +21,7 @@ import {
 
 const FADE_CURVE_OPTS = [
   { value: 'linear', label: 'Linear', searchText: 'linear' },
-  { value: 'decelerating', label: 'Decelerating (duration only)', searchText: 'decelerating non-linear' },
+  { value: 'decelerating', label: 'Decelerating (dim shape)', searchText: 'decelerating non-linear' },
 ];
 
 function TimingModelCard({
@@ -102,30 +102,56 @@ function TimingModelCard({
         </Field>
       </SimpleGrid>
 
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="sm">
-        <Field label="Fade step (sec / fadeBits)">
-          <NumberInput
-            size="xs"
-            decimalScale={3}
-            step={0.05}
-            min={0}
-            value={m.fadeStepSec}
-            onChange={(v) => set({ fadeStepSec: Number(v) || 0 })}
-          />
-        </Field>
-        <Field label="Fade curve">
-          <SearchableSelect
-            value={m.fadeCurve || 'linear'}
-            onChange={(fadeCurve) => set({ fadeCurve })}
-            options={FADE_CURVE_OPTS}
-            allowEmpty={false}
-          />
-        </Field>
+      <Text size="xs" fw={600} c="dimmed" mb={4}>Final-cycle stretch by fadeBits</Text>
+      <Text size="xs" c="dimmed" mb={4}>
+        fadeBits stretches the LAST flash cycle (the LED fades out during that stretch, rather than
+        a separate fade phase after on-time ends). Value = extra seconds added to that one cycle.
+        fadeBits=00 should stay 0. Lab-confirmed for E9 0E only.
+      </Text>
+      <SimpleGrid cols={4} spacing="xs" mb="xs">
+        {[0, 1, 2, 3].map((i) => (
+          <Field key={i} label={`fadeBits=${i}`}>
+            <NumberInput
+              size="xs"
+              decimalScale={2}
+              step={0.05}
+              min={0}
+              value={m.fadeBitsStretchSec?.[i] ?? 0}
+              onChange={(v) => {
+                const next = [...(m.fadeBitsStretchSec || [0, 0, 0, 0])];
+                next[i] = Number(v) || 0;
+                set({ fadeBitsStretchSec: next });
+              }}
+            />
+          </Field>
+        ))}
       </SimpleGrid>
+      <Checkbox
+        label="Apply stretch in extended-timeout mode"
+        checked={!!m.fadeBitsStretchAppliesToExtended}
+        onChange={(e) => set({ fadeBitsStretchAppliesToExtended: e.target.checked })}
+        mb="sm"
+      />
+      {!m.fadeBitsStretchAppliesToExtended && (
+        <Text size="xs" c="dimmed" mb="sm">
+          Currently disabled — lab data for extended-mode + fadeBits=01 is inconsistent (flash
+          counts varied 7 vs 13 across repeat sessions on an identical packet). Re-enable once
+          that&apos;s resolved.
+        </Text>
+      )}
+
+      <Field label="Dim curve during stretch">
+        <SearchableSelect
+          value={m.fadeCurve || 'linear'}
+          onChange={(fadeCurve) => set({ fadeCurve })}
+          options={FADE_CURVE_OPTS}
+          allowEmpty={false}
+        />
+      </Field>
       {m.fadeCurve === 'decelerating' && (
         <Text size="xs" c="orange" mb="sm">
-          Non-linear fade is documented only — WLED still gets a single fade duration.
-          Duration numbers are what we can match reliably.
+          Non-linear dim during the stretched final cycle is documented only — WLED still gets a
+          single transition duration. Duration numbers are what we can match reliably.
         </Text>
       )}
 
@@ -230,8 +256,8 @@ export function TimingModelEditor({ mb, effectOptions = [], onChange }) {
     <AppCard>
       <SectionHead title="Timing models" />
       <Text size="xs" c="dimmed" mb="sm">
-        Named on-time / fade formulas referenced by rules (like segment maps). Empty timing
-        model on a rule uses firmware defaults (same as E9 05/09 standard).
+        Named on-time / final-cycle stretch formulas referenced by rules (like segment maps).
+        Empty timing model on a rule uses firmware defaults (same as E9 05/09 standard — no stretch).
       </Text>
       <Group gap="xs" mb="sm" wrap="wrap">
         <AppButton size="compact-xs" onClick={addModel}>Add model</AppButton>

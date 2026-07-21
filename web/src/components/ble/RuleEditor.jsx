@@ -515,7 +515,7 @@ function TimingParamBindingEditor({
         </Field>
         {!timingConfigured && (
           <Text size="xs" c="orange" style={{ gridColumn: '1 / -1' }}>
-            Pick a timing model — flash rate / on-time / fade come from that model&apos;s formulas. Without one, values read as 0.
+            Pick a timing model — flash rate / on-time / final-cycle stretch come from that model&apos;s formulas. Without one, values read as 0.
             {onEditTimingModels ? (
               <>
                 {' '}
@@ -968,9 +968,9 @@ function RuleCard({
               : 'off'}
           >
             <Text size="xs" c="dimmed" mb="xs">
-              On-time and fade-out come from the packet timing byte (how long the effect runs).
-              Cooldown is how long lights stay black after fade-out. Bind flash rate / on-time /
-              fade to segment fields (sx, ix, …) in the section at the bottom of this card.
+              On-time comes from the packet timing byte (including final-cycle stretch from fadeBits).
+              Cooldown is how long lights stay black after the stretched final cycle. Bind flash rate /
+              on-time / stretch to segment fields (sx, ix, …) in the section at the bottom of this card.
             </Text>
             <Switch
               label="Use packet timing byte"
@@ -1004,10 +1004,10 @@ function RuleCard({
                   disabled={!timing.enabled}
                 />
               </Field>
-              <Field label="Fade override (ms)">
+              <Field label="Stretch override (ms)">
                 <NumberInput
                   value={timing.fadeOverrideMs ?? ''}
-                  placeholder="Packet timing"
+                  placeholder="Packet stretch"
                   onChange={(v) => {
                     const blank = v === '' || v === null || v === undefined;
                     onChange({
@@ -1060,8 +1060,8 @@ function RuleCard({
 
             <Text size="sm" fw={700} mt="md" mb={4}>Wire timing values → segment fields</Text>
             <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
-              Duration (on / fade / black hold) is controlled above. Use bindings here to push
-              decoded flash rate, on-time, or fade duration through a curve into any segment
+              Duration (on / stretch / black hold) is controlled above. Use bindings here to push
+              decoded flash rate, on-time, or final-cycle stretch through a curve into any segment
               param (sx, ix, c1–c3, o1–o3, or a custom usermod field).
             </Text>
             <Stack gap="xs">
@@ -1143,12 +1143,12 @@ function RuleCard({
           <CollapsibleBlock
             title="Stop transition"
             summary={stopTransition.enabled
-              ? `${stopTransition.type || 'fade'} · ${stopTransition.durationMode === 'custom' ? `${stopTransition.timeMs ?? 0}ms` : 'timing fade'}`
+              ? `${stopTransition.type || 'fade'} · ${stopTransition.durationMode === 'custom' ? `${stopTransition.timeMs ?? 0}ms` : 'timing stretch'}`
               : 'off (plain FTB)'}
           >
             <Text size="xs" c="dimmed" mb="xs">
               How the effect transitions out to fade-to-black. Duration defaults to the timing
-              byte&apos;s fade-out; choose Custom to override.
+              byte&apos;s final-cycle stretch; choose Custom to override.
             </Text>
             <Switch
               label="Use stop transition"
@@ -1192,7 +1192,7 @@ function RuleCard({
                     },
                   })}
                   data={[
-                    { value: 'timingFade', label: 'Timing fade' },
+                    { value: 'timingFade', label: 'Timing stretch' },
                     { value: 'custom', label: 'Custom' },
                   ]}
                   disabled={!stopTransition.enabled || stopTransition.type === 'instant'}
@@ -1417,11 +1417,11 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
               <Text size="xs" c="dimmed" mt={4}>
                 timing 0x{p.timing.raw.toString(16).padStart(2, '0')}
                 {' '}→ on {p.timing.onSec.toFixed(1)}s
-                {' · '}fade {p.timing.fadeSec.toFixed(1)}s
+                {' · '}stretch {p.timing.stretchSec.toFixed(1)}s
                 {' · '}black hold {p.timing.cooldownSec}s
                 {p.timing.extended ? ' · extended' : ''}
                 {p.timing.scaler ? ' · scaler' : ''}
-                {p.timing.fadeCurve === 'decelerating' ? ' · fade≈non-linear' : ''}
+                {p.timing.fadeCurve === 'decelerating' ? ' · stretch≈non-linear dim' : ''}
                 {p.timing.strobe
                   ? ` · strobe ${p.timing.strobe.flashRateHz.toFixed(2)} Hz → fx=${p.timing.strobe.fx} sx=${p.timing.strobe.sx}`
                   : ''}

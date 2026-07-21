@@ -213,8 +213,9 @@ export function strobeSxFromFlashRateHz(flashRateHz) {
 }
 
 /**
- * On / fade / cooldown lifecycle from a timing byte + optional timing model + rule cooldownSec.
- * When model is null/undefined, uses the same hardcoded defaults as firmware Config.h.
+ * On / stretch / cooldown lifecycle from a timing byte + optional timing model + rule cooldownSec.
+ * When model is null/undefined, uses the same hardcoded defaults as firmware Config.h
+ * (no final-cycle stretch — stretch is timing-model data, lab-confirmed on E9 0E).
  * @param {number} byte
  * @param {number} [cooldownSec=2]
  * @param {object|null} [model] normalized timing model (or null for firmware defaults)
@@ -227,14 +228,21 @@ export function computeTimingLifecycle(byte, cooldownSec = 2, model = null) {
   const multScaler = Number.isFinite(m?.multScaler) ? Number(m.multScaler) : 3.0;
   const multExtended = Number.isFinite(m?.multExtended) ? Number(m.multExtended) : 7.6;
   const t0Fallback = Number.isFinite(m?.t0FallbackSec) ? Number(m.t0FallbackSec) : 3.0;
-  const fadeStepSec = Number.isFinite(m?.fadeStepSec) ? Number(m.fadeStepSec) : 0.5;
   const fadeCurve = m?.fadeCurve === 'decelerating' ? 'decelerating' : 'linear';
+
+  // fadeBits stretches the final flash cycle — stretchSec is extra length of that one
+  // cycle over a normal cycle, not a separate fade phase after on-time.
+  const stretchArr = Array.isArray(m?.fadeBitsStretchSec) ? m.fadeBitsStretchSec : [0, 0, 0, 0];
+  const stretchAppliesToExtended = !!m?.fadeBitsStretchAppliesToExtended;
+  const rawStretch = Number.isFinite(stretchArr[fadeBits]) ? Number(stretchArr[fadeBits]) : 0;
+  const stretchSec = (extended && !stretchAppliesToExtended) ? 0 : Math.max(0, rawStretch);
 
   let onSec;
   if (extended) onSec = t === 0 ? t0Fallback : multExtended * t;
   else if (scaler) onSec = t === 0 ? t0Fallback : multScaler * t;
   else onSec = t === 0 ? t0Fallback : multNormal * t;
-  const fadeSec = fadeBits * fadeStepSec;
+  onSec += stretchSec;
+
   const cooldown = Number.isFinite(cooldownSec) ? Math.max(0, Number(cooldownSec)) : 2;
 
   let strobe = null;
@@ -253,10 +261,13 @@ export function computeTimingLifecycle(byte, cooldownSec = 2, model = null) {
   return {
     ...decoded,
     onSec,
-    fadeSec,
+    stretchSec,
+    /** @deprecated Alias of stretchSec — fade is folded into onSec. */
+    fadeSec: stretchSec,
     fadeCurve,
     cooldownSec: cooldown,
-    totalSec: onSec + fadeSec + cooldown,
+    // Fade is inside onSec (final-cycle stretch); do not add a separate fade phase.
+    totalSec: onSec + cooldown,
     strobe,
   };
 }
@@ -315,7 +326,7 @@ export function resolveTimingDerivedValue(rule, payloadBytes, timingModels = [],
   }
   if (source === 'timingOnSec' || source === 'timingFadeSec') {
     const life = computeTimingLifecycle(byte, timing.cooldownSec ?? 2, model);
-    return source === 'timingOnSec' ? life.onSec : life.fadeSec;
+    return source === 'timingOnSec' ? life.onSec : life.stretchSec;
   }
   return 0;
 }
