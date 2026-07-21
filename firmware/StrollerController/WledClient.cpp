@@ -166,15 +166,9 @@ void loadWledBaselineFromNvs() {
 }
 
 void ensureWledPowerOn() {
-  DynamicJsonDocument doc(12288);
-  if (baselineWledState.length() > 0 &&
-      deserializeJson(doc, baselineWledState) == DeserializationError::Ok) {
-    if (!doc["on"].as<bool>()) {
-      sendToWLED("{\"on\":true}");
-      Serial.println("[WLED] Master power was off — sent on:true (relay)");
-    }
-    return;
-  }
+  // Always POST on:true — do not infer live power from baselineWledState (boot
+  // snapshot). Mid-session {"on":false} (FTB fallback, etc.) leaves that snapshot
+  // stale and would skip the relay restore before the next rule payload.
   sendToWLED("{\"on\":true}");
 }
 
