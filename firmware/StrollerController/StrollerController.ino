@@ -27,6 +27,11 @@ void setup() {
   delay(500);
   randomSeed(esp_random());
   Serial.println("\n[Boot] StrollerController v2.1");
+  Serial.printf("[Boot] freeHeap=%u maxAllocHeap=%u psramSize=%u psramFree=%u\n",
+                (unsigned)ESP.getFreeHeap(),
+                (unsigned)ESP.getMaxAllocHeap(),
+                (unsigned)ESP.getPsramSize(),
+                ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
 
   // Load NVS config
   prefs.begin("config", true);

@@ -1098,7 +1098,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
                   (unsigned)wledJson.length(), wledJson.c_str());
     return;
   }
-  Serial.printf("[Rule] posting WLED (%u bytes)\n", (unsigned)wledJson.length());
+  Serial.printf("[Rule] posting WLED (%u bytes) id=%s name=%s\n",
+                (unsigned)wledJson.length(),
+                rule["id"] | "(no id)", rule["name"] | "(no name)");
   // preparePresetApplyPayload forces on:true in the same POST (GLEDOPTO relay).
   // Do not call ensureWledPowerOn() first — an extra HTTP under scan load often
   // fails silently and is redundant once on is in the apply body.
@@ -1108,7 +1110,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     injectWledTransition(body, startTransMs, hasStartTr ? blendingStyle : -1),
     1200, 0);
   if (!ok) {
-    Serial.println("[Rule] WLED apply failed");
+    Serial.printf("[Rule] WLED apply failed id=%s name=%s\n",
+                  rule["id"] | "(no id)", rule["name"] | "(no name)");
     return;
   }
 
@@ -1120,7 +1123,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     touchOverrideIdleTimer(src);
   }
 
-  Serial.printf("[Rule] Applied preset=%s map=%s src=%d\n",
+  Serial.printf("[Rule] Applied id=%s name=%s preset=%s map=%s src=%d\n",
+                rule["id"] | "(no id)", rule["name"] | "(no name)",
                 presetId.c_str(), mapId, (int)src);
   bleNotify(wand
     ? "{\"type\":\"sw_event\",\"event\":\"rule\"}"

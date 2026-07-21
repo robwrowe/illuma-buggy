@@ -160,7 +160,8 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   int matchIdx = findMatchingRule(payload, plen, rules);
   if (matchIdx >= 0) {
     JsonObject rule = rules[matchIdx].as<JsonObject>();
-    Serial.printf("[Rule] match idx=%d name=%s\n", matchIdx, rule["name"] | "");
+    Serial.printf("[Rule] match idx=%d id=%s name=%s\n",
+                  matchIdx, rule["id"] | "(no id)", rule["name"] | "(no name)");
     applyMatchedRule(rule, payload, plen);
     // Only dedupe after a successful apply (setOverride). Failed/hung applies must be
     // eligible to retry on the next advert.

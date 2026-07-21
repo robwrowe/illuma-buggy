@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include "BleCommandHandler.h"
 #include "Config.h"
+#include <esp_heap_caps.h>
 
 void resetCmdChunkBuffer() {
   cmdChunkBuffer = "";
@@ -66,7 +67,13 @@ void bleNotifyChunked(const String& type, const String& payload) {
 // ─────────────────────────────────────────────
 
 void processBleCmdChunk(int seq, bool last, const String& data) {
-  if (seq == 0) resetCmdChunkBuffer();
+  if (seq == 0) {
+    resetCmdChunkBuffer();
+    // Avoid ~N realloc/copies while assembling large set_mb_rules payloads —
+    // repeated String growth fragments the internal heap and can make the
+    // subsequent enqueueBleCommand malloc fail even when freeHeap looks fine.
+    cmdChunkBuffer.reserve(BLE_CMD_BUF_SIZE);
+  }
   if (seq != cmdChunkNextSeq) {
     Serial.printf("[BLE] Chunk seq mismatch (got %d, expected %d)\n", seq, cmdChunkNextSeq);
     bleNotify(String("{\"type\":\"chunk_sync_failed\",\"expectedSeq\":") +
@@ -96,12 +103,25 @@ void enqueueBleCommand(const String& msg) {
     Serial.printf("[BLE] Command size %u rejected\n", (unsigned)msg.length());
     return;
   }
-  char* buf = (char*)malloc(msg.length() + 1);
+  const size_t need = msg.length() + 1;
+  // Prefer PSRAM for large infrequent command buffers (rules JSON) so we do not
+  // fragment the internal heap used by BLE / ESP-NOW / HTTP.
+  char* buf = (char*)heap_caps_malloc(need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) {
-    Serial.println("[BLE] Command alloc failed");
+    buf = (char*)malloc(need);
+  }
+  if (!buf) {
+    Serial.printf("[BLE] Command alloc failed (%u bytes, freeHeap=%u, largestFreeBlock=%u, psramFree=%u)\n",
+                  (unsigned)need,
+                  (unsigned)ESP.getFreeHeap(),
+                  (unsigned)ESP.getMaxAllocHeap(),
+                  ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+    bleNotify("{\"type\":\"cmd_alloc_failed\",\"needed\":" + String((unsigned)need) +
+              ",\"freeHeap\":" + String(ESP.getFreeHeap()) +
+              ",\"maxAllocHeap\":" + String(ESP.getMaxAllocHeap()) + "}");
     return;
   }
-  memcpy(buf, msg.c_str(), msg.length() + 1);
+  memcpy(buf, msg.c_str(), need);
   PendingBleCmd item = { buf };
   if (xQueueSend(bleCmdQueue, &item, 0) != pdTRUE) {
     static uint32_t bleCmdDropCount = 0;
