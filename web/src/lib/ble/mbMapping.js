@@ -224,9 +224,10 @@ export function createEmptyRuleTiming() {
   return {
     enabled: false,
     offset: 5,
-    cooldownSec: 10,
+    cooldownSec: 2,
     cooldownResetMode: 'onMatch',
     timingModelId: '',
+    fadeOverrideMs: null,
   };
 }
 
@@ -739,12 +740,18 @@ export function normalizeSegmentMap(raw) {
 export function normalizeRuleTiming(raw) {
   const d = createEmptyRuleTiming();
   if (!raw || typeof raw !== 'object') return { ...d };
+  let fadeOverrideMs = null;
+  if (raw.fadeOverrideMs !== null && raw.fadeOverrideMs !== undefined && raw.fadeOverrideMs !== '') {
+    const n = Number(raw.fadeOverrideMs);
+    if (Number.isFinite(n) && n >= 0) fadeOverrideMs = n;
+  }
   return {
     enabled: !!raw.enabled,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : d.offset,
     cooldownSec: Number.isFinite(raw.cooldownSec) ? Math.max(0, Number(raw.cooldownSec)) : d.cooldownSec,
     cooldownResetMode: COOLDOWN_RESET_MODES.has(raw.cooldownResetMode) ? raw.cooldownResetMode : d.cooldownResetMode,
     timingModelId: typeof raw.timingModelId === 'string' ? raw.timingModelId : '',
+    fadeOverrideMs,
   };
 }
 

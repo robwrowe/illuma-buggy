@@ -87,6 +87,7 @@ void setup() {
   showLookFireworksPre  = prefs.getString("showFwPre", "");
   showLookFireworksLive = prefs.getString("showFwLive", "__BLACK__");
   showLookFireworksPost = prefs.getString("showFwPost", "");
+  mbFadeToBlackPresetId = prefs.getString("mbFtbPreset", "");
   wledSsid = prefs.getString("wledSsid", "KyLan Ren");
   wledPass = prefs.getString("wledPass", "tigers2016");
   wledIp   = prefs.getString("wledIp", "wled.local");

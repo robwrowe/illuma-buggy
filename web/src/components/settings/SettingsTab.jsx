@@ -26,6 +26,7 @@ import { MB_COLOR_NAMES, MB_PAL_RANDOM } from '../../lib/ble/mbConstants';
 import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
 import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
+import { webBleBoard } from '../../lib/ble/chunking';
 
 export function SettingsTab({ data, update }) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
@@ -277,7 +278,12 @@ export function SettingsTab({ data, update }) {
             <SectionHead>Quick Actions</SectionHead>
             <Field label="Fade to Black preset">
               <SearchableSelect value={data.ftbPresetId || ''} allowEmpty={true}
-                onChange={v => update({ ftbPresetId: v })}
+                onChange={(v) => {
+                  update({ ftbPresetId: v });
+                  if (webBleBoard.connected) {
+                    webBleBoard.send({ type: 'mb_rule_config', ftbPresetId: v || '' }).catch(() => {});
+                  }
+                }}
                 placeholder="Pure black (no preset)"
                 options={presets.map(p => ({ value: p.id, label: p.name, searchText: p.name }))} />
             </Field>

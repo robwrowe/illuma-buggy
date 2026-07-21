@@ -12,6 +12,7 @@ export const DEFAULT_BOARD_SYNC_OPTIONS = {
   effectTransition: true,
   overrideMode: true,
   showMode: true,
+  mbRuleConfig: true,
 };
 
 export function loadBoardSyncOptions() {
@@ -88,6 +89,16 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
     await delay(BLE_SEND_DELAY_MS);
   }
 
+  if (opts.mbRuleConfig) {
+    onProgress?.('Sending MB rule fade-to-black preset…');
+    await webBleBoard.send({
+      type: 'mb_rule_config',
+      ftbPresetId: data.ftbPresetId || '',
+    });
+    sent.push('MB rule FTB');
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
   if (opts.showMode) {
     onProgress?.('Sending show mode config…');
     await webBleBoard.send({
@@ -126,5 +137,6 @@ export const BOARD_SYNC_ITEMS = [
   { key: 'mbConfig', label: 'MagicBand+', hint: () => 'Enabled, 5-point mode, timeout' },
   { key: 'effectTransition', label: 'Effect transitions', hint: (data) => `${data.bleEffectTransitionMs ?? 700} ms fade` },
   { key: 'overrideMode', label: 'Override mode', hint: (data) => data.overrideKillOnZone ? 'Kill override on zone entry' : 'Keep override in zones' },
+  { key: 'mbRuleConfig', label: 'MB rule FTB preset', hint: (data) => data.ftbPresetId ? `Preset ${data.ftbPresetId}` : 'Pure black (on:false fallback)' },
   { key: 'showMode', label: 'Show mode', hint: () => 'Parade + fireworks preset looks' },
 ];

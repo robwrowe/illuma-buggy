@@ -911,7 +911,7 @@ function RuleCard({
           <CollapsibleBlock
             title="Timing"
             summary={timing.enabled
-              ? `on · hold ${timing.cooldownSec ?? 10}s${timing.timingModelId ? ` · ${timingModelOpts.find((m) => m.value === timing.timingModelId)?.label || timing.timingModelId}` : ''}`
+              ? `on · hold ${timing.cooldownSec ?? 2}s${timing.timingModelId ? ` · ${timingModelOpts.find((m) => m.value === timing.timingModelId)?.label || timing.timingModelId}` : ''}`
               : 'off'}
           >
             <Text size="xs" c="dimmed" mb="xs">
@@ -942,11 +942,29 @@ function RuleCard({
               </Field>
               <Field label="Black hold / cooldown (sec)">
                 <NumberInput
-                  value={timing.cooldownSec ?? 10}
+                  value={timing.cooldownSec ?? 2}
                   onChange={(v) => onChange({
                     ...rule,
                     timing: { ...timing, cooldownSec: Math.max(0, parseInt(v, 10) || 0) },
                   })}
+                  min={0}
+                  disabled={!timing.enabled}
+                />
+              </Field>
+              <Field label="Fade override (ms)">
+                <NumberInput
+                  value={timing.fadeOverrideMs ?? ''}
+                  placeholder="Packet timing"
+                  onChange={(v) => {
+                    const blank = v === '' || v === null || v === undefined;
+                    onChange({
+                      ...rule,
+                      timing: {
+                        ...timing,
+                        fadeOverrideMs: blank ? null : Math.max(0, parseInt(v, 10) || 0),
+                      },
+                    });
+                  }}
                   min={0}
                   disabled={!timing.enabled}
                 />
@@ -1163,7 +1181,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
         if (matched && selectedRule.timing?.enabled && bytes.length > Number(selectedRule.timing.offset ?? 0)) {
           timing = computeTimingLifecycle(
             bytes[Number(selectedRule.timing.offset ?? 0)],
-            selectedRule.timing.cooldownSec ?? 10,
+            selectedRule.timing.cooldownSec ?? 2,
             modelFor(selectedRule),
           );
         }
@@ -1207,7 +1225,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
       if (first?.timing?.enabled && bytes.length > Number(first.timing.offset ?? 0)) {
         timing = computeTimingLifecycle(
           bytes[Number(first.timing.offset ?? 0)],
-          first.timing.cooldownSec ?? 10,
+          first.timing.cooldownSec ?? 2,
           modelFor(first),
         );
       }

@@ -216,10 +216,10 @@ export function strobeSxFromFlashRateHz(flashRateHz) {
  * On / fade / cooldown lifecycle from a timing byte + optional timing model + rule cooldownSec.
  * When model is null/undefined, uses the same hardcoded defaults as firmware Config.h.
  * @param {number} byte
- * @param {number} [cooldownSec=10]
+ * @param {number} [cooldownSec=2]
  * @param {object|null} [model] normalized timing model (or null for firmware defaults)
  */
-export function computeTimingLifecycle(byte, cooldownSec = 10, model = null) {
+export function computeTimingLifecycle(byte, cooldownSec = 2, model = null) {
   const decoded = decodeTimingByte(byte);
   const { t, fadeBits, scaler, extended } = decoded;
   const m = model && typeof model === 'object' ? model : null;
@@ -235,7 +235,7 @@ export function computeTimingLifecycle(byte, cooldownSec = 10, model = null) {
   else if (scaler) onSec = t === 0 ? t0Fallback : multScaler * t;
   else onSec = t === 0 ? t0Fallback : multNormal * t;
   const fadeSec = fadeBits * fadeStepSec;
-  const cooldown = Number.isFinite(cooldownSec) ? Math.max(0, Number(cooldownSec)) : 10;
+  const cooldown = Number.isFinite(cooldownSec) ? Math.max(0, Number(cooldownSec)) : 2;
 
   let strobe = null;
   const se = m?.strobeEffect;
@@ -314,7 +314,7 @@ export function resolveTimingDerivedValue(rule, payloadBytes, timingModels = [],
     return resolveFlashRateHz(rule, payloadBytes, timingModels);
   }
   if (source === 'timingOnSec' || source === 'timingFadeSec') {
-    const life = computeTimingLifecycle(byte, timing.cooldownSec ?? 10, model);
+    const life = computeTimingLifecycle(byte, timing.cooldownSec ?? 2, model);
     return source === 'timingOnSec' ? life.onSec : life.fadeSec;
   }
   return 0;
@@ -456,7 +456,7 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
     const model = extractRule.timing.timingModelId
       ? timingModels.find((m) => m.id === extractRule.timing.timingModelId) || null
       : null;
-    timing = computeTimingLifecycle(bytes[offset], extractRule.timing.cooldownSec ?? 10, model);
+    timing = computeTimingLifecycle(bytes[offset], extractRule.timing.cooldownSec ?? 2, model);
   }
   return {
     hex,

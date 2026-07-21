@@ -55,6 +55,7 @@ String showLookParadeLive    = "";
 String showLookFireworksPre  = "";
 String showLookFireworksLive = "__BLACK__";
 String showLookFireworksPost = "";
+String mbFadeToBlackPresetId = "";  // "" = fall back to {"on":false}
 
 int    currentBrightness = 128;
 String currentPresetId   = "";

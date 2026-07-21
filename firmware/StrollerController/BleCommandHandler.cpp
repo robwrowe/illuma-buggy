@@ -114,6 +114,16 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"override_mode\",\"kill_on_zone\":" + String(overrideKillOnZone ? "true" : "false") + "}");
   }
 
+  else if (type == "mb_rule_config") {
+    if (doc.containsKey("ftbPresetId")) {
+      mbFadeToBlackPresetId = doc["ftbPresetId"] | "";
+      prefs.begin("config", false);
+      prefs.putString("mbFtbPreset", mbFadeToBlackPresetId);
+      prefs.end();
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"mb_rule_config\"}");
+  }
+
   else if (type == "show_mode_config") {
     if (doc.containsKey("parade")) {
       JsonObject p = doc["parade"];

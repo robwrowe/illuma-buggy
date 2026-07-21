@@ -502,7 +502,7 @@ export default function SettingsScreen() {
       <View style={s.section}>
         <Text style={s.sectionTitle}>Quick Actions</Text>
         <Text style={s.sectionHint}>
-          Fade to Black uses this preset when tapped on Home (or pure black if none selected).
+          Used for Home “Fade to Black” and MB rule fade-out (keeps WLED powered so the next effect can render). Empty = master power off.
         </Text>
         <TouchableOpacity style={s.dataBtn} onPress={() => setFtbPickerOpen(true)}>
           <IconMoon size={16} color={colors.primary} />
@@ -518,7 +518,11 @@ export default function SettingsScreen() {
         presets={presets}
         selectedId={ftbPresetId}
         emptyLabel="Pure black (no preset)"
-        onSelect={(id) => { setFtbPresetId(id); saveToStorage(); }}
+        onSelect={(id) => {
+          setFtbPresetId(id);
+          saveToStorage();
+          if (bleService.isConnected()) bleService.sendMbRuleConfig(id || '');
+        }}
         onClose={() => setFtbPickerOpen(false)}
         colors={colors}
       />

@@ -44,6 +44,8 @@ extern String showLookParadeLive;
 extern String showLookFireworksPre;
 extern String showLookFireworksLive;
 extern String showLookFireworksPost;
+/** MB timed-rule ON→FADE look; empty = fall back to {"on":false} (cuts GLEDOPTO relay). */
+extern String mbFadeToBlackPresetId;
 
 extern int    currentBrightness;
 extern String currentPresetId;

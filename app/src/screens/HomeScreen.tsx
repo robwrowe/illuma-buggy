@@ -501,6 +501,7 @@ export default function HomeScreen() {
         onSelect={(id) => {
           setFtbPresetId(id);
           saveToStorage();
+          if (bleService.isConnected()) bleService.sendMbRuleConfig(id || '');
         }}
         onClose={() => setFtbPickerOpen(false)}
         colors={colors}

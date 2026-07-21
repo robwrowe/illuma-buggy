@@ -624,6 +624,15 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
   }
 }
 
+static void sendMbRuleOff(unsigned long fadeMs) {
+  if (mbFadeToBlackPresetId.length() > 0) {
+    if (restorePresetWithTransition(mbFadeToBlackPresetId, fadeMs)) return;
+    Serial.printf("[Rule] FTB preset '%s' failed, falling back to on:false\n",
+                  mbFadeToBlackPresetId.c_str());
+  }
+  sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+}
+
 static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload, size_t plen) {
   JsonObject timing = rule["timing"].as<JsonObject>();
   if (timing.isNull() || !(timing["enabled"] | false)) {
@@ -635,7 +644,7 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   const char* timingModelId = timing["timingModelId"] | "";
   JsonObject timingModel = findTimingModelById(timingModelId);
   TimingDecode td = decodeTimingByte(byte, timingModel);
-  int cooldownSec = timing["cooldownSec"] | 10;
+  int cooldownSec = timing["cooldownSec"] | 2;
   if (cooldownSec < 0) cooldownSec = 0;
   const char* mode = timing["cooldownResetMode"] | "onMatch";
 
@@ -643,7 +652,11 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   mbActiveRuleId[MB_RULE_ID_LEN - 1] = '\0';
   mbActiveRuleCooldownMode =
     (strcmp(mode, "fixed") == 0) ? MB_COOLDOWN_FIXED : MB_COOLDOWN_ON_MATCH;
-  mbRuleFadeMs = td.fadeMs;
+  long fadeOverride = -1;
+  if (timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
+    fadeOverride = (long)(timing["fadeOverrideMs"] | -1);
+  }
+  mbRuleFadeMs = (fadeOverride >= 0) ? (unsigned long)fadeOverride : td.fadeMs;
   mbRuleCooldownMs = (unsigned long)cooldownSec * 1000UL;
   mbRulePhase = MB_RULE_ON;
   mbRulePhaseDeadlineMs = millis() + td.onTimeMs;
@@ -657,7 +670,7 @@ void resetMbRuleLifecycle() {
   mbRulePhase = MB_RULE_IDLE;
   mbRulePhaseDeadlineMs = 0;
   mbRuleFadeMs = 0;
-  mbRuleCooldownMs = 10000;
+  mbRuleCooldownMs = 2000;
   mbActiveRuleCooldownMode = MB_COOLDOWN_ON_MATCH;
   mbActiveRuleId[0] = '\0';
 }
@@ -672,7 +685,7 @@ void serviceMbRuleLifecycle() {
 
   if (mbRulePhase == MB_RULE_ON) {
     Serial.printf("[Rule] ON→FADE fadeMs=%lu\n", mbRuleFadeMs);
-    sendToWLED(injectWledTransition("{\"on\":false}", mbRuleFadeMs));
+    sendMbRuleOff(mbRuleFadeMs);
     mbRulePhase = MB_RULE_FADE;
     mbRulePhaseDeadlineMs = millis() + (mbRuleFadeMs > 0 ? mbRuleFadeMs : 1);
     return;

@@ -356,6 +356,9 @@ class BLEService {
     return this.send(msg);
   }
   sendOverrideMode(killOnZone: boolean)                   { return this.send({ type: 'override_mode', kill_on_zone: killOnZone }); }
+  sendMbRuleConfig(ftbPresetId: string) {
+    return this.send({ type: 'mb_rule_config', ftbPresetId: ftbPresetId || '' });
+  }
   sendBrightness(value: number)                           { return this.send({ type: 'brightness', value }); }
   sendWledRaw(wled: object, presetId?: string) {
     const msg: BLEMessage = { type: 'wled_raw', wled };
