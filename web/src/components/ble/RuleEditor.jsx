@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Checkbox,
@@ -134,6 +134,49 @@ function CollapsibleBlock({
   );
 }
 
+/** Display/edit a 0–255 value as `0xNN` hex; storage stays decimal for the firmware. */
+function formatHexByte(n) {
+  return `0x${(Number(n) & 0xff).toString(16).toUpperCase().padStart(2, '0')}`;
+}
+
+function HexByteInput({ value, onChange, placeholder = '0x00' }) {
+  const [text, setText] = useState(() => formatHexByte(value ?? 0));
+
+  useEffect(() => {
+    setText(formatHexByte(value ?? 0));
+  }, [value]);
+
+  const commit = (raw) => {
+    const cleaned = String(raw ?? '').trim().replace(/^0x/i, '');
+    if (cleaned === '') {
+      onChange(0);
+      setText(formatHexByte(0));
+      return;
+    }
+    if (/[^0-9a-fA-F]/.test(cleaned)) {
+      setText(formatHexByte(value ?? 0));
+      return;
+    }
+    const parsed = parseInt(cleaned, 16);
+    const clamped = Number.isFinite(parsed) ? Math.min(255, Math.max(0, parsed)) : 0;
+    onChange(clamped);
+    setText(formatHexByte(clamped));
+  };
+
+  return (
+    <TextInput
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={(e) => commit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+      }}
+      placeholder={placeholder}
+      styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+    />
+  );
+}
+
 function ConditionLeafEditor({ node, onChange, onDelete }) {
   const set = (patch) => onChange({ ...node, ...patch });
   return (
@@ -183,11 +226,19 @@ function ConditionLeafEditor({ node, onChange, onDelete }) {
             <SearchableSelect value={node.op || 'eq'} onChange={(op) => set({ op })} options={BYTE_OP_OPTS} allowEmpty={false} />
           </Field>
           <Field label="Value">
-            <NumberInput value={node.value ?? 0} onChange={(v) => set({ value: parseInt(v, 10) || 0 })} min={0} max={255} />
+            <HexByteInput
+              value={node.value ?? 0}
+              onChange={(value) => set({ value })}
+              placeholder="0x19"
+            />
           </Field>
           {node.op === 'maskEq' && (
             <Field label="Mask">
-              <NumberInput value={node.mask ?? 255} onChange={(v) => set({ mask: (parseInt(v, 10) || 0) & 0xff })} min={0} max={255} />
+              <HexByteInput
+                value={node.mask ?? 255}
+                onChange={(mask) => set({ mask })}
+                placeholder="0xFF"
+              />
             </Field>
           )}
         </SimpleGrid>
