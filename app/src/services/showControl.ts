@@ -1,5 +1,6 @@
 /**
  * Run show phases via board preset apply (per-binding presets, not global only).
+ * Live is blackout-only — no live preset on bindings.
  */
 
 import { bleService } from './BLEService';
@@ -31,12 +32,20 @@ export async function runShowPhase(
   fadeMs = 800,
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
+
+  // Live: firmware blackout-only; no per-binding live preset
+  if (phase === 'live') {
+    await bleService.sendFadeToBlack(undefined, fadeMs);
+    await onShowLiveStarted(phase);
+    await bleService.sendShowModeEnter(binding.kind, firmwarePhase(binding.kind, phase));
+    return true;
+  }
+
   const presetId = binding.presets[phase];
   if (!presetId) return false;
 
   if (presetId === '__BLACK__') {
     await bleService.sendFadeToBlack(undefined, fadeMs);
-    await onShowLiveStarted(phase);
     await bleService.sendShowModeEnter(binding.kind, firmwarePhase(binding.kind, phase));
     return true;
   }
@@ -46,7 +55,6 @@ export async function runShowPhase(
 
   const ok = await applyPresetToBoard(preset, recall, layouts);
   if (ok) {
-    await onShowLiveStarted(phase);
     await bleService.sendShowModeEnter(binding.kind, firmwarePhase(binding.kind, phase));
   }
   return ok;

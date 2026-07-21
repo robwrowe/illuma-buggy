@@ -55,6 +55,7 @@ String showLookParadeLive    = "";
 String showLookFireworksPre  = "";
 String showLookFireworksLive = "__BLACK__";
 String showLookFireworksPost = "";
+String mbFadeToBlackPresetId = "";  // "" = fall back to {"on":false}
 
 int    currentBrightness = 128;
 String currentPresetId   = "";
@@ -107,9 +108,26 @@ String liveWledState    = "";
 unsigned long lastLiveStatePollMs = 0;
 String baselineWledState  = "";
 String mbMappingJson = "";
+String mbRulesJson = "";
 bool   mbMappingLoadedFromNvs = false;
 String bleDefaultPresetId = "";
 bool   wledWasConnected   = false;
+
+bool          mbUnmatchedLogEnabled = false;
+
+bool          paradeDetectEnabled = false;
+char          paradeBeaconPrefix[16] = "cd07";
+int           paradeRssiThreshold = -70;
+unsigned long paradeCooldownMs = 30000;
+unsigned long paradeLastBeaconMs = 0;
+
+MbRulePhase        mbRulePhase = MB_RULE_IDLE;
+unsigned long      mbRulePhaseDeadlineMs = 0;
+unsigned long      mbRuleFadeMs = 0;
+unsigned long      mbRuleCooldownMs = 10000;
+MbCooldownResetMode mbActiveRuleCooldownMode = MB_COOLDOWN_ON_MATCH;
+char               mbActiveRuleId[MB_RULE_ID_LEN] = "";
+
 
 DisneyPayloadJob disneyJob = {};
 portMUX_TYPE disneyJobMux = portMUX_INITIALIZER_UNLOCKED;

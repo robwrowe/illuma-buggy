@@ -11,6 +11,7 @@
 #include "PresetStore.h"
 #include "OverrideManager.h"
 #include "MbMapping.h"
+#include "MbRuleEngine.h"
 #include "MbEffects.h"
 #include "BlePeripheral.h"
 #include "DisneyBleScan.h"
@@ -18,12 +19,19 @@
 #include "SerialConsole.h"
 #include "WandTx.h"
 #include "DebugLog.h"
+#include "NvsLargeString.h"
+#include "MbRulesStore.h"
 
 void setup() {
   Serial.begin(115200);
   delay(500);
   randomSeed(esp_random());
   Serial.println("\n[Boot] StrollerController v2.1");
+  Serial.printf("[Boot] freeHeap=%u maxAllocHeap=%u psramSize=%u psramFree=%u\n",
+                (unsigned)ESP.getFreeHeap(),
+                (unsigned)ESP.getMaxAllocHeap(),
+                (unsigned)ESP.getPsramSize(),
+                ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
 
   // Load NVS config
   prefs.begin("config", true);
@@ -39,7 +47,44 @@ void setup() {
   mbChaseThickness    = prefs.getUChar("mbGrp", 4);
   if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
-  mbMappingJson       = prefs.getString("mbMapping", "");
+  mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
+  // Prefer SPIFFS for large rules JSON; migrate leftover NVS blobs once.
+  // Discard corrupt/empty blobs so a truncated legacy file doesn't look like a
+  // successful load (rules=0) and block a clean "waiting for push" state.
+  mbRulesFsBegin();
+  mbRulesJson = mbRulesFsLoad();
+  bool rulesOnFs = mbRulesJson.length() > 0;
+  bool discardNvsRules = false;
+  if (rulesOnFs && !mbRulesJsonUsable(mbRulesJson)) {
+    Serial.printf("[Rules] discarded invalid/empty rules file (%u bytes) — waiting for push\n",
+                  (unsigned)mbRulesJson.length());
+    mbRulesFsClear();
+    mbRulesJson = "";
+    rulesOnFs = false;
+  }
+  if (!rulesOnFs) {
+    String fromNvs = nvsGetLargeString(prefs, "mbRules", "");
+    if (fromNvs.length() == 0) {
+      fromNvs = nvsGetLargeString(prefs, "mbMapping", "");
+    }
+    if (fromNvs.length() > 0) {
+      if (mbRulesJsonUsable(fromNvs)) {
+        mbRulesJson = fromNvs;
+        Serial.printf("[FS] migrating %u bytes from NVS → SPIFFS\n",
+                      (unsigned)mbRulesJson.length());
+        rulesOnFs = mbRulesFsSave(mbRulesJson);
+        if (!rulesOnFs) {
+          Serial.println("[FS] migrate failed — keeping NVS copy for this boot");
+        }
+      } else {
+        Serial.printf("[Rules] discarded invalid/empty NVS blob (%u bytes) — waiting for push\n",
+                      (unsigned)fromNvs.length());
+        mbRulesJson = "";
+        discardNvsRules = true;
+      }
+    }
+  }
+  mbMappingJson = mbRulesJson;
   mbLayoutsJson       = prefs.getString("mbLayouts", "");
   mbActiveLayoutIdx   = prefs.getUChar("mbActiveLayout", 0);
   showLookParadePre     = prefs.getString("showParaPre", "");
@@ -47,6 +92,7 @@ void setup() {
   showLookFireworksPre  = prefs.getString("showFwPre", "");
   showLookFireworksLive = prefs.getString("showFwLive", "__BLACK__");
   showLookFireworksPost = prefs.getString("showFwPost", "");
+  mbFadeToBlackPresetId = prefs.getString("mbFtbPreset", "");
   wledSsid = prefs.getString("wledSsid", "KyLan Ren");
   wledPass = prefs.getString("wledPass", "tigers2016");
   wledIp   = prefs.getString("wledIp", "wled.local");
@@ -60,15 +106,26 @@ void setup() {
     }
   }
   prefs.end();
+
+  // Drop legacy NVS rule blobs after SPIFFS has a good copy, or when the NVS
+  // blob was junk we refused to migrate.
+  if (rulesOnFs || discardNvsRules) {
+    prefs.begin("config", false);
+    nvsRemoveLargeString(prefs, "mbRules");
+    nvsRemoveLargeString(prefs, "mbMapping");
+    prefs.end();
+  }
   loadMbMappingDefaults();
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
-  loadMbMappingFromJson();
-  mbMappingLoadedFromNvs = mbMappingJson.length() > 0;
+  loadMbRulesFromJson();
+  mbMappingLoadedFromNvs = mbRulesJson.length() > 0 || mbMappingJson.length() > 0;
   loadWledBaselineFromNvs();
   Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums role=%u\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
                 bleScanLogEnabled, mbChaseSpeed, mbChaseThickness, bleEffectTransitionMs,
                 (unsigned)boardRole);
+  Serial.printf("[NVS] mbRules=%u bytes mbMapping=%u bytes\n",
+                (unsigned)mbRulesJson.length(), (unsigned)mbMappingJson.length());
 
   prefs.begin("presets", false);
   prefs.end();
@@ -89,7 +146,7 @@ void setup() {
 
   // Create command queue (10 slots)
   cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
-  bleCmdQueue = xQueueCreate(6, sizeof(PendingBleCmd));
+  bleCmdQueue = xQueueCreate(BLE_CMD_QUEUE_DEPTH, sizeof(PendingBleCmd));
 
   xTaskCreatePinnedToCore(
     [](void*) { connectToWLED(); vTaskDelete(NULL); },
@@ -136,12 +193,13 @@ void processPendingCommands() {
 }
 
 void loop() {
+  // BLE first — app preset fire / status must not wait behind ESP-NOW rule applies.
+  processBleCmdQueue();
+  processPendingCommands();
   processParsedPacketQueue();
   transportPairResendTick();
   serviceScannerFallback();
   processSerialCommands();
-  processBleCmdQueue();
-  processPendingCommands();
   serviceWandTx();
 
   // Auto-clear Starlight Wand override after timeout
@@ -153,14 +211,17 @@ void loop() {
     }
   }
 
-  // Auto-clear MagicBand override after timeout
-  if (currentOverride == BLE_MAGIC && magicBandTimeoutMs > 0) {
+  // Auto-clear MagicBand override after timeout (flat path — skipped while timed rule lifecycle runs)
+  if (currentOverride == BLE_MAGIC && magicBandTimeoutMs > 0 && mbRulePhase == MB_RULE_IDLE) {
     if (millis() - mbEventTimestamp >= magicBandTimeoutMs) {
       Serial.printf("[MB] Timeout after %lums — restoring state\n", magicBandTimeoutMs);
       clearOverride();
       bleNotify("{\"type\":\"ble_event\",\"event\":\"timeout\"}");
     }
   }
+
+  serviceMbRuleLifecycle();
+  serviceParadeCooldown();
 
   if (bleCaptureToApp && bleCaptureUntilMs > 0 && millis() >= bleCaptureUntilMs) {
     stopBleCapture("timeout");
@@ -176,7 +237,9 @@ void loop() {
     wledWasConnected = false;
   } else if (!wledWasConnected) {
     wledWasConnected = true;
+    delay(300);  // let AP/WLED settle after STA join
     snapshotWledBaseline();
+    ensureWledPowerOn();
   } else {
     pollLiveWledState();
   }

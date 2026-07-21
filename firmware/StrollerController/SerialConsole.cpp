@@ -44,8 +44,9 @@ void processSerialCommands() {
                   boardRole == BoardRole::LOGIC_BOARD ? "logic" : "standalone",
                   scannerPeerConfigured ? transportMacToString(scannerPeerMac).c_str() : "(none)",
                   lastScannerPacketMs ? (millis() - lastScannerPacketMs) : 0UL);
-    Serial.printf("[Status] ESP-NOW rx=%lu rejected=%lu last=%s\n",
+    Serial.printf("[Status] ESP-NOW rx=%lu rejected=%lu drops=%lu last=%s\n",
                   (unsigned long)espNowRxCount, (unsigned long)espNowRxRejected,
+                  (unsigned long)parsedPacketDropCount,
                   lastScannerPacketMs ? String((millis() - lastScannerPacketMs)) + "ms ago" : String("never"));
   } else if (line == "nvs wifi") {
     Preferences dbgPrefs;
@@ -187,8 +188,8 @@ void processSerialCommands() {
       prefs.begin("config", false);
       prefs.putUChar("boardRole", (uint8_t)boardRole);
       prefs.end();
-      payloadTransportInit();
-      Serial.printf("[Serial] boardRole=%s — reboot to apply BLE scan on/off\n",
+      applyBoardRoleRuntime();
+      Serial.printf("[Serial] boardRole=%s applied live\n",
                     boardRole == BoardRole::LOGIC_BOARD ? "logic_board" : "standalone");
     } else {
       Serial.println("[Serial] usage: role standalone|logic");

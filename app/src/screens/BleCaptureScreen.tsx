@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Alert,
+  TextInput, Alert, Switch,
 } from 'react-native';
 import IconBolt from '@tabler/icons-react-native/dist/esm/icons/IconBolt';
 import IconDownload from '@tabler/icons-react-native/dist/esm/icons/IconDownload';
@@ -14,6 +14,7 @@ import { useAppStore } from '../stores/store';
 import { useTheme } from '../utils/theme';
 import {
   CAPTURE_DURATION_MANUAL, CAPTURE_DURATION_PRESETS, MAX_PACKETS_PER_SESSION,
+  BLE_CAPTURE_NOISE_PING, BLE_CAPTURE_NOISE_WAND_IDLE,
   describeBlePacket, formatCaptureExport, isCaptureDurationPreset,
   BleCaptureSession,
 } from '../utils/bleCapture';
@@ -111,12 +112,20 @@ export default function BleCaptureScreen() {
   const {
     bleCaptureActive, bleCaptureDurationSec, bleCaptureStartedAt, bleCaptureEndsAt,
     bleCaptureSegment, bleCaptureLiveCount, bleCaptureBuffer, bleCaptureSessions, bleCaptureDraftName,
+    bleCaptureIgnoreTags, bleCaptureIgnoredCount, setBleCaptureIgnoreTags,
     showSettings, userLocation,
     setBleCaptureDurationSec, setBleCaptureDraftName,
     startBleCapture, stopBleCapture, appendBleCapturePacket,
     deleteBleCaptureSession,
     updateBleCapturePacketNote,
   } = useAppStore();
+
+  const toggleIgnoreTag = (tag: string, on: boolean) => {
+    const next = on
+      ? Array.from(new Set([...bleCaptureIgnoreTags, tag]))
+      : bleCaptureIgnoreTags.filter(t => t !== tag);
+    setBleCaptureIgnoreTags(next);
+  };
 
   useEffect(() => {
     if (!bleCaptureActive || !bleCaptureStartedAt) return;
@@ -349,6 +358,35 @@ export default function BleCaptureScreen() {
           (recording continues in a new part).
         </Text>
 
+        <Text style={s.label}>Ignore noise</Text>
+        <View style={s.ignoreRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.ignoreLabel}>Wake pings</Text>
+            <Text style={s.sub}>Skip CC03 / PING packets</Text>
+          </View>
+          <Switch
+            value={bleCaptureIgnoreTags.includes(BLE_CAPTURE_NOISE_PING)}
+            onValueChange={v => toggleIgnoreTag(BLE_CAPTURE_NOISE_PING, v)}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+        <View style={s.ignoreRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.ignoreLabel}>Wand idle beacons</Text>
+            <Text style={s.sub}>Skip WAND_IDLE / WAND-IDLE packets</Text>
+          </View>
+          <Switch
+            value={bleCaptureIgnoreTags.includes(BLE_CAPTURE_NOISE_WAND_IDLE)}
+            onValueChange={v => toggleIgnoreTag(BLE_CAPTURE_NOISE_WAND_IDLE, v)}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+        {bleCaptureActive && bleCaptureIgnoredCount > 0 && (
+          <Text style={s.sub}>{bleCaptureIgnoredCount} packets ignored this session</Text>
+        )}
+
         {bleCaptureActive && (
           <View style={s.statsRow}>
             <Text style={s.stat}>
@@ -554,6 +592,8 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
     customDurationInput: { flex: 0, width: 72, paddingVertical: 8, textAlign: 'center' },
     inputActive: { borderColor: c.primary },
     customDurationSuffix: { color: c.textMuted, fontSize: 12, flex: 1 },
+    ignoreRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    ignoreLabel: { color: c.textPrimary, fontSize: 13, fontWeight: '600' },
     statsRow:  { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
     stat:      { color: c.textPrimary, fontSize: 13, fontWeight: '600' },
     healthRow: { flexDirection: 'row', gap: 14, flexWrap: 'wrap' },

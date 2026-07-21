@@ -32,13 +32,19 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     if (plen == 0) return;
 
     ParsedDisneyPacket pkt = decodeDisneyPayload(payload, plen, millis());
-    if (pkt.kind == DisneyPacketKind::UNKNOWN) return;
+    pkt.rssi = (int8_t)constrain(rssi, -128, 127);
+    // Forward all Disney payloads (including UNKNOWN) so the rule engine / parade
+    // detector can evaluate raw bytes. Dedup still applies at apply time.
     transportSendParsedPacket(pkt);
   }
 };
 
 void startBLEScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
+  if (scan->isScanning()) {
+    Serial.println("[BLE] Scanner already running");
+    return;
+  }
   scan->setScanCallbacks(new DisneyBLEScanCallbacks(), true);
   scan->setActiveScan(true);
   scan->setInterval(80);
@@ -48,4 +54,11 @@ void startBLEScan() {
   Serial.println("[BLE] Scanner started (active, continuous, no dedup)");
   Serial.printf("[BLE] Scan logging: %s (WAND-CAST / WAND-IDLE / MB+ / PING)\n",
                 bleScanLogEnabled ? "ON" : "OFF");
+}
+
+void stopBLEScan() {
+  NimBLEScan* scan = NimBLEDevice::getScan();
+  if (!scan->isScanning()) return;
+  scan->stop();
+  Serial.println("[BLE] Scanner stopped");
 }

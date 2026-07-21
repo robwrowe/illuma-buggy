@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include "BleCommandHandler.h"
 #include "Config.h"
+#include <esp_heap_caps.h>
 
 void resetCmdChunkBuffer() {
   cmdChunkBuffer = "";
@@ -66,14 +67,23 @@ void bleNotifyChunked(const String& type, const String& payload) {
 // ─────────────────────────────────────────────
 
 void processBleCmdChunk(int seq, bool last, const String& data) {
-  if (seq == 0) resetCmdChunkBuffer();
+  if (seq == 0) {
+    resetCmdChunkBuffer();
+    // Avoid ~N realloc/copies while assembling large set_mb_rules payloads —
+    // repeated String growth fragments the internal heap and can make the
+    // subsequent enqueueBleCommand malloc fail even when freeHeap looks fine.
+    cmdChunkBuffer.reserve(BLE_CMD_BUF_SIZE);
+  }
   if (seq != cmdChunkNextSeq) {
     Serial.printf("[BLE] Chunk seq mismatch (got %d, expected %d)\n", seq, cmdChunkNextSeq);
+    bleNotify(String("{\"type\":\"chunk_sync_failed\",\"expectedSeq\":") +
+              String(cmdChunkNextSeq) + ",\"gotSeq\":" + String(seq) + "}");
     resetCmdChunkBuffer();
     return;
   }
-  if (cmdChunkBuffer.length() + data.length() > 32768) {
+  if (cmdChunkBuffer.length() + data.length() > BLE_CMD_BUF_SIZE) {
     Serial.println("[BLE] Chunk buffer overflow, aborting");
+    bleNotify("{\"type\":\"chunk_sync_failed\",\"reason\":\"overflow\"}");
     resetCmdChunkBuffer();
     return;
   }
@@ -93,15 +103,31 @@ void enqueueBleCommand(const String& msg) {
     Serial.printf("[BLE] Command size %u rejected\n", (unsigned)msg.length());
     return;
   }
-  char* buf = (char*)malloc(msg.length() + 1);
+  const size_t need = msg.length() + 1;
+  // Prefer PSRAM for large infrequent command buffers (rules JSON) so we do not
+  // fragment the internal heap used by BLE / ESP-NOW / HTTP.
+  char* buf = (char*)heap_caps_malloc(need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) {
-    Serial.println("[BLE] Command alloc failed");
+    buf = (char*)malloc(need);
+  }
+  if (!buf) {
+    Serial.printf("[BLE] Command alloc failed (%u bytes, freeHeap=%u, largestFreeBlock=%u, psramFree=%u)\n",
+                  (unsigned)need,
+                  (unsigned)ESP.getFreeHeap(),
+                  (unsigned)ESP.getMaxAllocHeap(),
+                  ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+    bleNotify("{\"type\":\"cmd_alloc_failed\",\"needed\":" + String((unsigned)need) +
+              ",\"freeHeap\":" + String(ESP.getFreeHeap()) +
+              ",\"maxAllocHeap\":" + String(ESP.getMaxAllocHeap()) + "}");
     return;
   }
-  memcpy(buf, msg.c_str(), msg.length() + 1);
+  memcpy(buf, msg.c_str(), need);
   PendingBleCmd item = { buf };
   if (xQueueSend(bleCmdQueue, &item, 0) != pdTRUE) {
-    Serial.println("[BLE] Command queue full");
+    static uint32_t bleCmdDropCount = 0;
+    bleCmdDropCount++;
+    Serial.printf("[BLE] Command queue full (depth=%u, dropped=%lu)\n",
+                  (unsigned)BLE_CMD_QUEUE_DEPTH, (unsigned long)bleCmdDropCount);
     free(buf);
   }
 }
@@ -118,13 +144,40 @@ void processBleCmdQueue() {
   if (bleCmdQueue == nullptr) return;
   PendingBleCmd item;
   int drained = 0;
-  while (drained < 4 && xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
+  while (drained < BLE_CMD_DRAIN_PER_LOOP &&
+         xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
     if (item.data) {
       handleBLECommand(String(item.data));
       free(item.data);
     }
     drained++;
   }
+}
+
+/** Cheap gate: chunk envelopes always contain this exact type token (JSON.stringify). */
+static bool looksLikeChunkEnvelope(const String& val) {
+  return val.indexOf("\"type\":\"ble_cmd_chunk\"") >= 0;
+}
+
+/**
+ * Reassemble ble_cmd_chunk envelopes on the write callback — string append only,
+ * no WLED/network. Must not go through bleCmdQueue (depth cannot absorb a large
+ * sync's fragment flood). Fully assembled commands still enqueue via processBleCmdChunk.
+ */
+static void handleChunkEnvelopeDirect(const String& val) {
+  // Envelope is ≤ BLE_MAX_WRITE_BYTES (512); leave headroom for ArduinoJson copies.
+  StaticJsonDocument<1536> doc;
+  DeserializationError err = deserializeJson(doc, val);
+  if (err) {
+    Serial.printf("[BLE] Chunk envelope parse error: %s\n", err.c_str());
+    return;
+  }
+  const char* type = doc["type"] | "";
+  if (strcmp(type, "ble_cmd_chunk") != 0) {
+    enqueueBleCommand(val);
+    return;
+  }
+  processBleCmdChunk(doc["seq"].as<int>(), doc["last"].as<bool>(), doc["data"].as<String>());
 }
 
 class ServerCallbacks : public NimBLEServerCallbacks {
@@ -146,6 +199,13 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
     String val = chr->getValue().c_str();
     if (val.length() <= 120) Serial.printf("[BLE] Received: %s\n", val.c_str());
     else Serial.printf("[BLE] Received %u bytes\n", (unsigned)val.length());
+
+    // Chunk envelopes: reassemble synchronously so fragments are never dropped by
+    // queue pressure. Only the completed command (or a non-chunked write) is queued.
+    if (looksLikeChunkEnvelope(val)) {
+      handleChunkEnvelopeDirect(val);
+      return;
+    }
     enqueueBleCommand(val);
   }
 };

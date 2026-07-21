@@ -67,6 +67,7 @@ enum class DisneyPacketKind : uint8_t {
 };
 
 // Wire contract for ESP-NOW and decode→apply boundary. Packed for stable sizeof.
+// rssi is filled by the scanner; rule engine / parade detection consume it on the logic board.
 struct __attribute__((packed)) ParsedDisneyPacket {
   DisneyPacketKind kind;
   uint16_t         opcode;
@@ -76,12 +77,8 @@ struct __attribute__((packed)) ParsedDisneyPacket {
   uint8_t          hasRawFallback;  // 0/1 — true when undecodable; rawPayload populated
   uint8_t          rawPayload[PARSED_PACKET_RAW_MAX];
   uint8_t          rawLen;
+  int8_t           rssi;
   uint32_t         capturedAtMs;
-};
-
-struct ParsedPacketJob {
-  ParsedDisneyPacket pkt;
-  volatile bool pending;
 };
 
 enum class BoardRole : uint8_t { STANDALONE = 0, LOGIC_BOARD = 1 };
@@ -90,6 +87,19 @@ enum OverrideSource { NONE, ZONE, MANUAL, SHOW_MODE, BLE_MAGIC, BLE_STARLIGHT };
 enum SwMatchQuality { SW_MATCH_EXACT, SW_MATCH_FUZZY, SW_MATCH_NONE };
 enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS };
 enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
+
+// Rule-engine effect lifecycle (timing-byte driven). IDLE = use flat magicBandTimeoutMs.
+enum MbRulePhase : uint8_t {
+  MB_RULE_IDLE = 0,
+  MB_RULE_ON,
+  MB_RULE_FADE,
+  MB_RULE_COOLDOWN,
+};
+
+enum MbCooldownResetMode : uint8_t {
+  MB_COOLDOWN_ON_MATCH = 0,
+  MB_COOLDOWN_FIXED    = 1,
+};
 
 struct EspNowPairMsg {
   uint32_t magic;

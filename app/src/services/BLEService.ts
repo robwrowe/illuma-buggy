@@ -11,7 +11,6 @@ import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
 import { resetBoardSyncStatus } from '../utils/boardSyncState';
 import { saveBleDeviceId } from '../utils/locationRuntimeBridge';
 import { dismissBleDisconnectedNotification, notifyBleDisconnected } from './strollerNotification';
-import type { MbSegmentLayout } from '../utils/configMigration';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
 export const SERVICE_UUID     = '12345678-1234-1234-1234-123456789abc';
@@ -357,6 +356,9 @@ class BLEService {
     return this.send(msg);
   }
   sendOverrideMode(killOnZone: boolean)                   { return this.send({ type: 'override_mode', kill_on_zone: killOnZone }); }
+  sendMbRuleConfig(ftbPresetId: string) {
+    return this.send({ type: 'mb_rule_config', ftbPresetId: ftbPresetId || '' });
+  }
   sendBrightness(value: number)                           { return this.send({ type: 'brightness', value }); }
   sendWledRaw(wled: object, presetId?: string) {
     const msg: BLEMessage = { type: 'wled_raw', wled };
@@ -391,17 +393,7 @@ class BLEService {
     return this.send(msg);
   }
   sendMbMappingConfig(payload: object) {
-    return this.send({ type: 'mb_mapping_config', mapping: payload });
-  }
-  sendMbLayoutSet(layouts: MbSegmentLayout[], activeIndex: number) {
-    return this.send({
-      type: 'mb_layout_set',
-      layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
-      active: activeIndex,
-    });
-  }
-  sendMbLayoutSwitch(index: number) {
-    return this.send({ type: 'mb_layout_switch', index });
+    return this.send({ type: 'set_mb_rules', mapping: payload });
   }
   sendShowModeConfig(config: { parade: { pre: string; live: string }; fireworks: { pre: string; live: string; post: string } }) {
     return this.send({ type: 'show_mode_config', ...config });
@@ -417,6 +409,9 @@ class BLEService {
     if (active && durationMs > 0) msg.duration_ms = durationMs;
     if (active && label) msg.label = label;
     return this.send(msg);
+  }
+  sendMbUnmatchedLogConfig(active: boolean) {
+    return this.send({ type: 'mb_unmatched_log_config', active });
   }
   sendBoardRole(role: 'standalone' | 'logic_board') {
     return this.send({ type: 'set_board_role', role });
@@ -692,6 +687,8 @@ class BLEService {
       console.log(
         `[BLE] ← ack ${action}${msg.id ? ` id=${msg.id}` : ''} ${ok ? 'ok' : `FAIL${msg.reason ? ` (${msg.reason})` : ''}`}`,
       );
+    } else if (msg.type === 'chunk_sync_failed') {
+      console.error('[BLE] ← chunk_sync_failed', msg);
     } else if (msg.type === 'error') {
       console.warn('[BLE] ← error', msg.msg);
     }

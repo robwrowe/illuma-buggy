@@ -20,14 +20,29 @@ bool scannerPeerConfigured = false;
 unsigned long lastScannerPacketMs = 0;
 uint32_t espNowRxCount = 0;
 uint32_t espNowRxRejected = 0;
+uint32_t parsedPacketDropCount = 0;
 
-static ParsedPacketJob parsedJob = {};
+struct ParsedPacketQueue {
+  ParsedDisneyPacket items[PARSED_PACKET_QUEUE_DEPTH];
+  volatile uint8_t head = 0;
+  volatile uint8_t tail = 0;
+  volatile uint8_t count = 0;
+};
+static ParsedPacketQueue parsedQueue;
 static portMUX_TYPE parsedJobMux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t lastLoggedDropCount = 0;
 
 static void queueParsedPacket(const ParsedDisneyPacket& pkt) {
   portENTER_CRITICAL(&parsedJobMux);
-  parsedJob.pkt = pkt;
-  parsedJob.pending = true;
+  if (parsedQueue.count >= PARSED_PACKET_QUEUE_DEPTH) {
+    // Drop oldest so we stay closest to real-time once loop() catches up.
+    parsedQueue.head = (uint8_t)((parsedQueue.head + 1) % PARSED_PACKET_QUEUE_DEPTH);
+    parsedQueue.count--;
+    parsedPacketDropCount++;
+  }
+  parsedQueue.items[parsedQueue.tail] = pkt;
+  parsedQueue.tail = (uint8_t)((parsedQueue.tail + 1) % PARSED_PACKET_QUEUE_DEPTH);
+  parsedQueue.count++;
   portEXIT_CRITICAL(&parsedJobMux);
 }
 
@@ -62,20 +77,88 @@ static void onEspNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 }
 #endif
 
+static bool ensureEspNowPeer(const uint8_t mac[6]);
+static bool espNowReady = false;
+
+// Deferred peer adopt — never touch Preferences or esp_now_add/del from the recv callback.
+static uint8_t pendingAdoptMac[6];
+static volatile bool scannerMacAdoptPending = false;
+
+static void adoptScannerPeerMac(const uint8_t mac[6]) {
+  if (!mac) return;
+  if (scannerPeerConfigured && memcmp(scannerPeerMac, mac, 6) == 0) return;
+
+  Serial.printf("[ESP-NOW] scanner MAC mismatch: configured=%s incoming=%s — auto-adopting\n",
+                scannerPeerConfigured ? transportMacToString(scannerPeerMac).c_str() : "(none)",
+                transportMacToString(mac).c_str());
+
+  // RAM only here so the peer filter accepts this packet and the rest of the burst.
+  // Peer table + NVS persist run from transportPairResendTick().
+  memcpy(scannerPeerMac, mac, 6);
+  scannerPeerConfigured = true;
+  memcpy(pendingAdoptMac, mac, 6);
+  scannerMacAdoptPending = true;
+}
+
+static void applyPendingScannerMacAdopt() {
+  if (!scannerMacAdoptPending) return;
+  scannerMacAdoptPending = false;
+
+  uint8_t mac[6];
+  memcpy(mac, pendingAdoptMac, 6);
+  memcpy(scannerPeerMac, mac, 6);
+  scannerPeerConfigured = true;
+
+  if (espNowReady) {
+    // Best-effort: remove any stale peer entries by re-adding the new one.
+    // (We may not know the previous MAC if multiple adopts raced; that's fine.)
+    ensureEspNowPeer(mac);
+  }
+
+  prefs.begin("config", false);
+  prefs.putBytes("scannerMac", mac, 6);
+  prefs.end();
+  Serial.printf("[ESP-NOW] scanner MAC persisted %s\n", transportMacToString(mac).c_str());
+}
+
 void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len) {
   if (!data || len <= 0) return;
 
-  const char* typeLabel = "other";
-  if (len == (int)sizeof(ParsedDisneyPacket)) typeLabel = "scan";
-  else if (len == (int)sizeof(EspNowPairMsg)) typeLabel = "pair";
+  const bool isScan = (len == (int)sizeof(ParsedDisneyPacket));
+  bool isPair = (len == (int)sizeof(EspNowPairMsg));
+  if (isPair) {
+    EspNowPairMsg msg;
+    memcpy(&msg, data, sizeof(msg));
+    if (msg.magic != ESPNOW_PAIR_MAGIC) isPair = false;
+  }
 
-  // Reflected pairing is scanner-side; logic board only accepts ParsedDisneyPacket.
-  if (len == (int)sizeof(ParsedDisneyPacket)) {
+  // Single-scanner setups: if a valid scan/pair frame arrives from a different MAC
+  // (reflashed board, swapped hardware, stale NVS), auto-adopt instead of silently
+  // rejecting forever.
+  if (scannerPeerConfigured && mac && memcmp(mac, scannerPeerMac, 6) != 0) {
+    if (isScan || isPair) {
+      adoptScannerPeerMac(mac);
+    } else {
+      espNowRxRejected++;
+      if (espNowRxRejected <= 5 || (espNowRxRejected % 100) == 0) {
+        Serial.printf("[ESP-NOW] ignore non-peer %s (want %s) rejected=%lu\n",
+                      transportMacToString(mac).c_str(),
+                      transportMacToString(scannerPeerMac).c_str(),
+                      (unsigned long)espNowRxRejected);
+      }
+      return;
+    }
+  }
+
+  const char* typeLabel = isScan ? "scan" : (isPair ? "pair" : "other");
+
+  // Scanner → logic: ParsedDisneyPacket only. Pair frames are learn-only here
+  // (scanner learns from our outbound beacons; it does not send EspNowPairMsg).
+  if (isScan) {
     ParsedDisneyPacket pkt;
     memcpy(&pkt, data, sizeof(pkt));
     lastScannerPacketMs = millis();
     espNowRxCount++;
-    // Always log early packets + periodic thereafter (proof scanner→logic path is alive).
     if (espNowRxCount <= 40 || (espNowRxCount % 25) == 0) {
       Serial.printf("[ESP-NOW] recv from %s: len=%d type=%s rx=#%lu kind=%u op=0x%04X\n",
                     mac ? transportMacToString(mac).c_str() : "?",
@@ -83,6 +166,11 @@ void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len) 
                     (unsigned)pkt.kind, (unsigned)pkt.opcode);
     }
     queueParsedPacket(pkt);
+    return;
+  }
+
+  if (isPair) {
+    // Already adopted above when MAC mismatched; nothing else to do.
     return;
   }
 
@@ -109,7 +197,6 @@ static bool ensureEspNowPeer(const uint8_t mac[6]) {
 
 static unsigned long lastPairSendMs = 0;
 static bool localScanFallbackActive = false;
-static bool espNowReady = false;
 
 static void sendPairMessage() {
   EspNowPairMsg msg = {};
@@ -130,6 +217,7 @@ static void sendPairMessage() {
 void transportSetScannerMac(const uint8_t mac[6]) {
   memcpy(scannerPeerMac, mac, 6);
   scannerPeerConfigured = true;
+  scannerMacAdoptPending = false;  // explicit set wins over pending auto-adopt
 
   prefs.begin("config", false);
   prefs.putBytes("scannerMac", scannerPeerMac, 6);
@@ -152,18 +240,32 @@ static bool scannerLinkAlive() {
 }
 
 void transportPairResendTick() {
+  applyPendingScannerMacAdopt();
   if (boardRole != BoardRole::LOGIC_BOARD || !scannerPeerConfigured) return;
   // Only beacon once WiFi is connected (so the advertised channel is the stable AP
   // channel) and ESP-NOW has been (re)initialized after that connect.
   if (WiFi.status() != WL_CONNECTED || !espNowReady) return;
   if (scannerLinkAlive()) return;  // packets flowing — already paired & healthy
-  // Beacon faster than the scanner's per-channel dwell so a beacon is guaranteed to land
-  // while the scanner is sitting on our channel during its sweep.
-  if (millis() - lastPairSendMs >= 200) sendPairMessage();
+  // While on local-scan fallback, beacon slowly (pairing still useful) — don't flood serial.
+  unsigned long interval = localScanFallbackActive ? 5000UL : 200UL;
+  if (millis() - lastPairSendMs >= interval) sendPairMessage();
 }
 
 void serviceScannerFallback() {
   if (boardRole != BoardRole::LOGIC_BOARD) return;
+
+  // Dual-board with a configured scanner: never start local NimBLE scan.
+  // Fallback re-introduces WiFi/BLE contention on the logic radio and can prevent
+  // ESP-NOW RX even while the scanner reports send-cb SUCCESS — a chicken-and-egg
+  // once the 20s absent timer fires (pair beacons keep going; lastScanPacketMs stays 0).
+  if (scannerPeerConfigured) {
+    if (localScanFallbackActive) {
+      Serial.println("[Fallback] Scanner peer configured — stopping local BLE scan (ESP-NOW only)");
+      stopBLEScan();
+      localScanFallbackActive = false;
+    }
+    return;
+  }
 
   if (!localScanFallbackActive) {
     unsigned long now = millis();
@@ -172,15 +274,35 @@ void serviceScannerFallback() {
       Serial.printf("[Fallback] lastScanPacketMs=%lu now=%lu delta=%lu threshold=%lu\n",
                     (unsigned long)lastScannerPacketMs, (unsigned long)now,
                     (unsigned long)silentFor, (unsigned long)SCANNER_ABSENT_MS);
-      Serial.println("[Fallback] Scanner silent — starting local BLE scan on logic board");
+      Serial.println("[Fallback] No scanner MAC — starting local BLE scan on logic board");
       startBLEScan();
       localScanFallbackActive = true;
     }
   } else if (scannerLinkAlive()) {
     Serial.println("[Fallback] Scanner back online — stopping local BLE scan");
-    NimBLEDevice::getScan()->stop();
+    stopBLEScan();
     localScanFallbackActive = false;
   }
+}
+
+/** Switch scan / ESP-NOW behavior immediately when boardRole changes (no reboot). */
+void applyBoardRoleRuntime() {
+  if (boardRole == BoardRole::STANDALONE) {
+    localScanFallbackActive = false;
+    lastScannerPacketMs = 0;
+    startBLEScan();
+    Serial.println("[Role] STANDALONE — local BLE scan active (no reboot needed)");
+    return;
+  }
+
+  // LOGIC_BOARD: stop local scan; ESP-NOW + pair beacon take over (no NimBLE fallback
+  // while a scanner MAC is configured — see serviceScannerFallback).
+  stopBLEScan();
+  localScanFallbackActive = false;
+  lastScannerPacketMs = 0;
+  payloadTransportInit();
+  if (WiFi.status() == WL_CONNECTED) transportEnsureEspNow();
+  Serial.println("[Role] LOGIC_BOARD — local scan off; ESP-NOW / pair beacon");
 }
 
 void payloadTransportInit() {
@@ -199,7 +321,7 @@ void payloadTransportInit() {
   // (re)called after every successful WiFi connect instead.
   Serial.println("[ESP-NOW] LOGIC_BOARD — ESP-NOW inits after WiFi connects");
   Serial.printf("[Fallback] SCANNER_ABSENT_MS=%lu SCANNER_ALIVE_MS=%lu "
-                "(local scan starts only after absent window with no ESP-NOW scan packets)\n",
+                "(local NimBLE fallback only if no scanner MAC configured)\n",
                 (unsigned long)SCANNER_ABSENT_MS, (unsigned long)SCANNER_ALIVE_MS);
 }
 
@@ -234,17 +356,30 @@ void transportSendParsedPacket(const ParsedDisneyPacket& pkt) {
 }
 
 void processParsedPacketQueue() {
-  if (!parsedJob.pending) return;
-  ParsedDisneyPacket pkt;
-  portENTER_CRITICAL(&parsedJobMux);
-  if (!parsedJob.pending) {
-    portEXIT_CRITICAL(&parsedJobMux);
-    return;
+  if (parsedPacketDropCount != lastLoggedDropCount) {
+    Serial.printf("[ESP-NOW] parsed packet drops=%lu (queue full; oldest discarded)\n",
+                  (unsigned long)parsedPacketDropCount);
+    lastLoggedDropCount = parsedPacketDropCount;
   }
-  pkt = parsedJob.pkt;
-  parsedJob.pending = false;
-  portEXIT_CRITICAL(&parsedJobMux);
-  applyParsedDisneyPacket(pkt);
+
+  // Cap per loop() so a MagicBand advert flood cannot starve BLE command drain
+  // (preset fire / status). Remaining packets stay queued for the next iteration.
+  const int kMaxPerLoop = 2;
+  int processed = 0;
+  while (processed < kMaxPerLoop) {
+    ParsedDisneyPacket pkt;
+    portENTER_CRITICAL(&parsedJobMux);
+    if (parsedQueue.count == 0) {
+      portEXIT_CRITICAL(&parsedJobMux);
+      break;
+    }
+    pkt = parsedQueue.items[parsedQueue.head];
+    parsedQueue.head = (uint8_t)((parsedQueue.head + 1) % PARSED_PACKET_QUEUE_DEPTH);
+    parsedQueue.count--;
+    portEXIT_CRITICAL(&parsedJobMux);
+    applyParsedDisneyPacket(pkt);
+    processed++;
+  }
 }
 
 void queueDisneyPayload(const uint8_t* payload, size_t plen) {

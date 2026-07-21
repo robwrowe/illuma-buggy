@@ -24,6 +24,26 @@
 #define MB_MAX_RANDOM_POOL    32
 #define MB_MAX_RANDOM_CUSTOM  16
 
+// Rule-engine segment maps (Part 5)
+#define MB_MAX_RULE_SEG_MAPS   8
+#define MB_MAX_SEGS_PER_MAP    8
+#define MB_MAX_PRESET_VARS     8
+#define MB_SEG_ID_LEN          24
+#define MB_SEG_MAP_ID_LEN      24
+#define MB_RULE_ID_LEN         32
+
+// Timing-byte on-time multipliers (lab-confirmed — docs/ble-packets-details/timing-byte.md)
+#define MB_TIMING_MULT_NORMAL   1.6f
+#define MB_TIMING_MULT_SCALER   3.0f
+#define MB_TIMING_MULT_EXTENDED 7.6f
+#define MB_TIMING_T0_FALLBACK_SEC 3.0f
+/** @deprecated Prefer timing-model fadeBitsStretchSec[]. Kept for reference only. */
+#define MB_TIMING_FADE_STEP_MS  500UL
+/** Grace after last same-rule advert before ON→FADE (not a full on-time re-arm).
+ *  Does not apply during FADE/COOLDOWN — those re-apply the effect instead. */
+#define MB_RULE_REPEAT_SLACK_MS 400UL
+
+
 // Starlight wand
 #define SW_ANIM_COUNT 10
 #define WAND_CAST_LEN 13
@@ -32,7 +52,15 @@
 #define DISNEY_PAYLOAD_MAX 64
 #define PARSED_PACKET_MAX_PALETTES 5
 #define PARSED_PACKET_RAW_MAX 32
-#define BLE_CMD_BUF_SIZE 8192
+/** ESP-NOW → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
+#define PARSED_PACKET_QUEUE_DEPTH 32
+#define BLE_CMD_BUF_SIZE 65536
+/** ArduinoJson pool for BLE command parse + cached rules document (must track BLE_CMD_BUF_SIZE). */
+#define BLE_JSON_DOC_SIZE 65536
+/** Depth for complete BLE commands (reconnect burst is ~5–8; leave headroom). */
+#define BLE_CMD_QUEUE_DEPTH 24
+/** Max commands handled per loop() — empty a full burst in ~2 iterations. */
+#define BLE_CMD_DRAIN_PER_LOOP 12
 
 // ESP-NOW pairing magic ("PAIR" little-endian)
 #define ESPNOW_PAIR_MAGIC 0x52494150u

@@ -5,7 +5,6 @@ import {
   NumberInput,
   Paper,
   ScrollArea,
-  SimpleGrid,
   Slider,
   Stack,
   Text,
@@ -18,6 +17,8 @@ import { SearchableSelect } from '../shared/SearchableSelect';
 import { AppButton, AppCard } from '../shared/styles';
 import { buildLegacyShowModeConfig, fetchParkShows, inferShowKind, normalizeShowBinding } from '../../lib/map/themeParks';
 import { DEFAULT_DATA, generateId, showModePresetOptions, showPresetLabel } from '../../lib/utils';
+import { normalizeMbMapping, normalizeParadeDetection } from '../../lib/ble/mbMapping';
+import { webBleBoard } from '../../lib/ble/chunking';
 
 export function ShowsTab({ data, update }) {
   const parks = data.parks || [];
@@ -27,6 +28,8 @@ export function ShowsTab({ data, update }) {
   const showBindings = (data.showBindings || [])
     .map((b) => normalizeShowBinding(b, showSettings))
     .filter(Boolean);
+  const mb = normalizeMbMapping(data.mbMapping);
+  const paradeDetection = normalizeParadeDetection(mb.paradeDetection);
 
   const [selectedParkId, setSelectedParkId] = useState(parks[0]?.id || null);
   const [apiShows, setApiShows] = useState([]);
@@ -35,6 +38,7 @@ export function ShowsTab({ data, update }) {
   const [editingId, setEditingId] = useState(null);
   const [picker, setPicker] = useState(null);
   const [showErr, setShowErr] = useState('');
+  const [paradeMsg, setParadeMsg] = useState('');
 
   const selectedPark = parks.find((p) => p.id === selectedParkId) || null;
   const parkBindings = showBindings.filter((b) => b.parkId === selectedParkId);
@@ -54,6 +58,26 @@ export function ShowsTab({ data, update }) {
       showBindings: nextBindings,
       showModeConfig: buildLegacyShowModeConfig(nextBindings, parkId || selectedParkId),
     });
+  };
+
+  const setParadeDetection = (patch) => {
+    update({
+      mbMapping: normalizeMbMapping({
+        ...mb,
+        paradeDetection: normalizeParadeDetection({ ...paradeDetection, ...patch }),
+      }),
+    });
+  };
+
+  const sendParadeManual = async (type) => {
+    setParadeMsg('');
+    try {
+      if (!webBleBoard.connected) await webBleBoard.connect();
+      await webBleBoard.send({ type });
+      setParadeMsg(type === 'parade_manual_start' ? 'Parade start sent.' : 'Parade stop sent.');
+    } catch (e) {
+      setParadeMsg(String(e.message || e));
+    }
   };
 
   const loadApiShows = useCallback(async () => {
@@ -97,7 +121,7 @@ export function ShowsTab({ data, update }) {
       entityId,
       name,
       kind: inferShowKind(name),
-      presets: { pre: '', live: '', post: '' },
+      presets: { pre: '', post: '' },
     }, showSettings);
     if (!binding) return;
     persistBindings([...showBindings, binding], selectedParkId);
@@ -116,16 +140,16 @@ export function ShowsTab({ data, update }) {
     sh.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const phaseLabels = { pre: 'Pre-show', live: 'In-show', post: 'Post-show' };
+  const phaseLabels = { pre: 'Pre-show', post: 'Post-show' };
   const presetOpts = showModePresetOptions(presets);
-  const fwLiveOpts = showModePresetOptions(presets, true);
 
   return (
     <ScrollArea h="100%">
       <Stack p="md" gap="md" maw={720}>
         <Title order={3}>Shows</Title>
         <Text size="xs" c="dimmed" lh={1.5}>
-          Assign pre/live/post presets per parade and fireworks show. Synced to the companion app via export/import.
+          Assign pre/post presets per parade and fireworks show. Live phase is blackout-only on the board.
+          Synced to the companion app via export/import.
           Legacy <strong>showModeConfig</strong> (Settings → Show Mode) is updated from the selected park&apos;s bindings for board push.
         </Text>
 
@@ -137,8 +161,8 @@ export function ShowsTab({ data, update }) {
             ['defaultPostDelaySec', 'Post-show delay (sec)'],
             ['defaultHomeVisibleBeforeMin', 'Home visible before (min)'],
             ['defaultHomeVisibleAfterMin', 'Home visible after (min)'],
-            ['defaultParadeDurationMin', 'Default parade duration (min)'],
-            ['defaultFireworksDurationMin', 'Default fireworks duration (min)'],
+            ['defaultParadeDurationSec', 'Default parade duration (sec)'],
+            ['defaultFireworksDurationSec', 'Default fireworks duration (sec)'],
           ]).map(([key, label]) => (
             <Group key={key} justify="space-between" mb="xs">
               <Text size="sm" c="dimmed">{label}</Text>
@@ -153,6 +177,62 @@ export function ShowsTab({ data, update }) {
               />
             </Group>
           ))}
+        </AppCard>
+
+        <AppCard>
+          <Text fw={700} size="sm" mb="xs">Parade detection</Text>
+          <Text size="xs" c="dimmed" mb="sm" lh={1.45}>
+            Beacon settings for board-side parade start. Stored on MB mapping / rules and pushed with board sync.
+          </Text>
+          <Checkbox
+            label="Enable parade detection"
+            checked={!!paradeDetection.enabled}
+            onChange={(e) => setParadeDetection({ enabled: e.target.checked })}
+            mb="xs"
+          />
+          <Group justify="space-between" mb="xs">
+            <Text size="sm" c="dimmed">Beacon hex prefix</Text>
+            <TextInput
+              w={120}
+              value={paradeDetection.beaconOpcodeHexPrefix}
+              onChange={(e) => setParadeDetection({ beaconOpcodeHexPrefix: e.target.value })}
+              styles={{ input: { textAlign: 'right', fontFamily: 'monospace' } }}
+            />
+          </Group>
+          <Group justify="space-between" mb="xs">
+            <Text size="sm" c="dimmed">RSSI threshold</Text>
+            <NumberInput
+              w={88}
+              value={paradeDetection.rssiThreshold}
+              onChange={(v) => {
+                const n = parseInt(v, 10);
+                if (!isNaN(n)) setParadeDetection({ rssiThreshold: n });
+              }}
+              styles={{ input: { textAlign: 'right' } }}
+            />
+          </Group>
+          <Group justify="space-between" mb="xs">
+            <Text size="sm" c="dimmed">Cooldown (sec)</Text>
+            <NumberInput
+              w={88}
+              min={1}
+              value={paradeDetection.cooldownSec}
+              onChange={(v) => {
+                const n = parseInt(v, 10);
+                if (!isNaN(n)) setParadeDetection({ cooldownSec: n });
+              }}
+              styles={{ input: { textAlign: 'right' } }}
+            />
+          </Group>
+          <Group gap="xs" mt="sm">
+            <AppButton variant="primary" size="compact-sm" onClick={() => sendParadeManual('parade_manual_start')}>
+              Manual parade start
+            </AppButton>
+            <AppButton variant="default" size="compact-sm" onClick={() => sendParadeManual('parade_manual_stop')}>
+              Manual parade stop
+            </AppButton>
+          </Group>
+          {paradeMsg && <Text size="xs" c="dimmed" mt="xs">{paradeMsg}</Text>}
         </AppCard>
 
         <AppCard>
@@ -244,7 +324,7 @@ export function ShowsTab({ data, update }) {
                         <Stack gap={2} align="flex-start">
                           <Text fw={600} size="sm">{b.name}</Text>
                           <Text size="xs" c="dimmed">
-                            {b.kind} · {scopeLabel(b)} · {b.durationMin}m · pre {b.preLeadSec}s · post +{b.postDelaySec}s
+                            {b.kind} · {scopeLabel(b)} · {b.durationSec}s · pre {b.preLeadSec}s · live {b.liveOffsetSec >= 0 ? '+' : ''}{b.liveOffsetSec}s · post +{b.postDelaySec}s
                           </Text>
                         </Stack>
                       </AppButton>
@@ -261,7 +341,7 @@ export function ShowsTab({ data, update }) {
                             allowEmpty
                           />
                         </Field>
-                        {(['pre', 'live', 'post']).map((phase) => (
+                        {(['pre', 'post']).map((phase) => (
                           <Group key={phase} gap="xs" wrap="nowrap">
                             <Text size="xs" c="dimmed" w={88}>{phaseLabels[phase]}</Text>
                             <AppButton
@@ -281,8 +361,9 @@ export function ShowsTab({ data, update }) {
                           mt="xs"
                         />
                         {([
-                          ['durationMin', 'Show duration (min)'],
+                          ['durationSec', 'Show duration (sec)'],
                           ['preLeadSec', 'Pre lead (sec)'],
+                          ['liveOffsetSec', 'Live start offset (sec, +/-)'],
                           ['postDelaySec', 'Post delay (sec)'],
                           ['homeVisibleBeforeMin', 'Home before (min)'],
                           ['homeVisibleAfterMin', 'Home after (min)'],
@@ -346,16 +427,14 @@ export function ShowsTab({ data, update }) {
             <SearchableSelect
               value={pickerBinding.presets[picker.phase] || ''}
               onChange={(v) => {
-                const presetsNext = { ...pickerBinding.presets, [picker.phase]: v };
-                if (picker.phase === 'live' && pickerBinding.kind === 'fireworks' && !v) {
-                  presetsNext.live = '__BLACK__';
-                }
-                updateBinding(picker.bindingId, { presets: presetsNext });
+                updateBinding(picker.bindingId, {
+                  presets: { ...pickerBinding.presets, [picker.phase]: v },
+                });
                 setPicker(null);
               }}
-              placeholder={picker.phase === 'live' && pickerBinding.kind === 'fireworks' ? 'Black (strip off)' : '(none)'}
-              options={picker.phase === 'live' && pickerBinding.kind === 'fireworks' ? fwLiveOpts : presetOpts}
-              allowEmpty={!(picker.phase === 'live' && pickerBinding.kind === 'fireworks')}
+              placeholder="(none)"
+              options={presetOpts}
+              allowEmpty
             />
           </Modal>
         )}

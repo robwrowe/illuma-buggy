@@ -37,7 +37,7 @@ export interface UpcomingShow {
   autoPrePostDisabled: boolean;
   autoLiveDisabled: boolean;
   inScope: boolean;
-  durationMin: number;
+  durationSec: number;
 }
 
 function parseShowStart(iso: string): number {
@@ -62,18 +62,20 @@ export function buildUpcomingShows(
     const visibleBeforeMs = binding.homeVisibleBeforeMin * 60_000;
     const visibleAfterMs = binding.homeVisibleAfterMin * 60_000;
     const preLeadMs = binding.preLeadSec * 1000;
+    const liveAtMs = (startMs: number) => startMs + binding.liveOffsetSec * 1000;
 
     for (const iso of entity.showtimes) {
       const startMs = parseShowStart(iso);
       if (!Number.isFinite(startMs)) continue;
-      const endMs = startMs + binding.durationMin * 60_000;
+      const endMs = startMs + binding.durationSec * 1000;
+      const liveMs = liveAtMs(startMs);
       const windowStart = startMs - visibleBeforeMs;
       const windowEnd = endMs + visibleAfterMs;
       if (now < windowStart || now > windowEnd) continue;
 
       let status: ShowStatus = 'upcoming';
       if (now >= endMs) status = 'ended';
-      else if (now >= startMs) status = 'live';
+      else if (now >= liveMs) status = 'live';
       else if (now >= startMs - preLeadMs) status = 'pre';
 
       const instanceId = `${entity.id}-${startMs}`;
@@ -93,7 +95,7 @@ export function buildUpcomingShows(
         autoPrePostDisabled: isAutoPrePostDisabled(binding, instanceOverride),
         autoLiveDisabled: isAutoLiveDisabled(binding, instanceOverride),
         inScope,
-        durationMin: binding.durationMin,
+        durationSec: binding.durationSec,
       });
     }
   }
@@ -258,6 +260,12 @@ function formatShowTime(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+function formatDurationLabel(durationSec: number): string {
+  if (durationSec >= 60 && durationSec % 60 === 0) return `${durationSec / 60}m`;
+  if (durationSec >= 60) return `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`;
+  return `${durationSec}s`;
+}
+
 export function formatShowStatus(show: UpcomingShow): string {
   if (!show.inScope) return 'Outside show area';
   if (show.status === 'ended') {
@@ -268,9 +276,10 @@ export function formatShowStatus(show: UpcomingShow): string {
     const minsLeft = Math.max(0, Math.round((show.endMs - Date.now()) / 60000));
     return `In progress · ${minsLeft}m left · ends ${formatShowTime(show.endMs)}`;
   }
+  const dur = formatDurationLabel(show.durationSec);
   if (show.status === 'pre') {
-    return `Pre-show · starts in ${Math.max(0, show.minutesUntil)}m · ${show.durationMin}m show`;
+    return `Pre-show · starts in ${Math.max(0, show.minutesUntil)}m · ${dur} show`;
   }
-  if (show.minutesUntil <= 0) return `Starting soon · ${show.durationMin}m show`;
-  return `In ${show.minutesUntil}m · ${formatShowTime(show.startMs)} · ${show.durationMin}m`;
+  if (show.minutesUntil <= 0) return `Starting soon · ${dur} show`;
+  return `In ${show.minutesUntil}m · ${formatShowTime(show.startMs)} · ${dur}`;
 }

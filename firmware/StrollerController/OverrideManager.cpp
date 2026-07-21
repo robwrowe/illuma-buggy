@@ -5,6 +5,7 @@
 #include "MbEffects.h"
 #include "BlePeripheral.h"
 #include "DisneyPayloadHandlers.h"
+#include "MbRuleEngine.h"
 
 void touchOverrideIdleTimer(OverrideSource src) {
   unsigned long now = millis();
@@ -17,8 +18,8 @@ int overridePriority(OverrideSource src) {
     case ZONE:          return 1;
     case MANUAL:        return 2;
     case SHOW_MODE:     return 3;
-    case BLE_MAGIC:     return 4;
-    case BLE_STARLIGHT: return 5;
+    case BLE_STARLIGHT: return 4;
+    case BLE_MAGIC:     return 5;
     default:            return 0;
   }
 }
@@ -55,16 +56,11 @@ void saveWledStateForOverride() {
     }
   }
 
-  if (liveWledState.length() == 0) {
-    String state = getFromWLED("/json/state");
-    if (state.length() > 0) {
-      liveWledState = compactWledStateForSave(state);
-      lastLiveStatePollMs = millis();
-      Serial.printf("[WLED] Sync state poll (%u bytes)\n", (unsigned)liveWledState.length());
-    }
-  }
-
-  // Cache only — prefer live/sync poll over stale boot baseline.
+  // Do NOT synchronously poll WLED here — this runs on the hot rule-apply /
+  // override path under active BLE/ESP-NOW load. A blocking GET (default 5s)
+  // stalls loop(), starves the packet queue, and can hang long enough that
+  // "[Rule] posting WLED" never appears. Use whatever is already cached
+  // (liveWledState from the periodic poll, or the boot baseline).
   if (liveWledState.length() > 0) {
     savedWledState = liveWledState;
     Serial.printf("[Override] Saved snapshot (%u bytes, preset_fallback=%s)\n",
@@ -151,8 +147,19 @@ String preparePresetApplyPayload(const String& json) {
   DynamicJsonDocument doc(WLED_RESTORE_JSON_CAP);
   if (deserializeJson(doc, restored) != DeserializationError::Ok) return restored;
 
+  // GLEDOPTO relay (GPIO 18) cuts output when master power is off. Always force on
+  // in the same POST as the effect — a prior ensureWledPowerOn() can fail/timeout
+  // under BLE+scan load and leave the strip dark while seg/fx still "apply".
+  doc["on"] = true;
+
   JsonArray segs = doc["seg"].as<JsonArray>();
-  if (segs.isNull() || segs.size() == 0) return restored;
+  if (segs.isNull() || segs.size() == 0) {
+    // Brightness is app-managed — never from preset apply.
+    doc.remove("bri");
+    String out;
+    serializeJson(doc, out);
+    return out.length() ? out : restored;
+  }
 
   bool activeIds[MB_WLED_MAX_SEG] = {false};
   for (JsonObject seg : segs) {
@@ -186,7 +193,7 @@ bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBla
   return sendToWLED(payload, 8000, 2);
 }
 
-bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
+bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, int blendingStyle) {
   String preset = getPreset(id);
   if (preset.length() == 0) return false;
   DynamicJsonDocument doc(12288);
@@ -195,21 +202,30 @@ bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
   serializeJson(doc["wled"], wledJson);
   if (wledJson.length() == 0) return false;
   currentPresetId = id;
-  return restoreWledSnapshot(prepareWledRestorePayload(wledJson), fadeMs);
+  disableAllSplitSegments();
+  String payload = injectWledTransition(
+    buildWledRestorePayload(prepareWledRestorePayload(wledJson)),
+    fadeMs, blendingStyle);
+  return sendToWLED(payload, 8000, 2);
+}
+
+bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
+  return restorePresetWithTransitionStyled(id, fadeMs, -1);
 }
 
 void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
-  if (phase == PHASE_BLACK) {
+  // LIVE is blackout-only: turn lights off once on enter so the rule engine can drive
+  // effects without fighting a competing "live look" preset push.
+  if (phase == PHASE_BLACK || phase == PHASE_LIVE) {
     sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
     return;
   }
   String presetId;
   if (type == SHOW_PARADE) {
-    presetId = (phase == PHASE_PRE) ? showLookParadePre : showLookParadeLive;
+    presetId = showLookParadePre;  // PRE only; LIVE handled above
   } else if (type == SHOW_FIREWORKS) {
     if (phase == PHASE_PRE) presetId = showLookFireworksPre;
-    else if (phase == PHASE_LIVE) presetId = showLookFireworksLive;
-    else presetId = showLookFireworksPost;
+    else presetId = showLookFireworksPost;  // POST; LIVE handled above
   }
   if (presetId == "__BLACK__") {
     sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
@@ -250,7 +266,9 @@ void pollLiveWledState() {
   unsigned long now = millis();
   if (now - lastLiveStatePollMs < LIVE_STATE_POLL_MS) return;
   lastLiveStatePollMs = now;
-  String state = getFromWLED("/json/state");
+  // Background poll: fail fast so a slow/unreachable WLED cannot stall loop()
+  // and starve the ESP-NOW → rule-engine packet queue.
+  String state = getFromWLED("/json/state", 500);
   if (state.length() > 0) {
     liveWledState = compactWledStateForSave(state);
     Serial.printf("[WLED] Live state poll (%u bytes)\n", (unsigned)liveWledState.length());
@@ -260,6 +278,13 @@ void pollLiveWledState() {
 void clearOverride() {
   OverrideSource prev = currentOverride;
   unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
+
+  // Timed rule lifecycle ends with clearOverride — avoid double-reset from serviceMbRuleLifecycle.
+  if (mbRulePhase != MB_RULE_IDLE && prev == BLE_MAGIC) {
+    // Keep fade duration from the rule when we're finishing COOLDOWN via serviceMbRuleLifecycle
+    // (already faded). For external clears, reset phase tracking.
+  }
+  resetMbRuleLifecycle();
 
   if (overrideBeforeInterrupt == SHOW_MODE && (prev == BLE_MAGIC || prev == BLE_STARLIGHT)) {
     overrideBeforeInterrupt = NONE;

@@ -2,12 +2,11 @@ import { Button, Group } from '@mantine/core';
 
 export function BleMappingTabBar({ active, onChange }) {
   const tabs = [
-    { id: 'device', label: 'Device' },
-    { id: 'sw', label: 'Starlight' },
-    { id: 'mb', label: 'MagicBand' },
+    { id: 'rules', label: 'Rules' },
+    { id: 'segmentMaps', label: 'Segment Maps' },
+    { id: 'timingModels', label: 'Timing Models' },
     { id: 'show', label: 'Show Mode' },
     { id: 'colors', label: 'MB Colors' },
-    { id: 'segments', label: 'Segments' },
     { id: 'general', label: 'General' },
   ];
   return (

@@ -51,11 +51,7 @@ export default function SettingsScreen() {
   const { isConnected } = useBLE();
   const {
     overrideKillOnZone, setOverrideKillOnZone,
-    starlightEnabled, setStarlightEnabled,
-    starlightTimeoutSec, setStarlightTimeoutSec,
-    magicBandEnabled, setMagicBandEnabled,
-    magicBandFivePoint, setMagicBandFivePoint,
-    magicBandTimeoutSec, setMagicBandTimeoutSec,
+    mbUnmatchedLogEnabled, setMbUnmatchedLogEnabled,
     bleEffectTransitionMs, setBleEffectTransitionMs,
     wledSsid, setWledSsid,
     wledPass, setWledPass,
@@ -196,18 +192,6 @@ export default function SettingsScreen() {
     saveToStorage();
   };
 
-  const pushSwConfig = (enabled = starlightEnabled, timeoutSec = starlightTimeoutSec) => {
-    if (isConnected) bleService.sendSwConfig(enabled, timeoutSec * 1000);
-  };
-
-  const pushMbConfig = (
-    enabled = magicBandEnabled,
-    fivePoint = magicBandFivePoint,
-    timeoutSec = magicBandTimeoutSec,
-  ) => {
-    if (isConnected) bleService.sendMbConfig(enabled, fivePoint, timeoutSec * 1000);
-  };
-
   const pushBleEffectConfig = (transitionMs = bleEffectTransitionMs) => {
     if (isConnected) bleService.sendBleEffectConfig(transitionMs);
   };
@@ -229,24 +213,6 @@ export default function SettingsScreen() {
     bleService.sendWledNetConfig(payload.ssid, payload.pass, payload.ip, payload.port);
     saveToStorage();
     Alert.alert('Saved', 'WLED network settings sent to board. WiFi will reconnect.');
-  };
-
-  const updateStarlightEnabled = (val: boolean) => {
-    setStarlightEnabled(val);
-    pushSwConfig(val);
-    saveToStorage();
-  };
-
-  const updateMbEnabled = (val: boolean) => {
-    setMagicBandEnabled(val);
-    pushMbConfig(val);
-    saveToStorage();
-  };
-
-  const updateMbFivePoint = (val: boolean) => {
-    setMagicBandFivePoint(val);
-    pushMbConfig(magicBandEnabled, val);
-    saveToStorage();
   };
 
   const updateBrightness = (key: keyof typeof brightnessConfig, val: string) => {
@@ -422,65 +388,19 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Starlight Wand */}
+      {/* Diagnostics */}
       <View style={s.section}>
-        <Text style={s.sectionTitle}>Starlight Wand Effects</Text>
-        <Text style={s.sectionHint}>Highest priority. Map presets under Wand & MagicBand Presets → Starlight tab.</Text>
+        <Text style={s.sectionTitle}>Diagnostics</Text>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
-            <Text style={s.rowLabel}>Enable wand effects</Text>
-            <Text style={s.rowHint}>Listen for Starlight Wand BLE color codes.</Text>
+            <Text style={s.rowLabel}>Log unmatched MB/Wand packets</Text>
+            <Text style={s.rowHint}>Runs continuously while connected. Disable if it causes instability.</Text>
           </View>
-          <Switch value={starlightEnabled} onValueChange={updateStarlightEnabled}
-            trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
-        </View>
-        <View style={s.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.rowLabel}>Auto-clear timeout</Text>
-            <Text style={s.rowHint}>Seconds before wand effect reverts. 0 = never.</Text>
-          </View>
-          <TextInput
-            style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
-            value={String(starlightTimeoutSec)}
-            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setStarlightTimeoutSec(n); }}
-            onEndEditing={() => { pushSwConfig(); saveToStorage(); }}
-            keyboardType="number-pad"
-            selectTextOnFocus
-          />
-        </View>
-      </View>
-
-      {/* MagicBand */}
-      <View style={s.section}>
-        <Text style={s.sectionTitle}>MagicBand+ Effects</Text>
-        <View style={s.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.rowLabel}>Enable MB+ effects</Text>
-            <Text style={s.rowHint}>Listen for in-park E9 show codes (lower priority than wand).</Text>
-          </View>
-          <Switch value={magicBandEnabled} onValueChange={updateMbEnabled}
-            trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
-        </View>
-        <View style={s.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.rowLabel}>5-point mode</Text>
-            <Text style={s.rowHint}>On: 4 corners + center LED. Off: 4 corners only.</Text>
-          </View>
-          <Switch value={magicBandFivePoint} onValueChange={updateMbFivePoint}
-            trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
-        </View>
-        <View style={s.row}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.rowLabel}>Auto-clear timeout</Text>
-            <Text style={s.rowHint}>Seconds before MB+ effect auto-clears. 0 = never.</Text>
-          </View>
-          <TextInput
-            style={{ backgroundColor: colors.background, borderRadius: 8, borderWidth: 1, borderColor: colors.borderFocus, color: colors.textPrimary, padding: 8, fontSize: 14, width: 72, textAlign: 'right' }}
-            value={String(magicBandTimeoutSec)}
-            onChangeText={v => { const n = parseInt(v, 10); if (!isNaN(n)) setMagicBandTimeoutSec(n); }}
-            onEndEditing={() => { pushMbConfig(); saveToStorage(); }}
-            keyboardType="number-pad"
-            selectTextOnFocus
+          <Switch
+            value={mbUnmatchedLogEnabled}
+            onValueChange={setMbUnmatchedLogEnabled}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
           />
         </View>
       </View>
@@ -489,7 +409,7 @@ export default function SettingsScreen() {
       <View style={s.section}>
         <Text style={s.sectionTitle}>Quick Actions</Text>
         <Text style={s.sectionHint}>
-          Fade to Black uses this preset when tapped on Home (or pure black if none selected).
+          Used for Home “Fade to Black” and MB rule fade-out (keeps WLED powered so the next effect can render). Empty = master power off.
         </Text>
         <TouchableOpacity style={s.dataBtn} onPress={() => setFtbPickerOpen(true)}>
           <IconMoon size={16} color={colors.primary} />
@@ -505,7 +425,11 @@ export default function SettingsScreen() {
         presets={presets}
         selectedId={ftbPresetId}
         emptyLabel="Pure black (no preset)"
-        onSelect={(id) => { setFtbPresetId(id); saveToStorage(); }}
+        onSelect={(id) => {
+          setFtbPresetId(id);
+          saveToStorage();
+          if (bleService.isConnected()) bleService.sendMbRuleConfig(id || '');
+        }}
         onClose={() => setFtbPickerOpen(false)}
         colors={colors}
       />
@@ -556,9 +480,9 @@ export default function SettingsScreen() {
 
       {/* MB → WLED mapping */}
       <View style={s.section}>
-        <Text style={s.sectionTitle}>Wand & MagicBand Presets</Text>
+        <Text style={s.sectionTitle}>BLE mapping</Text>
         <Text style={s.sectionHint}>
-          Same presets as GPS zones. Set a default, then per-effect overrides under Starlight / MagicBand tabs.
+          Default preset and MB color table. Author rules in the web tool, then Board sync.
         </Text>
         <MbMappingSections colors={colors} isConnected={isConnected} />
       </View>

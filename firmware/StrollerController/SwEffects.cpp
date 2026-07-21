@@ -91,11 +91,7 @@ void applySwAnimFallbackSolid(OverrideSource src) {
 bool tryApplySwE9Payload(const uint8_t* payload, size_t plen, const char* mbFallbackKey, const char* label) {
   if (!starlightEnabled) return false;
   const char* swKey = nullptr;
-  SwMatchQuality mq = identifySwFxPresetQuality(payload, plen, &swKey);
-  uint16_t func = swPayloadFuncCode(payload, plen);
-  if (mq != SW_MATCH_EXACT && func >= 0xE90C && func <= 0xE913) {
-    notifyUnknownAnimation(payload, plen, mq, func);
-  }
+  identifySwFxPresetQuality(payload, plen, &swKey);
   if (!swKey) return false;
   if (!canTakeOverride(BLE_STARLIGHT)) {
     bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");

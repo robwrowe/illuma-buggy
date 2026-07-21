@@ -52,10 +52,23 @@ export const SEGMENT_LAYOUT_FIELDS = [
 ];
 
 export const WLED_BLEND_MODES = [
-  { value: 0, label: 'Normal' },
-  { value: 1, label: 'Additive' },
-  { value: 2, label: 'Subtractive' },
-  { value: 3, label: 'Multiply' },
+  { value: 0, label: 'Top / Default' },
+  { value: 1, label: 'Bottom / None' },
+  { value: 2, label: 'Add' },
+  { value: 3, label: 'Subtract' },
+  { value: 4, label: 'Difference' },
+  { value: 5, label: 'Average' },
+  { value: 6, label: 'Multiply' },
+  { value: 7, label: 'Divide' },
+  { value: 8, label: 'Lighten' },
+  { value: 9, label: 'Darken' },
+  { value: 10, label: 'Screen' },
+  { value: 11, label: 'Overlay' },
+  { value: 12, label: 'Hard Light' },
+  { value: 13, label: 'Soft Light' },
+  { value: 14, label: 'Dodge' },
+  { value: 15, label: 'Burn' },
+  { value: 32, label: 'Stencil' },
 ];
 
 export function normalizeSegmentDef(raw) {

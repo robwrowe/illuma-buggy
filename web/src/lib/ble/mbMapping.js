@@ -1,53 +1,593 @@
-import { DEFAULT_MB_WLED_COLORS, MB_ANIMATION_META, MB_EFFECT_CLASS_META, MB_PATTERN_META, MB_SEGMENT_META, SW_ANIMATION_META, defaultRandomPaletteIndices, normalizeRandomPool } from './mbConstants';
+import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId } from './mbConstants';
 import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
 
-export const DEFAULT_MB_EFFECT_CLASSES = {
-  singleColor: { presetId: '', useMbColors: true },
-  dualColor: { presetId: '', useMbColors: true },
-  sixBitColor: { presetId: '', useMbColors: true },
-  fivePositionPalette: { presetId: '', useMbColors: true },
-  fivePositionFlash: { presetId: '', useMbColors: true },
-  unclassified: { presetId: '', useMbColors: false },
-  unclassifiedOpcodes: {},
+const BYTE_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
+const CMP_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte']);
+const MB_SEG_KEY_SET = new Set(MB_SEG_KEYS);
+const COOLDOWN_RESET_MODES = new Set(['onMatch', 'fixed']);
+
+/** WLED v16 state.`bs` transition styles (FX.h TRANSITION_*), plus Illuma `instant`. */
+export const WLED_START_TRANSITIONS = [
+  { value: 'fade', label: 'Fade', bs: 0x00 },
+  { value: 'fairyDust', label: 'Fairy Dust', bs: 0x01 },
+  { value: 'swipeRight', label: 'Swipe right', bs: 0x02 },
+  { value: 'swipeLeft', label: 'Swipe left', bs: 0x03 },
+  { value: 'pushRight', label: 'Push right', bs: 0x10 },
+  { value: 'pushLeft', label: 'Push left', bs: 0x11 },
+  { value: 'outsideIn', label: 'Outside-in', bs: 0x04 },
+  { value: 'insideOut', label: 'Inside-out', bs: 0x05 },
+  { value: 'swipeUp', label: 'Swipe up (2D)', bs: 0x06 },
+  { value: 'swipeDown', label: 'Swipe down (2D)', bs: 0x07 },
+  { value: 'openH', label: 'Open horizontal (2D)', bs: 0x08 },
+  { value: 'openV', label: 'Open vertical (2D)', bs: 0x09 },
+  { value: 'swipeTL', label: 'Swipe TL (2D)', bs: 0x0A },
+  { value: 'swipeTR', label: 'Swipe TR (2D)', bs: 0x0B },
+  { value: 'swipeBR', label: 'Swipe BR (2D)', bs: 0x0C },
+  { value: 'swipeBL', label: 'Swipe BL (2D)', bs: 0x0D },
+  { value: 'circularOut', label: 'Circular out (2D)', bs: 0x0E },
+  { value: 'circularIn', label: 'Circular in (2D)', bs: 0x0F },
+  { value: 'pushUp', label: 'Push up (2D)', bs: 0x12 },
+  { value: 'pushDown', label: 'Push down (2D)', bs: 0x13 },
+  { value: 'pushTL', label: 'Push TL (2D)', bs: 0x14 },
+  { value: 'pushTR', label: 'Push TR (2D)', bs: 0x15 },
+  { value: 'pushBR', label: 'Push BR (2D)', bs: 0x16 },
+  { value: 'pushBL', label: 'Push BL (2D)', bs: 0x17 },
+  { value: 'instant', label: 'Instant', bs: 0x00 },
+];
+
+const START_TRANSITION_TYPES = new Set(WLED_START_TRANSITIONS.map((t) => t.value));
+
+export function shortRuleId() {
+  return `r${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+export function shortSegmentMapId() {
+  return `sm${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+export function shortSegmentId() {
+  return `seg${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+export function createEmptyMatchGroup(mode = 'all') {
+  return { mode: mode === 'some' ? 'some' : 'all', children: [] };
+}
+
+export function createEmptyCondition(type = 'hexPrefix') {
+  if (type === 'length') return { type: 'length', op: 'eq', value: 0 };
+  if (type === 'byte') return { type: 'byte', offset: 0, op: 'eq', value: 0, mask: 0xff };
+  if (type === 'bits') return { type: 'bits', offset: 0, bitStart: 0, bitCount: 1, op: 'eq', value: 0 };
+  return { type: 'hexPrefix', value: '' };
+}
+
+export function createEmptyExtractTarget(kind = 'maskColor') {
+  if (kind === 'segmentColor') return { kind: 'segmentColor', segmentId: '', colorSlot: 0 };
+  if (kind === 'segmentField') return { kind: 'segmentField', segmentId: '', field: '' };
+  if (kind === 'ignore') return { kind: 'ignore' };
+  return { kind: 'maskColor', mask: 'all' };
+}
+
+export function createEmptyExtract(name = '') {
+  return {
+    name,
+    source: 'payloadBits',
+    offset: 0,
+    bitStart: 0,
+    bitCount: 5,
+    paletteMap: true,
+    targets: [{ kind: 'maskColor', mask: 'all' }],
+  };
+}
+
+/** Timing-derived extract sources (not packet bits). */
+export const TIMING_DERIVED_SOURCES = [
+  { value: 'timingFlashRate', label: 'Flash rate (Hz)', unit: 'Hz', defaultField: 'sx', defaultCurve: 'reciprocal' },
+  { value: 'timingOnSec', label: 'On-time (sec)', unit: 's', defaultField: 'ix', defaultCurve: 'linear' },
+  { value: 'timingFadeSec', label: 'Final-cycle stretch (sec)', unit: 's', defaultField: 'c1', defaultCurve: 'linear' },
+];
+
+export const TIMING_DERIVED_SOURCE_SET = new Set(TIMING_DERIVED_SOURCES.map((s) => s.value));
+
+export function isTimingDerivedSource(source) {
+  return TIMING_DERIVED_SOURCE_SET.has(source);
+}
+
+/** Common WLED segment numeric fields + freeform for unknown/usermod params. */
+export const SEGMENT_FIELD_PRESETS = [
+  { value: 'sx', label: 'sx (speed)' },
+  { value: 'ix', label: 'ix (intensity)' },
+  { value: 'c1', label: 'c1 (custom 1)' },
+  { value: 'c2', label: 'c2 (custom 2)' },
+  { value: 'c3', label: 'c3 (custom 3)' },
+  { value: 'o1', label: 'o1 (option 1)' },
+  { value: 'o2', label: 'o2 (option 2)' },
+  { value: 'o3', label: 'o3 (option 3)' },
+];
+
+/**
+ * Pre-built extract that wires a timing-derived value → segmentField.
+ * Lives in rule.extract[] (same schema as packet extracts).
+ */
+export function createEmptyTimingParamBinding(source = 'timingFlashRate') {
+  const meta = TIMING_DERIVED_SOURCES.find((s) => s.value === source) || TIMING_DERIVED_SOURCES[0];
+  const reciprocal = meta.defaultCurve === 'reciprocal';
+  return {
+    name: meta.value === 'timingFlashRate' ? 'flashRate' : meta.value === 'timingOnSec' ? 'onTime' : 'fadeTime',
+    source: meta.value,
+    offset: 0,
+    bitStart: 0,
+    bitCount: 8,
+    paletteMap: false,
+    curve: {
+      type: reciprocal ? 'reciprocal' : 'linear',
+      inMin: 0,
+      inMax: reciprocal ? 50 : 60,
+      outMin: 0,
+      outMax: 255,
+      exponent: 2,
+      outScale: 50,
+    },
+    targets: [{ kind: 'segmentField', segmentId: '', field: meta.defaultField }],
+  };
+}
+
+export function createEmptySegment(overrides = {}) {
+  return {
+    id: shortSegmentId(),
+    wledSegId: 0,
+    start: 0,
+    stop: 100,
+    grp: 1,
+    spc: 0,
+    of: 0,
+    rev: false,
+    mi: false,
+    blend: 'top',
+    fx: -1,
+    sx: 128,
+    ix: 128,
+    pal: -1,
+    presetId: '',
+    presetVariables: {},
+    colors: ['', '', ''],
+    maskAssignment: 'all',
+    ...overrides,
+  };
+}
+
+/** RGB array from WLED `col[i]` → `#rrggbb`, or '' if missing. */
+export function rgbArrayToHex(rgb) {
+  if (!Array.isArray(rgb) || rgb.length < 3) return '';
+  const clamp = (n) => Math.max(0, Math.min(255, Number(n) || 0));
+  return `#${[rgb[0], rgb[1], rgb[2]].map((n) => clamp(n).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Map a live WLED segment (from fetchWledSegmentsFromIp) into a segment-map entry. */
+export function wledSegmentToSegmentMapSegment(raw) {
+  const colSrc = Array.isArray(raw?.col) ? raw.col : [];
+  return createEmptySegment({
+    wledSegId: Number(raw?.id ?? 0),
+    start: Number(raw?.start ?? 0),
+    stop: Number(raw?.stop ?? 0),
+    grp: raw?.grp ?? 1,
+    spc: raw?.spc ?? 0,
+    of: raw?.of ?? 0,
+    rev: !!raw?.rev,
+    mi: !!raw?.mi,
+    blend: bmToBlendModeId(raw?.bm ?? 0),
+    fx: raw?.fx ?? -1,
+    pal: raw?.pal ?? -1,
+    sx: raw?.sx ?? 128,
+    ix: raw?.ix ?? 128,
+    colors: [0, 1, 2].map((i) => rgbArrayToHex(colSrc[i])),
+  });
+}
+
+/**
+ * Merge imported WLED segments into a map: update by wledSegId (preserve mask/preset
+ * fields), append new ones. Returns { segments, updated, added }.
+ */
+export function mergeImportedSegmentsIntoMap(existingSegments, importedSegments) {
+  const merged = [...(existingSegments || [])];
+  let updated = 0;
+  let added = 0;
+  (importedSegments || []).forEach((seg) => {
+    const idx = merged.findIndex((s) => s.wledSegId === seg.wledSegId);
+    if (idx >= 0) {
+      merged[idx] = {
+        ...merged[idx],
+        ...seg,
+        id: merged[idx].id,
+        maskAssignment: merged[idx].maskAssignment,
+        presetId: merged[idx].presetId,
+        presetVariables: merged[idx].presetVariables,
+      };
+      updated += 1;
+    } else {
+      merged.push(seg);
+      added += 1;
+    }
+  });
+  return { segments: merged, updated, added };
+}
+
+export function createEmptySegmentMap(overrides = {}) {
+  return {
+    id: shortSegmentMapId(),
+    name: 'New segment map',
+    segments: [createEmptySegment()],
+    ...overrides,
+  };
+}
+
+export function createEmptyRuleTiming() {
+  return {
+    enabled: false,
+    offset: 5,
+    cooldownSec: 2,
+    cooldownResetMode: 'onMatch',
+    timingModelId: '',
+    fadeOverrideMs: null,
+  };
+}
+
+export function shortTimingModelId() {
+  return `tm${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
+}
+
+/** Matches Config.h MB_TIMING_* defaults — used when timingModelId is empty. */
+export const DEFAULT_TIMING_MODEL_VALUES = {
+  multNormal: 1.6,
+  multScaler: 3.0,
+  multExtended: 7.6,
+  t0FallbackSec: 3.0,
+  fadeCurve: 'linear',
+  // Extra seconds added to the final flash cycle length, indexed by fadeBits (0–3).
+  // fadeBits stretches the LAST cycle (LED fades during that stretch) rather than
+  // appending a separate fade phase after on-time. 0 = no stretch.
+  fadeBitsStretchSec: [0, 0, 0, 0],
+  fadeBitsStretchAppliesToExtended: false,
+  /** @deprecated Unused in lifecycle math — prefer fadeBitsStretchSec. Kept for older saved configs. */
+  fadeStepSec: 0.5,
 };
+
+export function createEmptyStrobeEffect(overrides = {}) {
+  return {
+    enabled: false,
+    fx: 23, // classic WLED "Strobe"; web picker can override
+    flashRateNormalHz: 2.0,
+    flashRateScalerHz: 1.0,
+    flashRateExtendedHz: 0.35,
+    ...overrides,
+  };
+}
+
+export function createEmptyTimingModel(overrides = {}) {
+  return {
+    id: shortTimingModelId(),
+    name: 'New timing model',
+    ...DEFAULT_TIMING_MODEL_VALUES,
+    strobeEffect: createEmptyStrobeEffect(),
+    ...overrides,
+  };
+}
+
+/** Built-in models seeded into DEFAULT_MB_MAPPING. */
+export function defaultTimingModels() {
+  return [
+    createEmptyTimingModel({
+      id: 'tm_default',
+      name: 'E9 05/09 standard',
+      ...DEFAULT_TIMING_MODEL_VALUES,
+      strobeEffect: createEmptyStrobeEffect(),
+    }),
+    createEmptyTimingModel({
+      id: 'tm_e90e',
+      name: 'E9 0E strobe',
+      multNormal: 1.5,
+      multScaler: 3.0,
+      multExtended: 7.6,
+      t0FallbackSec: 3.0,
+      fadeCurve: 'linear',
+      // Lab 2026-07-21: fadeBits stretches the FINAL flash cycle (not a post-on fade).
+      // fadeBits=01 confirmed +0.5s (scaler 0/1). fadeBits=10 provisional (~+0.75–1.25s → 1.0).
+      // fadeBits=11 unconfirmed. Extended mode stretch disabled until retested.
+      fadeBitsStretchSec: [0, 0.5, 1.0, 0],
+      fadeBitsStretchAppliesToExtended: false,
+      strobeEffect: createEmptyStrobeEffect({
+        enabled: true,
+        fx: 23,
+        flashRateNormalHz: 2.0,
+        flashRateScalerHz: 1.0,
+        flashRateExtendedHz: 0.35,
+      }),
+    }),
+  ];
+}
+
+const FADE_CURVES = new Set(['linear', 'decelerating']);
+
+export function normalizeStrobeEffect(raw) {
+  const d = createEmptyStrobeEffect();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  const clampHz = (v, fallback) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return fallback;
+    return Math.min(50, Math.max(0.05, n));
+  };
+  return {
+    enabled: !!raw.enabled,
+    fx: Number.isFinite(raw.fx) ? Math.max(0, Math.floor(Number(raw.fx))) : d.fx,
+    flashRateNormalHz: clampHz(raw.flashRateNormalHz, d.flashRateNormalHz),
+    flashRateScalerHz: clampHz(raw.flashRateScalerHz, d.flashRateScalerHz),
+    flashRateExtendedHz: clampHz(raw.flashRateExtendedHz, d.flashRateExtendedHz),
+  };
+}
+
+export function normalizeTimingModel(raw, index = 0) {
+  const d = createEmptyTimingModel({ name: `Timing model ${index + 1}` });
+  if (!raw || typeof raw !== 'object') return d;
+  const clampPos = (v, fallback) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  const normalizeStretchArr = (raw4, fallback4) => {
+    if (!Array.isArray(raw4)) return [...fallback4];
+    return [0, 1, 2, 3].map((i) => clampPos(raw4[i], fallback4[i] ?? 0));
+  };
+  // Prefer fadeBitsStretchSec; migrate deprecated fadeStepSec → [0, s, 2s, 3s] when missing.
+  let stretchFallback = d.fadeBitsStretchSec;
+  if (!Array.isArray(raw.fadeBitsStretchSec)) {
+    const step = Number(raw.fadeStepSec);
+    if (Number.isFinite(step) && step >= 0) {
+      stretchFallback = [0, step, step * 2, step * 3];
+    }
+  }
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : shortTimingModelId(),
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : d.name,
+    multNormal: clampPos(raw.multNormal, d.multNormal),
+    multScaler: clampPos(raw.multScaler, d.multScaler),
+    multExtended: clampPos(raw.multExtended, d.multExtended),
+    t0FallbackSec: clampPos(raw.t0FallbackSec, d.t0FallbackSec),
+    fadeCurve: FADE_CURVES.has(raw.fadeCurve) ? raw.fadeCurve : 'linear',
+    fadeBitsStretchSec: normalizeStretchArr(raw.fadeBitsStretchSec, stretchFallback),
+    fadeBitsStretchAppliesToExtended: !!raw.fadeBitsStretchAppliesToExtended,
+    /** @deprecated Kept so older saved JSON round-trips; lifecycle uses fadeBitsStretchSec. */
+    fadeStepSec: clampPos(raw.fadeStepSec, d.fadeStepSec),
+    strobeEffect: normalizeStrobeEffect(raw.strobeEffect),
+  };
+}
+
+/** Resolve timing model by id; empty/missing → null (firmware/web use hardcoded defaults). */
+export function findTimingModel(timingModels, timingModelId) {
+  if (!timingModelId || typeof timingModelId !== 'string') return null;
+  const list = Array.isArray(timingModels) ? timingModels : [];
+  return list.find((m) => m.id === timingModelId) || null;
+}
+
+/**
+ * WLED Strobe: cycleTime_ms = (255 - sx) * 20 → sx = 255 - 50 / flashRateHz.
+ * @param {number} flashRateHz
+ * @returns {number} sx 0–255
+ */
+export function strobeSxFromFlashRateHz(flashRateHz) {
+  const hz = Number(flashRateHz);
+  if (!Number.isFinite(hz) || hz <= 0) return 128;
+  const sx = Math.round(255 - 50 / hz);
+  return Math.min(255, Math.max(0, sx));
+}
+
+export function createEmptyStartTransition() {
+  return { type: 'fade', timeMs: 400 };
+}
+
+const STOP_DURATION_MODES = new Set(['timingFade', 'custom']);
+
+export function createEmptyStopTransition() {
+  return {
+    enabled: false,
+    type: 'fade',
+    durationMode: 'timingFade',
+    timeMs: null,
+  };
+}
+
+export function createEmptyRuleEffect() {
+  return { enabled: false, fx: -1, pal: -1, sx: 128, ix: 128 };
+}
+
+/** Per-property source modes for rule.segmentOverrides. */
+export const SEG_OVERRIDE_MODES = ['default', 'stored', 'custom', 'extract'];
+export const SEG_OVERRIDE_PROPS = ['fx', 'pal', 'sx', 'ix', 'blend'];
+
+export function createEmptyPropOverride(mode = 'stored') {
+  return { mode };
+}
+
+export function createEmptySegmentOverride() {
+  return {
+    fx: createEmptyPropOverride('stored'),
+    pal: createEmptyPropOverride('stored'),
+    sx: createEmptyPropOverride('stored'),
+    ix: createEmptyPropOverride('stored'),
+    blend: createEmptyPropOverride('stored'),
+    colors: [
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+    ],
+  };
+}
+
+function normalizeCustomHex(value) {
+  if (typeof value !== 'string') return '';
+  const raw = value.trim();
+  if (!raw) return '';
+  if (/^#?[0-9a-fA-F]{6}$/.test(raw)) {
+    return `#${raw.replace(/^#/, '').toLowerCase()}`;
+  }
+  return '';
+}
+
+export function normalizePropOverride(raw, { color = false } = {}) {
+  const mode = SEG_OVERRIDE_MODES.includes(raw?.mode) ? raw.mode : 'stored';
+  const out = { mode };
+  if (mode !== 'custom') return out;
+  if (color) {
+    const hex = normalizeCustomHex(raw?.value);
+    if (hex) out.value = hex;
+    return out;
+  }
+  if (raw?.value === undefined || raw?.value === null) return out;
+  if (typeof raw.value === 'number' && Number.isFinite(raw.value)) {
+    out.value = raw.value;
+  } else if (typeof raw.value === 'string') {
+    out.value = raw.value;
+  } else if (typeof raw.value === 'boolean') {
+    out.value = raw.value;
+  }
+  return out;
+}
+
+/** Normalize rule.segmentOverrides keyed by segment local id. */
+export function normalizeSegmentOverrides(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([segId, ov]) => {
+    if (!segId || typeof segId !== 'string' || !ov || typeof ov !== 'object') return;
+    // UI-only meta key — never a segment id.
+    if (segId === '_meta') return;
+    const n = createEmptySegmentOverride();
+    SEG_OVERRIDE_PROPS.forEach((prop) => {
+      if (ov[prop]) {
+        n[prop] = normalizePropOverride(ov[prop]);
+        if (prop === 'blend' && n[prop].mode === 'custom') {
+          n[prop] = { mode: 'custom', value: normalizeBlendModeId(n[prop].value) };
+        }
+      }
+    });
+    if (Array.isArray(ov.colors)) {
+      n.colors = [0, 1, 2].map((i) => normalizePropOverride(ov.colors[i], { color: true }));
+    }
+    out[segId] = n;
+  });
+  return out;
+}
+
+export const SEGMENT_SOURCE_MODES = ['global', 'perSegment'];
+
+export function normalizeSegmentSourceMode(raw) {
+  if (raw === 'global') return 'global';
+  if (raw === 'perSegment') return 'perSegment';
+  // Legacy rules without the field keep the old per-segment editor.
+  return 'perSegment';
+}
+
+/** Template used by the global sources editor (first segment, or empty defaults). */
+export function getGlobalSegmentOverrideTemplate(segments, overrides) {
+  const list = Array.isArray(segments) ? segments : [];
+  const ovs = normalizeSegmentOverrides(overrides);
+  if (!list.length) return createEmptySegmentOverride();
+  return ovs[list[0].id] || createEmptySegmentOverride();
+}
+
+/** Write the same override object onto every segment in the map. */
+export function applySegmentOverrideToAll(segments, nextOv) {
+  const list = Array.isArray(segments) ? segments : [];
+  const ov = { ...createEmptySegmentOverride(), ...(nextOv || {}) };
+  const out = {};
+  list.forEach((seg) => {
+    if (seg?.id) out[seg.id] = ov;
+  });
+  return normalizeSegmentOverrides(out);
+}
+
+/**
+ * Patch one property on the global template and replicate to all segments.
+ * @param {string} propKey 'fx'|'pal'|… or 'colors.0'
+ */
+export function patchGlobalSegmentProp(segments, overrides, propKey, entry) {
+  const template = getGlobalSegmentOverrideTemplate(segments, overrides);
+  const next = { ...createEmptySegmentOverride(), ...template };
+  if (propKey.startsWith('colors.')) {
+    const slot = Number(propKey.slice(7));
+    const colors = [...(next.colors || [
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+      createEmptyPropOverride('stored'),
+    ])];
+    colors[slot] = entry;
+    next.colors = colors;
+  } else {
+    next[propKey] = entry;
+  }
+  return applySegmentOverrideToAll(segments, next);
+}
+
+/**
+ * Keys driven by extract targets for a segment: 'fx'|'pal'|'sx'|'ix'|'blend'|'colors.0'|…
+ * Used by the override table to show Extracted as read-only.
+ */
+export function extractDrivenKeysForSegment(extracts, segId, segMaskAssignment = '') {
+  const keys = new Set();
+  if (!segId || !Array.isArray(extracts)) return keys;
+  extracts.forEach((ex) => {
+    const targets = Array.isArray(ex?.targets)
+      ? ex.targets
+      : (ex?.target && typeof ex.target === 'object' ? [ex.target] : []);
+    targets.forEach((t) => {
+      if (!t || typeof t !== 'object') return;
+      if (t.kind === 'segmentColor' && t.segmentId === segId) {
+        const slot = Number.isFinite(t.colorSlot) ? Math.min(2, Math.max(0, Number(t.colorSlot))) : 0;
+        keys.add(`colors.${slot}`);
+      } else if (t.kind === 'segmentField' && t.segmentId === segId) {
+        const field = typeof t.field === 'string' ? t.field.trim() : '';
+        if (field === 'bm') keys.add('blend');
+        else if (SEG_OVERRIDE_PROPS.includes(field) || field === 'fx' || field === 'pal') keys.add(field);
+        else if (field) keys.add(field);
+      } else if (t.kind === 'maskColor' || t.kind === 'color') {
+        const mask = t.mask || t.segment || 'all';
+        if (mask === 'all' || (segMaskAssignment && mask === segMaskAssignment)) {
+          keys.add('colors.0');
+        }
+      }
+    });
+  });
+  return keys;
+}
+
+export function createEmptyRule(overrides = {}) {
+  return {
+    id: shortRuleId(),
+    name: 'New rule',
+    enabled: true,
+    priority: 0,
+    match: createEmptyMatchGroup('all'),
+    extract: [],
+    presetId: '',
+    segmentMapId: '',
+    effect: createEmptyRuleEffect(),
+    timing: createEmptyRuleTiming(),
+    startTransition: createEmptyStartTransition(),
+    stopTransition: createEmptyStopTransition(),
+    /** 'global' = one fx/pal/sx/ix source for every map segment; 'perSegment' = per-row overrides. */
+    segmentSourceMode: 'global',
+    segmentOverrides: {},
+    ...overrides,
+  };
+}
 
 export const DEFAULT_MB_MAPPING = {
   version: 1,
-  effectClasses: JSON.parse(JSON.stringify(DEFAULT_MB_EFFECT_CLASSES)),
+  rules: [],
+  segmentMaps: [],
+  timingModels: defaultTimingModels(),
   defaultPresetId: '',
   colors: [...DEFAULT_MB_WLED_COLORS],
   randomPool: {
     paletteIndices: defaultRandomPaletteIndices(),
     custom: [],
-  },
-  animations: {
-    E90C: { presetId: '', colorSlots: [] },
-    E90E: { presetId: '', colorSlots: [] },
-    E90F: { presetId: '', colorSlots: [] },
-    E910: { presetId: '', colorSlots: [] },
-    E911: { presetId: '', colorSlots: [] },
-    E912: { presetId: '', colorSlots: [] },
-    E913: { presetId: '', colorSlots: [] },
-    wand: { presetId: '', colorSlots: [] },
-  },
-  swAnimations: {
-    wand: { presetId: '', colorSlots: [] },
-    rainbow: { presetId: '', colorSlots: [] },
-    blink: { presetId: '', colorSlots: [] },
-    palette5: { presetId: '', colorSlots: [] },
-    flash: { presetId: '', colorSlots: [] },
-    sparkle: { presetId: '', colorSlots: [] },
-    pulse: { presetId: '', colorSlots: [] },
-    circle: { presetId: '', colorSlots: [] },
-    fade: { presetId: '', colorSlots: [] },
-    fade2: { presetId: '', colorSlots: [] },
-  },
-  patterns: {
-    '3': { presetId: '', colorSlots: [] },
-    '4': { presetId: '', colorSlots: [] },
-    '5': { presetId: '', colorSlots: [] },
-    '8': { presetId: '', colorSlots: [] },
-    'B': { presetId: '', colorSlots: [] },
   },
   segments: {
     all: [{ id: 0, start: 0, stop: 100 }],
@@ -67,25 +607,24 @@ export const DEFAULT_MB_MAPPING = {
     band6: [{ id: 15, start: 87, stop: 94 }],
     band7: [{ id: 16, start: 94, stop: 100 }],
   },
+  paradeDetection: {
+    enabled: true,
+    beaconOpcodeHexPrefix: 'cd07',
+    rssiThreshold: -70,
+    cooldownSec: 30,
+  },
 };
 
-export function buildMbKeyedSegmentsFromMapping(mbMapping) {
-  const segments = {};
-  const mb = mbMapping || DEFAULT_MB_MAPPING;
-  MB_SEGMENT_META.forEach(({ id }) => {
-    segments[id] = (mb.segments?.[id] || DEFAULT_MB_MAPPING.segments[id] || []).map(withSegRefDefaults);
-  });
-  return segments;
-}
-
-export function mbLayoutSetBlePayload(data) {
-  const layouts = data.mbSegmentLayouts || [];
-  const activeId = data.mbActiveSegmentLayoutId || layouts[0]?.id;
-  const activeIdx = Math.max(0, layouts.findIndex(l => l.id === activeId));
+export function normalizeParadeDetection(raw) {
+  const d = DEFAULT_MB_MAPPING.paradeDetection;
+  const prefix = typeof raw?.beaconOpcodeHexPrefix === 'string'
+    ? raw.beaconOpcodeHexPrefix.trim().toLowerCase()
+    : d.beaconOpcodeHexPrefix;
   return {
-    type: 'mb_layout_set',
-    layouts: layouts.map(l => ({ name: l.name, segments: l.segments })),
-    active: activeIdx,
+    enabled: raw?.enabled !== undefined ? !!raw.enabled : d.enabled,
+    beaconOpcodeHexPrefix: prefix || d.beaconOpcodeHexPrefix,
+    rssiThreshold: Number.isFinite(raw?.rssiThreshold) ? Number(raw.rssiThreshold) : d.rssiThreshold,
+    cooldownSec: Number.isFinite(raw?.cooldownSec) ? Math.max(1, Number(raw.cooldownSec)) : d.cooldownSec,
   };
 }
 
@@ -113,95 +652,274 @@ export function findMbSegIdConflicts(mapping) {
   return conflicts;
 }
 
-export function normalizeEffectClassMapping(v, fallback) {
-  if (!v) return { ...fallback };
+const CURVE_TYPES = new Set(['linear', 'exponential', 'reciprocal']);
+
+function normalizeCurve(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const type = CURVE_TYPES.has(raw.type) ? raw.type : 'linear';
+  const outScale = Number.isFinite(raw.outScale) && Number(raw.outScale) > 0
+    ? Number(raw.outScale)
+    : 50;
   return {
-    presetId: typeof v.presetId === 'string' ? v.presetId : fallback.presetId,
-    useMbColors: typeof v.useMbColors === 'boolean' ? v.useMbColors : fallback.useMbColors,
+    type,
+    inMin: Number.isFinite(raw.inMin) ? Number(raw.inMin) : 0,
+    inMax: Number.isFinite(raw.inMax) ? Number(raw.inMax) : 15,
+    outMin: Number.isFinite(raw.outMin) ? Number(raw.outMin) : 0,
+    outMax: Number.isFinite(raw.outMax) ? Number(raw.outMax) : 255,
+    exponent: Number.isFinite(raw.exponent) ? Number(raw.exponent) : 2,
+    outScale,
   };
 }
 
-export function normalizeEffectClasses(raw) {
-  const d = DEFAULT_MB_EFFECT_CLASSES;
-  const unclassifiedOpcodes = {};
-  if (raw?.unclassifiedOpcodes && typeof raw.unclassifiedOpcodes === 'object') {
-    Object.entries(raw.unclassifiedOpcodes).forEach(([k, v]) => {
-      unclassifiedOpcodes[k] = normalizeEffectClassMapping(v, d.unclassified);
-    });
+function normalizeHexOrEmpty(raw) {
+  if (typeof raw !== 'string') return '';
+  const v = raw.trim();
+  if (!v) return '';
+  const hex = v.startsWith('#') ? v : `#${v}`;
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : '';
+}
+
+export function normalizeExtractTarget(raw) {
+  if (!raw || typeof raw !== 'object') return createEmptyExtractTarget('maskColor');
+  const kind = raw.kind;
+  if (kind === 'segmentColor') {
+    const slot = Number(raw.colorSlot);
+    return {
+      kind: 'segmentColor',
+      segmentId: typeof raw.segmentId === 'string' ? raw.segmentId : '',
+      colorSlot: slot === 1 || slot === 2 ? slot : 0,
+    };
   }
+  if (kind === 'maskColor') {
+    const mask = typeof raw.mask === 'string' && MB_SEG_KEY_SET.has(raw.mask) ? raw.mask : 'all';
+    return { kind: 'maskColor', mask };
+  }
+  if (kind === 'segmentField') {
+    return {
+      kind: 'segmentField',
+      segmentId: typeof raw.segmentId === 'string' ? raw.segmentId : '',
+      field: typeof raw.field === 'string' ? raw.field : '',
+    };
+  }
+  if (kind === 'ignore') return { kind: 'ignore' };
+  return createEmptyExtractTarget('maskColor');
+}
+
+const EXTRACT_SOURCES = new Set(['payloadBits', ...TIMING_DERIVED_SOURCE_SET]);
+
+export function normalizeExtract(raw) {
+  if (!raw || typeof raw !== 'object') return createEmptyExtract();
+  const source = EXTRACT_SOURCES.has(raw.source) ? raw.source : 'payloadBits';
+  const isTiming = isTimingDerivedSource(source);
+  const paletteMap = isTiming ? false : !!raw.paletteMap;
+  const curve = paletteMap ? null : normalizeCurve(raw.curve);
+  // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.map(normalizeExtractTarget)
+    : [createEmptyExtractTarget(isTiming ? 'segmentField' : 'maskColor')];
   return {
-    singleColor: normalizeEffectClassMapping(raw?.singleColor, d.singleColor),
-    dualColor: normalizeEffectClassMapping(raw?.dualColor, d.dualColor),
-    sixBitColor: normalizeEffectClassMapping(raw?.sixBitColor, d.sixBitColor),
-    fivePositionPalette: normalizeEffectClassMapping(raw?.fivePositionPalette, d.fivePositionPalette),
-    fivePositionFlash: normalizeEffectClassMapping(raw?.fivePositionFlash, d.fivePositionFlash),
-    unclassified: normalizeEffectClassMapping(raw?.unclassified, d.unclassified),
-    unclassifiedOpcodes,
+    name: typeof raw.name === 'string' ? raw.name : '',
+    source,
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+    bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
+    bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
+    paletteMap,
+    ...(curve ? { curve } : {}),
+    targets,
   };
 }
 
-export function mirrorEffectClassesToLegacy(config) {
-  const ec = config.effectClasses;
-  if (!ec) return config;
-  const animations = { ...config.animations };
-  const patterns = { ...config.patterns };
-  const mirrorAnim = (opcode, cls) => {
-    if (cls.presetId && animations[opcode]) animations[opcode] = { ...animations[opcode], presetId: cls.presetId };
-  };
-  mirrorAnim('E90E', ec.fivePositionFlash);
-  Object.entries(ec.unclassifiedOpcodes || {}).forEach(([opcode, mapping]) => {
-    if (mapping?.presetId && animations[opcode]) animations[opcode] = { ...animations[opcode], presetId: mapping.presetId };
+export function normalizeConditionNode(raw) {
+  if (!raw || typeof raw !== 'object') return createEmptyCondition('hexPrefix');
+
+  if (raw.type) {
+    const type = raw.type;
+    if (type === 'hexPrefix') {
+      return { type: 'hexPrefix', value: typeof raw.value === 'string' ? raw.value.replace(/[^0-9a-fA-F]/g, '') : '' };
+    }
+    if (type === 'length') {
+      const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
+      return { type: 'length', op, value: Number.isFinite(raw.value) ? Number(raw.value) : 0 };
+    }
+    if (type === 'byte') {
+      const op = BYTE_OPS.has(raw.op) ? raw.op : 'eq';
+      return {
+        type: 'byte',
+        offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+        op,
+        value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
+        mask: Number.isFinite(raw.mask) ? Number(raw.mask) & 0xff : 0xff,
+      };
+    }
+    if (type === 'bits') {
+      const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
+      return {
+        type: 'bits',
+        offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+        bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
+        bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 1,
+        op,
+        value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
+      };
+    }
+    return createEmptyCondition('hexPrefix');
+  }
+
+  const mode = raw.mode === 'some' ? 'some' : 'all';
+  const children = Array.isArray(raw.children)
+    ? raw.children.map(normalizeConditionNode)
+    : [];
+  return { mode, children };
+}
+
+export function normalizePresetVariables(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    if (typeof key !== 'string' || !key.trim()) return;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      out[key.trim()] = value;
+    } else if (value == null) {
+      out[key.trim()] = '';
+    } else {
+      out[key.trim()] = String(value);
+    }
   });
-  if (ec.unclassified.presetId) {
-    MB_ANIMATION_META.forEach(({ key }) => {
-      if (key === 'wand') return;
-      if (!ec.unclassifiedOpcodes?.[key] && !animations[key].presetId) {
-        animations[key] = { ...animations[key], presetId: ec.unclassified.presetId };
-      }
-    });
+  return out;
+}
+
+export function normalizeSegment(raw) {
+  const d = createEmptySegment();
+  if (!raw || typeof raw !== 'object') return d;
+  const maskRaw = typeof raw.maskAssignment === 'string' ? raw.maskAssignment : d.maskAssignment;
+  const maskAssignment = maskRaw === 'ignore' || MB_SEG_KEY_SET.has(maskRaw) ? maskRaw : 'all';
+  const colorsSrc = Array.isArray(raw.colors) ? raw.colors : [];
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentId(),
+    wledSegId: Number.isFinite(raw.wledSegId) ? Math.max(0, Number(raw.wledSegId)) : d.wledSegId,
+    start: Number.isFinite(raw.start) ? Math.max(0, Number(raw.start)) : d.start,
+    stop: Number.isFinite(raw.stop) ? Math.max(0, Number(raw.stop)) : d.stop,
+    grp: Number.isFinite(raw.grp) ? Math.max(1, Number(raw.grp)) : d.grp,
+    spc: Number.isFinite(raw.spc) ? Math.max(0, Number(raw.spc)) : d.spc,
+    of: Number.isFinite(raw.of) ? Number(raw.of) : d.of,
+    rev: !!raw.rev,
+    mi: !!raw.mi,
+    blend: normalizeBlendModeId(raw.blend ?? raw.bm),
+    fx: Number.isFinite(raw.fx) ? Number(raw.fx) : d.fx,
+    sx: Number.isFinite(raw.sx) ? Math.min(255, Math.max(0, Number(raw.sx))) : d.sx,
+    ix: Number.isFinite(raw.ix) ? Math.min(255, Math.max(0, Number(raw.ix))) : d.ix,
+    pal: Number.isFinite(raw.pal) ? Number(raw.pal) : d.pal,
+    presetId: typeof raw.presetId === 'string' ? raw.presetId : '',
+    presetVariables: normalizePresetVariables(raw.presetVariables),
+    colors: [0, 1, 2].map((i) => normalizeHexOrEmpty(colorsSrc[i])),
+    maskAssignment,
+  };
+}
+
+export function normalizeSegmentMap(raw) {
+  if (!raw || typeof raw !== 'object') return createEmptySegmentMap();
+  const segments = Array.isArray(raw.segments) && raw.segments.length
+    ? raw.segments.map(normalizeSegment)
+    : [createEmptySegment()];
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentMapId(),
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'Untitled map',
+    segments,
+  };
+}
+
+export function normalizeRuleTiming(raw) {
+  const d = createEmptyRuleTiming();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  let fadeOverrideMs = null;
+  if (raw.fadeOverrideMs !== null && raw.fadeOverrideMs !== undefined && raw.fadeOverrideMs !== '') {
+    const n = Number(raw.fadeOverrideMs);
+    if (Number.isFinite(n) && n >= 0) fadeOverrideMs = n;
   }
-  if (ec.fivePositionPalette.presetId) {
-    MB_PATTERN_META.forEach(({ key }) => {
-      if (!patterns[key].presetId) patterns[key] = { ...patterns[key], presetId: ec.fivePositionPalette.presetId };
-    });
+  return {
+    enabled: !!raw.enabled,
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : d.offset,
+    cooldownSec: Number.isFinite(raw.cooldownSec) ? Math.max(0, Number(raw.cooldownSec)) : d.cooldownSec,
+    cooldownResetMode: COOLDOWN_RESET_MODES.has(raw.cooldownResetMode) ? raw.cooldownResetMode : d.cooldownResetMode,
+    timingModelId: typeof raw.timingModelId === 'string' ? raw.timingModelId : '',
+    fadeOverrideMs,
+  };
+}
+
+export function normalizeStartTransition(raw) {
+  const d = createEmptyStartTransition();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  return {
+    type: START_TRANSITION_TYPES.has(raw.type) ? raw.type : d.type,
+    timeMs: Number.isFinite(raw.timeMs) ? Math.max(0, Number(raw.timeMs)) : d.timeMs,
+  };
+}
+
+export function normalizeStopTransition(raw) {
+  const d = createEmptyStopTransition();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  let timeMs = null;
+  if (raw.timeMs !== null && raw.timeMs !== undefined && raw.timeMs !== '') {
+    const n = Number(raw.timeMs);
+    if (Number.isFinite(n) && n >= 0) timeMs = n;
   }
-  return { ...config, animations, patterns };
+  return {
+    enabled: !!raw.enabled,
+    type: START_TRANSITION_TYPES.has(raw.type) ? raw.type : d.type,
+    durationMode: STOP_DURATION_MODES.has(raw.durationMode) ? raw.durationMode : d.durationMode,
+    timeMs,
+  };
+}
+
+export function normalizeRuleEffect(raw) {
+  const d = createEmptyRuleEffect();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  return {
+    enabled: !!raw.enabled,
+    fx: Number.isFinite(raw.fx) ? Number(raw.fx) : d.fx,
+    pal: Number.isFinite(raw.pal) ? Number(raw.pal) : d.pal,
+    sx: Number.isFinite(raw.sx) ? Math.min(255, Math.max(0, Number(raw.sx))) : d.sx,
+    ix: Number.isFinite(raw.ix) ? Math.min(255, Math.max(0, Number(raw.ix))) : d.ix,
+  };
+}
+
+export function normalizeMbRule(raw, index = 0) {
+  const d = createEmptyRule();
+  if (!raw || typeof raw !== 'object') {
+    return { ...d, priority: index * 10 };
+  }
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id : shortRuleId(),
+    name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `Rule ${index + 1}`,
+    enabled: raw.enabled !== false,
+    priority: Number.isFinite(raw.priority) ? Number(raw.priority) : index * 10,
+    match: normalizeConditionNode(raw.match || createEmptyMatchGroup('all')),
+    extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],
+    presetId: typeof raw.presetId === 'string' ? raw.presetId : '',
+    segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
+    effect: normalizeRuleEffect(raw.effect),
+    timing: normalizeRuleTiming(raw.timing),
+    startTransition: normalizeStartTransition(raw.startTransition),
+    stopTransition: normalizeStopTransition(raw.stopTransition),
+    segmentSourceMode: normalizeSegmentSourceMode(raw.segmentSourceMode),
+    segmentOverrides: normalizeSegmentOverrides(raw.segmentOverrides),
+  };
+}
+
+/** Re-assign priority to 0, 10, 20, … preserving array order. */
+export function reindexRulePriorities(rules) {
+  return (rules || []).map((rule, i) => ({ ...rule, priority: i * 10 }));
 }
 
 export function normalizeMbMapping(raw) {
   const d = DEFAULT_MB_MAPPING;
-  if (!raw || raw.version !== 1) return JSON.parse(JSON.stringify(d));
+  if (!raw || typeof raw !== 'object') return JSON.parse(JSON.stringify(d));
+
   const colors = Array.from({ length: 32 }, (_, i) => {
     const c = raw.colors?.[i];
     return c && /^#[0-9a-fA-F]{6}$/.test(c) ? c : d.colors[i];
   });
-  const normEffect = (key, fallback, src) => {
-    const v = src?.[key];
-    if (!v) return { ...fallback };
-    if (typeof v === 'string') return { presetId: v, colorSlots: [...fallback.colorSlots] };
-    return {
-      presetId: v.presetId ?? '',
-      colorSlots: Array.isArray(v.colorSlots) ? [...v.colorSlots] : [...fallback.colorSlots],
-    };
-  };
-  const animations = {};
-  MB_ANIMATION_META.forEach(({ key }) => { animations[key] = normEffect(key, d.animations[key], raw.animations); });
-  const normEffectDirect = (v, fallback) => {
-    if (!v) return { ...fallback };
-    if (typeof v === 'string') return { presetId: v, colorSlots: [...fallback.colorSlots] };
-    return {
-      presetId: v.presetId ?? '',
-      colorSlots: Array.isArray(v.colorSlots) ? [...v.colorSlots] : [...fallback.colorSlots],
-    };
-  };
-  const swAnimations = {};
-  SW_ANIMATION_META.forEach(({ key }) => {
-    const fromSw = raw.swAnimations?.[key];
-    const fromLegacy = key === 'wand' ? raw.animations?.wand : undefined;
-    swAnimations[key] = normEffectDirect(fromSw ?? fromLegacy, d.swAnimations[key]);
-  });
-  const patterns = {};
-  MB_PATTERN_META.forEach(({ key }) => { patterns[key] = normEffect(key, d.patterns[key], raw.patterns); });
+
   const segments = {};
   MB_SEGMENT_META.forEach(({ id }) => {
     const src = raw.segments?.[id];
@@ -209,19 +927,31 @@ export function normalizeMbMapping(raw) {
       ? src.map(s => withSegRefDefaults(s))
       : d.segments[id].map(s => withSegRefDefaults(s));
   });
-  const base = {
+
+  const rulesSrc = Array.isArray(raw.rules) ? raw.rules : [];
+  const rules = rulesSrc.map((r, i) => normalizeMbRule(r, i));
+  const segmentMaps = (raw.segmentMaps || []).map(normalizeSegmentMap);
+  const timingModelsSrc = Array.isArray(raw.timingModels) ? raw.timingModels : [];
+  const timingModels = timingModelsSrc.length > 0
+    ? timingModelsSrc.map((m, i) => normalizeTimingModel(m, i))
+    : defaultTimingModels();
+
+  return {
     version: 1,
-    effectClasses: normalizeEffectClasses(raw.effectClasses),
+    rules,
+    segmentMaps,
+    timingModels,
     defaultPresetId: typeof raw.defaultPresetId === 'string' ? raw.defaultPresetId : '',
     colors,
     randomPool: normalizeRandomPool(raw.randomPool),
-    animations, swAnimations, patterns, segments,
+    segments,
+    paradeDetection: normalizeParadeDetection(raw.paradeDetection),
   };
-  return mirrorEffectClassesToLegacy(base);
 }
 
+/** BLE / NVS document shape expected by firmware set_mb_rules / mb_mapping_config. */
 export function mbMappingToBlePayload(config) {
-  const synced = mirrorEffectClassesToLegacy(normalizeMbMapping(config));
+  const synced = normalizeMbMapping(config);
   const colors = {};
   synced.colors.forEach((hex, i) => {
     if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
@@ -231,24 +961,12 @@ export function mbMappingToBlePayload(config) {
       parseInt(hex.slice(5, 7), 16),
     ];
   });
-  const mapEffect = (m) => ({ presetId: m.presetId, colorSlots: m.colorSlots });
-  const animations = {};
-  Object.entries(synced.animations).forEach(([k, v]) => { animations[k] = mapEffect(v); });
-  const swAnimations = {};
-  Object.entries(synced.swAnimations || {}).forEach(([k, v]) => { swAnimations[k] = mapEffect(v); });
-  const patterns = {};
-  Object.entries(synced.patterns).forEach(([k, v]) => { patterns[k] = mapEffect(v); });
-  const mapClass = (m) => ({ presetId: m.presetId, useMbColors: m.useMbColors });
-  const effectClasses = {};
-  MB_EFFECT_CLASS_META.forEach(({ key }) => { effectClasses[key] = mapClass(synced.effectClasses[key]); });
-  const unclassifiedOpcodes = {};
-  Object.entries(synced.effectClasses.unclassifiedOpcodes || {}).forEach(([k, v]) => {
-    if (v) unclassifiedOpcodes[k] = mapClass(v);
-  });
   return {
     version: 1,
+    rules: synced.rules,
+    segmentMaps: synced.segmentMaps,
+    timingModels: synced.timingModels,
     defaultPresetId: synced.defaultPresetId || '',
-    effectClasses: { ...effectClasses, unclassifiedOpcodes },
     colors,
     randomPool: {
       palettes: synced.randomPool.paletteIndices,
@@ -262,10 +980,8 @@ export function mbMappingToBlePayload(config) {
         ],
       })),
     },
-    animations,
-    swAnimations,
-    patterns,
     segments: synced.segments,
+    paradeDetection: normalizeParadeDetection(synced.paradeDetection),
   };
 }
 

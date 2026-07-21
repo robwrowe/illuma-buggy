@@ -28,11 +28,31 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
 }
 
 String injectWledTransition(const String& jsonBody, unsigned long transitionMs) {
-  if (transitionMs == 0 || jsonBody.length() < 2 || jsonBody.charAt(0) != '{') return jsonBody;
-  unsigned tenths = transitionMs / 100;
-  if (tenths == 0) tenths = 1;
-  if (tenths > 655) tenths = 655;
-  return "{\"transition\":" + String(tenths) + "," + jsonBody.substring(1);
+  return injectWledTransition(jsonBody, transitionMs, -1);
+}
+
+String injectWledTransition(const String& jsonBody, unsigned long transitionMs, int blendingStyle) {
+  if (jsonBody.length() < 2 || jsonBody.charAt(0) != '{') return jsonBody;
+  // Instant: no duration inject; still allow bs if caller asks.
+  if (transitionMs == 0 && blendingStyle < 0) return jsonBody;
+
+  String prefix = "{";
+  bool needComma = false;
+  if (transitionMs > 0) {
+    unsigned tenths = transitionMs / 100;
+    if (tenths == 0) tenths = 1;
+    if (tenths > 655) tenths = 655;
+    prefix += "\"transition\":" + String(tenths);
+    needComma = true;
+  }
+  if (blendingStyle >= 0) {
+    if (needComma) prefix += ",";
+    prefix += "\"bs\":" + String(blendingStyle & 0x1F);
+    needComma = true;
+  }
+  if (!needComma) return jsonBody;
+  prefix += ",";
+  return prefix + jsonBody.substring(1);
 }
 
 bool sendToWLEDForBleEffect(const String& jsonBody) {
@@ -43,11 +63,11 @@ bool sendToWLEDForBleSolid(const String& jsonBody) {
   return sendToWLED(injectWledTransition(jsonBody, 0));
 }
 
-String getFromWLED(const String& path) {
+String getFromWLED(const String& path, int timeoutMs) {
   if (WiFi.status() != WL_CONNECTED) return "";
   HTTPClient http;
   http.begin("http://" + wledIp + ":" + String(wledPort) + path);
-  http.setTimeout(5000);
+  http.setTimeout(timeoutMs > 0 ? timeoutMs : 5000);
   int code = http.GET();
   String body = "";
   if (code == 200) {
@@ -102,7 +122,8 @@ String compactWledStateForSave(const String& full) {
 }
 
 void snapshotWledBaseline() {
-  String state = getFromWLED("/json/state");
+  // Short timeout — this runs on loop() and must not stall BLE / ESP-NOW drain.
+  String state = getFromWLED("/json/state", 800);
   if (state.length() == 0) {
     Serial.println("[WLED] Baseline snapshot failed (GET /json/state)");
     return;
@@ -145,15 +166,9 @@ void loadWledBaselineFromNvs() {
 }
 
 void ensureWledPowerOn() {
-  DynamicJsonDocument doc(12288);
-  if (baselineWledState.length() > 0 &&
-      deserializeJson(doc, baselineWledState) == DeserializationError::Ok) {
-    if (!doc["on"].as<bool>()) {
-      sendToWLED("{\"on\":true}");
-      Serial.println("[WLED] Master power was off — sent on:true (relay)");
-    }
-    return;
-  }
+  // Always POST on:true — do not infer live power from baselineWledState (boot
+  // snapshot). Mid-session {"on":false} (FTB fallback, etc.) leaves that snapshot
+  // stale and would skip the relay restore before the next rule payload.
   sendToWLED("{\"on\":true}");
 }
 

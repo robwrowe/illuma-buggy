@@ -4,7 +4,6 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Preset } from '../stores/store';
-import type { MbSegmentLayout } from './configMigration';
 import type { MbMappingConfig } from './mbConfig';
 import type { ShowModeConfig } from './configMigration';
 
@@ -16,7 +15,6 @@ export type BoardSyncPhase =
   | 'connecting'
   | 'essential'
   | 'verifying'
-  | 'layouts'
   | 'presets'
   | 'ready'
   | 'error';
@@ -37,8 +35,6 @@ export interface BoardSyncMeta {
   fullSyncAt: number;
   fingerprint: string;
   syncedPresetIds: string[];
-  mbLayoutActive?: number;
-  mbLayoutCount?: number;
 }
 
 const META_KEY = 'boardSyncMeta';
@@ -113,8 +109,6 @@ export function markBoardSyncBackgroundBusy(busy: boolean, detail?: string) {
 export function computeBoardConfigFingerprint(input: {
   presets: Preset[];
   mbMapping: MbMappingConfig;
-  mbSegmentLayouts: MbSegmentLayout[];
-  mbActiveSegmentLayoutId: string | null;
   showModeConfig: ShowModeConfig;
   starlightEnabled: boolean;
   magicBandEnabled: boolean;
@@ -125,8 +119,6 @@ export function computeBoardConfigFingerprint(input: {
   const payload = JSON.stringify({
     presetKeys: input.presets.map(p => `${p.id}:${p.createdAt}`).sort(),
     mbMapping: input.mbMapping,
-    layouts: input.mbSegmentLayouts.map(l => ({ id: l.id, name: l.name, segments: l.segments })),
-    activeLayout: input.mbActiveSegmentLayoutId,
     showMode: input.showModeConfig,
     sw: input.starlightEnabled,
     mb: input.magicBandEnabled,
@@ -204,7 +196,6 @@ export function formatSyncStatusLabel(
     if (s.detail) return s.detail;
     if (s.phase === 'essential') return 'Applying wand & MagicBand settings…';
     if (s.phase === 'verifying') return 'Checking presets on board…';
-    if (s.phase === 'layouts') return 'Syncing segment layouts…';
     if (s.phase === 'presets') {
       const p = s.presetProgress;
       if (p) return `Syncing presets to board (${p.current}/${p.total})…`;

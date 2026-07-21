@@ -6,8 +6,9 @@ extern BoardRole boardRole;
 extern uint8_t scannerPeerMac[6];
 extern bool scannerPeerConfigured;
 extern unsigned long lastScannerPacketMs;
-extern uint32_t espNowRxCount;      // valid ParsedDisneyPackets received over ESP-NOW
-extern uint32_t espNowRxRejected;   // ESP-NOW frames dropped (wrong length)
+extern uint32_t espNowRxCount;         // valid ParsedDisneyPackets received over ESP-NOW
+extern uint32_t espNowRxRejected;      // ESP-NOW frames dropped (wrong length)
+extern uint32_t parsedPacketDropCount; // ring buffer overflows (oldest dropped)
 
 void payloadTransportInit();
 // (Re)initialize ESP-NOW on the logic board. Must be called after every successful WiFi
@@ -31,5 +32,7 @@ void transportPairResendTick();
 // Called from loop(): if the scanner stays silent, fall back to local BLE scanning on the
 // logic board; stop the local scan once the scanner is delivering packets again.
 void serviceScannerFallback();
+/** Apply boardRole immediately (start/stop local scan, ESP-NOW) — no reboot required. */
+void applyBoardRoleRuntime();
 bool transportParseMacString(const char* str, uint8_t out[6]);
 String transportMacToString(const uint8_t mac[6]);

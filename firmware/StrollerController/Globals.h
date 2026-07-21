@@ -44,6 +44,8 @@ extern String showLookParadeLive;
 extern String showLookFireworksPre;
 extern String showLookFireworksLive;
 extern String showLookFireworksPost;
+/** MB timed-rule ON→FADE look; empty = fall back to {"on":false} (cuts GLEDOPTO relay). */
+extern String mbFadeToBlackPresetId;
 
 extern int    currentBrightness;
 extern String currentPresetId;
@@ -95,9 +97,27 @@ extern String liveWledState;
 extern unsigned long lastLiveStatePollMs;
 extern String baselineWledState;
 extern String mbMappingJson;
+extern String mbRulesJson;
 extern bool   mbMappingLoadedFromNvs;
 extern String bleDefaultPresetId;
 extern bool   wledWasConnected;
+
+extern bool          mbUnmatchedLogEnabled;
+
+extern bool          paradeDetectEnabled;
+extern char          paradeBeaconPrefix[16];
+extern int           paradeRssiThreshold;
+extern unsigned long paradeCooldownMs;
+extern unsigned long paradeLastBeaconMs;
+
+// Rule-engine timing lifecycle (Part 5)
+extern MbRulePhase        mbRulePhase;
+extern unsigned long      mbRulePhaseDeadlineMs;
+extern unsigned long      mbRuleFadeMs;
+extern unsigned long      mbRuleCooldownMs;
+extern MbCooldownResetMode mbActiveRuleCooldownMode;
+extern char               mbActiveRuleId[MB_RULE_ID_LEN];
+
 
 extern DisneyPayloadJob disneyJob;
 extern portMUX_TYPE disneyJobMux;

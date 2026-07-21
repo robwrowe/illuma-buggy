@@ -97,6 +97,34 @@ export interface MbEffectClassesConfig {
   unclassifiedOpcodes: Partial<Record<string, MbEffectClassMapping>>;
 }
 
+/** Parade beacon detection — pushed with mb_mapping_config / rules. */
+export interface ParadeDetectionConfig {
+  enabled: boolean;
+  beaconOpcodeHexPrefix: string;
+  rssiThreshold: number;
+  cooldownSec: number;
+}
+
+export const DEFAULT_PARADE_DETECTION: ParadeDetectionConfig = {
+  enabled: true,
+  beaconOpcodeHexPrefix: 'cd07',
+  rssiThreshold: -70,
+  cooldownSec: 30,
+};
+
+export function normalizeParadeDetection(raw: Partial<ParadeDetectionConfig> | undefined): ParadeDetectionConfig {
+  const d = DEFAULT_PARADE_DETECTION;
+  const prefix = typeof raw?.beaconOpcodeHexPrefix === 'string'
+    ? raw.beaconOpcodeHexPrefix.trim().toLowerCase()
+    : d.beaconOpcodeHexPrefix;
+  return {
+    enabled: raw?.enabled !== undefined ? !!raw.enabled : d.enabled,
+    beaconOpcodeHexPrefix: prefix || d.beaconOpcodeHexPrefix,
+    rssiThreshold: Number.isFinite(raw?.rssiThreshold) ? Number(raw!.rssiThreshold) : d.rssiThreshold,
+    cooldownSec: Number.isFinite(raw?.cooldownSec) ? Math.max(1, Number(raw!.cooldownSec)) : d.cooldownSec,
+  };
+}
+
 export interface MbMappingConfig {
   version: 1;
   /** Animation-class → preset bindings (additive; empty = legacy firmware fallback) */
@@ -112,6 +140,12 @@ export interface MbMappingConfig {
   swAnimations: Record<SwAnimationKey, MbEffectMapping>;
   patterns: Record<MbPatternKey, MbEffectMapping>;
   segments: Record<MbSegmentId, WledSegRef[]>;
+  /** Part 5 rule engine — opaque; authored in web tool, pushed via set_mb_rules */
+  rules?: unknown[];
+  /** Part 5 shareable segment maps — opaque; authored in web tool */
+  segmentMaps?: unknown[];
+  /** Parade route beacon detection (firmware MbRuleEngine) */
+  paradeDetection?: ParadeDetectionConfig;
 }
 
 /** MB palette index 29 = off, 30 = unique, 31 = random (resolved at runtime) */
@@ -329,6 +363,7 @@ export const DEFAULT_MB_MAPPING: MbMappingConfig = {
     band6:       [{ id: 15, start: 87, stop: 94 }],
     band7:       [{ id: 16, start: 94, stop: 100 }],
   },
+  paradeDetection: { ...DEFAULT_PARADE_DETECTION },
 };
 
 export const MB_SEGMENT_META: { id: MbSegmentId; label: string; hint: string }[] = [
@@ -507,7 +542,14 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
     colors,
     randomPool: normalizeRandomPool(raw.randomPool),
     animations, swAnimations, patterns, segments,
+    paradeDetection: normalizeParadeDetection(raw.paradeDetection),
   };
+  if (Array.isArray((raw as { rules?: unknown }).rules)) {
+    base.rules = (raw as { rules: unknown[] }).rules;
+  }
+  if (Array.isArray((raw as { segmentMaps?: unknown }).segmentMaps)) {
+    base.segmentMaps = (raw as { segmentMaps: unknown[] }).segmentMaps;
+  }
   return mirrorEffectClassesToLegacy(base);
 }
 
@@ -573,5 +615,8 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
     swAnimations,
     patterns,
     segments: synced.segments,
+    ...(Array.isArray(synced.rules) ? { rules: synced.rules } : {}),
+    ...(Array.isArray(synced.segmentMaps) ? { segmentMaps: synced.segmentMaps } : {}),
+    paradeDetection: normalizeParadeDetection(synced.paradeDetection),
   };
 }

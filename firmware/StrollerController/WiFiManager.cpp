@@ -1,6 +1,5 @@
 #include "WiFiManager.h"
 #include "Globals.h"
-#include "WledClient.h"
 #include "PayloadTransport.h"
 
 void connectToWLED(bool force) {
@@ -34,10 +33,10 @@ void connectToWLED(bool force) {
     // WiFi.disconnect(true) above tore down ESP-NOW — bring it back up on the now-stable
     // STA channel so the scanner pair beacon / packet receive work (dual-board mode).
     transportEnsureEspNow();
-    delay(500);
-    snapshotWledBaseline();
-    ensureWledPowerOn();
-    wledWasConnected = true;
+    // Do NOT call snapshotWledBaseline / ensureWledPowerOn here — this runs on a
+    // FreeRTOS WiFi task. Concurrent HTTPClient with loop() hangs / races.
+    // Main loop picks up the newly-connected edge and snapshots there.
+    wledWasConnected = false;  // force main-loop one-shot snapshot
   } else {
     Serial.println("\n[WiFi] Failed — will retry");
   }

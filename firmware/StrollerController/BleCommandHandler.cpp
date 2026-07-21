@@ -5,6 +5,7 @@
 #include "WledClient.h"
 #include "OverrideManager.h"
 #include "MbMapping.h"
+#include "MbRuleEngine.h"
 #include "MbEffects.h"
 #include "ColorPalette.h"
 #include "WiFiManager.h"
@@ -12,12 +13,15 @@
 #include "WandTx.h"
 #include "PayloadTransport.h"
 #include "Config.h"
+#include "NvsLargeString.h"
+#include "DisneyBleScan.h"
+#include "MbRulesStore.h"
 #include <WiFi.h>
 
 void handleBLECommand(const String& msg) {
   size_t cap = msg.length() + 512;
   if (cap < 4096) cap = 4096;
-  if (cap > 32768) cap = 32768;
+  if (cap > BLE_JSON_DOC_SIZE) cap = BLE_JSON_DOC_SIZE;
   DynamicJsonDocument doc(cap);
   DeserializationError err = deserializeJson(doc, msg);
   if (err) {
@@ -108,6 +112,16 @@ void handleBLECommand(const String& msg) {
     prefs.putBool("killOnZone", overrideKillOnZone);
     prefs.end();
     bleNotify("{\"type\":\"ack\",\"action\":\"override_mode\",\"kill_on_zone\":" + String(overrideKillOnZone ? "true" : "false") + "}");
+  }
+
+  else if (type == "mb_rule_config") {
+    if (doc.containsKey("ftbPresetId")) {
+      mbFadeToBlackPresetId = doc["ftbPresetId"] | "";
+      prefs.begin("config", false);
+      prefs.putString("mbFtbPreset", mbFadeToBlackPresetId);
+      prefs.end();
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"mb_rule_config\"}");
   }
 
   else if (type == "show_mode_config") {
@@ -242,6 +256,26 @@ void handleBLECommand(const String& msg) {
     Serial.printf("[Capture] app recording %s\n", bleCaptureToApp ? "ON" : "OFF");
   }
 
+  // ── Unmatched rule-engine packet log (always-on, independent of capture) ──
+  else if (type == "mb_unmatched_log_config") {
+    if (doc.containsKey("active")) mbUnmatchedLogEnabled = doc["active"].as<bool>();
+    prefs.begin("config", false);
+    prefs.putBool("mbUnmatched", mbUnmatchedLogEnabled);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"mb_unmatched_log_config\","
+              "\"active\":" + String(mbUnmatchedLogEnabled ? "true" : "false") + "}");
+    Serial.printf("[Rules] unmatched log %s\n", mbUnmatchedLogEnabled ? "ON" : "OFF");
+  }
+
+  else if (type == "parade_manual_start") {
+    manualParadeStart();
+    bleNotify("{\"type\":\"ack\",\"action\":\"parade_manual_start\"}");
+  }
+  else if (type == "parade_manual_stop") {
+    manualParadeStop();
+    bleNotify("{\"type\":\"ack\",\"action\":\"parade_manual_stop\"}");
+  }
+
   // ── MB / SW effect fade ──
   else if (type == "ble_effect_config") {
     if (doc.containsKey("transition_ms")) {
@@ -304,18 +338,43 @@ void handleBLECommand(const String& msg) {
     bleNotify(ack);
   }
 
-  // ── Unified MB→WLED mapping ──
-  else if (type == "mb_mapping_config") {
-    if (doc.containsKey("mapping")) {
-      serializeJson(doc["mapping"], mbMappingJson);
-      prefs.begin("config", false);
-      prefs.putString("mbMapping", mbMappingJson);
-      prefs.end();
+  // ── MB rule engine config (rules + colors + segments + paradeDetection) ──
+  else if (type == "set_mb_rules" || type == "mb_rules_config" || type == "mb_mapping_config") {
+    JsonObject mapping = doc.containsKey("mapping") ? doc["mapping"].as<JsonObject>()
+                       : doc.as<JsonObject>();
+    if (!mapping.isNull()) {
+      bool hasRules = mapping.containsKey("rules") || mapping.containsKey("segmentMaps");
+      bool persisted = false;
+      if (hasRules) {
+        serializeJson(mapping, mbRulesJson);
+        mbMappingJson = mbRulesJson;
+        persisted = mbRulesFsSave(mbRulesJson);
+        // Free NVS — rules no longer live there (was overflowing the 20KB partition).
+        prefs.begin("config", false);
+        nvsRemoveLargeString(prefs, "mbRules");
+        nvsRemoveLargeString(prefs, "mbMapping");
+        prefs.end();
+      } else {
+        serializeJson(mapping, mbMappingJson);
+        mbRulesJson = mbMappingJson;
+        persisted = mbRulesFsSave(mbMappingJson);
+        prefs.begin("config", false);
+        nvsRemoveLargeString(prefs, "mbRules");
+        nvsRemoveLargeString(prefs, "mbMapping");
+        prefs.end();
+      }
       mbMappingLoadedFromNvs = true;
-      applyMbMappingJson(doc["mapping"]);
-      Serial.printf("[MB] Mapping updated (%u bytes)\n", (unsigned)mbMappingJson.length());
+      applyMbRulesJson(mapping);
+      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes, fs=%s)\n",
+                    hasRules ? 1 : 0,
+                    (unsigned)(hasRules ? mbRulesJson.length() : mbMappingJson.length()),
+                    persisted ? "ok" : "FAIL");
+      if (!persisted) {
+        bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":false,\"reason\":\"fs_persist\"}");
+        return;
+      }
     }
-    bleNotify("{\"type\":\"ack\",\"action\":\"mb_mapping_config\",\"ok\":true}");
+    bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");
   }
 
   else if (type == "mb_layout_set") {
@@ -393,11 +452,10 @@ void handleBLECommand(const String& msg) {
     prefs.begin("config", false);
     prefs.putUChar("boardRole", (uint8_t)boardRole);
     prefs.end();
-    payloadTransportInit();
+    applyBoardRoleRuntime();
     bleNotify(String("{\"type\":\"ack\",\"action\":\"set_board_role\",\"role\":\"") +
               (boardRole == BoardRole::LOGIC_BOARD ? "logic_board" : "standalone") + "\"}");
-    Serial.printf("[Config] boardRole=%u (reboot recommended to apply scan on/off)\n",
-                  (unsigned)boardRole);
+    Serial.printf("[Config] boardRole=%u applied live\n", (unsigned)boardRole);
   }
   else if (type == "set_scanner_mac") {
     String macStr = doc["mac"] | "";
