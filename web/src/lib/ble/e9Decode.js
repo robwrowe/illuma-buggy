@@ -468,6 +468,25 @@ export function resolveFlashRateHz(rule, payloadBytes, timingModels = []) {
   return hz;
 }
 
+function previewNamedColorSources(colorSources, payloadBytes, colors) {
+  const map = {};
+  (colorSources || []).forEach((src) => {
+    const name = typeof src?.name === 'string' ? src.name.trim() : '';
+    if (!name || map[name]) return;
+    if (src.kind === 'rgb' && src.channelGroup) {
+      map[name] = previewChannelGroupRgb(src.channelGroup, payloadBytes);
+    } else {
+      map[name] = previewColorSource({
+        offset: src.offset,
+        bitStart: src.bitStart,
+        bitCount: src.bitCount,
+        paletteMap: true,
+      }, payloadBytes, colors);
+    }
+  });
+  return map;
+}
+
 /**
  * Preview extract slots: raw bit value + mapped (palette index or curve output).
  * @param {number[]} payloadBytes
@@ -480,19 +499,21 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
   if (!Array.isArray(extracts)) return [];
   const rule = opts.rule || null;
   const timingModels = Array.isArray(opts.timingModels) ? opts.timingModels : [];
+  const namedColors = previewNamedColorSources(rule?.colorSources, payloadBytes, colors);
   return extracts.map((ex) => {
     const name = ex?.name || '';
     const source = ex?.source || 'payloadBits';
     const isTiming = source === 'timingFlashRate' || source === 'timingOnSec' || source === 'timingFadeSec';
+    const isColorSourceBlend = source === 'colorSourceBlend';
     const targets = Array.isArray(ex?.targets) ? ex.targets : [];
     let raw = 0;
     let derivedValue;
     let mapped;
     let paletteIndex;
     let rgb = null;
-    const paletteMap = isTiming ? false : !!ex?.paletteMap;
-    const hasChannelGroup = !isTiming && ex?.channelGroup && typeof ex.channelGroup === 'object';
-    const hasColorBlend = !isTiming && !hasChannelGroup && ex?.colorBlend && typeof ex.colorBlend === 'object';
+    const paletteMap = isTiming || isColorSourceBlend ? false : !!ex?.paletteMap;
+    const hasChannelGroup = !isTiming && !isColorSourceBlend && ex?.channelGroup && typeof ex.channelGroup === 'object';
+    const hasColorBlend = !isTiming && !isColorSourceBlend && !hasChannelGroup && ex?.colorBlend && typeof ex.colorBlend === 'object';
 
     if (isTiming) {
       derivedValue = resolveTimingDerivedValue(rule, payloadBytes, timingModels, source);
@@ -516,6 +537,24 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
       ];
       mapped = ratio;
       raw = Math.round(ratio * 1000) / 1000;
+    } else if (isColorSourceBlend) {
+      const blend = Array.isArray(ex.blend) ? ex.blend : [];
+      let sumWeight = blend.reduce((s, e) => s + (Number(e?.weightPct) || 0), 0);
+      if (sumWeight <= 0) sumWeight = 100;
+      let rf = 0;
+      let gf = 0;
+      let bf = 0;
+      blend.forEach((entry) => {
+        const srcRgb = namedColors[entry?.source];
+        if (!srcRgb) return;
+        const w = (Number(entry.weightPct) || 0) / sumWeight;
+        rf += srcRgb[0] * w;
+        gf += srcRgb[1] * w;
+        bf += srcRgb[2] * w;
+      });
+      rgb = [Math.round(rf), Math.round(gf), Math.round(bf)];
+      mapped = sumWeight;
+      raw = Math.round(sumWeight * 10) / 10;
     } else {
       const offset = Number(ex?.offset ?? 0);
       const bitStart = Number(ex?.bitStart ?? 0);

@@ -417,14 +417,18 @@ static bool resolveSpeedBucketValue(JsonObject model, uint8_t timingByte,
   return true;
 }
 
-/** Resolve one colorBlend a/b source to RGB (palette index or raw channel group). */
+/** Resolve one color source to RGB (palette index, raw gray, or channel group). */
 static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t plen,
                                uint8_t& r, uint8_t& g, uint8_t& b) {
   r = g = b = 0;
   if (srcObj.isNull()) return;
 
+  const char* kind = srcObj["kind"] | "";
   JsonObject channelGroup = srcObj["channelGroup"].as<JsonObject>();
-  if (!channelGroup.isNull()) {
+  // Named sources use kind:"rgb"; legacy colorBlend a/b may embed channelGroup without kind.
+  bool useRgb = (strcmp(kind, "rgb") == 0) || (kind[0] == 0 && !channelGroup.isNull());
+  if (useRgb) {
+    if (channelGroup.isNull()) return;
     auto extractChannel = [&](const char* key) -> uint8_t {
       JsonObject ch = channelGroup[key].as<JsonObject>();
       if (ch.isNull()) return 0;
@@ -447,7 +451,9 @@ static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t
   uint8_t bitStart = (uint8_t)(srcObj["bitStart"] | 0);
   uint8_t bitCount = (uint8_t)(srcObj["bitCount"] | 8);
   uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
-  if (srcObj["paletteMap"] | true) {
+  // kind:"palette" always maps; legacy colorBlend a/b uses paletteMap (default true).
+  bool asPalette = (strcmp(kind, "palette") == 0) || (srcObj["paletteMap"] | true);
+  if (asPalette) {
     paletteToRGB((uint8_t)(raw & 0x1F), r, g, b);
   } else {
     r = g = b = (uint8_t)raw;
@@ -1070,6 +1076,35 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   }
 
   // Extract → fan-out targets
+  // Resolve all named color sources once per apply — avoids re-parsing the same
+  // bytes if multiple segment targets reference the same source.
+  struct NamedColor { const char* name; uint8_t r, g, b; };
+  NamedColor resolvedSources[8];
+  int resolvedSourceCount = 0;
+
+  JsonArray colorSources = rule["colorSources"].as<JsonArray>();
+  if (!colorSources.isNull() && payload && plen > 0) {
+    for (JsonVariant v : colorSources) {
+      if (resolvedSourceCount >= 8) break;
+      if (!v.is<JsonObject>()) continue;
+      JsonObject src = v.as<JsonObject>();
+      const char* name = src["name"] | "";
+      if (!name[0]) continue;
+      uint8_t sr = 0, sg = 0, sb = 0;
+      resolveColorSource(src, payload, plen, sr, sg, sb);
+      resolvedSources[resolvedSourceCount++] = { name, sr, sg, sb };
+      Serial.printf("[Rule] colorSource '%s' rgb=%u,%u,%u\n", name, sr, sg, sb);
+    }
+  }
+
+  auto findResolvedSource = [&](const char* name) -> const NamedColor* {
+    if (!name || !name[0]) return nullptr;
+    for (int i = 0; i < resolvedSourceCount; i++) {
+      if (strcmp(resolvedSources[i].name, name) == 0) return &resolvedSources[i];
+    }
+    return nullptr;
+  };
+
   if (!extracts.isNull()) {
     for (JsonVariant ev : extracts) {
       if (!ev.is<JsonObject>()) continue;
@@ -1082,11 +1117,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       bool hasChannelGroup = !channelGroup.isNull();
       JsonObject colorBlend = ex["colorBlend"].as<JsonObject>();
       bool hasColorBlend = !colorBlend.isNull();
+      bool hasColorSourceBlend = (strcmp(source, "colorSourceBlend") == 0);
 
       if (isTimingDerivedSource(source)) {
         derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
         paletteMap = false;
-      } else if (!hasChannelGroup && !hasColorBlend) {
+      } else if (!hasChannelGroup && !hasColorBlend && !hasColorSourceBlend) {
         uint8_t offset = (uint8_t)(ex["offset"] | 0);
         uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
         uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
@@ -1137,6 +1173,42 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         b = (uint8_t)lroundf((float)ab + ((float)bb - (float)ab) * ratio);
         mapped = 0.0f;
         Serial.printf("[Rule] colorBlend rgb=%u,%u,%u ratio=%.3f\n", r, g, b, ratio);
+      } else if (hasColorSourceBlend) {
+        JsonArray blend = ex["blend"].as<JsonArray>();
+        float sumWeight = 0.0f;
+        if (!blend.isNull()) {
+          for (JsonVariant v : blend) {
+            if (!v.is<JsonObject>()) continue;
+            sumWeight += (float)(v.as<JsonObject>()["weightPct"] | 0.0f);
+          }
+        }
+        if (sumWeight <= 0.0f) sumWeight = 100.0f;
+
+        float rf = 0.0f, gf = 0.0f, bf = 0.0f;
+        int used = 0;
+        if (!blend.isNull()) {
+          for (JsonVariant v : blend) {
+            if (!v.is<JsonObject>()) continue;
+            JsonObject be = v.as<JsonObject>();
+            const char* srcName = be["source"] | "";
+            float w = (float)(be["weightPct"] | 0.0f) / sumWeight;
+            const NamedColor* nc = findResolvedSource(srcName);
+            if (!nc) {
+              Serial.printf("[Rule] colorSourceBlend unknown source '%s'\n", srcName);
+              continue;
+            }
+            rf += (float)nc->r * w;
+            gf += (float)nc->g * w;
+            bf += (float)nc->b * w;
+            used++;
+          }
+        }
+        r = (uint8_t)lroundf(rf);
+        g = (uint8_t)lroundf(gf);
+        b = (uint8_t)lroundf(bf);
+        mapped = 0.0f;
+        Serial.printf("[Rule] colorSourceBlend rgb=%u,%u,%u (%d/%d entries)\n",
+                      r, g, b, used, blend.isNull() ? 0 : (int)blend.size());
       } else if (paletteMap) {
         uint8_t pal = (uint8_t)(raw & 0x1F);
         paletteToRGB(pal, r, g, b);

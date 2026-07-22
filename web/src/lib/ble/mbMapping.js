@@ -86,6 +86,68 @@ export function createEmptyColorBlend(overrides = {}) {
   };
 }
 
+export function createEmptyColorSource(overrides = {}) {
+  return {
+    name: '',
+    kind: 'palette',
+    offset: 0,
+    bitStart: 0,
+    bitCount: 8,
+    ...overrides,
+  };
+}
+
+export function createEmptyColorSourceRgb(overrides = {}) {
+  return createEmptyColorSource({
+    kind: 'rgb',
+    channelGroup: {
+      r: { offset: 8, bitStart: 0, bitCount: 8 },
+      g: { offset: 9, bitStart: 0, bitCount: 8 },
+      b: { offset: 10, bitStart: 0, bitCount: 8 },
+      scale: 'direct8',
+    },
+    ...overrides,
+  });
+}
+
+export function createEmptyColorSourceBlendEntry(overrides = {}) {
+  return {
+    source: '',
+    weightPct: 100,
+    ...overrides,
+  };
+}
+
+export function createEmptyColorSourceBlendExtract(name = '') {
+  return {
+    name,
+    source: 'colorSourceBlend',
+    blend: [createEmptyColorSourceBlendEntry({ weightPct: 100 })],
+    targets: [{ kind: 'maskColor', mask: 'all' }],
+  };
+}
+
+/** Duplicate non-empty names in rule.colorSources (should block authoring). */
+export function findDuplicateColorSourceNames(sources) {
+  const seen = new Set();
+  const dups = new Set();
+  (sources || []).forEach((s) => {
+    const n = typeof s?.name === 'string' ? s.name.trim() : '';
+    if (!n) return;
+    if (seen.has(n)) dups.add(n);
+    else seen.add(n);
+  });
+  return [...dups];
+}
+
+/** Sum of weightPct across a colorSourceBlend extract. */
+export function colorSourceBlendWeightSum(blend) {
+  return (blend || []).reduce((sum, e) => {
+    const n = Number(e?.weightPct);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
 export function createEmptySpeedBuckets(overrides = {}) {
   return {
     enabled: false,
@@ -629,6 +691,7 @@ export function createEmptyRule(overrides = {}) {
     enabled: true,
     priority: 0,
     match: createEmptyMatchGroup('all'),
+    colorSources: [],
     extract: [],
     presetId: '',
     segmentMapId: '',
@@ -839,16 +902,92 @@ function normalizeColorBlend(raw) {
   };
 }
 
-const EXTRACT_SOURCES = new Set(['payloadBits', ...TIMING_DERIVED_SOURCE_SET]);
+function normalizeChannelGroup(raw, fallbackOffset = 8) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const normCh = (ch, fo) => {
+    const c = ch && typeof ch === 'object' ? ch : {};
+    return {
+      offset: Number.isFinite(c.offset) ? Math.max(0, Number(c.offset)) : fo,
+      bitStart: Number.isFinite(c.bitStart) ? Math.min(7, Math.max(0, Number(c.bitStart))) : 0,
+      bitCount: Number.isFinite(c.bitCount) ? Math.min(32, Math.max(1, Number(c.bitCount))) : 8,
+    };
+  };
+  const scale = CHANNEL_SCALES.has(src.scale) ? src.scale : 'direct8';
+  return {
+    r: normCh(src.r, fallbackOffset),
+    g: normCh(src.g, fallbackOffset + 1),
+    b: normCh(src.b, fallbackOffset + 2),
+    scale,
+  };
+}
+
+export function normalizeColorSource(raw, index = 0) {
+  const d = createEmptyColorSource({ name: `color${index + 1}` });
+  if (!raw || typeof raw !== 'object') return d;
+  const kind = raw.kind === 'rgb' ? 'rgb' : 'palette';
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (kind === 'rgb') {
+    return {
+      name: name || d.name,
+      kind: 'rgb',
+      channelGroup: normalizeChannelGroup(raw.channelGroup, 8),
+    };
+  }
+  return {
+    name: name || d.name,
+    kind: 'palette',
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+    bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
+    bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
+  };
+}
+
+/** Keep first occurrence of each name; drop later duplicates (firmware uses first match). */
+export function normalizeColorSources(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  raw.forEach((item, i) => {
+    const src = normalizeColorSource(item, i);
+    const key = src.name.trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(src);
+  });
+  return out;
+}
+
+export function normalizeColorSourceBlend(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return [createEmptyColorSourceBlendEntry({ weightPct: 100 })];
+  }
+  return raw
+    .filter((e) => e && typeof e === 'object')
+    .map((e) => ({
+      source: typeof e.source === 'string' ? e.source.trim() : '',
+      weightPct: (() => {
+        const n = Number(e.weightPct);
+        if (!Number.isFinite(n)) return 0;
+        return Math.min(1000, Math.max(0, n));
+      })(),
+    }));
+}
+
+const EXTRACT_SOURCES = new Set(['payloadBits', 'colorSourceBlend', ...TIMING_DERIVED_SOURCE_SET]);
+
+export function isColorSourceBlendSource(source) {
+  return source === 'colorSourceBlend';
+}
 
 export function normalizeExtract(raw) {
   if (!raw || typeof raw !== 'object') return createEmptyExtract();
   const source = EXTRACT_SOURCES.has(raw.source) ? raw.source : 'payloadBits';
   const isTiming = isTimingDerivedSource(source);
-  const hasChannelGroup = !isTiming && raw.channelGroup && typeof raw.channelGroup === 'object';
-  const hasColorBlend = !isTiming && !hasChannelGroup && raw.colorBlend && typeof raw.colorBlend === 'object';
-  const paletteMap = isTiming || hasChannelGroup || hasColorBlend ? false : !!raw.paletteMap;
-  const curve = (paletteMap || hasChannelGroup || hasColorBlend) ? null : normalizeCurve(raw.curve);
+  const isColorSourceBlend = isColorSourceBlendSource(source);
+  const hasChannelGroup = !isTiming && !isColorSourceBlend && raw.channelGroup && typeof raw.channelGroup === 'object';
+  const hasColorBlend = !isTiming && !isColorSourceBlend && !hasChannelGroup && raw.colorBlend && typeof raw.colorBlend === 'object';
+  const paletteMap = isTiming || isColorSourceBlend || hasChannelGroup || hasColorBlend ? false : !!raw.paletteMap;
+  const curve = (paletteMap || hasChannelGroup || hasColorBlend || isColorSourceBlend) ? null : normalizeCurve(raw.curve);
   // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
   const targets = Array.isArray(raw.targets)
     ? raw.targets.map(normalizeExtractTarget)
@@ -863,6 +1002,10 @@ export function normalizeExtract(raw) {
     ...(curve ? { curve } : {}),
     targets,
   };
+  if (isColorSourceBlend) {
+    out.blend = normalizeColorSourceBlend(raw.blend);
+    return out;
+  }
   if (hasChannelGroup) {
     const scaleIsDirect = raw.channelGroup.scale === 'direct8';
     const normCh = (ch, fallbackOffset) => {
@@ -1055,6 +1198,7 @@ export function normalizeMbRule(raw, index = 0) {
     enabled: raw.enabled !== false,
     priority: Number.isFinite(raw.priority) ? Number(raw.priority) : index * 10,
     match: normalizeConditionNode(raw.match || createEmptyMatchGroup('all')),
+    colorSources: normalizeColorSources(raw.colorSources),
     extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],
     presetId: typeof raw.presetId === 'string' ? raw.presetId : '',
     segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',

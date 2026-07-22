@@ -24,6 +24,10 @@ import { MB_SEGMENT_META } from '../../lib/ble/mbConstants';
 import {
   createEmptyColorBlend,
   createEmptyColorBlendSource,
+  createEmptyColorSource,
+  createEmptyColorSourceBlendEntry,
+  createEmptyColorSourceBlendExtract,
+  createEmptyColorSourceRgb,
   createEmptyCondition,
   createEmptyExtract,
   createEmptyExtractTarget,
@@ -34,6 +38,9 @@ import {
   createEmptyStartTransition,
   createEmptyStopTransition,
   createEmptyTimingParamBinding,
+  colorSourceBlendWeightSum,
+  findDuplicateColorSourceNames,
+  isColorSourceBlendSource,
   isTimingDerivedSource,
   normalizeMbMapping,
   reindexRulePriorities,
@@ -672,6 +679,200 @@ function TimingParamBindingEditor({
   );
 }
 
+function ChannelGroupFields({ channelGroup, onChange }) {
+  const cg = channelGroup || {
+    r: { offset: 8, bitStart: 0, bitCount: 8 },
+    g: { offset: 9, bitStart: 0, bitCount: 8 },
+    b: { offset: 10, bitStart: 0, bitCount: 8 },
+    scale: 'direct8',
+  };
+  const setChannel = (key, patch) => {
+    onChange({
+      ...cg,
+      [key]: { ...(cg[key] || { offset: 0, bitStart: 0, bitCount: 8 }), ...patch },
+    });
+  };
+  return (
+    <Stack gap="xs">
+      {['r', 'g', 'b'].map((key) => {
+        const ch = cg[key] || { offset: 0, bitStart: 0, bitCount: 8 };
+        return (
+          <Paper key={key} p="xs" bg="var(--bg)" withBorder>
+            <Text size="xs" fw={600} mb={4}>{key.toUpperCase()} channel</Text>
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
+              <Field label="Offset">
+                <NumberInput
+                  value={ch.offset ?? 0}
+                  onChange={(v) => setChannel(key, { offset: Math.max(0, parseInt(v, 10) || 0) })}
+                  min={0}
+                />
+              </Field>
+              <Field label="bitStart">
+                <NumberInput
+                  value={ch.bitStart ?? 0}
+                  onChange={(v) => setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+                  min={0}
+                  max={7}
+                />
+              </Field>
+              <Field label="bitCount">
+                <NumberInput
+                  value={ch.bitCount ?? 8}
+                  onChange={(v) => setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+                  min={1}
+                  max={32}
+                />
+              </Field>
+            </SimpleGrid>
+          </Paper>
+        );
+      })}
+      <Field label="Scale">
+        <SearchableSelect
+          value={cg.scale || 'direct8'}
+          onChange={(scale) => onChange({ ...cg, scale })}
+          options={[
+            { value: 'direct8', label: 'direct8 (full-byte RGB)' },
+            { value: 'bitReplicate6to8', label: 'bitReplicate6to8 (6-bit packed)' },
+            { value: 'none', label: 'none (pass-through)' },
+          ]}
+          allowEmpty={false}
+        />
+      </Field>
+    </Stack>
+  );
+}
+
+function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
+  const src = source || createEmptyColorSource();
+  const nameTrim = (src.name || '').trim();
+  const isDup = nameTrim && usedNames.filter((n) => n === nameTrim).length > 1;
+  return (
+    <Paper p="xs" withBorder bg="var(--surface2)">
+      <Group justify="space-between" mb="xs">
+        <Text size="xs" fw={600}>Color source</Text>
+        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+      </Group>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
+        <Field label="Name">
+          <TextInput
+            value={src.name || ''}
+            onChange={(e) => onChange({ ...src, name: e.target.value })}
+            placeholder="innerColor"
+            error={isDup ? 'Duplicate name' : undefined}
+            styles={{ input: { fontFamily: 'monospace' } }}
+          />
+        </Field>
+        <Field label="Kind">
+          <SegmentedControl
+            fullWidth
+            size="xs"
+            value={src.kind === 'rgb' ? 'rgb' : 'palette'}
+            onChange={(kind) => {
+              if (kind === 'rgb') {
+                onChange(createEmptyColorSourceRgb({ name: src.name || '' }));
+                return;
+              }
+              const next = createEmptyColorSource({ name: src.name || '', kind: 'palette' });
+              onChange(next);
+            }}
+            data={[
+              { label: 'Palette', value: 'palette' },
+              { label: 'RGB', value: 'rgb' },
+            ]}
+          />
+        </Field>
+      </SimpleGrid>
+      {src.kind === 'rgb' ? (
+        <ChannelGroupFields
+          channelGroup={src.channelGroup}
+          onChange={(channelGroup) => onChange({ ...src, kind: 'rgb', channelGroup })}
+        />
+      ) : (
+        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
+          <Field label="Offset">
+            <NumberInput
+              value={src.offset ?? 0}
+              onChange={(v) => onChange({ ...src, offset: Math.max(0, parseInt(v, 10) || 0) })}
+              min={0}
+            />
+          </Field>
+          <Field label="bitStart">
+            <NumberInput
+              value={src.bitStart ?? 0}
+              onChange={(v) => onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+              min={0}
+              max={7}
+            />
+          </Field>
+          <Field label="bitCount">
+            <NumberInput
+              value={src.bitCount ?? 8}
+              onChange={(v) => onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+              min={1}
+              max={32}
+            />
+          </Field>
+        </SimpleGrid>
+      )}
+    </Paper>
+  );
+}
+
+function ColorSourcesEditor({ sources, onChange }) {
+  const list = Array.isArray(sources) ? sources : [];
+  const usedNames = list.map((s) => (s.name || '').trim()).filter(Boolean);
+  const dups = findDuplicateColorSourceNames(list);
+  return (
+    <CollapsibleBlock
+      title="Color sources"
+      summary={list.length ? `${list.length} named` : 'none'}
+    >
+      <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
+        Define palette or RGB colors once on this rule, then reference them by name in
+        &quot;Named blend&quot; extracts (N-way weighted mixes per segment).
+      </Text>
+      {dups.length > 0 && (
+        <Text size="xs" c="red" mb="xs" fw={600}>
+          Duplicate source names must be fixed before these can be used reliably: {dups.join(', ')}
+        </Text>
+      )}
+      <Stack gap="xs">
+        {list.map((src, i) => (
+          <ColorSourceRowEditor
+            key={i}
+            source={src}
+            usedNames={usedNames}
+            onChange={(next) => {
+              const copy = [...list];
+              copy[i] = next;
+              onChange(copy);
+            }}
+            onDelete={() => onChange(list.filter((_, j) => j !== i))}
+          />
+        ))}
+      </Stack>
+      <AppButton
+        size="compact-sm"
+        variant="default"
+        mt="xs"
+        onClick={() => {
+          const base = `color${list.length + 1}`;
+          let name = base;
+          let n = 2;
+          const taken = new Set(usedNames);
+          while (taken.has(name)) {
+            name = `${base}_${n++}`;
+          }
+          onChange([...list, createEmptyColorSource({ name })]);
+        }}
+      >
+        Add color source
+      </AppButton>
+    </CollapsibleBlock>
+  );
+}
+
 function ColorBlendSourceEditor({ label, source, onChange }) {
   const src = source || createEmptyColorBlendSource();
   return (
@@ -718,8 +919,8 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
   );
 }
 
-function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
-  const set = (patch) => onChange({ ...extract, ...patch, source: 'payloadBits' });
+function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange, onDelete }) {
+  const set = (patch) => onChange({ ...extract, source: 'payloadBits', ...patch });
   const targets = Array.isArray(extract.targets) ? extract.targets : [];
   const curve = extract.curve || {
     type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
@@ -737,22 +938,31 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
     scale: 'bitReplicate6to8',
   };
   const colorBlend = extract.colorBlend || createEmptyColorBlend();
+  const blend = Array.isArray(extract.blend) ? extract.blend : [createEmptyColorSourceBlendEntry()];
   const isReciprocal = curve.type === 'reciprocal';
-  const extractMode = extract.channelGroup
-    ? 'channelGroup'
-    : (extract.colorBlend
-      ? 'colorBlend'
-      : (extract.paletteMap ? 'palette' : 'curve'));
+  const extractMode = isColorSourceBlendSource(extract.source)
+    ? 'colorSourceBlend'
+    : (extract.channelGroup
+      ? 'channelGroup'
+      : (extract.colorBlend
+        ? 'colorBlend'
+        : (extract.paletteMap ? 'palette' : 'curve')));
+  const blendWeightSum = colorSourceBlendWeightSum(blend);
+  const blendWeightOk = Math.abs(blendWeightSum - 100) < 0.5;
   const title = extract.name?.trim() ? extract.name.trim() : 'Packet extract';
   const summary = [
     extractMode === 'channelGroup'
       ? 'rgb channel group'
-      : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`),
+      : (extractMode === 'colorSourceBlend'
+        ? 'named blend'
+        : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`)),
     extractMode === 'channelGroup'
       ? (channelGroup.scale || 'bitReplicate6to8')
-      : (extractMode === 'colorBlend'
-        ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
-        : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve'))),
+      : (extractMode === 'colorSourceBlend'
+        ? `${blend.length} src · ${blendWeightSum.toFixed(0)}%`
+        : (extractMode === 'colorBlend'
+          ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
+          : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve')))),
     `${targets.length} target${targets.length === 1 ? '' : 's'}`,
   ].join(' · ');
 
@@ -768,6 +978,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
     };
     delete rest.curve;
     delete rest.colorBlend;
+    delete rest.blend;
     onChange(rest);
   };
 
@@ -777,6 +988,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
       delete rest.curve;
       delete rest.channelGroup;
       delete rest.colorBlend;
+      delete rest.blend;
       onChange(rest);
       return;
     }
@@ -784,6 +996,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
       const rest = { ...extract, source: 'payloadBits', paletteMap: false };
       delete rest.curve;
       delete rest.colorBlend;
+      delete rest.blend;
       onChange({
         ...rest,
         channelGroup: {
@@ -799,12 +1012,28 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
       const rest = { ...extract, source: 'payloadBits', paletteMap: false };
       delete rest.curve;
       delete rest.channelGroup;
+      delete rest.blend;
       onChange({ ...rest, colorBlend: extract.colorBlend || createEmptyColorBlend() });
+      return;
+    }
+    if (mode === 'colorSourceBlend') {
+      const rest = createEmptyColorSourceBlendExtract(extract.name || '');
+      onChange({
+        ...rest,
+        name: extract.name || '',
+        targets: Array.isArray(extract.targets) && extract.targets.length
+          ? extract.targets
+          : rest.targets,
+        blend: Array.isArray(extract.blend) && extract.blend.length
+          ? extract.blend
+          : rest.blend,
+      });
       return;
     }
     const rest = { ...extract, source: 'payloadBits', paletteMap: false, curve };
     delete rest.channelGroup;
     delete rest.colorBlend;
+    delete rest.blend;
     onChange(rest);
   };
 
@@ -829,6 +1058,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
     };
     delete rest.curve;
     delete rest.colorBlend;
+    delete rest.blend;
     onChange(rest);
   };
 
@@ -851,14 +1081,15 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
           value={extractMode}
           onChange={setExtractMode}
           data={[
-            { label: 'Palette map', value: 'palette' },
+            { label: 'Palette', value: 'palette' },
             { label: 'Curve', value: 'curve' },
-            { label: 'RGB channels', value: 'channelGroup' },
-            { label: 'Color blend', value: 'colorBlend' },
+            { label: 'RGB', value: 'channelGroup' },
+            { label: 'Blend', value: 'colorBlend' },
+            { label: 'Named blend', value: 'colorSourceBlend' },
           ]}
         />
       </Field>
-      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && (
+      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && extractMode !== 'colorSourceBlend' && (
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
           <Field label="Name">
             <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />
@@ -924,6 +1155,84 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
               allowEmpty={false}
             />
           </Field>
+        </Stack>
+      )}
+      {extractMode === 'colorSourceBlend' && (
+        <Stack gap="xs" mt="xs">
+          <Field label="Name">
+            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="centerBlend" />
+          </Field>
+          <Text size="xs" c="dimmed" lh={1.45}>
+            Weighted mix of named rule color sources. Add sources in the Color sources section above.
+            Single entry at 100% is a pass-through.
+          </Text>
+          {!colorSourceOpts.length && (
+            <Text size="xs" c="orange">No named color sources on this rule yet.</Text>
+          )}
+          <Text
+            size="xs"
+            fw={600}
+            c={blendWeightOk ? 'dimmed' : 'orange'}
+          >
+            Total: {blendWeightSum.toFixed(0)}% — should be 100%
+            {blendWeightOk ? '' : ' (firmware will normalize)'}
+          </Text>
+          <Stack gap="xs">
+            {blend.map((entry, i) => (
+              <Group key={i} gap="xs" align="flex-end" wrap="wrap">
+                <Field label="Source">
+                  <SearchableSelect
+                    value={entry.source || ''}
+                    onChange={(source) => {
+                      const next = [...blend];
+                      next[i] = { ...next[i], source };
+                      set({ source: 'colorSourceBlend', blend: next, paletteMap: false });
+                    }}
+                    options={colorSourceOpts}
+                    placeholder="(pick source)"
+                    allowEmpty
+                  />
+                </Field>
+                <Field label="Weight %">
+                  <NumberInput
+                    value={entry.weightPct ?? 0}
+                    onChange={(v) => {
+                      const next = [...blend];
+                      next[i] = { ...next[i], weightPct: Math.max(0, Number(v) || 0) };
+                      set({ source: 'colorSourceBlend', blend: next, paletteMap: false });
+                    }}
+                    min={0}
+                    max={1000}
+                  />
+                </Field>
+                <AppButton
+                  size="compact-xs"
+                  variant="danger"
+                  onClick={() => {
+                    const next = blend.filter((_, j) => j !== i);
+                    set({
+                      source: 'colorSourceBlend',
+                      blend: next.length ? next : [createEmptyColorSourceBlendEntry()],
+                      paletteMap: false,
+                    });
+                  }}
+                >
+                  Delete
+                </AppButton>
+              </Group>
+            ))}
+          </Stack>
+          <AppButton
+            size="compact-xs"
+            variant="default"
+            onClick={() => set({
+              source: 'colorSourceBlend',
+              blend: [...blend, createEmptyColorSourceBlendEntry({ weightPct: 0 })],
+              paletteMap: false,
+            })}
+          >
+            Add source
+          </AppButton>
         </Stack>
       )}
       {extractMode === 'colorBlend' && (
@@ -1589,6 +1898,11 @@ function RuleCard({
             onChange={(match) => onChange({ ...rule, match })}
           />
 
+          <ColorSourcesEditor
+            sources={rule.colorSources || []}
+            onChange={(colorSources) => onChange({ ...rule, colorSources })}
+          />
+
           <CollapsibleBlock
             title="Packet extracts"
             summary={`${(rule.extract || []).filter((ex) => !isTimingDerivedSource(ex.source)).length} extract(s)`}
@@ -1606,6 +1920,10 @@ function RuleCard({
                     key={i}
                     extract={ex}
                     segmentOpts={segmentOpts}
+                    colorSourceOpts={(rule.colorSources || [])
+                      .map((s) => (s.name || '').trim())
+                      .filter(Boolean)
+                      .map((name) => ({ value: name, label: name, searchText: name }))}
                     onChange={(next) => {
                       const extract = [...(rule.extract || [])];
                       extract[i] = next;
