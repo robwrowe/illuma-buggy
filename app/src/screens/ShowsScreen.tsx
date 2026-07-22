@@ -352,17 +352,23 @@ export default function ShowsScreen() {
                           <IconPencil size={14} color={colors.textMuted} />
                         </TouchableOpacity>
                         {(['pre', 'post'] as PhaseKey[]).map(phase => (
-                          <TouchableOpacity
-                            key={phase}
-                            style={s.phaseRow}
-                            onPress={() => setPicker({ bindingId: b.id, phase })}
-                          >
-                            <Text style={s.rowLabel}>{PHASE_LABELS[phase]}</Text>
-                            <Text style={s.phaseValue}>
-                              {presetLabel(presets, b.presets[phase], b.kind, phase)}
-                            </Text>
-                            <IconPencil size={14} color={colors.textMuted} />
-                          </TouchableOpacity>
+                          <View key={phase}>
+                            <TouchableOpacity
+                              style={s.phaseRow}
+                              onPress={() => setPicker({ bindingId: b.id, phase })}
+                            >
+                              <Text style={s.rowLabel}>{PHASE_LABELS[phase]}</Text>
+                              <Text style={s.phaseValue}>
+                                {presetLabel(presets, b.presets[phase], b.kind, phase)}
+                              </Text>
+                              <IconPencil size={14} color={colors.textMuted} />
+                            </TouchableOpacity>
+                            {phase === 'pre' && (
+                              <Text style={[s.hint, { marginTop: -4, marginBottom: 8, textAlign: 'left' }]}>
+                                Show start uses this preset&apos;s own transition style/duration (edit on Presets).
+                              </Text>
+                            )}
+                          </View>
                         ))}
                         <View style={s.switchRow}>
                           <Text style={s.rowLabel}>Disable auto pre/post (all instances)</Text>

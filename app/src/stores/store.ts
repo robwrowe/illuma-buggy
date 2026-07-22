@@ -4,6 +4,7 @@
  */
 
 import { normalizeTags } from '../utils/tags';
+import { KNOWN_TRANSITION_STYLES } from '../utils/transitionStyles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
@@ -71,6 +72,21 @@ export interface PresetWled {
   o3?:     boolean;
   col?:    number[][];
   seg?:    object[];
+  /**
+   * WLED transition duration in ms for this preset's activation.
+   * null/undefined = use WLED's current default (unchanged behavior).
+   */
+  transitionMs?: number | null;
+  /**
+   * Transition style — same set as rule-engine stopTransition / blendingStyleFromTypeString.
+   * null/undefined = no style override.
+   */
+  transitionStyle?:
+    | 'instant' | 'fairyDust' | 'swipeRight' | 'swipeLeft' | 'outsideIn' | 'insideOut'
+    | 'swipeUp' | 'swipeDown' | 'openH' | 'openV' | 'swipeTL' | 'swipeTR' | 'swipeBR' | 'swipeBL'
+    | 'circularOut' | 'circularIn' | 'pushRight' | 'pushLeft' | 'pushUp' | 'pushDown'
+    | 'pushTL' | 'pushTR' | 'pushBR' | 'pushBL'
+    | null;
 }
 
 export interface PresetMemory {
@@ -421,10 +437,33 @@ const DEFAULT_PRESET_MEMORY: PresetMemory = {
 
 /** Normalize preset from board sync or legacy imports (firmware stores id/name/wled only). */
 export function normalizePreset(p: Partial<Preset> & { id: string; name: string }): Preset {
+  const rawWled = (p.wled ?? { on: true }) as PresetWled & {
+    pd?: unknown;
+    transition?: unknown;
+  };
+  // Drop dead/unconfirmed `pd` and legacy raw WLED `transition` tenths field —
+  // app authors use transitionMs / transitionStyle instead.
+  const { pd: _pd, transition: _legacyTransition, ...wledRest } = rawWled;
+
+  const transitionMs = Number.isFinite(rawWled.transitionMs)
+    ? Number(rawWled.transitionMs)
+    : (rawWled.transitionMs === null ? null : undefined);
+  const transitionStyle = (
+    typeof rawWled.transitionStyle === 'string'
+    && KNOWN_TRANSITION_STYLES.has(rawWled.transitionStyle)
+  )
+    ? rawWled.transitionStyle
+    : (rawWled.transitionStyle === null ? null : undefined);
+
   return {
     id:        p.id,
     name:      p.name,
-    wled:      p.wled ?? { on: true },
+    wled: {
+      ...wledRest,
+      on: wledRest.on ?? true,
+      ...(transitionMs !== undefined ? { transitionMs } : {}),
+      ...(transitionStyle !== undefined ? { transitionStyle } : {}),
+    },
     memory:    p.memory ?? DEFAULT_PRESET_MEMORY,
     tags:      normalizeTags(p.tags),
     segmentLayoutId: p.segmentLayoutId,

@@ -13,6 +13,7 @@ import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } fro
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
 import type { MbMappingConfig } from './mbConfig';
 import { collectMappingPresetIds, mbMappingToBlePayload } from './mbConfig';
+import { TRANSITION_STYLE_TO_BS } from './transitionStyles';
 
 const BOARD_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: true, segments: true,
@@ -128,8 +129,16 @@ export function presetWledForBoard(
     seg: buildRecalledSegmentsFromPreset(preset, recall, layouts, BOARD_PRESET_MEMORY),
   });
   const out: Record<string, unknown> = { ...base };
-  if (w.transition !== undefined) out.transition = w.transition;
-  if (w.pd !== undefined) out.pd = w.pd;
+
+  // transitionMs → WLED `transition` (100ms units). Omitted when unset → WLED default.
+  if (Number.isFinite(w.transitionMs)) {
+    out.transition = Math.max(0, Math.round((w.transitionMs as number) / 100));
+  }
+  // transitionStyle → WLED `bs` (numeric). Omitted when unset → no style override.
+  if (w.transitionStyle && TRANSITION_STYLE_TO_BS[w.transitionStyle] !== undefined) {
+    out.bs = TRANSITION_STYLE_TO_BS[w.transitionStyle];
+  }
+
   return out;
 }
 
