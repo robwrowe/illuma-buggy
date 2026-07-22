@@ -821,25 +821,59 @@ static void sendMbRuleOff(unsigned long fadeMs) {
 
 static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload, size_t plen) {
   JsonObject timing = rule["timing"].as<JsonObject>();
-  if (timing.isNull() || !(timing["enabled"] | false)) {
+  bool timingActive = !timing.isNull() && (timing["enabled"] | false);
+
+  TimingDecode td = {};
+  int cooldownSec = 2;
+  bool haveSchedule = false;
+  uint8_t timingByte = 0;
+  const char* timingModelId = "";
+
+  if (timingActive) {
+    uint8_t offset = (uint8_t)(timing["offset"] | 5);
+    timingByte = (payload && offset < plen) ? payload[offset] : 0;
+    timingModelId = timing["timingModelId"] | "";
+    JsonObject timingModel = findTimingModelById(timingModelId);
+    td = decodeTimingByte(timingByte, timingModel);
+    cooldownSec = timing["cooldownSec"] | 2;
+    haveSchedule = true;
+  } else {
+    JsonObject fb = rule["fallbackDuration"].as<JsonObject>();
+    if (!fb.isNull() && (fb["enabled"] | false)) {
+      float onSec = fb["onSec"] | 10.0f;
+      float fadeSec = fb["fadeSec"] | 0.0f;
+      if (onSec < 0) onSec = 0;
+      if (fadeSec < 0) fadeSec = 0;
+      td.onTimeMs = (unsigned long)(onSec * 1000.0f + 0.5f);
+      td.stretchMs = (unsigned long)(fadeSec * 1000.0f + 0.5f);
+      td.extended = false;
+      td.scaler = false;
+      // cooldownSec: fallback's own value, else inherit timing block's (even if disabled), else 2.
+      if (fb.containsKey("cooldownSec") && !fb["cooldownSec"].isNull()) {
+        cooldownSec = fb["cooldownSec"] | 2;
+      } else if (!timing.isNull() && timing.containsKey("cooldownSec")) {
+        cooldownSec = timing["cooldownSec"] | 2;
+      } else {
+        cooldownSec = 2;
+      }
+      haveSchedule = true;
+    }
+  }
+
+  if (!haveSchedule) {
     resetMbRuleLifecycle();
     return;
   }
-  uint8_t offset = (uint8_t)(timing["offset"] | 5);
-  uint8_t byte = (payload && offset < plen) ? payload[offset] : 0;
-  const char* timingModelId = timing["timingModelId"] | "";
-  JsonObject timingModel = findTimingModelById(timingModelId);
-  TimingDecode td = decodeTimingByte(byte, timingModel);
-  int cooldownSec = timing["cooldownSec"] | 2;
   if (cooldownSec < 0) cooldownSec = 0;
-  const char* mode = timing["cooldownResetMode"] | "onMatch";
+
+  const char* mode = timing.isNull() ? "onMatch" : (timing["cooldownResetMode"] | "onMatch");
 
   strncpy(mbActiveRuleId, rule["id"] | "", MB_RULE_ID_LEN - 1);
   mbActiveRuleId[MB_RULE_ID_LEN - 1] = '\0';
   mbActiveRuleCooldownMode =
     (strcmp(mode, "fixed") == 0) ? MB_COOLDOWN_FIXED : MB_COOLDOWN_ON_MATCH;
   long fadeOverride = -1;
-  if (timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
+  if (!timing.isNull() && timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
     fadeOverride = (long)(timing["fadeOverrideMs"] | -1);
   }
   // stretchMs drives the FTB transition during the final flash cycle (timingFade mode).
@@ -871,10 +905,17 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
     onHoldMs = 1;
   }
   mbRulePhaseDeadlineMs = millis() + (onHoldMs > 0 ? onHoldMs : 1);
-  Serial.printf("[Rule] timing ON hold=%lums (totalOn=%lums) stretch/fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X stopBs=%d\n",
-                onHoldMs, td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
-                mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
-                timingModelId[0] ? timingModelId : "(default)", byte, mbRuleStopBlendingStyle);
+  if (timingActive) {
+    Serial.printf("[Rule] timing ON hold=%lums (totalOn=%lums) stretch/fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X stopBs=%d\n",
+                  onHoldMs, td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
+                  mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
+                  timingModelId[0] ? timingModelId : "(default)", timingByte, mbRuleStopBlendingStyle);
+  } else {
+    Serial.printf("[Rule] fallbackDuration ON hold=%lums (totalOn=%lums) stretch/fade=%lums blackHold=%lums mode=%s stopBs=%d\n",
+                  onHoldMs, td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
+                  mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
+                  mbRuleStopBlendingStyle);
+  }
 }
 
 void resetMbRuleLifecycle() {
@@ -1391,7 +1432,10 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   }
 
   setOverride(src);
-  if (timingEn && src == BLE_MAGIC) {
+  // Fallback duration reuses the timed ON→FADE→COOLDOWN machine when timing is off.
+  // Keep BLE_MAGIC-only (same restriction as the packet-timing path).
+  bool hasFallback = !timingEn && (rule["fallbackDuration"]["enabled"] | false);
+  if ((timingEn || hasFallback) && src == BLE_MAGIC) {
     beginTimedRuleOnPhase(rule, payload, plen);
   } else {
     resetMbRuleLifecycle();

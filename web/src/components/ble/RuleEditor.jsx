@@ -32,6 +32,7 @@ import {
   createEmptyExtract,
   createEmptyExtractTarget,
   createEmptyMatchGroup,
+  createEmptyFallbackDuration,
   createEmptyRule,
   createEmptyRuleEffect,
   createEmptyRuleTiming,
@@ -1466,6 +1467,7 @@ function RuleCard({
   onEditTimingModels,
 }) {
   const timing = rule.timing || createEmptyRuleTiming();
+  const fallbackDuration = rule.fallbackDuration || createEmptyFallbackDuration();
   const startTransition = rule.startTransition || createEmptyStartTransition();
   const stopTransition = rule.stopTransition || createEmptyStopTransition();
   const effect = rule.effect || createEmptyRuleEffect();
@@ -1779,6 +1781,82 @@ function RuleCard({
             >
               Add timing → param binding
             </AppButton>
+          </CollapsibleBlock>
+
+          <CollapsibleBlock
+            title="Fallback duration"
+            summary={fallbackDuration.enabled
+              ? `on · ${fallbackDuration.onSec ?? 10}s${fallbackDuration.fadeSec ? ` · fade ${fallbackDuration.fadeSec}s` : ''}`
+              : 'off'}
+          >
+            <Text size="xs" c="dimmed" mb="xs">
+              Used when Timing is disabled — lets an unhandled/undecoded opcode still return to
+              normal after a fixed duration instead of staying on indefinitely. When Timing is
+              enabled, the packet timing byte always wins.
+            </Text>
+            <Switch
+              label="Use fallback duration"
+              checked={!!fallbackDuration.enabled}
+              onChange={(e) => onChange({
+                ...rule,
+                fallbackDuration: { ...fallbackDuration, enabled: e.target.checked },
+              })}
+              mb="xs"
+            />
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+              <Field label="On duration (sec)">
+                <NumberInput
+                  value={fallbackDuration.onSec ?? 10}
+                  onChange={(v) => onChange({
+                    ...rule,
+                    fallbackDuration: {
+                      ...fallbackDuration,
+                      onSec: Math.max(0, Number(v) || 0),
+                    },
+                  })}
+                  min={0}
+                  step={0.5}
+                  decimalScale={2}
+                  disabled={!fallbackDuration.enabled}
+                />
+              </Field>
+              <Field label="Fade duration (sec)">
+                <NumberInput
+                  value={fallbackDuration.fadeSec ?? 0}
+                  onChange={(v) => onChange({
+                    ...rule,
+                    fallbackDuration: {
+                      ...fallbackDuration,
+                      fadeSec: Math.max(0, Number(v) || 0),
+                    },
+                  })}
+                  min={0}
+                  step={0.1}
+                  decimalScale={2}
+                  disabled={!fallbackDuration.enabled}
+                />
+              </Field>
+              <Field label="Cooldown (sec)">
+                <NumberInput
+                  value={fallbackDuration.cooldownSec ?? ''}
+                  placeholder="inherit from timing / 2s default"
+                  onChange={(v) => {
+                    const blank = v === '' || v === null || v === undefined;
+                    onChange({
+                      ...rule,
+                      fallbackDuration: {
+                        ...fallbackDuration,
+                        cooldownSec: blank ? null : Math.max(0, Number(v) || 0),
+                      },
+                    });
+                  }}
+                  min={0}
+                  step={0.5}
+                  decimalScale={2}
+                  disabled={!fallbackDuration.enabled}
+                />
+              </Field>
+            </SimpleGrid>
           </CollapsibleBlock>
 
           <CollapsibleBlock

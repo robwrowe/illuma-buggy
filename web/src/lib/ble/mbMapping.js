@@ -326,6 +326,32 @@ export function createEmptyRuleTiming() {
   };
 }
 
+export function createEmptyFallbackDuration(overrides = {}) {
+  return {
+    enabled: false,
+    onSec: 10,
+    fadeSec: 0,
+    cooldownSec: null, // null = inherit from timing block or default 2
+    ...overrides,
+  };
+}
+
+export function normalizeFallbackDuration(raw) {
+  const d = createEmptyFallbackDuration();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  let cooldownSec = null;
+  if (raw.cooldownSec !== null && raw.cooldownSec !== undefined && raw.cooldownSec !== '') {
+    const n = Number(raw.cooldownSec);
+    if (Number.isFinite(n) && n >= 0) cooldownSec = n;
+  }
+  return {
+    enabled: !!raw.enabled,
+    onSec: Number.isFinite(raw.onSec) ? Math.max(0, Number(raw.onSec)) : d.onSec,
+    fadeSec: Number.isFinite(raw.fadeSec) ? Math.max(0, Number(raw.fadeSec)) : d.fadeSec,
+    cooldownSec,
+  };
+}
+
 export function shortTimingModelId() {
   return `tm${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
 }
@@ -697,6 +723,7 @@ export function createEmptyRule(overrides = {}) {
     segmentMapId: '',
     effect: createEmptyRuleEffect(),
     timing: createEmptyRuleTiming(),
+    fallbackDuration: createEmptyFallbackDuration(),
     startTransition: createEmptyStartTransition(),
     stopTransition: createEmptyStopTransition(),
     /** 'global' = one fx/pal/sx/ix source for every map segment; 'perSegment' = per-row overrides. */
@@ -1204,6 +1231,7 @@ export function normalizeMbRule(raw, index = 0) {
     segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
     effect: normalizeRuleEffect(raw.effect),
     timing: normalizeRuleTiming(raw.timing),
+    fallbackDuration: normalizeFallbackDuration(raw.fallbackDuration),
     startTransition: normalizeStartTransition(raw.startTransition),
     stopTransition: normalizeStopTransition(raw.stopTransition),
     segmentSourceMode: normalizeSegmentSourceMode(raw.segmentSourceMode),
