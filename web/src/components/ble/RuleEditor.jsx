@@ -628,13 +628,68 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
   const curve = extract.curve || {
     type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
   };
+  const defaultChannel = (offset) => ({
+    offset, bitStart: 1, bitCount: 6,
+  });
+  const channelGroup = extract.channelGroup || {
+    r: defaultChannel(8),
+    g: defaultChannel(9),
+    b: defaultChannel(10),
+    scale: 'bitReplicate6to8',
+  };
   const isReciprocal = curve.type === 'reciprocal';
+  const extractMode = extract.channelGroup
+    ? 'channelGroup'
+    : (extract.paletteMap ? 'palette' : 'curve');
   const title = extract.name?.trim() ? extract.name.trim() : 'Packet extract';
   const summary = [
-    `off ${extract.offset ?? 0}`,
-    extract.paletteMap ? 'palette' : (curve.type || 'curve'),
+    extractMode === 'channelGroup' ? 'rgb channel group' : `off ${extract.offset ?? 0}`,
+    extractMode === 'channelGroup'
+      ? (channelGroup.scale || 'bitReplicate6to8')
+      : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve')),
     `${targets.length} target${targets.length === 1 ? '' : 's'}`,
   ].join(' · ');
+
+  const setChannel = (key, patch) => {
+    const rest = {
+      ...extract,
+      source: 'payloadBits',
+      paletteMap: false,
+      channelGroup: {
+        ...channelGroup,
+        [key]: { ...(channelGroup[key] || defaultChannel(8)), ...patch },
+      },
+    };
+    delete rest.curve;
+    onChange(rest);
+  };
+
+  const setExtractMode = (mode) => {
+    if (mode === 'palette') {
+      const rest = { ...extract, source: 'payloadBits', paletteMap: true };
+      delete rest.curve;
+      delete rest.channelGroup;
+      onChange(rest);
+      return;
+    }
+    if (mode === 'channelGroup') {
+      const rest = { ...extract, source: 'payloadBits', paletteMap: false };
+      delete rest.curve;
+      onChange({
+        ...rest,
+        channelGroup: {
+          r: channelGroup.r || defaultChannel(8),
+          g: channelGroup.g || defaultChannel(9),
+          b: channelGroup.b || defaultChannel(10),
+          scale: channelGroup.scale || 'bitReplicate6to8',
+        },
+      });
+      return;
+    }
+    const rest = { ...extract, source: 'payloadBits', paletteMap: false, curve };
+    delete rest.channelGroup;
+    onChange(rest);
+  };
 
   return (
     <CollapsibleBlock
@@ -649,36 +704,95 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
         Reads bits from the packet. For flash rate / on-time → segment fields, use{' '}
         <strong>Timing → Add timing → param binding</strong> above (not this section).
       </Text>
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-        <Field label="Name">
-          <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />
-        </Field>
-        <Field label="Offset">
-          <NumberInput value={extract.offset ?? 0} onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })} min={0} />
-        </Field>
-        <Field label="bitStart">
-          <NumberInput value={extract.bitStart ?? 0} onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })} min={0} max={7} />
-        </Field>
-        <Field label="bitCount">
-          <NumberInput value={extract.bitCount ?? 5} onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })} min={1} max={32} />
-        </Field>
-      </SimpleGrid>
-      <Checkbox
-        mt="xs"
-        label="Palette map (low 5 bits → MB color)"
-        checked={!!extract.paletteMap}
-        onChange={(e) => {
-          const paletteMap = e.target.checked;
-          if (paletteMap) {
-            const rest = { ...extract, source: 'payloadBits' };
-            delete rest.curve;
-            onChange({ ...rest, paletteMap: true });
-          } else {
-            set({ paletteMap: false, curve });
-          }
-        }}
-      />
-      {!extract.paletteMap && (
+      <Field label="Value mode">
+        <SegmentedControl
+          fullWidth
+          value={extractMode}
+          onChange={setExtractMode}
+          data={[
+            { label: 'Palette map', value: 'palette' },
+            { label: 'Curve', value: 'curve' },
+            { label: 'RGB channel group', value: 'channelGroup' },
+          ]}
+        />
+      </Field>
+      {extractMode !== 'channelGroup' && (
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
+          <Field label="Name">
+            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />
+          </Field>
+          <Field label="Offset">
+            <NumberInput value={extract.offset ?? 0} onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })} min={0} />
+          </Field>
+          <Field label="bitStart">
+            <NumberInput value={extract.bitStart ?? 0} onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })} min={0} max={7} />
+          </Field>
+          <Field label="bitCount">
+            <NumberInput value={extract.bitCount ?? 5} onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })} min={1} max={32} />
+          </Field>
+        </SimpleGrid>
+      )}
+      {extractMode === 'channelGroup' && (
+        <Stack gap="xs" mt="xs">
+          <Field label="Name">
+            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="e908Color" />
+          </Field>
+          {['r', 'g', 'b'].map((key) => {
+            const ch = channelGroup[key] || defaultChannel(key === 'r' ? 8 : key === 'g' ? 9 : 10);
+            return (
+              <Paper key={key} p="xs" bg="var(--bg)" withBorder>
+                <Text size="xs" fw={600} mb={4}>{key.toUpperCase()} channel</Text>
+                <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
+                  <Field label="Offset">
+                    <NumberInput
+                      value={ch.offset ?? 0}
+                      onChange={(v) => setChannel(key, { offset: Math.max(0, parseInt(v, 10) || 0) })}
+                      min={0}
+                    />
+                  </Field>
+                  <Field label="bitStart">
+                    <NumberInput
+                      value={ch.bitStart ?? 1}
+                      onChange={(v) => setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+                      min={0}
+                      max={7}
+                    />
+                  </Field>
+                  <Field label="bitCount">
+                    <NumberInput
+                      value={ch.bitCount ?? 6}
+                      onChange={(v) => setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+                      min={1}
+                      max={32}
+                    />
+                  </Field>
+                </SimpleGrid>
+              </Paper>
+            );
+          })}
+          <Field label="Scale">
+            <SearchableSelect
+              value={channelGroup.scale || 'bitReplicate6to8'}
+              onChange={(scale) => {
+                const rest = {
+                  ...extract,
+                  source: 'payloadBits',
+                  paletteMap: false,
+                  channelGroup: { ...channelGroup, scale },
+                };
+                delete rest.curve;
+                onChange(rest);
+              }}
+              options={[
+                { value: 'bitReplicate6to8', label: 'bitReplicate6to8' },
+                { value: 'none', label: 'none (pass-through)' },
+              ]}
+              allowEmpty={false}
+            />
+          </Field>
+        </Stack>
+      )}
+      {extractMode === 'curve' && (
         <Stack gap="xs" mt="xs">
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
             <Field label="Curve">

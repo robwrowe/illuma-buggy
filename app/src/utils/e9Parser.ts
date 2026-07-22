@@ -66,11 +66,22 @@ export interface ParsedE906 extends ParsedE9Base {
   vibration?: number;
 }
 
+/** Per-channel byte for E908 true-RGB (flash + 6-bit value + unk bit0). */
+export interface E908Channel {
+  raw: number;
+  flash: boolean;
+  value6: number;
+  unkBit0: boolean;
+}
+
 export interface ParsedE908 extends ParsedE9Base {
   kind: 'E908';
   tier: 1;
+  channels: { r: E908Channel; g: E908Channel; b: E908Channel };
+  /** scale6To8() per channel; flash/unkBit0 ignored */
   rgb: [number, number, number];
-  rgb6: [number, number, number];
+  /** Full-frame idx 8/9 (payload 6/7) — opaque; seen as 0xd2/0x55 in lab samples */
+  opaqueBytes: { b8?: number; b9?: number };
   timing?: E9TimingByte;
   vibration?: number;
 }
@@ -181,6 +192,15 @@ export function scale6To8(v: number): number {
 
 export function decode6BitChannel(byte: number): number {
   return scale6To8((byte >> 1) & 0x3f);
+}
+
+export function decode908Channel(b: number): E908Channel {
+  return {
+    raw: b,
+    flash: (b & 0x80) !== 0,
+    value6: (b >> 1) & 0x3f,
+    unkBit0: (b & 0x01) !== 0,
+  };
 }
 
 export function looksLikePaletteByte(b: number): boolean {
@@ -357,20 +377,26 @@ export function parseE9Packet(input: number[] | string): ParsedE9 | null {
       };
     }
     case 0xe908: {
+      // Payload after 8301 strip: e1/e2 00 e9 08 00 [TIMING] [opaque] [opaque] [R] [G] [B] [VIB]
       if (bytes.length < 12) return tier2(bytes, opcode, 'E908 frame too short');
-      const rgb6: [number, number, number] = [
-        (bytes[8] >> 1) & 0x3f,
-        (bytes[9] >> 1) & 0x3f,
-        (bytes[10] >> 1) & 0x3f,
-      ];
+      const channels = {
+        r: decode908Channel(bytes[8]),
+        g: decode908Channel(bytes[9]),
+        b: decode908Channel(bytes[10]),
+      };
       return {
         ...baseFields(bytes, opcode, 1, 'sixBitColor', 'full'),
         kind: 'E908',
         tier: 1,
-        rgb6,
-        rgb: [scale6To8(rgb6[0]), scale6To8(rgb6[1]), scale6To8(rgb6[2])],
-        timing: bytes.length > 6 ? decodeTimingByte(bytes[6]) : undefined,
-        vibration: bytes.length > 11 ? bytes[11] : undefined,
+        channels,
+        rgb: [
+          scale6To8(channels.r.value6),
+          scale6To8(channels.g.value6),
+          scale6To8(channels.b.value6),
+        ],
+        opaqueBytes: { b8: bytes[6], b9: bytes[7] },
+        timing: decodeTimingByte(bytes[5]),
+        vibration: bytes[11],
       };
     }
     case 0xe909: {

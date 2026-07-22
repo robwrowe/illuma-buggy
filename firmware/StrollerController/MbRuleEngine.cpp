@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include "ColorPalette.h"
 #include "MbMapping.h"
+#include "MbPacketDecode.h"
 #include "OverrideManager.h"
 #include "PresetStore.h"
 #include "WledClient.h"
@@ -984,11 +985,13 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       uint32_t raw = 0;
       float derivedValue = -1.0f;  // sentinel: not a timing-derived extract
       bool paletteMap = ex["paletteMap"] | false;
+      JsonObject channelGroup = ex["channelGroup"].as<JsonObject>();
+      bool hasChannelGroup = !channelGroup.isNull();
 
       if (isTimingDerivedSource(source)) {
         derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
         paletteMap = false;
-      } else {
+      } else if (!hasChannelGroup) {
         uint8_t offset = (uint8_t)(ex["offset"] | 0);
         uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
         uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
@@ -997,7 +1000,38 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
       uint8_t r = 0, g = 0, b = 0;
       float mapped = (derivedValue >= 0.0f) ? derivedValue : (float)raw;
-      if (paletteMap) {
+      if (hasChannelGroup) {
+        auto extractChannel = [&](const char* key, bool* flashOut) -> uint8_t {
+          JsonObject ch = channelGroup[key].as<JsonObject>();
+          if (ch.isNull()) {
+            if (flashOut) *flashOut = false;
+            return 0;
+          }
+          uint8_t offset = (uint8_t)(ch["offset"] | 0);
+          uint8_t bitStart = (uint8_t)(ch["bitStart"] | 0);
+          uint8_t bitCount = (uint8_t)(ch["bitCount"] | 6);
+          uint32_t chRaw = extractBits(payload, plen, offset, bitStart, bitCount);
+          if (flashOut) {
+            *flashOut = false;
+            JsonObject flashBit = ch["flashBit"].as<JsonObject>();
+            if (!flashBit.isNull()) {
+              uint8_t fOff = (uint8_t)(flashBit["offset"] | offset);
+              uint8_t fBit = (uint8_t)(flashBit["bit"] | 7);
+              *flashOut = extractBits(payload, plen, fOff, fBit, 1) != 0;
+            }
+          }
+          const char* scale = channelGroup["scale"] | "bitReplicate6to8";
+          if (strcmp(scale, "bitReplicate6to8") == 0) return scale6To8((uint8_t)chRaw);
+          return (uint8_t)chRaw;
+        };
+        bool flashR = false, flashG = false, flashB = false;
+        r = extractChannel("r", &flashR);
+        g = extractChannel("g", &flashG);
+        b = extractChannel("b", &flashB);
+        mapped = 0.0f;
+        Serial.printf("[Rule] channelGroup rgb=%u,%u,%u flash=%u%u%u\n",
+                      r, g, b, flashR ? 1u : 0u, flashG ? 1u : 0u, flashB ? 1u : 0u);
+      } else if (paletteMap) {
         uint8_t pal = (uint8_t)(raw & 0x1F);
         paletteToRGB(pal, r, g, b);
         mapped = (float)pal;

@@ -711,13 +711,14 @@ export function normalizeExtract(raw) {
   if (!raw || typeof raw !== 'object') return createEmptyExtract();
   const source = EXTRACT_SOURCES.has(raw.source) ? raw.source : 'payloadBits';
   const isTiming = isTimingDerivedSource(source);
-  const paletteMap = isTiming ? false : !!raw.paletteMap;
-  const curve = paletteMap ? null : normalizeCurve(raw.curve);
+  const hasChannelGroup = !isTiming && raw.channelGroup && typeof raw.channelGroup === 'object';
+  const paletteMap = isTiming || hasChannelGroup ? false : !!raw.paletteMap;
+  const curve = (paletteMap || hasChannelGroup) ? null : normalizeCurve(raw.curve);
   // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
   const targets = Array.isArray(raw.targets)
     ? raw.targets.map(normalizeExtractTarget)
     : [createEmptyExtractTarget(isTiming ? 'segmentField' : 'maskColor')];
-  return {
+  const out = {
     name: typeof raw.name === 'string' ? raw.name : '',
     source,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
@@ -727,6 +728,24 @@ export function normalizeExtract(raw) {
     ...(curve ? { curve } : {}),
     targets,
   };
+  if (hasChannelGroup) {
+    const normCh = (ch, fallbackOffset) => {
+      const src = ch && typeof ch === 'object' ? ch : {};
+      return {
+        offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fallbackOffset,
+        bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : 1,
+        bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : 6,
+      };
+    };
+    const scale = raw.channelGroup.scale === 'none' ? 'none' : 'bitReplicate6to8';
+    out.channelGroup = {
+      r: normCh(raw.channelGroup.r, 8),
+      g: normCh(raw.channelGroup.g, 9),
+      b: normCh(raw.channelGroup.b, 10),
+      scale,
+    };
+  }
+  return out;
 }
 
 export function normalizeConditionNode(raw) {
