@@ -67,6 +67,39 @@ export function createEmptyExtractTarget(kind = 'maskColor') {
   return { kind: 'maskColor', mask: 'all' };
 }
 
+export function createEmptyColorBlendSource(overrides = {}) {
+  return {
+    offset: 0,
+    bitStart: 0,
+    bitCount: 8,
+    paletteMap: true,
+    ...overrides,
+  };
+}
+
+export function createEmptyColorBlend(overrides = {}) {
+  return {
+    a: createEmptyColorBlendSource({ offset: 6 }),
+    b: createEmptyColorBlendSource({ offset: 7 }),
+    ratio: { mode: 'fixed', value: 0.5 },
+    ...overrides,
+  };
+}
+
+export function createEmptySpeedBuckets(overrides = {}) {
+  return {
+    enabled: false,
+    field: 'sx',
+    buckets: [
+      { maxByte: 15, value: 220 },
+      { maxByte: 70, value: 140 },
+      { maxByte: 150, value: 90 },
+      { maxByte: 255, value: 40 },
+    ],
+    ...overrides,
+  };
+}
+
 export function createEmptyExtract(name = '') {
   return {
     name,
@@ -268,6 +301,7 @@ export function createEmptyTimingModel(overrides = {}) {
     name: 'New timing model',
     ...DEFAULT_TIMING_MODEL_VALUES,
     strobeEffect: createEmptyStrobeEffect(),
+    speedBuckets: createEmptySpeedBuckets(),
     ...overrides,
   };
 }
@@ -324,6 +358,36 @@ export function normalizeStrobeEffect(raw) {
   };
 }
 
+export function normalizeSpeedBuckets(raw) {
+  const d = createEmptySpeedBuckets();
+  if (!raw || typeof raw !== 'object') return { ...d, buckets: d.buckets.map((b) => ({ ...b })) };
+  const field = typeof raw.field === 'string' && raw.field.trim() ? raw.field.trim() : 'sx';
+  const buckets = Array.isArray(raw.buckets)
+    ? raw.buckets
+      .filter((b) => b && typeof b === 'object')
+      .map((b) => ({
+        maxByte: Math.min(255, Math.max(0, Number.isFinite(b.maxByte) ? Math.floor(Number(b.maxByte)) : 255)),
+        value: Number.isFinite(b.value) ? Math.floor(Number(b.value)) : 128,
+      }))
+    : d.buckets.map((b) => ({ ...b }));
+  const out = {
+    enabled: !!raw.enabled,
+    field,
+    buckets: buckets.length > 0 ? buckets : d.buckets.map((b) => ({ ...b })),
+  };
+  if (raw.maskBits && typeof raw.maskBits === 'object') {
+    out.maskBits = {
+      bitStart: Number.isFinite(raw.maskBits.bitStart)
+        ? Math.min(7, Math.max(0, Number(raw.maskBits.bitStart)))
+        : 0,
+      bitCount: Number.isFinite(raw.maskBits.bitCount)
+        ? Math.min(8, Math.max(1, Number(raw.maskBits.bitCount)))
+        : 8,
+    };
+  }
+  return out;
+}
+
 export function normalizeTimingModel(raw, index = 0) {
   const d = createEmptyTimingModel({ name: `Timing model ${index + 1}` });
   if (!raw || typeof raw !== 'object') return d;
@@ -356,6 +420,7 @@ export function normalizeTimingModel(raw, index = 0) {
     /** @deprecated Kept so older saved JSON round-trips; lifecycle uses fadeBitsStretchSec. */
     fadeStepSec: clampPos(raw.fadeStepSec, d.fadeStepSec),
     strobeEffect: normalizeStrobeEffect(raw.strobeEffect),
+    speedBuckets: normalizeSpeedBuckets(raw.speedBuckets),
   };
 }
 
@@ -684,10 +749,17 @@ export function normalizeExtractTarget(raw) {
   const kind = raw.kind;
   if (kind === 'segmentColor') {
     const slot = Number(raw.colorSlot);
+    const colorSlot = slot === 1 || slot === 2 ? slot : 0;
+    const segmentIds = Array.isArray(raw.segmentIds)
+      ? raw.segmentIds.filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim())
+      : [];
+    if (segmentIds.length > 0) {
+      return { kind: 'segmentColor', segmentIds, colorSlot };
+    }
     return {
       kind: 'segmentColor',
       segmentId: typeof raw.segmentId === 'string' ? raw.segmentId : '',
-      colorSlot: slot === 1 || slot === 2 ? slot : 0,
+      colorSlot,
     };
   }
   if (kind === 'maskColor') {
@@ -705,6 +777,68 @@ export function normalizeExtractTarget(raw) {
   return createEmptyExtractTarget('maskColor');
 }
 
+const CHANNEL_SCALES = new Set(['bitReplicate6to8', 'direct8', 'none']);
+
+function normalizeColorBlendSource(raw, fallbackOffset = 0) {
+  const d = createEmptyColorBlendSource({ offset: fallbackOffset });
+  if (!raw || typeof raw !== 'object') return d;
+  const out = {
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : fallbackOffset,
+    bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
+    bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
+    paletteMap: raw.paletteMap !== false,
+  };
+  if (raw.channelGroup && typeof raw.channelGroup === 'object') {
+    const foOr = (ch, fallback) => (
+      Number.isFinite(ch?.offset) ? Math.max(0, Number(ch.offset)) : fallback
+    );
+    const normCh = (ch, fo) => {
+      const src = ch && typeof ch === 'object' ? ch : {};
+      return {
+        offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fo,
+        bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : 0,
+        bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : 8,
+      };
+    };
+    const scale = CHANNEL_SCALES.has(raw.channelGroup.scale) ? raw.channelGroup.scale : 'direct8';
+    out.paletteMap = false;
+    out.channelGroup = {
+      r: normCh(raw.channelGroup.r, foOr(raw.channelGroup.r, fallbackOffset)),
+      g: normCh(raw.channelGroup.g, foOr(raw.channelGroup.g, fallbackOffset + 1)),
+      b: normCh(raw.channelGroup.b, foOr(raw.channelGroup.b, fallbackOffset + 2)),
+      scale,
+    };
+  }
+  return out;
+}
+
+function normalizeColorBlend(raw) {
+  const d = createEmptyColorBlend();
+  if (!raw || typeof raw !== 'object') return d;
+  const ratioRaw = raw.ratio && typeof raw.ratio === 'object' ? raw.ratio : {};
+  const mode = ratioRaw.mode === 'extract' ? 'extract' : 'fixed';
+  const ratio = mode === 'extract'
+    ? {
+      mode: 'extract',
+      offset: Number.isFinite(ratioRaw.offset) ? Math.max(0, Number(ratioRaw.offset)) : 0,
+      bitStart: Number.isFinite(ratioRaw.bitStart) ? Math.min(7, Math.max(0, Number(ratioRaw.bitStart))) : 0,
+      bitCount: Number.isFinite(ratioRaw.bitCount) ? Math.min(32, Math.max(1, Number(ratioRaw.bitCount))) : 8,
+    }
+    : {
+      mode: 'fixed',
+      value: (() => {
+        const n = Number(ratioRaw.value);
+        if (!Number.isFinite(n)) return 0.5;
+        return Math.min(1, Math.max(0, n));
+      })(),
+    };
+  return {
+    a: normalizeColorBlendSource(raw.a, 6),
+    b: normalizeColorBlendSource(raw.b, 7),
+    ratio,
+  };
+}
+
 const EXTRACT_SOURCES = new Set(['payloadBits', ...TIMING_DERIVED_SOURCE_SET]);
 
 export function normalizeExtract(raw) {
@@ -712,8 +846,9 @@ export function normalizeExtract(raw) {
   const source = EXTRACT_SOURCES.has(raw.source) ? raw.source : 'payloadBits';
   const isTiming = isTimingDerivedSource(source);
   const hasChannelGroup = !isTiming && raw.channelGroup && typeof raw.channelGroup === 'object';
-  const paletteMap = isTiming || hasChannelGroup ? false : !!raw.paletteMap;
-  const curve = (paletteMap || hasChannelGroup) ? null : normalizeCurve(raw.curve);
+  const hasColorBlend = !isTiming && !hasChannelGroup && raw.colorBlend && typeof raw.colorBlend === 'object';
+  const paletteMap = isTiming || hasChannelGroup || hasColorBlend ? false : !!raw.paletteMap;
+  const curve = (paletteMap || hasChannelGroup || hasColorBlend) ? null : normalizeCurve(raw.curve);
   // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
   const targets = Array.isArray(raw.targets)
     ? raw.targets.map(normalizeExtractTarget)
@@ -729,21 +864,28 @@ export function normalizeExtract(raw) {
     targets,
   };
   if (hasChannelGroup) {
+    const scaleIsDirect = raw.channelGroup.scale === 'direct8';
     const normCh = (ch, fallbackOffset) => {
       const src = ch && typeof ch === 'object' ? ch : {};
+      const defaultBitStart = scaleIsDirect ? 0 : 1;
+      const defaultBitCount = scaleIsDirect ? 8 : 6;
       return {
         offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fallbackOffset,
-        bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : 1,
-        bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : 6,
+        bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : defaultBitStart,
+        bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : defaultBitCount,
       };
     };
-    const scale = raw.channelGroup.scale === 'none' ? 'none' : 'bitReplicate6to8';
+    const scale = CHANNEL_SCALES.has(raw.channelGroup.scale)
+      ? raw.channelGroup.scale
+      : 'bitReplicate6to8';
     out.channelGroup = {
       r: normCh(raw.channelGroup.r, 8),
       g: normCh(raw.channelGroup.g, 9),
       b: normCh(raw.channelGroup.b, 10),
       scale,
     };
+  } else if (hasColorBlend) {
+    out.colorBlend = normalizeColorBlend(raw.colorBlend);
   }
   return out;
 }

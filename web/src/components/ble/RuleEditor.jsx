@@ -3,6 +3,7 @@ import {
   Badge,
   Checkbox,
   Group,
+  MultiSelect,
   NumberInput,
   Paper,
   SegmentedControl,
@@ -21,6 +22,8 @@ import { AppButton, AppCard } from '../shared/styles';
 import { SegmentOverrideTable } from './SegmentOverrideTable';
 import { MB_SEGMENT_META } from '../../lib/ble/mbConstants';
 import {
+  createEmptyColorBlend,
+  createEmptyColorBlendSource,
   createEmptyCondition,
   createEmptyExtract,
   createEmptyExtractTarget,
@@ -361,6 +364,7 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
 
 function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
   const setKind = (kind) => onChange(createEmptyExtractTarget(kind));
+  const isMultiSeg = Array.isArray(target.segmentIds);
   return (
     <Paper p="xs" withBorder bg="var(--bg)">
       <Group justify="space-between" mb="xs">
@@ -378,19 +382,65 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
         </Field>
         {target.kind === 'segmentColor' && (
           <>
-            <Field label="Segment">
-              <SearchableSelect
-                value={target.segmentId || ''}
-                onChange={(segmentId) => onChange({ ...target, kind: 'segmentColor', segmentId })}
-                options={segmentOpts}
-                placeholder="(pick segment)"
-                allowEmpty
+            <Field label="Segment mode">
+              <SegmentedControl
+                fullWidth
+                size="xs"
+                value={isMultiSeg ? 'multi' : 'single'}
+                onChange={(mode) => {
+                  if (mode === 'multi') {
+                    const seed = target.segmentId ? [target.segmentId] : [];
+                    const next = { kind: 'segmentColor', segmentIds: seed, colorSlot: target.colorSlot ?? 0 };
+                    onChange(next);
+                    return;
+                  }
+                  onChange({
+                    kind: 'segmentColor',
+                    segmentId: (target.segmentIds && target.segmentIds[0]) || target.segmentId || '',
+                    colorSlot: target.colorSlot ?? 0,
+                  });
+                }}
+                data={[
+                  { label: 'Single', value: 'single' },
+                  { label: 'Multi (pair)', value: 'multi' },
+                ]}
               />
             </Field>
+            {isMultiSeg ? (
+              <Field label="Segments">
+                <MultiSelect
+                  size="xs"
+                  searchable
+                  data={(segmentOpts || []).map((o) => ({ value: o.value, label: o.label }))}
+                  value={target.segmentIds || []}
+                  onChange={(segmentIds) => onChange({
+                    kind: 'segmentColor',
+                    segmentIds,
+                    colorSlot: target.colorSlot ?? 0,
+                  })}
+                  placeholder="Pick pair / group…"
+                  comboboxProps={{ withinPortal: true }}
+                />
+              </Field>
+            ) : (
+              <Field label="Segment">
+                <SearchableSelect
+                  value={target.segmentId || ''}
+                  onChange={(segmentId) => onChange({ kind: 'segmentColor', segmentId, colorSlot: target.colorSlot ?? 0 })}
+                  options={segmentOpts}
+                  placeholder="(pick segment)"
+                  allowEmpty
+                />
+              </Field>
+            )}
             <Field label="Color slot">
               <SearchableSelect
                 value={String(target.colorSlot ?? 0)}
-                onChange={(v) => onChange({ ...target, kind: 'segmentColor', colorSlot: parseInt(v, 10) || 0 })}
+                onChange={(v) => onChange({
+                  ...target,
+                  kind: 'segmentColor',
+                  colorSlot: parseInt(v, 10) || 0,
+                })}
                 options={COLOR_SLOT_OPTS}
                 allowEmpty={false}
               />
@@ -622,31 +672,87 @@ function TimingParamBindingEditor({
   );
 }
 
+function ColorBlendSourceEditor({ label, source, onChange }) {
+  const src = source || createEmptyColorBlendSource();
+  return (
+    <Paper p="xs" withBorder bg="var(--bg)">
+      <Text size="xs" fw={600} mb={4}>{label}</Text>
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+        <Field label="Offset">
+          <NumberInput
+            value={src.offset ?? 0}
+            onChange={(v) => onChange({ ...src, offset: Math.max(0, parseInt(v, 10) || 0) })}
+            min={0}
+          />
+        </Field>
+        <Field label="bitStart">
+          <NumberInput
+            value={src.bitStart ?? 0}
+            onChange={(v) => onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+            min={0}
+            max={7}
+          />
+        </Field>
+        <Field label="bitCount">
+          <NumberInput
+            value={src.bitCount ?? 8}
+            onChange={(v) => onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+            min={1}
+            max={32}
+          />
+        </Field>
+        <Field label="Source type">
+          <SegmentedControl
+            fullWidth
+            size="xs"
+            value={src.paletteMap === false ? 'raw' : 'palette'}
+            onChange={(mode) => onChange({ ...src, paletteMap: mode === 'palette' })}
+            data={[
+              { label: 'Palette idx', value: 'palette' },
+              { label: 'Raw', value: 'raw' },
+            ]}
+          />
+        </Field>
+      </SimpleGrid>
+    </Paper>
+  );
+}
+
 function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
   const set = (patch) => onChange({ ...extract, ...patch, source: 'payloadBits' });
   const targets = Array.isArray(extract.targets) ? extract.targets : [];
   const curve = extract.curve || {
     type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
   };
-  const defaultChannel = (offset) => ({
-    offset, bitStart: 1, bitCount: 6,
-  });
+  const scale = extract.channelGroup?.scale || 'bitReplicate6to8';
+  const defaultChannel = (offset) => (
+    scale === 'direct8'
+      ? { offset, bitStart: 0, bitCount: 8 }
+      : { offset, bitStart: 1, bitCount: 6 }
+  );
   const channelGroup = extract.channelGroup || {
     r: defaultChannel(8),
     g: defaultChannel(9),
     b: defaultChannel(10),
     scale: 'bitReplicate6to8',
   };
+  const colorBlend = extract.colorBlend || createEmptyColorBlend();
   const isReciprocal = curve.type === 'reciprocal';
   const extractMode = extract.channelGroup
     ? 'channelGroup'
-    : (extract.paletteMap ? 'palette' : 'curve');
+    : (extract.colorBlend
+      ? 'colorBlend'
+      : (extract.paletteMap ? 'palette' : 'curve'));
   const title = extract.name?.trim() ? extract.name.trim() : 'Packet extract';
   const summary = [
-    extractMode === 'channelGroup' ? 'rgb channel group' : `off ${extract.offset ?? 0}`,
+    extractMode === 'channelGroup'
+      ? 'rgb channel group'
+      : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`),
     extractMode === 'channelGroup'
       ? (channelGroup.scale || 'bitReplicate6to8')
-      : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve')),
+      : (extractMode === 'colorBlend'
+        ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
+        : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve'))),
     `${targets.length} target${targets.length === 1 ? '' : 's'}`,
   ].join(' · ');
 
@@ -661,6 +767,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
       },
     };
     delete rest.curve;
+    delete rest.colorBlend;
     onChange(rest);
   };
 
@@ -669,12 +776,14 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
       const rest = { ...extract, source: 'payloadBits', paletteMap: true };
       delete rest.curve;
       delete rest.channelGroup;
+      delete rest.colorBlend;
       onChange(rest);
       return;
     }
     if (mode === 'channelGroup') {
       const rest = { ...extract, source: 'payloadBits', paletteMap: false };
       delete rest.curve;
+      delete rest.colorBlend;
       onChange({
         ...rest,
         channelGroup: {
@@ -686,8 +795,40 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
       });
       return;
     }
+    if (mode === 'colorBlend') {
+      const rest = { ...extract, source: 'payloadBits', paletteMap: false };
+      delete rest.curve;
+      delete rest.channelGroup;
+      onChange({ ...rest, colorBlend: extract.colorBlend || createEmptyColorBlend() });
+      return;
+    }
     const rest = { ...extract, source: 'payloadBits', paletteMap: false, curve };
     delete rest.channelGroup;
+    delete rest.colorBlend;
+    onChange(rest);
+  };
+
+  const setScale = (nextScale) => {
+    const bitDefaults = nextScale === 'direct8'
+      ? { bitStart: 0, bitCount: 8 }
+      : (nextScale === 'bitReplicate6to8' ? { bitStart: 1, bitCount: 6 } : null);
+    const patchCh = (ch, fallbackOff) => ({
+      ...(ch || defaultChannel(fallbackOff)),
+      ...(bitDefaults || {}),
+    });
+    const rest = {
+      ...extract,
+      source: 'payloadBits',
+      paletteMap: false,
+      channelGroup: {
+        r: patchCh(channelGroup.r, 8),
+        g: patchCh(channelGroup.g, 9),
+        b: patchCh(channelGroup.b, 10),
+        scale: nextScale,
+      },
+    };
+    delete rest.curve;
+    delete rest.colorBlend;
     onChange(rest);
   };
 
@@ -712,11 +853,12 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
           data={[
             { label: 'Palette map', value: 'palette' },
             { label: 'Curve', value: 'curve' },
-            { label: 'RGB channel group', value: 'channelGroup' },
+            { label: 'RGB channels', value: 'channelGroup' },
+            { label: 'Color blend', value: 'colorBlend' },
           ]}
         />
       </Field>
-      {extractMode !== 'channelGroup' && (
+      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && (
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
           <Field label="Name">
             <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />
@@ -752,7 +894,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
                   </Field>
                   <Field label="bitStart">
                     <NumberInput
-                      value={ch.bitStart ?? 1}
+                      value={ch.bitStart ?? (scale === 'direct8' ? 0 : 1)}
                       onChange={(v) => setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
                       min={0}
                       max={7}
@@ -760,7 +902,7 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
                   </Field>
                   <Field label="bitCount">
                     <NumberInput
-                      value={ch.bitCount ?? 6}
+                      value={ch.bitCount ?? (scale === 'direct8' ? 8 : 6)}
                       onChange={(v) => setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
                       min={1}
                       max={32}
@@ -773,23 +915,132 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
           <Field label="Scale">
             <SearchableSelect
               value={channelGroup.scale || 'bitReplicate6to8'}
-              onChange={(scale) => {
-                const rest = {
-                  ...extract,
-                  source: 'payloadBits',
-                  paletteMap: false,
-                  channelGroup: { ...channelGroup, scale },
-                };
-                delete rest.curve;
-                onChange(rest);
-              }}
+              onChange={setScale}
               options={[
-                { value: 'bitReplicate6to8', label: 'bitReplicate6to8' },
+                { value: 'bitReplicate6to8', label: 'bitReplicate6to8 (6-bit packed)' },
+                { value: 'direct8', label: 'direct8 (full-byte RGB)' },
                 { value: 'none', label: 'none (pass-through)' },
               ]}
               allowEmpty={false}
             />
           </Field>
+        </Stack>
+      )}
+      {extractMode === 'colorBlend' && (
+        <Stack gap="xs" mt="xs">
+          <Field label="Name">
+            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="blendedColor" />
+          </Field>
+          <Text size="xs" c="dimmed">
+            Static apply-time blend of two colors (not a live WLED cross-fade). Use for fixed
+            in-between colors; use rule effect fx + col[0]/col[1] for animated fades.
+          </Text>
+          <ColorBlendSourceEditor
+            label="Color A"
+            source={colorBlend.a}
+            onChange={(a) => set({ colorBlend: { ...colorBlend, a } })}
+          />
+          <ColorBlendSourceEditor
+            label="Color B"
+            source={colorBlend.b}
+            onChange={(b) => set({ colorBlend: { ...colorBlend, b } })}
+          />
+          <Paper p="xs" withBorder bg="var(--bg)">
+            <Text size="xs" fw={600} mb={4}>Blend ratio</Text>
+            <SegmentedControl
+              fullWidth
+              size="xs"
+              mb="xs"
+              value={colorBlend.ratio?.mode === 'extract' ? 'extract' : 'fixed'}
+              onChange={(mode) => {
+                if (mode === 'extract') {
+                  set({
+                    colorBlend: {
+                      ...colorBlend,
+                      ratio: {
+                        mode: 'extract',
+                        offset: colorBlend.ratio?.offset ?? 0,
+                        bitStart: colorBlend.ratio?.bitStart ?? 0,
+                        bitCount: colorBlend.ratio?.bitCount ?? 8,
+                      },
+                    },
+                  });
+                  return;
+                }
+                set({
+                  colorBlend: {
+                    ...colorBlend,
+                    ratio: { mode: 'fixed', value: colorBlend.ratio?.value ?? 0.5 },
+                  },
+                });
+              }}
+              data={[
+                { label: 'Fixed', value: 'fixed' },
+                { label: 'From payload', value: 'extract' },
+              ]}
+            />
+            {colorBlend.ratio?.mode === 'extract' ? (
+              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
+                <Field label="Offset">
+                  <NumberInput
+                    value={colorBlend.ratio.offset ?? 0}
+                    onChange={(v) => set({
+                      colorBlend: {
+                        ...colorBlend,
+                        ratio: { ...colorBlend.ratio, offset: Math.max(0, parseInt(v, 10) || 0) },
+                      },
+                    })}
+                    min={0}
+                  />
+                </Field>
+                <Field label="bitStart">
+                  <NumberInput
+                    value={colorBlend.ratio.bitStart ?? 0}
+                    onChange={(v) => set({
+                      colorBlend: {
+                        ...colorBlend,
+                        ratio: {
+                          ...colorBlend.ratio,
+                          bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                        },
+                      },
+                    })}
+                    min={0}
+                    max={7}
+                  />
+                </Field>
+                <Field label="bitCount">
+                  <NumberInput
+                    value={colorBlend.ratio.bitCount ?? 8}
+                    onChange={(v) => set({
+                      colorBlend: {
+                        ...colorBlend,
+                        ratio: {
+                          ...colorBlend.ratio,
+                          bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)),
+                        },
+                      },
+                    })}
+                    min={1}
+                    max={32}
+                  />
+                </Field>
+              </SimpleGrid>
+            ) : (
+              <Field label={`Ratio (${((colorBlend.ratio?.value ?? 0.5) * 100).toFixed(0)}% B)`}>
+                <Slider
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={colorBlend.ratio?.value ?? 0.5}
+                  onChange={(value) => set({
+                    colorBlend: { ...colorBlend, ratio: { mode: 'fixed', value } },
+                  })}
+                  size="xs"
+                />
+              </Field>
+            )}
+          </Paper>
         </Stack>
       )}
       {extractMode === 'curve' && (
@@ -886,7 +1137,6 @@ function ExtractRowEditor({ extract, segmentOpts, onChange, onDelete }) {
     </CollapsibleBlock>
   );
 }
-
 
 function RuleCard({
   rule,
@@ -1540,6 +1790,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
                 {p.timing.fadeCurve === 'decelerating' ? ' · stretch≈non-linear dim' : ''}
                 {p.timing.strobe
                   ? ` · strobe ${p.timing.strobe.flashRateHz.toFixed(2)} Hz → fx=${p.timing.strobe.fx} sx=${p.timing.strobe.sx}`
+                  : ''}
+                {p.timing.speedBucket
+                  ? ` · speedBuckets ${p.timing.speedBucket.field}=${p.timing.speedBucket.value} (key=${p.timing.speedBucket.key})`
                   : ''}
               </Text>
             )}

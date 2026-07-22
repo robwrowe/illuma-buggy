@@ -378,6 +378,99 @@ static void applyStrobeFromTimingModel(JsonObject wled, const JsonObject& rule,
   Serial.printf("[Rule] strobe fx=%d sx=%d (%.2f Hz)\n", fx, sx, hz);
 }
 
+/** Author-sized timing→WLED field buckets (optional; mutually exclusive with strobe). */
+static bool resolveSpeedBucketValue(JsonObject model, uint8_t timingByte,
+                                    int* outValue, const char** outField) {
+  if (model.isNull() || !outValue || !outField) return false;
+  JsonObject sb = model["speedBuckets"].as<JsonObject>();
+  if (sb.isNull() || !(sb["enabled"] | false)) return false;
+  JsonArray buckets = sb["buckets"].as<JsonArray>();
+  if (buckets.isNull() || buckets.size() == 0) return false;
+
+  uint8_t key = timingByte;
+  JsonObject maskBits = sb["maskBits"].as<JsonObject>();
+  if (!maskBits.isNull()) {
+    uint8_t bitStart = (uint8_t)(maskBits["bitStart"] | 0);
+    uint8_t bitCount = (uint8_t)(maskBits["bitCount"] | 8);
+    key = (uint8_t)extractBits(&timingByte, 1, 0, bitStart, bitCount);
+  }
+
+  JsonObject chosen;
+  int chosenMax = 256;
+  int fallbackMax = -1;
+  JsonObject fallback;
+  for (JsonVariant v : buckets) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject b = v.as<JsonObject>();
+    int maxByte = b["maxByte"] | 255;
+    if (maxByte > fallbackMax) { fallbackMax = maxByte; fallback = b; }
+    if ((int)key <= maxByte && maxByte < chosenMax) {
+      chosenMax = maxByte;
+      chosen = b;
+    }
+  }
+  if (chosen.isNull()) chosen = fallback;
+  if (chosen.isNull()) return false;
+
+  *outValue = chosen["value"] | 128;
+  *outField = sb["field"] | "sx";
+  return true;
+}
+
+/** Resolve one colorBlend a/b source to RGB (palette index or raw channel group). */
+static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t plen,
+                               uint8_t& r, uint8_t& g, uint8_t& b) {
+  r = g = b = 0;
+  if (srcObj.isNull()) return;
+
+  JsonObject channelGroup = srcObj["channelGroup"].as<JsonObject>();
+  if (!channelGroup.isNull()) {
+    auto extractChannel = [&](const char* key) -> uint8_t {
+      JsonObject ch = channelGroup[key].as<JsonObject>();
+      if (ch.isNull()) return 0;
+      uint8_t offset = (uint8_t)(ch["offset"] | 0);
+      uint8_t bitStart = (uint8_t)(ch["bitStart"] | 0);
+      uint8_t bitCount = (uint8_t)(ch["bitCount"] | 6);
+      uint32_t chRaw = extractBits(payload, plen, offset, bitStart, bitCount);
+      const char* scale = channelGroup["scale"] | "bitReplicate6to8";
+      if (strcmp(scale, "bitReplicate6to8") == 0) return scale6To8((uint8_t)chRaw);
+      // "direct8" / "none" / unrecognized → pass through full extracted value
+      return (uint8_t)chRaw;
+    };
+    r = extractChannel("r");
+    g = extractChannel("g");
+    b = extractChannel("b");
+    return;
+  }
+
+  uint8_t offset = (uint8_t)(srcObj["offset"] | 0);
+  uint8_t bitStart = (uint8_t)(srcObj["bitStart"] | 0);
+  uint8_t bitCount = (uint8_t)(srcObj["bitCount"] | 8);
+  uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
+  if (srcObj["paletteMap"] | true) {
+    paletteToRGB((uint8_t)(raw & 0x1F), r, g, b);
+  } else {
+    r = g = b = (uint8_t)raw;
+  }
+}
+
+static float resolveBlendRatio(JsonObject ratioObj, const uint8_t* payload, size_t plen) {
+  if (ratioObj.isNull()) return 0.5f;
+  const char* mode = ratioObj["mode"] | "fixed";
+  if (strcmp(mode, "extract") == 0) {
+    uint8_t offset = (uint8_t)(ratioObj["offset"] | 0);
+    uint8_t bitStart = (uint8_t)(ratioObj["bitStart"] | 0);
+    uint8_t bitCount = (uint8_t)(ratioObj["bitCount"] | 8);
+    uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
+    uint32_t maxVal = (bitCount >= 32) ? 0xFFFFFFFFu : ((1u << bitCount) - 1u);
+    return maxVal > 0 ? ((float)raw / (float)maxVal) : 0.5f;
+  }
+  float v = ratioObj["value"] | 0.5f;
+  if (v < 0.0f) v = 0.0f;
+  if (v > 1.0f) v = 1.0f;
+  return v;
+}
+
 static JsonObject findSegmentMapById(const char* mapId) {
   JsonObject empty;
   if (!mapId || !mapId[0]) return empty;
@@ -987,11 +1080,13 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       bool paletteMap = ex["paletteMap"] | false;
       JsonObject channelGroup = ex["channelGroup"].as<JsonObject>();
       bool hasChannelGroup = !channelGroup.isNull();
+      JsonObject colorBlend = ex["colorBlend"].as<JsonObject>();
+      bool hasColorBlend = !colorBlend.isNull();
 
       if (isTimingDerivedSource(source)) {
         derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
         paletteMap = false;
-      } else if (!hasChannelGroup) {
+      } else if (!hasChannelGroup && !hasColorBlend) {
         uint8_t offset = (uint8_t)(ex["offset"] | 0);
         uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
         uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
@@ -1022,7 +1117,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
           }
           const char* scale = channelGroup["scale"] | "bitReplicate6to8";
           if (strcmp(scale, "bitReplicate6to8") == 0) return scale6To8((uint8_t)chRaw);
-          return (uint8_t)chRaw;
+          if (strcmp(scale, "direct8") == 0) return (uint8_t)chRaw;
+          return (uint8_t)chRaw;  // "none" or unrecognized
         };
         bool flashR = false, flashG = false, flashB = false;
         r = extractChannel("r", &flashR);
@@ -1031,6 +1127,16 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         mapped = 0.0f;
         Serial.printf("[Rule] channelGroup rgb=%u,%u,%u flash=%u%u%u\n",
                       r, g, b, flashR ? 1u : 0u, flashG ? 1u : 0u, flashB ? 1u : 0u);
+      } else if (hasColorBlend) {
+        uint8_t ar, ag, ab, br_, bg, bb;
+        resolveColorSource(colorBlend["a"].as<JsonObject>(), payload, plen, ar, ag, ab);
+        resolveColorSource(colorBlend["b"].as<JsonObject>(), payload, plen, br_, bg, bb);
+        float ratio = resolveBlendRatio(colorBlend["ratio"].as<JsonObject>(), payload, plen);
+        r = (uint8_t)lroundf((float)ar + ((float)br_ - (float)ar) * ratio);
+        g = (uint8_t)lroundf((float)ag + ((float)bg - (float)ag) * ratio);
+        b = (uint8_t)lroundf((float)ab + ((float)bb - (float)ab) * ratio);
+        mapped = 0.0f;
+        Serial.printf("[Rule] colorBlend rgb=%u,%u,%u ratio=%.3f\n", r, g, b, ratio);
       } else if (paletteMap) {
         uint8_t pal = (uint8_t)(raw & 0x1F);
         paletteToRGB(pal, r, g, b);
@@ -1104,8 +1210,20 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         if (strcmp(kind, "ignore") == 0 || !kind[0]) return;
 
         if (strcmp(kind, "segmentColor") == 0) {
-          const char* segId = tgt["segmentId"] | "";
           int slot = tgt["colorSlot"] | 0;
+          JsonArray segIds = tgt["segmentIds"].as<JsonArray>();
+          if (!segIds.isNull() && segIds.size() > 0) {
+            for (JsonVariant sv : segIds) {
+              const char* segId = sv.as<const char*>();
+              if (!segId || !segId[0]) continue;
+              JsonObject def = findSegInMap(segMap, segId);
+              if (def.isNull()) continue;
+              JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
+              setSegColorSlot(segObj, slot, r, g, b);
+            }
+            return;
+          }
+          const char* segId = tgt["segmentId"] | "";
           JsonObject def = findSegInMap(segMap, segId);
           if (def.isNull()) return;
           JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
@@ -1149,9 +1267,26 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     }
   }
 
-  // Timing-model strobe: set WLED Strobe fx/sx from flash-rate bits on the timing byte.
+  // Timing-model speed buckets (author table) take precedence over strobe when enabled.
   if (timingEn && payload && plen > 0) {
-    applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
+    JsonObject timingObj = rule["timing"].as<JsonObject>();
+    const char* tmId = timingObj.isNull() ? "" : (timingObj["timingModelId"] | "");
+    JsonObject tm = findTimingModelById(tmId);
+    uint8_t tOff = (uint8_t)(timingObj.isNull() ? 5 : (timingObj["offset"] | 5));
+    uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
+
+    int bucketValue = 0;
+    const char* bucketField = nullptr;
+    if (resolveSpeedBucketValue(tm, tByte, &bucketValue, &bucketField)) {
+      JsonArray segs = wled["seg"].as<JsonArray>();
+      if (!segs.isNull()) {
+        for (JsonObject seg : segs) setSegNumericField(seg, bucketField, (float)bucketValue);
+      }
+      Serial.printf("[Rule] speedBuckets %s=%d (timing=0x%02X)\n",
+                    bucketField ? bucketField : "sx", bucketValue, tByte);
+    } else {
+      applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
+    }
   }
 
   if (wled.overflowed()) {

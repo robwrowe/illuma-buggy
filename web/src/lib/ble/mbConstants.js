@@ -110,7 +110,8 @@ export function normalizeRandomPool(raw) {
 export const MB_EFFECT_CLASS_META = [
   { key: 'singleColor', label: 'Single Color', description: 'E905 — one palette color on selected LEDs', badge: 'Fully Decoded', tier: 1 },
   { key: 'dualColor', label: 'Dual Color', description: 'E906 — inner + outer ring colors', badge: 'Fully Decoded', tier: 1 },
-  { key: 'sixBitColor', label: '6-bit Color', description: 'E908 — raw RGB channels', badge: 'Fully Decoded', tier: 1 },
+  { key: 'sixBitColor', label: '6-bit Color', description: 'E908 packed 6-bit RGB channels (legacy bit-replicate)', badge: 'Fully Decoded', tier: 1 },
+  { key: 'rgbDirectColor', label: 'RGB (8-bit) Color', description: 'E907 / E908 d2 55 / E90D — raw 8-bit RGB triples', badge: 'Fully Decoded', tier: 1 },
   { key: 'fivePositionPalette', label: '5-Position Palette', description: 'E909 / E90C palette mode — five corner slots', badge: 'Fully Decoded', tier: 1 },
   { key: 'fivePositionFlash', label: '5-Position Flash Pattern', description: 'E90E — subset flash/hold patterns', badge: 'Partially Decoded', tier: 1 },
   { key: 'unclassified', label: 'Unclassified / Unknown', description: 'E910, E913, E90C animation mode, etc.', badge: 'Preset Only', tier: 2 },
