@@ -9,6 +9,8 @@
 #include "BlePeripheral.h"
 #include "DebugLog.h"
 #include "DisneyBleFilter.h"
+#include "JsonPsram.h"
+#include "Config.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -25,7 +27,21 @@ static inline void applyMbRgbCalibration(uint8_t& r, uint8_t& g, uint8_t& b) {
 static void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b);
 
 // Cached rules document — refreshed by applyMbRulesJson / loadMbRulesFromJson.
-static DynamicJsonDocument gRulesDoc(BLE_JSON_DOC_SIZE);
+// Lives in PSRAM so a ~128KB rules tree does not compete with BLE/WiFi/ESP-NOW on internal SRAM.
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+static SpiRamAllocator gRulesAlloc;
+static JsonDocument gRulesDoc(&gRulesAlloc);
+#else
+static PsramJsonDocument gRulesDoc(BLE_JSON_DOC_SIZE);
+#endif
+
+static void logRulesHeap(const char* tag) {
+  Serial.printf("[Rules] %s freeHeap=%u maxAlloc=%u psramFree=%u\n",
+                tag,
+                (unsigned)ESP.getFreeHeap(),
+                (unsigned)ESP.getMaxAllocHeap(),
+                ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+}
 
 static JsonArray rulesArray() {
   return gRulesDoc["rules"].as<JsonArray>();
@@ -1509,40 +1525,36 @@ void applyMbRulesJson(JsonObject doc) {
   // Cache rules[] / segmentMaps[] / timingModels[] when any are present —
   // colors-only pushes must not wipe them.
   if (doc.containsKey("rules") || doc.containsKey("segmentMaps") || doc.containsKey("timingModels")) {
-    String raw;
-    serializeJson(doc, raw);
-    // If only maps/models arrived without rules, merge onto existing cache
+    logRulesHeap("before cache write");
+    // Maps/models-only: mutate gRulesDoc in place (deep-copy from incoming doc).
+    // Avoids a second full-size DynamicJsonDocument while gRulesDoc is live.
     if (!doc.containsKey("rules") && gRulesDoc.containsKey("rules")) {
-      DynamicJsonDocument merged(BLE_JSON_DOC_SIZE);
-      String existing;
-      serializeJson(gRulesDoc, existing);
-      DeserializationError existingErr = deserializeJson(merged, existing);
-      if (!existingErr) {
-        if (doc.containsKey("segmentMaps")) merged["segmentMaps"] = doc["segmentMaps"];
-        if (doc.containsKey("timingModels")) merged["timingModels"] = doc["timingModels"];
-        if (doc.containsKey("paradeDetection")) merged["paradeDetection"] = doc["paradeDetection"];
-        if (doc.containsKey("defaultPresetId")) merged["defaultPresetId"] = doc["defaultPresetId"];
-        gRulesDoc.clear();
-        serializeJson(merged, raw);
-        DeserializationError mergeErr = deserializeJson(gRulesDoc, raw);
-        if (mergeErr) {
-          Serial.printf("[Rules] cache deserialize failed (merge writeback): %s\n", mergeErr.c_str());
-        }
-      } else {
-        Serial.printf("[Rules] existing cache deserialize failed: %s — replacing with incoming doc\n",
-                      existingErr.c_str());
-        gRulesDoc.clear();
-        DeserializationError replaceErr = deserializeJson(gRulesDoc, raw);
-        if (replaceErr) {
-          Serial.printf("[Rules] cache deserialize failed (replace): %s\n", replaceErr.c_str());
-        }
+      if (doc.containsKey("segmentMaps")) {
+        gRulesDoc.remove("segmentMaps");
+        gRulesDoc["segmentMaps"] = doc["segmentMaps"];
       }
+      if (doc.containsKey("timingModels")) {
+        gRulesDoc.remove("timingModels");
+        gRulesDoc["timingModels"] = doc["timingModels"];
+      }
+      if (doc.containsKey("paradeDetection")) {
+        gRulesDoc["paradeDetection"] = doc["paradeDetection"];
+      }
+      if (doc.containsKey("defaultPresetId")) {
+        gRulesDoc["defaultPresetId"] = doc["defaultPresetId"];
+      }
+      logRulesHeap("after in-place merge");
     } else {
+      // Full replace — serialize incoming mapping once, then fill gRulesDoc from that string.
+      String raw;
+      serializeJson(doc, raw);
       gRulesDoc.clear();
       DeserializationError cacheErr = deserializeJson(gRulesDoc, raw);
       if (cacheErr) {
-        Serial.printf("[Rules] cache deserialize failed: %s\n", cacheErr.c_str());
+        Serial.printf("[Rules] cache deserialize failed: %s (raw=%u)\n",
+                      cacheErr.c_str(), (unsigned)raw.length());
       }
+      logRulesHeap("after full replace");
     }
   } else if (doc.containsKey("paradeDetection") || doc.containsKey("defaultPresetId") ||
              doc.containsKey("colors") || doc.containsKey("segments") || doc.containsKey("randomPool")) {
@@ -1599,7 +1611,12 @@ void loadMbRulesFromJson() {
   bleDefaultPresetId = "";
   const String& src = mbRulesJson.length() > 0 ? mbRulesJson : mbMappingJson;
   if (src.length() == 0) return;
-  DynamicJsonDocument doc(BLE_JSON_DOC_SIZE);
+  logRulesHeap("loadMbRulesFromJson start");
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc(&jsonPsramAllocator());
+#else
+  PsramJsonDocument doc(BLE_JSON_DOC_SIZE);
+#endif
   DeserializationError err = deserializeJson(doc, src);
   if (err) {
     Serial.printf("[Rules] JSON parse failed: %s (%u bytes)\n", err.c_str(), (unsigned)src.length());
@@ -1610,7 +1627,11 @@ void loadMbRulesFromJson() {
 
 bool mbRulesJsonUsable(const String& json) {
   if (json.length() == 0) return false;
-  DynamicJsonDocument doc(BLE_JSON_DOC_SIZE);
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc(&jsonPsramAllocator());
+#else
+  PsramJsonDocument doc(BLE_JSON_DOC_SIZE);
+#endif
   DeserializationError err = deserializeJson(doc, json);
   if (err) return false;
   JsonArray rules = doc["rules"].as<JsonArray>();

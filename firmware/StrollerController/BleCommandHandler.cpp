@@ -17,12 +17,18 @@
 #include "MbRulesStore.h"
 #include "MbCalibrationStore.h"
 #include <WiFi.h>
+#include "JsonPsram.h"
 
 void handleBLECommand(const String& msg) {
+  // Large set_mb_rules bodies parse on PSRAM so we do not pin ~128KB of internal SRAM.
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc(&jsonPsramAllocator());
+#else
   size_t cap = msg.length() + 512;
   if (cap < 4096) cap = 4096;
   if (cap > BLE_JSON_DOC_SIZE) cap = BLE_JSON_DOC_SIZE;
-  DynamicJsonDocument doc(cap);
+  PsramJsonDocument doc(cap);
+#endif
   DeserializationError err = deserializeJson(doc, msg);
   if (err) {
     Serial.printf("[BLE] JSON parse error: %s\n", err.c_str());

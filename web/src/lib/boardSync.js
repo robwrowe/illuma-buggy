@@ -47,10 +47,15 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 
   if (opts.mbMapping) {
     onProgress?.('Sending MB rules…');
-    await webBleBoard.send({
-      type: 'set_mb_rules',
-      mapping: mbMappingToBlePayload(mb),
-    });
+    try {
+      await webBleBoard.send({
+        type: 'set_mb_rules',
+        mapping: mbMappingToBlePayload(mb),
+      });
+    } catch (e) {
+      const detail = e?.message || String(e);
+      throw new Error(`MB rules push failed: ${detail}`);
+    }
     sent.push(`MB rules (${(mb.rules || []).length})`);
     await delay(BLE_SEND_DELAY_MS);
   }

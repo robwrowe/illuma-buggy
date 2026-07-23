@@ -82,7 +82,9 @@ void processBleCmdChunk(int seq, bool last, const String& data) {
     return;
   }
   if (cmdChunkBuffer.length() + data.length() > BLE_CMD_BUF_SIZE) {
-    Serial.println("[BLE] Chunk buffer overflow, aborting");
+    Serial.printf("[BLE] Chunk buffer overflow (have=%u +%u > %u), aborting\n",
+                  (unsigned)cmdChunkBuffer.length(), (unsigned)data.length(),
+                  (unsigned)BLE_CMD_BUF_SIZE);
     bleNotify("{\"type\":\"chunk_sync_failed\",\"reason\":\"overflow\"}");
     resetCmdChunkBuffer();
     return;
