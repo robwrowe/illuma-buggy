@@ -12,7 +12,7 @@ import { buildRecalledSegmentsFromPreset, finalizeWledSegmentPayload, parseWledS
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
 import type { MbMappingConfig } from './mbConfig';
-import { collectMappingPresetIds, mbMappingToBlePayload } from './mbConfig';
+import { collectMappingPresetIds, compactMbPayloadForBle } from './mbConfig';
 import { TRANSITION_STYLE_TO_BS } from './transitionStyles';
 
 const BOARD_PRESET_MEMORY: PresetMemory = {
@@ -25,13 +25,13 @@ const BOARD_RECALL: RecallState = {
 
 export { clearBoardPresetSyncCache } from './blePresetCache';
 
-/** MB mapping for BLE — colors, segments, rules, segmentMaps, paradeDetection. */
+/** MB mapping for BLE — colors, segments, rules, segmentMaps, paradeDetection (compact wire). */
 export function mbMappingEssentialPayload(
   mbMapping: MbMappingConfig,
   _presets?: Preset[],
   _recall?: RecallState,
 ): object {
-  return mbMappingToBlePayload(mbMapping);
+  return compactMbPayloadForBle(mbMapping);
 }
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));

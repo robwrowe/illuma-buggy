@@ -52,7 +52,8 @@
 #define PARSED_PACKET_QUEUE_DEPTH 32
 /**
  * Chunk reassembly + ArduinoJson rules-cache budget.
- * Current full set_mb_rules payloads are ~62KB and growing; 128KB leaves ~2x headroom
+ * Current full set_mb_rules payloads are ~50KB compact (~67KB verbose editor shape);
+ * 128KB leaves headroom for growth. See docs/ble-packets-details/mb-rules-wire-format.md.
  * before ArduinoJson node overhead. Prefer PSRAM for the long-lived rules doc
  * (see JsonPsram.h / gRulesDoc).
  */

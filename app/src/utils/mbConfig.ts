@@ -236,7 +236,7 @@ export function normalizeMbMapping(raw: Partial<MbMappingConfig> | undefined): M
   return base;
 }
 
-/** Firmware BLE payload */
+/** Firmware BLE payload (verbose editor shape — not for transport). */
 export function mbMappingToBlePayload(config: MbMappingConfig): object {
   const synced = normalizeMbMapping(config);
   const colors: Record<string, number[]> = {};
@@ -269,4 +269,90 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
     ...(Array.isArray(synced.segmentMaps) ? { segmentMaps: synced.segmentMaps } : {}),
     paradeDetection: normalizeParadeDetection(synced.paradeDetection),
   };
+}
+
+/** Wire sentinel for segmentOverrides mode "default". Absent key = stored. */
+const SEG_OVERRIDE_DEFAULT_SENTINEL = 'd';
+const SEG_OVERRIDE_PROPS = ['fx', 'pal', 'sx', 'ix', 'blend'] as const;
+
+function compactSegmentOverrides(segmentOverrides: unknown): Record<string, unknown> | undefined {
+  if (!segmentOverrides || typeof segmentOverrides !== 'object') return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [segId, seg] of Object.entries(segmentOverrides as Record<string, unknown>)) {
+    if (!seg || typeof seg !== 'object') continue;
+    const segObj = seg as Record<string, unknown>;
+    const compactSeg: Record<string, unknown> = {};
+    for (const field of SEG_OVERRIDE_PROPS) {
+      const ov = segObj[field] as { mode?: string; value?: unknown } | undefined;
+      if (!ov || typeof ov !== 'object') continue;
+      if (ov.mode === 'custom' && ov.value !== undefined && ov.value !== null && ov.value !== '') {
+        compactSeg[field] = ov.value;
+      } else if (ov.mode === 'default') {
+        compactSeg[field] = SEG_OVERRIDE_DEFAULT_SENTINEL;
+      }
+    }
+    if (Array.isArray(segObj.colors)) {
+      const compactColors: { i: number; v: unknown }[] = [];
+      (segObj.colors as { mode?: string; value?: unknown }[]).forEach((c, i) => {
+        if (c?.mode === 'custom' && c.value) compactColors.push({ i, v: c.value });
+      });
+      if (compactColors.length) compactSeg.colors = compactColors;
+    }
+    if (Object.keys(compactSeg).length) out[segId] = compactSeg;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function compactExtractTargets(targets: unknown): unknown[] | undefined {
+  if (!Array.isArray(targets)) return undefined;
+  const out: unknown[] = [];
+  for (const t of targets) {
+    if (!t || typeof t !== 'object') continue;
+    const tgt = t as Record<string, unknown>;
+    const kind = (tgt.kind as string) || 'segmentColor';
+    if (kind === 'ignore') continue;
+    if (kind === 'segmentColor') {
+      const entry: Record<string, unknown> = {};
+      if (typeof tgt.segmentId === 'string' && tgt.segmentId) entry.s = tgt.segmentId;
+      if (Array.isArray(tgt.segmentIds) && tgt.segmentIds.length) entry.ss = tgt.segmentIds;
+      if (tgt.colorSlot !== undefined && tgt.colorSlot !== null) entry.c = tgt.colorSlot;
+      if (entry.s || entry.ss) out.push(entry);
+      continue;
+    }
+    if (kind === 'maskColor') {
+      out.push({ k: 'maskColor', m: tgt.mask || 'all' });
+      continue;
+    }
+    out.push({ ...tgt });
+  }
+  return out.length ? out : undefined;
+}
+
+function compactRule(rule: unknown): unknown {
+  if (!rule || typeof rule !== 'object') return rule;
+  const r = rule as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...r };
+  const ov = compactSegmentOverrides(r.segmentOverrides);
+  if (ov) next.segmentOverrides = ov;
+  else delete next.segmentOverrides;
+  if (Array.isArray(r.extract)) {
+    next.extract = r.extract.map((ex) => {
+      if (!ex || typeof ex !== 'object') return ex;
+      const e = ex as Record<string, unknown>;
+      const targets = compactExtractTargets(e.targets);
+      const { targets: _drop, ...rest } = e;
+      return targets ? { ...rest, targets } : { ...rest };
+    });
+  }
+  return next;
+}
+
+/**
+ * Compact set_mb_rules payload for BLE transport.
+ * Keep in sync with web compactMbPayloadForBle — see docs/ble-packets-details/mb-rules-wire-format.md.
+ */
+export function compactMbPayloadForBle(config: MbMappingConfig): object {
+  const verbose = mbMappingToBlePayload(config) as Record<string, unknown>;
+  const rules = Array.isArray(verbose.rules) ? verbose.rules.map(compactRule) : undefined;
+  return rules ? { ...verbose, rules } : verbose;
 }

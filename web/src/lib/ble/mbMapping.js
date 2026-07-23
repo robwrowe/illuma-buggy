@@ -1371,6 +1371,107 @@ export function mbMappingToBlePayload(config) {
   };
 }
 
+/** Wire sentinel for segmentOverrides mode "default" (use rule effect). Absent = stored. */
+export const SEG_OVERRIDE_DEFAULT_SENTINEL = 'd';
+
+/**
+ * Compact segmentOverrides for BLE: omit stored/extract no-ops; custom → bare value;
+ * default → sentinel "d". Colors only emit custom slots.
+ */
+export function compactSegmentOverrides(segmentOverrides) {
+  if (!segmentOverrides || typeof segmentOverrides !== 'object') return undefined;
+  const out = {};
+  for (const [segId, seg] of Object.entries(segmentOverrides)) {
+    if (!seg || typeof seg !== 'object') continue;
+    const compactSeg = {};
+    for (const field of SEG_OVERRIDE_PROPS) {
+      const ov = seg[field];
+      if (!ov || typeof ov !== 'object') continue;
+      if (ov.mode === 'custom' && ov.value !== undefined && ov.value !== null && ov.value !== '') {
+        compactSeg[field] = ov.value;
+      } else if (ov.mode === 'default') {
+        compactSeg[field] = SEG_OVERRIDE_DEFAULT_SENTINEL;
+      }
+      // stored / extract / missing → omit (firmware treats absence as stored)
+    }
+    if (Array.isArray(seg.colors)) {
+      const compactColors = [];
+      seg.colors.forEach((c, i) => {
+        if (c?.mode === 'custom' && c.value) {
+          compactColors.push({ i, v: c.value });
+        }
+      });
+      if (compactColors.length) compactSeg.colors = compactColors;
+    }
+    if (Object.keys(compactSeg).length) out[segId] = compactSeg;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Compact extract[].targets[] for BLE:
+ *   segmentColor → { s, c? } (kind omitted; firmware defaults)
+ *   maskColor → { k: 'maskColor', m }
+ *   ignore → dropped
+ */
+export function compactExtractTargets(targets) {
+  if (!Array.isArray(targets)) return undefined;
+  const out = [];
+  for (const t of targets) {
+    if (!t || typeof t !== 'object') continue;
+    const kind = t.kind || 'segmentColor';
+    if (kind === 'ignore') continue;
+    if (kind === 'segmentColor') {
+      const entry = {};
+      if (typeof t.segmentId === 'string' && t.segmentId) entry.s = t.segmentId;
+      if (Array.isArray(t.segmentIds) && t.segmentIds.length) entry.ss = t.segmentIds;
+      if (t.colorSlot !== undefined && t.colorSlot !== null) entry.c = t.colorSlot;
+      if (entry.s || entry.ss) out.push(entry);
+      continue;
+    }
+    if (kind === 'maskColor') {
+      out.push({ k: 'maskColor', m: t.mask || 'all' });
+      continue;
+    }
+    // Unknown / future kinds: keep verbose shape
+    out.push({ ...t });
+  }
+  return out.length ? out : undefined;
+}
+
+export function compactExtractEntry(ex) {
+  if (!ex || typeof ex !== 'object') return ex;
+  const targets = compactExtractTargets(ex.targets);
+  const { targets: _drop, ...rest } = ex;
+  if (targets) return { ...rest, targets };
+  return { ...rest };
+}
+
+export function compactRule(rule) {
+  if (!rule || typeof rule !== 'object') return rule;
+  const next = { ...rule };
+  const ov = compactSegmentOverrides(rule.segmentOverrides);
+  if (ov) next.segmentOverrides = ov;
+  else delete next.segmentOverrides;
+  if (Array.isArray(rule.extract)) {
+    next.extract = rule.extract.map(compactExtractEntry);
+  }
+  return next;
+}
+
+/**
+ * Compact set_mb_rules payload for BLE transport only.
+ * Editor / normalize / preview keep using mbMappingToBlePayload()'s verbose shape.
+ * See docs/ble-packets-details/mb-rules-wire-format.md.
+ */
+export function compactMbPayloadForBle(mbMapping) {
+  const verbose = mbMappingToBlePayload(mbMapping);
+  return {
+    ...verbose,
+    rules: (verbose.rules || []).map(compactRule),
+  };
+}
+
 /**
  * On-device ArduinoJson document budget for set_mb_rules (Config.h BLE_JSON_DOC_SIZE).
  * Keep in sync with firmware — this is the soft ceiling the capacity gauge tracks.
@@ -1389,8 +1490,8 @@ export const BLE_JSON_DOC_BUDGET_BYTES = 131072;
  *   4. Set ARDUINOJSON_OVERHEAD_FACTOR = parsedBytes / totalRawBytes.
  *
  * Provisional value 1.55: mid of the typical 1.4–1.7 range for nested rule trees
- * (match.children / extract.targets / segmentOverrides) on ArduinoJson 7. Replace after
- * measuring against a known ~60–70KB payload on your ESP32-S3.
+ * on ArduinoJson 7. **Re-measure after compact wire format** (fewer keys / smaller
+ * trees) — factor may need a bump or drop vs the old verbose payload calibration.
  */
 export const ARDUINOJSON_OVERHEAD_FACTOR = 1.55;
 
@@ -1403,7 +1504,8 @@ function utf8ByteLength(value) {
  * Returns raw + estimated-parsed sizes, category totals, and per-item heavies.
  */
 export function estimateMbPayloadFootprint(mbMapping) {
-  const payload = mbMappingToBlePayload(mbMapping);
+  // Gauge tracks what actually goes over BLE (compact wire), not the verbose editor shape.
+  const payload = compactMbPayloadForBle(mbMapping);
   const breakdown = {};
   let totalRaw = 0;
   for (const key of Object.keys(payload)) {

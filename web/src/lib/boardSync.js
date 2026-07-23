@@ -1,5 +1,5 @@
 import { BLE_SEND_DELAY_MS, webBleBoard } from './ble/chunking';
-import { mbMappingToBlePayload, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
+import { compactMbPayloadForBle, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
 import { DEFAULT_DATA, normalizeColorCalibration } from './utils';
 
 export const BOARD_SYNC_LS_KEY = 'illuma-buggy-board-sync';
@@ -50,7 +50,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
     try {
       await webBleBoard.send({
         type: 'set_mb_rules',
-        mapping: mbMappingToBlePayload(mb),
+        mapping: compactMbPayloadForBle(mb),
       });
     } catch (e) {
       const detail = e?.message || String(e);

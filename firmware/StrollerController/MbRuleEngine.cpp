@@ -744,8 +744,9 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
   }
 }
 
-/** Apply rule.segmentOverrides custom/default modes onto seeded WLED segs.
- *  stored/extract/missing leave the map (or preset) seed alone; extracts run later. */
+/** Apply rule.segmentOverrides onto seeded WLED segs.
+ *  Accepts verbose editor shape {mode,value} and compact wire shape
+ *  (bare custom value, or sentinel "d" for default). Absence = stored (no-op). */
 static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
                                           JsonObject ruleEffect, bool hasRuleEffect,
                                           JsonObject segmentOverrides) {
@@ -754,6 +755,12 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
   if (defs.isNull()) return;
   int fallbackFx = hasRuleEffect ? (ruleEffect["fx"] | 0) : 0;
   if (fallbackFx < 0) fallbackFx = 0;
+
+  auto isDefaultSentinel = [](JsonVariant v) -> bool {
+    if (!v.is<const char*>()) return false;
+    const char* s = v.as<const char*>();
+    return s && strcmp(s, "d") == 0;
+  };
 
   for (JsonVariant v : defs) {
     if (!v.is<JsonObject>()) continue;
@@ -764,62 +771,128 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
     if (ov.isNull()) continue;
     JsonObject seg = ensureWledSegByLocalId(wled, def);
 
-    if (ov.containsKey("fx") && ov["fx"].is<JsonObject>()) {
-      const char* mode = ov["fx"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) {
-        int fx = ov["fx"]["value"] | 0;
-        seg["fx"] = fx >= 0 ? fx : 0;
-      } else if (strcmp(mode, "default") == 0) {
+    auto applyFx = [&]() {
+      if (!ov.containsKey("fx")) return;
+      JsonVariant fxv = ov["fx"];
+      if (fxv.is<JsonObject>()) {
+        const char* mode = fxv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          int fx = fxv["value"] | 0;
+          seg["fx"] = fx >= 0 ? fx : 0;
+        } else if (strcmp(mode, "default") == 0) {
+          seg["fx"] = fallbackFx;
+        }
+      } else if (isDefaultSentinel(fxv)) {
         seg["fx"] = fallbackFx;
+      } else {
+        int fx = fxv.as<int>();
+        seg["fx"] = fx >= 0 ? fx : 0;
       }
-    }
-    if (ov.containsKey("pal") && ov["pal"].is<JsonObject>()) {
-      const char* mode = ov["pal"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) {
-        int pal = ov["pal"]["value"] | -1;
+    };
+    auto applyPal = [&]() {
+      if (!ov.containsKey("pal")) return;
+      JsonVariant pv = ov["pal"];
+      if (pv.is<JsonObject>()) {
+        const char* mode = pv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          int pal = pv["value"] | -1;
+          if (pal >= 0) seg["pal"] = pal;
+        } else if (strcmp(mode, "default") == 0 && hasRuleEffect) {
+          int rpal = ruleEffect["pal"] | -1;
+          if (rpal >= 0) seg["pal"] = rpal;
+        }
+      } else if (isDefaultSentinel(pv)) {
+        if (hasRuleEffect) {
+          int rpal = ruleEffect["pal"] | -1;
+          if (rpal >= 0) seg["pal"] = rpal;
+        }
+      } else {
+        int pal = pv.as<int>();
         if (pal >= 0) seg["pal"] = pal;
-      } else if (strcmp(mode, "default") == 0 && hasRuleEffect) {
-        int rpal = ruleEffect["pal"] | -1;
-        if (rpal >= 0) seg["pal"] = rpal;
       }
-    }
-    if (ov.containsKey("sx") && ov["sx"].is<JsonObject>()) {
-      const char* mode = ov["sx"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) seg["sx"] = ov["sx"]["value"] | 128;
-      else if (strcmp(mode, "default") == 0) {
+    };
+    auto applySx = [&]() {
+      if (!ov.containsKey("sx")) return;
+      JsonVariant sv = ov["sx"];
+      if (sv.is<JsonObject>()) {
+        const char* mode = sv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) seg["sx"] = sv["value"] | 128;
+        else if (strcmp(mode, "default") == 0) {
+          if (hasRuleEffect && ruleEffect.containsKey("sx")) seg["sx"] = ruleEffect["sx"];
+          else seg["sx"] = 128;
+        }
+      } else if (isDefaultSentinel(sv)) {
         if (hasRuleEffect && ruleEffect.containsKey("sx")) seg["sx"] = ruleEffect["sx"];
         else seg["sx"] = 128;
+      } else {
+        seg["sx"] = sv.as<int>();
       }
-    }
-    if (ov.containsKey("ix") && ov["ix"].is<JsonObject>()) {
-      const char* mode = ov["ix"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) seg["ix"] = ov["ix"]["value"] | 128;
-      else if (strcmp(mode, "default") == 0) {
+    };
+    auto applyIx = [&]() {
+      if (!ov.containsKey("ix")) return;
+      JsonVariant iv = ov["ix"];
+      if (iv.is<JsonObject>()) {
+        const char* mode = iv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) seg["ix"] = iv["value"] | 128;
+        else if (strcmp(mode, "default") == 0) {
+          if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
+          else seg["ix"] = 128;
+        }
+      } else if (isDefaultSentinel(iv)) {
         if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
         else seg["ix"] = 128;
+      } else {
+        seg["ix"] = iv.as<int>();
       }
-    }
-    if (ov.containsKey("blend") && ov["blend"].is<JsonObject>()) {
-      const char* mode = ov["blend"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) {
-        if (ov["blend"]["value"].is<int>()) seg["bm"] = ov["blend"]["value"] | 0;
-        else seg["bm"] = blendModeToBm(ov["blend"]["value"] | "top");
-      } else if (strcmp(mode, "default") == 0) {
+    };
+    auto applyBlend = [&]() {
+      if (!ov.containsKey("blend")) return;
+      JsonVariant bv = ov["blend"];
+      if (bv.is<JsonObject>()) {
+        const char* mode = bv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          if (bv["value"].is<int>()) seg["bm"] = bv["value"] | 0;
+          else seg["bm"] = blendModeToBm(bv["value"] | "top");
+        } else if (strcmp(mode, "default") == 0) {
+          seg["bm"] = 0;
+        }
+      } else if (isDefaultSentinel(bv)) {
         seg["bm"] = 0;
+      } else if (bv.is<int>()) {
+        seg["bm"] = bv.as<int>();
+      } else {
+        seg["bm"] = blendModeToBm(bv.as<const char*>() ? bv.as<const char*>() : "top");
       }
-    }
+    };
+
+    applyFx();
+    applyPal();
+    applySx();
+    applyIx();
+    applyBlend();
+
     JsonArray ovColors = ov["colors"].as<JsonArray>();
     if (!ovColors.isNull()) {
-      for (int i = 0; i < 3 && i < (int)ovColors.size(); i++) {
-        if (!ovColors[i].is<JsonObject>()) continue;
-        JsonObject cOv = ovColors[i].as<JsonObject>();
-        const char* cmode = cOv["mode"] | "stored";
-        if (strcmp(cmode, "custom") != 0) continue;
-        const char* hex = cOv["value"] | "";
+      for (size_t idx = 0; idx < ovColors.size(); idx++) {
+        if (!ovColors[idx].is<JsonObject>()) continue;
+        JsonObject cOv = ovColors[idx].as<JsonObject>();
+        int slot;
+        const char* hex = nullptr;
+        if (cOv.containsKey("v")) {
+          // Compact wire: { i, v }
+          slot = cOv.containsKey("i") ? (cOv["i"] | 0) : (int)idx;
+          hex = cOv["v"] | "";
+        } else {
+          // Verbose editor: [{mode,value}, ...] by array index
+          const char* cmode = cOv["mode"] | "stored";
+          if (strcmp(cmode, "custom") != 0) continue;
+          slot = (int)idx;
+          hex = cOv["value"] | "";
+        }
         if (!hex || !hex[0]) continue;
         uint8_t r, g, b;
         parseHexColor(hex, r, g, b);
-        setSegColorSlot(seg, i, r, g, b);
+        setSegColorSlot(seg, slot, r, g, b);
       }
     }
   }
@@ -1375,13 +1448,23 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         }
       };
 
+      // Verbose editor: {kind,segmentId,colorSlot,...}
+      // Compact wire:   segmentColor → {s|ss,c?} (kind omitted); maskColor → {k,m}
       auto dispatchTarget = [&](JsonObject tgt) {
         const char* kind = tgt["kind"] | "";
-        if (strcmp(kind, "ignore") == 0 || !kind[0]) return;
+        if (!kind[0] && tgt.containsKey("k")) kind = tgt["k"] | "";
+        if (!kind[0] && (tgt.containsKey("s") || tgt.containsKey("ss") ||
+                         tgt.containsKey("segmentId") || tgt.containsKey("segmentIds"))) {
+          kind = "segmentColor";
+        }
+        if (strcmp(kind, "ignore") == 0) return;
+        if (!kind[0]) return;
 
         if (strcmp(kind, "segmentColor") == 0) {
-          int slot = tgt["colorSlot"] | 0;
-          JsonArray segIds = tgt["segmentIds"].as<JsonArray>();
+          int slot = tgt.containsKey("c") ? (tgt["c"] | 0) : (tgt["colorSlot"] | 0);
+          JsonArray segIds = tgt.containsKey("ss")
+                                 ? tgt["ss"].as<JsonArray>()
+                                 : tgt["segmentIds"].as<JsonArray>();
           if (!segIds.isNull() && segIds.size() > 0) {
             for (JsonVariant sv : segIds) {
               const char* segId = sv.as<const char*>();
@@ -1393,7 +1476,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
             }
             return;
           }
-          const char* segId = tgt["segmentId"] | "";
+          const char* segId = tgt.containsKey("s") ? (tgt["s"] | "") : (tgt["segmentId"] | "");
           JsonObject def = findSegInMap(segMap, segId);
           if (def.isNull()) return;
           JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
@@ -1401,11 +1484,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
           return;
         }
         if (strcmp(kind, "maskColor") == 0) {
-          applyMaskColor(tgt["mask"] | "all");
+          const char* mask = tgt.containsKey("m") ? (tgt["m"] | "all") : (tgt["mask"] | "all");
+          applyMaskColor(mask);
           return;
         }
         if (strcmp(kind, "segmentField") == 0) {
-          const char* segId = tgt["segmentId"] | "";
+          const char* segId = tgt.containsKey("s") ? (tgt["s"] | "") : (tgt["segmentId"] | "");
           const char* field = tgt["field"] | "";
           JsonObject def = findSegInMap(segMap, segId);
           if (def.isNull()) return;
@@ -1524,6 +1608,9 @@ void applyMbRulesJson(JsonObject doc) {
 
   // Cache rules[] / segmentMaps[] / timingModels[] when any are present —
   // colors-only pushes must not wipe them.
+  // Wire may be compact (segmentOverrides bare values / "d"; extract targets {s,c}).
+  // Apply/match paths dual-read compact+verbose; we keep compact in gRulesDoc
+  // (no expand-to-verbose) so the PSRAM cache stays smaller.
   if (doc.containsKey("rules") || doc.containsKey("segmentMaps") || doc.containsKey("timingModels")) {
     logRulesHeap("before cache write");
     // Maps/models-only: mutate gRulesDoc in place (deep-copy from incoming doc).
