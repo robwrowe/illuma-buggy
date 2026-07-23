@@ -51,6 +51,39 @@ export function scale6To8(v) {
   return ((n << 2) | (n >> 4)) & 0xff;
 }
 
+/**
+ * WLED Chase (fx=28 / FX_MODE_CHASE_COLOR) cycle → sx.
+ * FX.cpp: counter = now * ((sx>>2)+1); full lap when counter += 65536
+ *   → T_ms = 65536 / ((sx>>2)+1)
+ * Inverse: sx = round(4 * (65536/T_ms - 1)), clamped 0–255.
+ * Use Disney on_time_ms as T_ms so one chase lap matches wand on-time (step ≈ on/5).
+ * @param {number} cycleMs
+ * @returns {number} sx 0–255
+ */
+export function chaseSxFromCycleMs(cycleMs) {
+  const ms = Number(cycleMs);
+  if (!Number.isFinite(ms) || ms <= 0) return 255;
+  let rate = 65536 / ms;
+  if (rate < 1) rate = 1;
+  if (rate > 64) rate = 64;
+  return Math.max(0, Math.min(255, Math.round((rate - 1) * 4)));
+}
+
+/** Build per-tval speedBuckets for E9 0C chase (maskBits = tval nibble). */
+export function e90cChaseSpeedBuckets(mult = 1.5) {
+  const m = Number(mult);
+  const buckets = [];
+  for (let t = 1; t <= 15; t++) {
+    buckets.push({ maxByte: t, value: chaseSxFromCycleMs(m * t * 1000) });
+  }
+  return {
+    enabled: true,
+    field: 'sx',
+    maskBits: { bitStart: 0, bitCount: 4 },
+    buckets,
+  };
+}
+
 function hexToRgb(hex) {
   if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
   return [

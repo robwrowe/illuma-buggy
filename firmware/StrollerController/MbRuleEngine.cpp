@@ -316,6 +316,24 @@ static int strobeSxFromHz(float hz) {
   return sx;
 }
 
+/**
+ * WLED Chase (FX_MODE_CHASE_COLOR / fx=28) in FX.cpp:
+ *   counter = strip.now * ((SEGMENT.speed >> 2) + 1);
+ *   a = (counter * SEGLEN) >> 16;
+ * Full lap when counter advances 65536 → T_ms = 65536 / ((sx >> 2) + 1).
+ * Inverse used to map Disney on_time (or on_time/5 × 5 zones) onto sx.
+ */
+static int chaseSxFromCycleMs(unsigned long cycleMs) {
+  if (cycleMs == 0) return 255;
+  float rate = 65536.0f / (float)cycleMs;
+  if (rate < 1.0f) rate = 1.0f;
+  if (rate > 64.0f) rate = 64.0f;  // sx=255 → (255>>2)+1 = 64
+  int sx = (int)lroundf((rate - 1.0f) * 4.0f);
+  if (sx < 0) sx = 0;
+  if (sx > 255) sx = 255;
+  return sx;
+}
+
 /** Shared by applyStrobeFromTimingModel + timing* extract sources. */
 static float resolveFlashRateHz(const JsonObject& rule, const uint8_t* payload, size_t plen) {
   JsonObject timingObj = rule["timing"].as<JsonObject>();
