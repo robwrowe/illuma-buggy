@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Checkbox,
+  ColorInput,
   Group,
   MultiSelect,
   NumberInput,
@@ -27,10 +28,12 @@ import {
   createEmptyColorSource,
   createEmptyColorSourceBlendEntry,
   createEmptyColorSourceBlendExtract,
+  createEmptyColorSourceFixed,
   createEmptyColorSourceRgb,
   createEmptyCondition,
   createEmptyExtract,
   createEmptyExtractTarget,
+  createEmptyFixedColorExtract,
   createEmptyMatchGroup,
   createEmptyFallbackDuration,
   createEmptyRule,
@@ -42,6 +45,7 @@ import {
   colorSourceBlendWeightSum,
   findDuplicateColorSourceNames,
   isColorSourceBlendSource,
+  isFixedColorSource,
   isTimingDerivedSource,
   normalizeMbMapping,
   reindexRulePriorities,
@@ -744,10 +748,47 @@ function ChannelGroupFields({ channelGroup, onChange }) {
   );
 }
 
+function normalizeHexInput(v) {
+  if (typeof v !== 'string') return null;
+  const raw = v.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+  if (/^[0-9a-fA-F]{6}$/.test(raw)) return `#${raw.toLowerCase()}`;
+  if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+    const r = raw[1]; const g = raw[2]; const b = raw[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return null;
+}
+
+function FixedHexField({ value, onChange, label = 'Color' }) {
+  // Mantine ColorInput is controlled and calls onChange on every keystroke —
+  // must accept partial input (e.g. "0") or the field snaps back to value.
+  return (
+    <Field label={label}>
+      <ColorInput
+        format="hex"
+        value={value || '#ffffff'}
+        onChange={(v) => {
+          const hex = normalizeHexInput(v);
+          onChange(hex ?? (typeof v === 'string' ? v : '#ffffff'));
+        }}
+        swatches={[
+          '#ff0000', '#ff4400', '#ff8800', '#ffcc00', '#ffff00', '#aaff00',
+          '#00ff00', '#00ff88', '#00ffff', '#0088ff', '#0044ff', '#6600ff',
+          '#aa00ff', '#ff00ff', '#ff0088', '#ffffff', '#888888', '#000000',
+        ]}
+        swatchesPerRow={9}
+        styles={{ input: { fontFamily: 'monospace' } }}
+      />
+    </Field>
+  );
+}
+
 function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
   const src = source || createEmptyColorSource();
   const nameTrim = (src.name || '').trim();
   const isDup = nameTrim && usedNames.filter((n) => n === nameTrim).length > 1;
+  const kind = src.kind === 'rgb' ? 'rgb' : (src.kind === 'fixed' ? 'fixed' : 'palette');
   return (
     <Paper p="xs" withBorder bg="var(--surface2)">
       <Group justify="space-between" mb="xs">
@@ -768,23 +809,35 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
           <SegmentedControl
             fullWidth
             size="xs"
-            value={src.kind === 'rgb' ? 'rgb' : 'palette'}
-            onChange={(kind) => {
-              if (kind === 'rgb') {
+            value={kind}
+            onChange={(next) => {
+              if (next === 'rgb') {
                 onChange(createEmptyColorSourceRgb({ name: src.name || '' }));
                 return;
               }
-              const next = createEmptyColorSource({ name: src.name || '', kind: 'palette' });
-              onChange(next);
+              if (next === 'fixed') {
+                onChange(createEmptyColorSourceFixed({
+                  name: src.name || '',
+                  value: src.value || '#ffffff',
+                }));
+                return;
+              }
+              onChange(createEmptyColorSource({ name: src.name || '', kind: 'palette' }));
             }}
             data={[
+              { label: 'Fixed', value: 'fixed' },
               { label: 'Palette', value: 'palette' },
               { label: 'RGB', value: 'rgb' },
             ]}
           />
         </Field>
       </SimpleGrid>
-      {src.kind === 'rgb' ? (
+      {kind === 'fixed' ? (
+        <FixedHexField
+          value={src.value || '#ffffff'}
+          onChange={(value) => onChange({ ...src, kind: 'fixed', value })}
+        />
+      ) : kind === 'rgb' ? (
         <ChannelGroupFields
           channelGroup={src.channelGroup}
           onChange={(channelGroup) => onChange({ ...src, kind: 'rgb', channelGroup })}
@@ -830,7 +883,7 @@ function ColorSourcesEditor({ sources, onChange }) {
       summary={list.length ? `${list.length} named` : 'none'}
     >
       <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
-        Define palette or RGB colors once on this rule, then reference them by name in
+        Define fixed, palette, or packet-RGB colors once on this rule, then reference them by name in
         &quot;Named blend&quot; extracts (N-way weighted mixes per segment).
       </Text>
       {dups.length > 0 && (
@@ -876,46 +929,97 @@ function ColorSourcesEditor({ sources, onChange }) {
 
 function ColorBlendSourceEditor({ label, source, onChange }) {
   const src = source || createEmptyColorBlendSource();
+  const kind = src.kind === 'fixed' ? 'fixed' : (src.kind === 'rgb' || src.channelGroup ? 'rgb' : 'palette');
   return (
     <Paper p="xs" withBorder bg="var(--bg)">
       <Text size="xs" fw={600} mb={4}>{label}</Text>
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-        <Field label="Offset">
-          <NumberInput
-            value={src.offset ?? 0}
-            onChange={(v) => onChange({ ...src, offset: Math.max(0, parseInt(v, 10) || 0) })}
-            min={0}
-          />
-        </Field>
-        <Field label="bitStart">
-          <NumberInput
-            value={src.bitStart ?? 0}
-            onChange={(v) => onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
-            min={0}
-            max={7}
-          />
-        </Field>
-        <Field label="bitCount">
-          <NumberInput
-            value={src.bitCount ?? 8}
-            onChange={(v) => onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
-            min={1}
-            max={32}
-          />
-        </Field>
-        <Field label="Source type">
-          <SegmentedControl
-            fullWidth
-            size="xs"
-            value={src.paletteMap === false ? 'raw' : 'palette'}
-            onChange={(mode) => onChange({ ...src, paletteMap: mode === 'palette' })}
-            data={[
-              { label: 'Palette idx', value: 'palette' },
-              { label: 'Raw', value: 'raw' },
-            ]}
-          />
-        </Field>
-      </SimpleGrid>
+      <Field label="Source" mb="xs">
+        <SegmentedControl
+          fullWidth
+          size="xs"
+          value={kind}
+          onChange={(next) => {
+            if (next === 'fixed') {
+              onChange({ kind: 'fixed', value: src.value || '#ffffff' });
+              return;
+            }
+            if (next === 'rgb') {
+              onChange({
+                kind: 'rgb',
+                paletteMap: false,
+                channelGroup: src.channelGroup || {
+                  r: { offset: src.offset ?? 8, bitStart: 0, bitCount: 8 },
+                  g: { offset: (src.offset ?? 8) + 1, bitStart: 0, bitCount: 8 },
+                  b: { offset: (src.offset ?? 8) + 2, bitStart: 0, bitCount: 8 },
+                  scale: 'direct8',
+                },
+              });
+              return;
+            }
+            onChange({
+              kind: 'palette',
+              offset: src.offset ?? 0,
+              bitStart: src.bitStart ?? 0,
+              bitCount: src.bitCount ?? 8,
+              paletteMap: true,
+            });
+          }}
+          data={[
+            { label: 'Fixed', value: 'fixed' },
+            { label: 'Palette', value: 'palette' },
+            { label: 'RGB', value: 'rgb' },
+          ]}
+        />
+      </Field>
+      {kind === 'fixed' ? (
+        <FixedHexField
+          value={src.value || '#ffffff'}
+          onChange={(value) => onChange({ kind: 'fixed', value })}
+        />
+      ) : kind === 'rgb' ? (
+        <ChannelGroupFields
+          channelGroup={src.channelGroup}
+          onChange={(channelGroup) => onChange({ kind: 'rgb', paletteMap: false, channelGroup })}
+        />
+      ) : (
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+          <Field label="Offset">
+            <NumberInput
+              value={src.offset ?? 0}
+              onChange={(v) => onChange({ ...src, kind: 'palette', offset: Math.max(0, parseInt(v, 10) || 0) })}
+              min={0}
+            />
+          </Field>
+          <Field label="bitStart">
+            <NumberInput
+              value={src.bitStart ?? 0}
+              onChange={(v) => onChange({ ...src, kind: 'palette', bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+              min={0}
+              max={7}
+            />
+          </Field>
+          <Field label="bitCount">
+            <NumberInput
+              value={src.bitCount ?? 8}
+              onChange={(v) => onChange({ ...src, kind: 'palette', bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+              min={1}
+              max={32}
+            />
+          </Field>
+          <Field label="Map">
+            <SegmentedControl
+              fullWidth
+              size="xs"
+              value={src.paletteMap === false ? 'raw' : 'palette'}
+              onChange={(mode) => onChange({ ...src, kind: 'palette', paletteMap: mode === 'palette' })}
+              data={[
+                { label: 'Palette idx', value: 'palette' },
+                { label: 'Raw gray', value: 'raw' },
+              ]}
+            />
+          </Field>
+        </SimpleGrid>
+      )}
     </Paper>
   );
 }
@@ -943,27 +1047,33 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
   const isReciprocal = curve.type === 'reciprocal';
   const extractMode = isColorSourceBlendSource(extract.source)
     ? 'colorSourceBlend'
-    : (extract.channelGroup
-      ? 'channelGroup'
-      : (extract.colorBlend
-        ? 'colorBlend'
-        : (extract.paletteMap ? 'palette' : 'curve')));
+    : (isFixedColorSource(extract.source)
+      ? 'fixedColor'
+      : (extract.channelGroup
+        ? 'channelGroup'
+        : (extract.colorBlend
+          ? 'colorBlend'
+          : (extract.paletteMap ? 'palette' : 'curve'))));
   const blendWeightSum = colorSourceBlendWeightSum(blend);
   const blendWeightOk = Math.abs(blendWeightSum - 100) < 0.5;
   const title = extract.name?.trim() ? extract.name.trim() : 'Packet extract';
   const summary = [
-    extractMode === 'channelGroup'
-      ? 'rgb channel group'
-      : (extractMode === 'colorSourceBlend'
-        ? 'named blend'
-        : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`)),
-    extractMode === 'channelGroup'
-      ? (channelGroup.scale || 'bitReplicate6to8')
-      : (extractMode === 'colorSourceBlend'
-        ? `${blend.length} src · ${blendWeightSum.toFixed(0)}%`
-        : (extractMode === 'colorBlend'
-          ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
-          : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve')))),
+    extractMode === 'fixedColor'
+      ? (extract.value || '#ffffff')
+      : (extractMode === 'channelGroup'
+        ? 'rgb channel group'
+        : (extractMode === 'colorSourceBlend'
+          ? 'named blend'
+          : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`))),
+    extractMode === 'fixedColor'
+      ? 'hard-coded'
+      : (extractMode === 'channelGroup'
+        ? (channelGroup.scale || 'bitReplicate6to8')
+        : (extractMode === 'colorSourceBlend'
+          ? `${blend.length} src · ${blendWeightSum.toFixed(0)}%`
+          : (extractMode === 'colorBlend'
+            ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
+            : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve'))))),
     `${targets.length} target${targets.length === 1 ? '' : 's'}`,
   ].join(' · ');
 
@@ -984,12 +1094,25 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
   };
 
   const setExtractMode = (mode) => {
+    if (mode === 'fixedColor') {
+      const rest = createEmptyFixedColorExtract(extract.name || '');
+      onChange({
+        ...rest,
+        name: extract.name || '',
+        value: extract.value || rest.value,
+        targets: Array.isArray(extract.targets) && extract.targets.length
+          ? extract.targets
+          : rest.targets,
+      });
+      return;
+    }
     if (mode === 'palette') {
       const rest = { ...extract, source: 'payloadBits', paletteMap: true };
       delete rest.curve;
       delete rest.channelGroup;
       delete rest.colorBlend;
       delete rest.blend;
+      delete rest.value;
       onChange(rest);
       return;
     }
@@ -998,6 +1121,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       delete rest.curve;
       delete rest.colorBlend;
       delete rest.blend;
+      delete rest.value;
       onChange({
         ...rest,
         channelGroup: {
@@ -1014,6 +1138,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       delete rest.curve;
       delete rest.channelGroup;
       delete rest.blend;
+      delete rest.value;
       onChange({ ...rest, colorBlend: extract.colorBlend || createEmptyColorBlend() });
       return;
     }
@@ -1035,6 +1160,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
     delete rest.channelGroup;
     delete rest.colorBlend;
     delete rest.blend;
+    delete rest.value;
     onChange(rest);
   };
 
@@ -1073,7 +1199,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       headerRight={<AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>}
     >
       <Text size="xs" c="dimmed" mb="xs">
-        Reads bits from the packet. For flash rate / on-time → segment fields, use{' '}
+        Hard-code a color, or read bits from the packet. For flash rate / on-time → segment fields, use{' '}
         <strong>Timing → Add timing → param binding</strong> above (not this section).
       </Text>
       <Field label="Value mode">
@@ -1082,6 +1208,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           value={extractMode}
           onChange={setExtractMode}
           data={[
+            { label: 'Fixed', value: 'fixedColor' },
             { label: 'Palette', value: 'palette' },
             { label: 'Curve', value: 'curve' },
             { label: 'RGB', value: 'channelGroup' },
@@ -1090,7 +1217,18 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           ]}
         />
       </Field>
-      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && extractMode !== 'colorSourceBlend' && (
+      {extractMode === 'fixedColor' && (
+        <Stack gap="xs" mt="xs">
+          <Field label="Name">
+            <TextInput value={extract.name || ''} onChange={(e) => onChange({ ...extract, source: 'fixedColor', name: e.target.value })} placeholder="solidPurple" />
+          </Field>
+          <FixedHexField
+            value={extract.value || '#ffffff'}
+            onChange={(value) => onChange({ ...extract, source: 'fixedColor', value })}
+          />
+        </Stack>
+      )}
+      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && extractMode !== 'colorSourceBlend' && extractMode !== 'fixedColor' && (
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
           <Field label="Name">
             <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />

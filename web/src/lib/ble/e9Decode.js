@@ -79,14 +79,19 @@ function previewChannelGroupRgb(channelGroup, payloadBytes) {
 
 function previewColorSource(srcObj, payloadBytes, colors) {
   if (!srcObj || typeof srcObj !== 'object') return [0, 0, 0];
-  if (srcObj.channelGroup) return previewChannelGroupRgb(srcObj.channelGroup, payloadBytes);
+  if (srcObj.kind === 'fixed') {
+    return hexToRgb(srcObj.value) || [0, 0, 0];
+  }
+  if (srcObj.kind === 'rgb' || srcObj.channelGroup) {
+    return previewChannelGroupRgb(srcObj.channelGroup, payloadBytes);
+  }
   const raw = extractBits(
     payloadBytes,
     Number(srcObj.offset ?? 0),
     Number(srcObj.bitStart ?? 0),
     Number(srcObj.bitCount ?? 8),
   );
-  if (srcObj.paletteMap !== false) {
+  if (srcObj.kind === 'palette' || srcObj.paletteMap !== false) {
     const pal = raw & 0x1f;
     return hexToRgb(Array.isArray(colors) ? colors[pal] : null) || [0, 0, 0];
   }
@@ -473,7 +478,9 @@ function previewNamedColorSources(colorSources, payloadBytes, colors) {
   (colorSources || []).forEach((src) => {
     const name = typeof src?.name === 'string' ? src.name.trim() : '';
     if (!name || map[name]) return;
-    if (src.kind === 'rgb' && src.channelGroup) {
+    if (src.kind === 'fixed') {
+      map[name] = hexToRgb(src.value) || [0, 0, 0];
+    } else if (src.kind === 'rgb' && src.channelGroup) {
       map[name] = previewChannelGroupRgb(src.channelGroup, payloadBytes);
     } else {
       map[name] = previewColorSource({
@@ -505,15 +512,18 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
     const source = ex?.source || 'payloadBits';
     const isTiming = source === 'timingFlashRate' || source === 'timingOnSec' || source === 'timingFadeSec';
     const isColorSourceBlend = source === 'colorSourceBlend';
+    const isFixedColor = source === 'fixedColor';
     const targets = Array.isArray(ex?.targets) ? ex.targets : [];
     let raw = 0;
     let derivedValue;
     let mapped;
     let paletteIndex;
     let rgb = null;
-    const paletteMap = isTiming || isColorSourceBlend ? false : !!ex?.paletteMap;
-    const hasChannelGroup = !isTiming && !isColorSourceBlend && ex?.channelGroup && typeof ex.channelGroup === 'object';
-    const hasColorBlend = !isTiming && !isColorSourceBlend && !hasChannelGroup && ex?.colorBlend && typeof ex.colorBlend === 'object';
+    const paletteMap = isTiming || isColorSourceBlend || isFixedColor ? false : !!ex?.paletteMap;
+    const hasChannelGroup = !isTiming && !isColorSourceBlend && !isFixedColor
+      && ex?.channelGroup && typeof ex.channelGroup === 'object';
+    const hasColorBlend = !isTiming && !isColorSourceBlend && !isFixedColor && !hasChannelGroup
+      && ex?.colorBlend && typeof ex.colorBlend === 'object';
 
     if (isTiming) {
       derivedValue = resolveTimingDerivedValue(rule, payloadBytes, timingModels, source);
@@ -522,6 +532,10 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
       if (ex?.curve && typeof ex.curve === 'object') {
         mapped = applyCurve(derivedValue, ex.curve);
       }
+    } else if (isFixedColor) {
+      rgb = hexToRgb(ex.value) || [0, 0, 0];
+      mapped = 0;
+      raw = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
     } else if (hasChannelGroup) {
       rgb = previewChannelGroupRgb(ex.channelGroup, payloadBytes);
       mapped = 0;

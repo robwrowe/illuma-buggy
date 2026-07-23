@@ -22,6 +22,8 @@ static inline void applyMbRgbCalibration(uint8_t& r, uint8_t& g, uint8_t& b) {
   b = mbCalCurveB[b];
 }
 
+static void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b);
+
 // Cached rules document — refreshed by applyMbRulesJson / loadMbRulesFromJson.
 static DynamicJsonDocument gRulesDoc(BLE_JSON_DOC_SIZE);
 
@@ -425,13 +427,19 @@ static bool resolveSpeedBucketValue(JsonObject model, uint8_t timingByte,
   return true;
 }
 
-/** Resolve one color source to RGB (palette index, raw gray, or channel group). */
+/** Resolve one color source to RGB (fixed hex, palette index, raw gray, or channel group). */
 static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t plen,
                                uint8_t& r, uint8_t& g, uint8_t& b) {
   r = g = b = 0;
   if (srcObj.isNull()) return;
 
   const char* kind = srcObj["kind"] | "";
+  // Authored constant — do not apply BLE RGB calibration (display values as written).
+  if (strcmp(kind, "fixed") == 0) {
+    parseHexColor(srcObj["value"] | "#000000", r, g, b);
+    return;
+  }
+
   JsonObject channelGroup = srcObj["channelGroup"].as<JsonObject>();
   // Named sources use kind:"rgb"; legacy colorBlend a/b may embed channelGroup without kind.
   bool useRgb = (strcmp(kind, "rgb") == 0) || (kind[0] == 0 && !channelGroup.isNull());
@@ -1133,7 +1141,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   int resolvedSourceCount = 0;
 
   JsonArray colorSources = rule["colorSources"].as<JsonArray>();
-  if (!colorSources.isNull() && payload && plen > 0) {
+  if (!colorSources.isNull()) {
     for (JsonVariant v : colorSources) {
       if (resolvedSourceCount >= 8) break;
       if (!v.is<JsonObject>()) continue;
@@ -1163,16 +1171,17 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       uint32_t raw = 0;
       float derivedValue = -1.0f;  // sentinel: not a timing-derived extract
       bool paletteMap = ex["paletteMap"] | false;
+      bool hasFixedColor = (strcmp(source, "fixedColor") == 0);
       JsonObject channelGroup = ex["channelGroup"].as<JsonObject>();
-      bool hasChannelGroup = !channelGroup.isNull();
+      bool hasChannelGroup = !hasFixedColor && !channelGroup.isNull();
       JsonObject colorBlend = ex["colorBlend"].as<JsonObject>();
-      bool hasColorBlend = !colorBlend.isNull();
+      bool hasColorBlend = !hasFixedColor && !colorBlend.isNull();
       bool hasColorSourceBlend = (strcmp(source, "colorSourceBlend") == 0);
 
       if (isTimingDerivedSource(source)) {
         derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
         paletteMap = false;
-      } else if (!hasChannelGroup && !hasColorBlend && !hasColorSourceBlend) {
+      } else if (!hasFixedColor && !hasChannelGroup && !hasColorBlend && !hasColorSourceBlend) {
         uint8_t offset = (uint8_t)(ex["offset"] | 0);
         uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
         uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
@@ -1181,7 +1190,11 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
       uint8_t r = 0, g = 0, b = 0;
       float mapped = (derivedValue >= 0.0f) ? derivedValue : (float)raw;
-      if (hasChannelGroup) {
+      if (hasFixedColor) {
+        parseHexColor(ex["value"] | "#000000", r, g, b);
+        mapped = 0.0f;
+        Serial.printf("[Rule] fixedColor rgb=%u,%u,%u\n", r, g, b);
+      } else if (hasChannelGroup) {
         auto extractChannel = [&](const char* key, bool* flashOut) -> uint8_t {
           JsonObject ch = channelGroup[key].as<JsonObject>();
           if (ch.isNull()) {

@@ -69,6 +69,7 @@ export function createEmptyExtractTarget(kind = 'maskColor') {
 
 export function createEmptyColorBlendSource(overrides = {}) {
   return {
+    kind: 'palette',
     offset: 0,
     bitStart: 0,
     bitCount: 8,
@@ -106,6 +107,14 @@ export function createEmptyColorSourceRgb(overrides = {}) {
       b: { offset: 10, bitStart: 0, bitCount: 8 },
       scale: 'direct8',
     },
+    ...overrides,
+  });
+}
+
+export function createEmptyColorSourceFixed(overrides = {}) {
+  return createEmptyColorSource({
+    kind: 'fixed',
+    value: '#ffffff',
     ...overrides,
   });
 }
@@ -872,13 +881,16 @@ const CHANNEL_SCALES = new Set(['bitReplicate6to8', 'direct8', 'none']);
 function normalizeColorBlendSource(raw, fallbackOffset = 0) {
   const d = createEmptyColorBlendSource({ offset: fallbackOffset });
   if (!raw || typeof raw !== 'object') return d;
-  const out = {
-    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : fallbackOffset,
-    bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
-    bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
-    paletteMap: raw.paletteMap !== false,
-  };
-  if (raw.channelGroup && typeof raw.channelGroup === 'object') {
+
+  // Hard-coded hex — no packet extract.
+  if (raw.kind === 'fixed') {
+    return {
+      kind: 'fixed',
+      value: normalizeCustomHex(raw.value) || '#ffffff',
+    };
+  }
+
+  if (raw.kind === 'rgb' || (raw.channelGroup && typeof raw.channelGroup === 'object')) {
     const foOr = (ch, fallback) => (
       Number.isFinite(ch?.offset) ? Math.max(0, Number(ch.offset)) : fallback
     );
@@ -890,16 +902,27 @@ function normalizeColorBlendSource(raw, fallbackOffset = 0) {
         bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : 8,
       };
     };
-    const scale = CHANNEL_SCALES.has(raw.channelGroup.scale) ? raw.channelGroup.scale : 'direct8';
-    out.paletteMap = false;
-    out.channelGroup = {
-      r: normCh(raw.channelGroup.r, foOr(raw.channelGroup.r, fallbackOffset)),
-      g: normCh(raw.channelGroup.g, foOr(raw.channelGroup.g, fallbackOffset + 1)),
-      b: normCh(raw.channelGroup.b, foOr(raw.channelGroup.b, fallbackOffset + 2)),
-      scale,
+    const cg = raw.channelGroup && typeof raw.channelGroup === 'object' ? raw.channelGroup : {};
+    const scale = CHANNEL_SCALES.has(cg.scale) ? cg.scale : 'direct8';
+    return {
+      kind: 'rgb',
+      paletteMap: false,
+      channelGroup: {
+        r: normCh(cg.r, foOr(cg.r, fallbackOffset)),
+        g: normCh(cg.g, foOr(cg.g, fallbackOffset + 1)),
+        b: normCh(cg.b, foOr(cg.b, fallbackOffset + 2)),
+        scale,
+      },
     };
   }
-  return out;
+
+  return {
+    kind: 'palette',
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : fallbackOffset,
+    bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
+    bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
+    paletteMap: raw.paletteMap !== false,
+  };
 }
 
 function normalizeColorBlend(raw) {
@@ -951,9 +974,15 @@ function normalizeChannelGroup(raw, fallbackOffset = 8) {
 export function normalizeColorSource(raw, index = 0) {
   const d = createEmptyColorSource({ name: `color${index + 1}` });
   if (!raw || typeof raw !== 'object') return d;
-  const kind = raw.kind === 'rgb' ? 'rgb' : 'palette';
   const name = typeof raw.name === 'string' ? raw.name.trim() : '';
-  if (kind === 'rgb') {
+  if (raw.kind === 'fixed') {
+    return {
+      name: name || d.name,
+      kind: 'fixed',
+      value: normalizeCustomHex(raw.value) || '#ffffff',
+    };
+  }
+  if (raw.kind === 'rgb') {
     return {
       name: name || d.name,
       kind: 'rgb',
@@ -1000,10 +1029,23 @@ export function normalizeColorSourceBlend(raw) {
     }));
 }
 
-const EXTRACT_SOURCES = new Set(['payloadBits', 'colorSourceBlend', ...TIMING_DERIVED_SOURCE_SET]);
+const EXTRACT_SOURCES = new Set(['payloadBits', 'colorSourceBlend', 'fixedColor', ...TIMING_DERIVED_SOURCE_SET]);
 
 export function isColorSourceBlendSource(source) {
   return source === 'colorSourceBlend';
+}
+
+export function isFixedColorSource(source) {
+  return source === 'fixedColor';
+}
+
+export function createEmptyFixedColorExtract(name = '') {
+  return {
+    name,
+    source: 'fixedColor',
+    value: '#ffffff',
+    targets: [{ kind: 'maskColor', mask: 'all' }],
+  };
 }
 
 export function normalizeExtract(raw) {
@@ -1011,10 +1053,17 @@ export function normalizeExtract(raw) {
   const source = EXTRACT_SOURCES.has(raw.source) ? raw.source : 'payloadBits';
   const isTiming = isTimingDerivedSource(source);
   const isColorSourceBlend = isColorSourceBlendSource(source);
-  const hasChannelGroup = !isTiming && !isColorSourceBlend && raw.channelGroup && typeof raw.channelGroup === 'object';
-  const hasColorBlend = !isTiming && !isColorSourceBlend && !hasChannelGroup && raw.colorBlend && typeof raw.colorBlend === 'object';
-  const paletteMap = isTiming || isColorSourceBlend || hasChannelGroup || hasColorBlend ? false : !!raw.paletteMap;
-  const curve = (paletteMap || hasChannelGroup || hasColorBlend || isColorSourceBlend) ? null : normalizeCurve(raw.curve);
+  const isFixedColor = isFixedColorSource(source);
+  const hasChannelGroup = !isTiming && !isColorSourceBlend && !isFixedColor
+    && raw.channelGroup && typeof raw.channelGroup === 'object';
+  const hasColorBlend = !isTiming && !isColorSourceBlend && !isFixedColor && !hasChannelGroup
+    && raw.colorBlend && typeof raw.colorBlend === 'object';
+  const paletteMap = isTiming || isColorSourceBlend || isFixedColor || hasChannelGroup || hasColorBlend
+    ? false
+    : !!raw.paletteMap;
+  const curve = (paletteMap || hasChannelGroup || hasColorBlend || isColorSourceBlend || isFixedColor)
+    ? null
+    : normalizeCurve(raw.curve);
   // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
   const targets = Array.isArray(raw.targets)
     ? raw.targets.map(normalizeExtractTarget)
@@ -1029,6 +1078,10 @@ export function normalizeExtract(raw) {
     ...(curve ? { curve } : {}),
     targets,
   };
+  if (isFixedColor) {
+    out.value = normalizeCustomHex(raw.value) || '#ffffff';
+    return out;
+  }
   if (isColorSourceBlend) {
     out.blend = normalizeColorSourceBlend(raw.blend);
     return out;
