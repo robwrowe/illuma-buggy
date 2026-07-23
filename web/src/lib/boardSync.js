@@ -31,7 +31,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
   const opts = { ...DEFAULT_BOARD_SYNC_OPTIONS, ...options };
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
   const presets = data.presets || [];
-  const layouts = data.customSegmentLayouts || [];
+  const segmentMaps = normalizeMbMapping(data.mbMapping).segmentMaps || [];
   const mb = normalizeMbMapping(data.mbMapping);
   const sent = [];
 
@@ -107,7 +107,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
         type: 'preset_save',
         id: p.id,
         name: p.name,
-        wled: presetWledForBoard(p, layouts),
+        wled: presetWledForBoard(p, segmentMaps),
       });
       await delay(BLE_SEND_DELAY_MS + 30);
     }

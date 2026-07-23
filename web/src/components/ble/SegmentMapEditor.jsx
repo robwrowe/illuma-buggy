@@ -186,9 +186,14 @@ function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions
             value={seg.fx >= 0 ? String(seg.fx) : ''}
             onChange={(v) => set({ fx: v === '' ? -1 : parseInt(v, 10) })}
             options={fxOpts}
-            placeholder="(default — Solid)"
+            placeholder="(use rule fx)"
             allowEmpty
           />
+          {seg.fx >= 0 && (
+            <Text size="xs" c="dimmed" mt={4}>
+              Overrides the rule&apos;s effect for this segment. Leave blank to use the rule&apos;s fx.
+            </Text>
+          )}
         </Field>
         <Field label="Palette">
           <SearchableSelect
@@ -269,7 +274,13 @@ function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions
 }
 
 export function SegmentMapEditor({
-  mb, presets = [], wledIp = '', effectOptions = [], paletteOptions = [], onChange,
+  mb,
+  presets = [],
+  wledIp = '',
+  effectOptions = [],
+  paletteOptions = [],
+  onChange,
+  onPresetsChange,
 }) {
   const mapping = normalizeMbMapping(mb);
   const maps = mapping.segmentMaps || [];
@@ -305,8 +316,34 @@ export function SegmentMapEditor({
   };
 
   const deleteMap = (id) => {
+    const inUseByRules = (mapping.rules || []).filter((r) => r.segmentMapId === id);
+    const inUseByPresets = (presets || []).filter((p) => p.segmentMapId === id);
+    if (inUseByRules.length || inUseByPresets.length) {
+      const names = [
+        ...inUseByRules.map((r) => `rule "${r.name}"`),
+        ...inUseByPresets.map((p) => `preset "${p.name}"`),
+      ].join(', ');
+      if (!window.confirm(
+        `This map is used by ${names}. Deleting it will leave those references pointing at ` +
+        `nothing (rules fall back to single-segment mode; presets fall back to no segment data). ` +
+        `Delete anyway?`,
+      )) return;
+    }
     const next = maps.filter((m) => m.id !== id);
-    setMaps(next);
+    onChange({
+      ...mapping,
+      segmentMaps: next.map(normalizeSegmentMap),
+      rules: (mapping.rules || []).map((r) => (
+        r.segmentMapId === id ? { ...r, segmentMapId: '' } : r
+      )),
+    });
+    if (inUseByPresets.length && onPresetsChange) {
+      onPresetsChange(
+        (presets || []).map((p) => (
+          p.segmentMapId === id ? { ...p, segmentMapId: undefined } : p
+        )),
+      );
+    }
     if (selectedId === id) setSelectedId(next[0]?.id || null);
   };
 
@@ -363,8 +400,10 @@ export function SegmentMapEditor({
   return (
     <Stack gap="md">
       <Text size="xs" c="dimmed" lh={1.5}>
-        Shareable segment maps referenced by rules via <code style={{ fontFamily: 'monospace' }}>segmentMapId</code>.
+        Shareable segment maps referenced by rules and presets via{' '}
+        <code style={{ fontFamily: 'monospace' }}>segmentMapId</code>.
         Mask assignment links a segment to MB region extracts; <strong>ignore</strong> excludes it from mask fan-out.
+        Leave segment Effect blank (<code style={{ fontFamily: 'monospace' }}>fx: -1</code>) to use the rule&apos;s effect.
       </Text>
 
       <Group gap="xs" wrap="wrap">

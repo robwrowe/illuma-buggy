@@ -1,4 +1,4 @@
-import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId } from './mbConstants';
+import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId, blendModeIdToBm } from './mbConstants';
 import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
 
 const BYTE_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
@@ -1371,11 +1371,110 @@ export function mbMappingToBlePayload(config) {
   };
 }
 
-export function presetWledForBoard(preset, customSegmentLayouts) {
+/**
+ * Convert a segment-map segment into a WLED-shaped seg def for recall / board sync.
+ * Map segments use string ids + wledSegId + blend id + hex colors[]; WLED wants
+ * numeric id, bm, and col RGB arrays.
+ */
+export function segmentMapSegmentToWledDef(seg) {
+  if (!seg) return null;
+  const start = Number(seg.start ?? 0);
+  const stop = Number(seg.stop ?? 0);
+  if (stop <= start) return null;
+  const out = {
+    id: Number.isFinite(seg.wledSegId) ? Number(seg.wledSegId) : Number(seg.id ?? 0),
+    start,
+    stop,
+    grp: seg.grp ?? 1,
+    spc: seg.spc ?? 0,
+    of: seg.of ?? 0,
+    rev: !!seg.rev,
+    mi: !!seg.mi,
+    bm: blendModeIdToBm(seg.blend),
+  };
+  if (Number.isFinite(seg.fx) && seg.fx >= 0) out.fx = seg.fx;
+  if (Number.isFinite(seg.pal) && seg.pal >= 0) out.pal = seg.pal;
+  if (Number.isFinite(seg.sx)) out.sx = seg.sx;
+  if (Number.isFinite(seg.ix)) out.ix = seg.ix;
+  const colors = Array.isArray(seg.colors) ? seg.colors : [];
+  const col = [];
+  for (let i = 0; i < 3; i++) {
+    const hex = colors[i];
+    if (typeof hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(hex)) {
+      col.push([
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16),
+      ]);
+    }
+  }
+  if (col.length) out.col = col;
+  return out;
+}
+
+/**
+ * One-time migration: fold legacy top-level `customSegmentLayouts` into
+ * `mbMapping.segmentMaps`. Returns a NEW data object; does not mutate input.
+ * Idempotent — if customSegmentLayouts is absent/empty, strips the key (when present)
+ * and leaves segmentMaps untouched.
+ *
+ * Also returns idMap { oldLayoutId -> newSegmentMapId } so callers can rewrite
+ * preset.segmentLayoutId -> preset.segmentMapId in the same pass.
+ */
+export function migrateLegacySegmentLayouts(data) {
+  if (!data || typeof data !== 'object') return { data, idMap: {} };
+  const legacy = Array.isArray(data.customSegmentLayouts) ? data.customSegmentLayouts : [];
+  if (legacy.length === 0) {
+    if (!('customSegmentLayouts' in data)) return { data, idMap: {} };
+    const { customSegmentLayouts, ...rest } = data;
+    return { data: rest, idMap: {} };
+  }
+
+  const mapping = normalizeMbMapping(data.mbMapping);
+  const existingMaps = mapping.segmentMaps || [];
+  const idMap = {};
+  const migratedMaps = legacy.map((layout) => {
+    const newMap = normalizeSegmentMap({
+      id: undefined, // force fresh id — legacy layout ids may collide with segment map ids
+      name: layout.name ? `${layout.name} (migrated)` : 'Migrated layout',
+      segments: (layout.segments || []).map((s) => {
+        const legacyId = Number.isFinite(s?.wledSegId)
+          ? Number(s.wledSegId)
+          : (Number.isFinite(s?.id) ? Number(s.id) : 0);
+        const colors = Array.isArray(s?.colors)
+          ? s.colors
+          : (Array.isArray(s?.col) ? s.col.map(rgbArrayToHex) : undefined);
+        return {
+          ...s,
+          id: undefined,
+          wledSegId: legacyId,
+          maskAssignment: s?.maskAssignment || 'all',
+          blend: s?.blend ?? s?.bm,
+          colors,
+          rev: !!s?.rev,
+          mi: !!s?.mi,
+        };
+      }),
+    });
+    if (layout.id) idMap[layout.id] = newMap.id;
+    return newMap;
+  });
+
+  const { customSegmentLayouts, ...rest } = data;
+  return {
+    data: {
+      ...rest,
+      mbMapping: { ...mapping, segmentMaps: [...existingMaps, ...migratedMaps] },
+    },
+    idMap,
+  };
+}
+
+export function presetWledForBoard(preset, segmentMaps) {
   const wled = JSON.parse(JSON.stringify(preset.wled || { on: true }));
   const always = () => true;
   const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
-  const activeSegments = activeSegmentsFromPreset(preset, customSegmentLayouts);
+  const activeSegments = activeSegmentsFromPreset(preset, segmentMaps);
   if (activeSegments.length > 0) {
     wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i));
   } else {

@@ -1,6 +1,6 @@
 import { finalizeWledSegmentPayload } from '../ble/chunking';
 import { FIVE_CORNER_IDS, FIVE_CORNER_RGB, STRIP_LED_COUNT } from '../ble/mbConstants';
-import { presetWledForBoard, withSegRefDefaults } from '../ble/mbMapping';
+import { presetWledForBoard, segmentMapSegmentToWledDef, withSegRefDefaults } from '../ble/mbMapping';
 
 export function segRefToPreview(ref, col) {
   const fx = (ref.fx ?? -1) >= 0 ? ref.fx : 0;
@@ -182,14 +182,16 @@ export function mergeSegmentsById(base, incoming) {
   return [...map.values()].sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0));
 }
 
-export function activeSegmentsFromPreset(preset, customSegmentLayouts) {
+export function activeSegmentsFromPreset(preset, segmentMaps) {
   const w = preset?.wled || {};
-  const linked = preset?.segmentLayoutId
-    ? (customSegmentLayouts || []).find(l => l.id === preset.segmentLayoutId)
+  const linked = preset?.segmentMapId
+    ? (segmentMaps || []).find(m => m.id === preset.segmentMapId)
     : undefined;
-  const fromLayout = linked?.segments?.map(s => normalizeSegmentDef(s)).filter(Boolean) || [];
+  const fromMap = linked?.segments
+    ?.map(s => normalizeSegmentDef(segmentMapSegmentToWledDef(s) || s))
+    .filter(Boolean) || [];
   const fromPreset = (w.seg || []).map(s => normalizeSegmentDef(s)).filter(Boolean);
-  const merged = mergeSegmentsById(fromLayout, fromPreset);
+  const merged = mergeSegmentsById(fromMap, fromPreset);
   return merged.filter(isActiveSegment);
 }
 
@@ -236,7 +238,7 @@ export function applyWledStateCapture(preset, state, catalog, opts, updateMemory
   if (!primary) throw new Error('No active segments in WLED state');
   const wled = { ...preset.wled };
   const memory = { ...preset.memory };
-  let segmentLayoutId = preset.segmentLayoutId;
+  let segmentMapId = preset.segmentMapId;
   const capturedSegs = rawSegs.map(seg => captureSegmentFromRaw(seg, opts)).filter(Boolean);
 
   if (opts.effect) {
@@ -268,13 +270,13 @@ export function applyWledStateCapture(preset, state, catalog, opts, updateMemory
   }
   if (capturedSegs.length && (opts.effect || opts.palette || opts.parameters || opts.color || opts.segments)) {
     wled.seg = capturedSegs.filter(seg => !opts.segments || isActiveSegment(seg));
-    segmentLayoutId = undefined;
+    segmentMapId = undefined;
   }
   if (opts.segments && capturedSegs.length > 0) {
     if (updateMemory) memory.segments = capturedSegs.some(isActiveSegment);
   }
 
-  return { ...preset, wled, memory, segmentLayoutId };
+  return { ...preset, wled, memory, segmentMapId };
 }
 
 export function formatWledSegLabel(seg) {
@@ -346,9 +348,9 @@ export function pruneRefsToSnapshot(snapshot, refs) {
   return [...manual, ...fromSnap];
 }
 
-export function buildPresetLayoutPayload(preset, customSegmentLayouts) {
+export function buildPresetLayoutPayload(preset, segmentMaps) {
   if (!preset) return null;
-  const wled = presetWledForBoard(preset, customSegmentLayouts);
+  const wled = presetWledForBoard(preset, segmentMaps);
   if (!wled.seg?.length) return null;
   return { on: true, seg: wled.seg.map(s => ({ ...s })) };
 }

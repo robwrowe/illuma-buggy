@@ -110,6 +110,7 @@ export function SettingsTab({ data, update }) {
               effectOptions={segFxOptions}
               paletteOptions={segPalOptions}
               onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
+              onPresetsChange={(nextPresets) => update({ presets: nextPresets })}
             />
           </>
         )}

@@ -21,15 +21,15 @@ export function finalizeWledSegmentPayload(payload) {
   return { ...payload, on: true, seg: merged };
 }
 
-export function buildTestPresetPayload(preset, customSegmentLayouts) {
+export function buildTestPresetPayload(preset, segmentMaps) {
   const p = { ...preset, memory: { ...TEST_PRESET_MEMORY } };
-  return finalizeWledSegmentPayload(buildRecallPayload(p, TEST_PRESET_RECALL, customSegmentLayouts));
+  return finalizeWledSegmentPayload(buildRecallPayload(p, TEST_PRESET_RECALL, segmentMaps));
 }
 
 export async function testPresetOnWled(ip, preset, data) {
   const host = ip.trim();
   if (!host) throw new Error('Enter a WLED IP');
-  const payload = buildTestPresetPayload(preset, data.customSegmentLayouts);
+  const payload = buildTestPresetPayload(preset, data.mbMapping?.segmentMaps);
   await postWledState(host, payload);
 }
 

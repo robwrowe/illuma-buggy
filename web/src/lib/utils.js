@@ -197,7 +197,7 @@ export const DEFAULT_DATA = {
   overrideKillOnZone: false, magicBandFivePoint: true, bleEffectTransitionMs: 700,
   starlightEnabled: true, starlightTimeoutSec: 15,
   magicBandEnabled: true, magicBandTimeoutSec: 15,
-  customPalettes: [], paletteSets: [], customSegmentLayouts: [], savedColors: [],
+  customPalettes: [], paletteSets: [], savedColors: [],
   showModeConfig: {
     parade: { pre: '', live: '', post: '' },
     fireworks: { pre: '', live: '', post: '' },
@@ -272,7 +272,7 @@ export function paletteSelectValue(wled) {
 
 export const DEFAULT_PRESET_MEMORY = { effect: true, palette: true, parameters: true, color: false, segments: false };
 
-export function buildRecallPayload(preset, recall, customSegmentLayouts) {
+export function buildRecallPayload(preset, recall, segmentMaps) {
   const r = recall || DEFAULT_DATA.recallState;
   const w = preset.wled || { on: true };
   const m = preset.memory || DEFAULT_PRESET_MEMORY;
@@ -284,7 +284,7 @@ export function buildRecallPayload(preset, recall, customSegmentLayouts) {
     return memVal;
   };
 
-  const activeSegments = activeSegmentsFromPreset(preset, customSegmentLayouts);
+  const activeSegments = activeSegmentsFromPreset(preset, segmentMaps);
   const recallLayout = should('segments', m.segments) && activeSegments.length > 0;
 
   if (recallLayout) {
