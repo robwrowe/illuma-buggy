@@ -404,6 +404,15 @@ class BLEService {
   sendShowModeExit() {
     return this.send({ type: 'show_mode_exit' });
   }
+  sendParadeManualStart() {
+    return this.send({ type: 'parade_manual_start' });
+  }
+  sendParadeManualStop() {
+    return this.send({ type: 'parade_manual_stop' });
+  }
+  sendColorCalibration(calibration: { enabled: boolean; curves: unknown }) {
+    return this.send({ type: 'set_color_calibration', calibration });
+  }
   sendBleCaptureConfig(active: boolean, durationMs = 0, label = '') {
     const msg: BLEMessage = { type: 'ble_capture_config', active };
     if (active && durationMs > 0) msg.duration_ms = durationMs;

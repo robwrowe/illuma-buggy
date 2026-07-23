@@ -16,6 +16,8 @@ import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 
 import { useTheme } from '../utils/theme';
 import { useAppStore } from '../stores/store';
+import { useBLE } from '../hooks/useBLE';
+import { bleService } from '../services/BLEService';
 import { PresetPickerModal } from './MbMappingSections';
 import { listParkShows } from '../services/themeParksApi';
 import {
@@ -44,6 +46,7 @@ function presetLabel(presets: { id: string; name: string }[], id: string, _kind:
 export default function ShowsScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
+  const { isConnected } = useBLE();
   const {
     parks, presets, zones, showBindings, showSettings, setShowSettings, saveToStorage,
     upsertShowBinding, removeShowBinding,
@@ -56,10 +59,35 @@ export default function ShowsScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [picker, setPicker] = useState<PickerTarget>(null);
   const [showBriDraft, setShowBriDraft] = useState<string | null>(null);
+  const [paradeBusy, setParadeBusy] = useState(false);
+  const [paradeMsg, setParadeMsg] = useState('');
 
   const selectedPark = parks.find(p => p.id === selectedParkId) ?? null;
   const parkBindings = showBindings.filter(b => b.parkId === selectedParkId);
   const parkZones = zones.filter(z => z.parkId === selectedParkId && z.enabled);
+
+  const sendParadeManual = async (action: 'start' | 'stop') => {
+    setParadeMsg('');
+    if (!isConnected) {
+      setParadeMsg('Connect to IllumaBuggy first.');
+      return;
+    }
+    setParadeBusy(true);
+    try {
+      const ok = action === 'start'
+        ? await bleService.sendParadeManualStart()
+        : await bleService.sendParadeManualStop();
+      setParadeMsg(
+        ok === false
+          ? 'Send failed.'
+          : (action === 'start' ? 'Parade start sent.' : 'Parade stop sent.'),
+      );
+    } catch (e) {
+      setParadeMsg(String((e as Error)?.message || e));
+    } finally {
+      setParadeBusy(false);
+    }
+  };
 
   const loadApiShows = useCallback(async () => {
     const entityId = selectedPark?.themeParksApiEntityId;
@@ -144,6 +172,35 @@ export default function ShowsScreen() {
   return (
     <View style={s.wrap}>
       <ScrollView contentContainerStyle={s.content}>
+
+        <View style={s.section}>
+          <Text style={s.sectionTitle}>Manual parade</Text>
+          <Text style={s.hint}>
+            Start or stop parade mode on the board (same as web Shows → Manual parade).
+            Requires a live BLE connection.
+          </Text>
+          <View style={s.paradeBtnRow}>
+            <TouchableOpacity
+              style={[s.paradeBtn, s.paradeBtnPrimary, (!isConnected || paradeBusy) && s.paradeBtnDisabled]}
+              onPress={() => void sendParadeManual('start')}
+              disabled={!isConnected || paradeBusy}
+            >
+              {paradeBusy ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={s.paradeBtnTextPrimary}>Start</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.paradeBtn, (!isConnected || paradeBusy) && s.paradeBtnDisabled]}
+              onPress={() => void sendParadeManual('stop')}
+              disabled={!isConnected || paradeBusy}
+            >
+              <Text style={s.paradeBtnText}>Stop</Text>
+            </TouchableOpacity>
+          </View>
+          {!!paradeMsg && <Text style={s.hint}>{paradeMsg}</Text>}
+        </View>
 
         {/* Default timing */}
         <View style={s.section}>
@@ -487,6 +544,15 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   phaseRow:         { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   phaseValue:       { color: c.primary, fontSize: 13, fontWeight: '600' },
   switchRow:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+  paradeBtnRow:     { flexDirection: 'row', gap: 8, marginTop: 8, marginBottom: 4 },
+  paradeBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: c.border,
+    backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center',
+  },
+  paradeBtnPrimary: { backgroundColor: c.primary, borderColor: c.primary },
+  paradeBtnDisabled:{ opacity: 0.45 },
+  paradeBtnText:    { color: c.textPrimary, fontWeight: '700', fontSize: 14 },
+  paradeBtnTextPrimary: { color: '#fff', fontWeight: '700', fontSize: 14 },
   numRow:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
   numInput:         {
     width: 72, textAlign: 'right', backgroundColor: c.background, borderRadius: 8,

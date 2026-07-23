@@ -176,6 +176,11 @@ import {
   type ParkConfig, type ShowModeConfig, type WandLabConfig,
 } from '../utils/configMigration';
 import {
+  createEmptyColorCalibration,
+  normalizeColorCalibration,
+  type ColorCalibrationConfig,
+} from '../utils/colorCalibration';
+import {
   MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
 import {
@@ -284,6 +289,10 @@ interface AppState {
   // Brightness
   brightnessConfig:    BrightnessConfig;
   setBrightnessConfig: (config: Partial<BrightnessConfig>) => void;
+
+  /** Per-channel RGB curves — authored on web; app persists/pushes/toggles enabled. */
+  colorCalibration: ColorCalibrationConfig;
+  setColorCalibration: (config: Partial<ColorCalibrationConfig> | ColorCalibrationConfig) => void;
 
   // Device status
   deviceStatus:    DeviceStatus | null;
@@ -567,6 +576,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   boardRole:           'standalone',
   scannerMac:          '',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
+  colorCalibration:    createEmptyColorCalibration(),
   bleCaptureActive:       false,
   bleCaptureDurationSec:  900,
   bleCaptureStartedAt:    null,
@@ -706,6 +716,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Brightness
   setBrightnessConfig: (config) => set(s => ({ brightnessConfig: { ...s.brightnessConfig, ...config } })),
+  setColorCalibration: (config) => set(s => ({
+    colorCalibration: normalizeColorCalibration({ ...s.colorCalibration, ...config }),
+  })),
 
   // Device
   setDeviceStatus:       (deviceStatus) => set({ deviceStatus }),
@@ -877,7 +890,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Persistence
   loadFromStorage: async () => {
     try {
-      const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
+      const keys = ['presets','zones','indoorZones','brightnessConfig','colorCalibration','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandFivePoint','magicBandTimeoutSec','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
@@ -911,6 +924,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         zones:              (d.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
         indoorZones:        (d.indoorZones ?? []).map((z: IndoorZone) => normalizeZonePolygon(z)),
         brightnessConfig:   d.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
+        colorCalibration:   normalizeColorCalibration(d.colorCalibration),
         overrideKillOnZone: d.overrideKillOnZone ?? false,
         starlightEnabled:   d.starlightEnabled   ?? true,
         starlightTimeoutSec:d.starlightTimeoutSec ?? 15,
@@ -967,6 +981,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['zones',              JSON.stringify(s.zones)],
         ['indoorZones',        JSON.stringify(s.indoorZones)],
         ['brightnessConfig',   JSON.stringify(s.brightnessConfig)],
+        ['colorCalibration',   JSON.stringify(s.colorCalibration)],
         ['overrideKillOnZone', JSON.stringify(s.overrideKillOnZone)],
         ['starlightEnabled',   JSON.stringify(s.starlightEnabled)],
         ['starlightTimeoutSec',JSON.stringify(s.starlightTimeoutSec)],
@@ -1087,6 +1102,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       version: CURRENT_CONFIG_VERSION, exportedAt: new Date().toISOString(),
       presets: s.presets, zones: s.zones, indoorZones: s.indoorZones,
       brightnessConfig: s.brightnessConfig, recallState: s.recallState,
+      colorCalibration: s.colorCalibration,
       overrideKillOnZone: s.overrideKillOnZone,
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
       magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
@@ -1113,6 +1129,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       zones:              (m.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
       indoorZones:        (m.indoorZones ?? []).map((z: IndoorZone) => normalizeZonePolygon(z)),
       brightnessConfig:   m.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
+      colorCalibration:   normalizeColorCalibration(m.colorCalibration),
       recallState:        m.recallState        ?? DEFAULT_RECALL,
       overrideKillOnZone: m.overrideKillOnZone ?? false,
       starlightEnabled:   m.starlightEnabled   ?? true,

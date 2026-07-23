@@ -28,9 +28,8 @@ export { clearBoardPresetSyncCache } from './blePresetCache';
 /** MB mapping for BLE — colors, segments, rules, segmentMaps, paradeDetection. */
 export function mbMappingEssentialPayload(
   mbMapping: MbMappingConfig,
-  _presets: Preset[],
-  _recall: RecallState,
-  _layouts: CustomSegmentLayout[],
+  _presets?: Preset[],
+  _recall?: RecallState,
 ): object {
   return mbMappingToBlePayload(mbMapping);
 }

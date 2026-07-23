@@ -33,6 +33,7 @@ import ShowsScreen from './ShowsScreen';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
 import { requestFullBoardSync } from '../utils/connectBootstrap';
+import { normalizeColorCalibration } from '../utils/colorCalibration';
 import { useTheme, ThemeMode } from '../utils/theme';
 import {
   scanForScanners,
@@ -61,6 +62,7 @@ export default function SettingsScreen() {
     locationPollSec, setLocationPollSec,
     ftbPresetId, setFtbPresetId, presets,
     brightnessConfig, setBrightnessConfig,
+    colorCalibration, setColorCalibration,
     recallState, setRecallState,
     syncMode, setSyncMode,
     boardConnectEnabled, setBoardConnectEnabled,
@@ -189,6 +191,13 @@ export default function SettingsScreen() {
   const updateOverrideMode = (val: boolean) => {
     setOverrideKillOnZone(val);
     bleService.sendOverrideMode(val);
+    saveToStorage();
+  };
+
+  const updateColorCalibrationEnabled = (val: boolean) => {
+    const next = normalizeColorCalibration({ ...colorCalibration, enabled: val });
+    setColorCalibration(next);
+    if (isConnected) bleService.sendColorCalibration(next);
     saveToStorage();
   };
 
@@ -322,6 +331,26 @@ export default function SettingsScreen() {
           </View>
           <Switch value={overrideKillOnZone} onValueChange={updateOverrideMode}
             trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
+        </View>
+      </View>
+
+      {/* Color calibration — curves authored on web; toggle here for field use */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Color Calibration</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Apply RGB curves</Text>
+            <Text style={s.rowHint}>
+              Curves are edited in the web tool (Palettes → Calibration) and pushed on connect.
+              Toggle off to troubleshoot colors in the field.
+            </Text>
+          </View>
+          <Switch
+            value={colorCalibration.enabled}
+            onValueChange={updateColorCalibrationEnabled}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
         </View>
       </View>
 

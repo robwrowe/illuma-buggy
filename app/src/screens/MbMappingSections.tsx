@@ -225,13 +225,13 @@ function RandomPoolEditor({
 
 export function MbMappingSections({ colors, isConnected }: { colors: Colors; isConnected: boolean }) {
   const {
-    mbMapping, setMbMapping, presets, saveToStorage, customSegmentLayouts, recallState,
+    mbMapping, setMbMapping, presets, saveToStorage, recallState,
   } = useAppStore();
   const [tab, setTab] = useState<BleTab>('colors');
   const [defaultPickerOpen, setDefaultPickerOpen] = useState(false);
 
   const mappingBlePayload = (config: MbMappingConfig) =>
-    mbMappingEssentialPayload(config, presets, recallState, customSegmentLayouts);
+    mbMappingEssentialPayload(config, presets, recallState);
 
   const push = (next: MbMappingConfig) => {
     setMbMapping(next);

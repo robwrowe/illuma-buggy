@@ -4,6 +4,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Preset } from '../stores/store';
+import type { ColorCalibrationConfig } from './colorCalibration';
 import type { MbMappingConfig } from './mbConfig';
 import type { ShowModeConfig } from './configMigration';
 
@@ -110,6 +111,7 @@ export function computeBoardConfigFingerprint(input: {
   presets: Preset[];
   mbMapping: MbMappingConfig;
   showModeConfig: ShowModeConfig;
+  colorCalibration?: ColorCalibrationConfig;
   starlightEnabled: boolean;
   magicBandEnabled: boolean;
   bleEffectTransitionMs: number;
@@ -120,6 +122,7 @@ export function computeBoardConfigFingerprint(input: {
     presetKeys: input.presets.map(p => `${p.id}:${p.createdAt}`).sort(),
     mbMapping: input.mbMapping,
     showMode: input.showModeConfig,
+    colorCalibration: input.colorCalibration,
     sw: input.starlightEnabled,
     mb: input.magicBandEnabled,
     bleMs: input.bleEffectTransitionMs,
