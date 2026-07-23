@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   Checkbox,
+  CloseButton,
   Group,
   NumberInput,
   Paper,
@@ -258,6 +259,18 @@ function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions
                   }
                 }}
                 styles={{ input: { fontFamily: 'monospace', fontSize: 11 } }}
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <CloseButton
+                size="sm"
+                aria-label={`Clear col${i}`}
+                title="Clear"
+                disabled={!seg.colors[i]}
+                onClick={() => {
+                  const colors = [...seg.colors];
+                  colors[i] = '';
+                  set({ colors });
+                }}
               />
             </Group>
           </Field>
