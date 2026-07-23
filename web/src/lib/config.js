@@ -1,9 +1,16 @@
 import { migrateWandLabDefaults, normalizeMbMapping, withSegRefDefaults } from './ble/mbMapping';
 import { normalizeTags } from './tags';
-import { DEFAULT_DATA, compareVersions, normalizeHex, normalizeZoneRecord } from './utils';
+import {
+  DEFAULT_DATA,
+  compareVersions,
+  normalizeColorCalibration,
+  normalizeHex,
+  normalizeZoneRecord,
+} from './utils';
 
 export function loadAppData(stored) {
   const merged = stored ? { ...DEFAULT_DATA, ...stored } : { ...DEFAULT_DATA };
+  merged.colorCalibration = normalizeColorCalibration(merged.colorCalibration);
   merged.mbMapping = normalizeMbMapping(merged.mbMapping);
   merged.savedColors = (merged.savedColors || [])
     .filter(c => c?.id && normalizeHex(c.hex))

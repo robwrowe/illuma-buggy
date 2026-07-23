@@ -27,6 +27,7 @@ import { STRIP_LED_COUNT } from '../../lib/ble/mbConstants';
 import { duplicateTaggedName, itemMatchesTagFilter } from '../../lib/tags';
 import { generateId, normalizeHex, saveColorToLibrary } from '../../lib/utils';
 import { WLED_BLEND_MODES, buildLayoutPayload, captureSegmentFromRaw, fetchWledFullStateFromIp, formatSegLabel, isActiveSegment, parseWledStateSegments, postWledState, summarizeLayout } from '../../lib/wled/capture';
+import { ColorCalibrationPanel } from './ColorCalibrationPanel';
 
 const blendModeOptions = [
   { value: '', label: '(inherit)' },
@@ -48,7 +49,7 @@ export function PalettesTab({ data, update }) {
   const [capturing, setCapturing] = useState(false);
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
 
-  const listItems = ptab === 'colors' ? savedColors : layouts;
+  const listItems = ptab === 'colors' ? savedColors : ptab === 'segments' ? layouts : [];
   const filteredList = useMemo(
     () => listItems.filter(item => itemMatchesTagFilter(item, search, activeTag)),
     [listItems, search, activeTag],
@@ -151,6 +152,7 @@ export function PalettesTab({ data, update }) {
           <Tabs.List grow>
             <Tabs.Tab value="segments">Segments ({layouts.length})</Tabs.Tab>
             <Tabs.Tab value="colors">Colors ({savedColors.length})</Tabs.Tab>
+            <Tabs.Tab value="calibration">Calibration</Tabs.Tab>
           </Tabs.List>
         </Tabs>
         {listItems.length > 0 && (
@@ -158,6 +160,11 @@ export function PalettesTab({ data, update }) {
             activeTag={activeTag} onActiveTagChange={setActiveTag} />
         )}
         <ScrollArea style={{ flex: 1 }} p="sm">
+          {ptab === 'calibration' && (
+            <Text size="xs" c="dimmed" lh={1.5}>
+              Tune per-channel RGB curves for BLE-extracted colors. Push via Board sync.
+            </Text>
+          )}
           {ptab === 'colors' && (
             <Stack gap="sm">
               <AppButton variant="primary" fullWidth size="compact-sm" onClick={() => { setEditSc(blankSavedColor()); setIsNew(true); }}>
@@ -247,6 +254,12 @@ export function PalettesTab({ data, update }) {
           )}
         </ScrollArea>
       </Box>
+
+      {ptab === 'calibration' && (
+        <ScrollArea style={{ flex: 1 }}>
+          <ColorCalibrationPanel data={data} update={update} />
+        </ScrollArea>
+      )}
 
       {editSc && ptab === 'colors' && (
         <ScrollArea style={{ flex: 1 }}>

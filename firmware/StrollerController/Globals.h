@@ -125,6 +125,12 @@ extern uint8_t mbRandomPoolCount;
 extern uint8_t mbRandomCustom[MB_MAX_RANDOM_CUSTOM][3];
 extern uint8_t mbRandomCustomCount;
 
+/** Per-channel RGB correction LUTs for BLE channelGroup / kind:rgb extracts. */
+extern bool mbCalibrationEnabled;
+extern uint8_t mbCalCurveR[256];
+extern uint8_t mbCalCurveG[256];
+extern uint8_t mbCalCurveB[256];
+
 extern MbSegmentLayout mbLayouts[MB_MAX_LAYOUTS];
 extern uint8_t mbLayoutCount;
 extern uint8_t mbActiveLayoutIdx;

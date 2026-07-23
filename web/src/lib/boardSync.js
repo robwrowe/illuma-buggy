@@ -1,12 +1,13 @@
 import { BLE_SEND_DELAY_MS, webBleBoard } from './ble/chunking';
 import { mbMappingToBlePayload, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
-import { DEFAULT_DATA } from './utils';
+import { DEFAULT_DATA, normalizeColorCalibration } from './utils';
 
 export const BOARD_SYNC_LS_KEY = 'illuma-buggy-board-sync';
 
 export const DEFAULT_BOARD_SYNC_OPTIONS = {
   presets: true,
   mbMapping: true,
+  colorCalibration: true,
   effectTransition: true,
   overrideMode: true,
   showMode: true,
@@ -51,6 +52,19 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
       mapping: mbMappingToBlePayload(mb),
     });
     sent.push(`MB rules (${(mb.rules || []).length})`);
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
+  if (opts.colorCalibration) {
+    onProgress?.('Sending color calibration…');
+    const calibration = normalizeColorCalibration(
+      data.colorCalibration || DEFAULT_DATA.colorCalibration,
+    );
+    await webBleBoard.send({
+      type: 'set_color_calibration',
+      calibration,
+    });
+    sent.push(calibration.enabled ? 'color calibration (on)' : 'color calibration (off)');
     await delay(BLE_SEND_DELAY_MS);
   }
 
@@ -108,6 +122,14 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 export const BOARD_SYNC_ITEMS = [
   { key: 'presets', label: 'Presets', hint: (data) => `${(data.presets || []).length} preset${(data.presets || []).length === 1 ? '' : 's'} (ESP32 NVS, not WLED slots)` },
   { key: 'mbMapping', label: 'MB rules + mapping', hint: (data) => `${(data.mbMapping?.rules || []).length} rules, colors, segments` },
+  {
+    key: 'colorCalibration',
+    label: 'Color calibration',
+    hint: (data) => {
+      const cal = data.colorCalibration || DEFAULT_DATA.colorCalibration;
+      return cal?.enabled ? 'Per-channel RGB curves (enabled)' : 'Per-channel RGB curves (disabled)';
+    },
+  },
   { key: 'effectTransition', label: 'Effect transitions', hint: (data) => `${data.bleEffectTransitionMs ?? 700} ms fade` },
   { key: 'overrideMode', label: 'Override mode', hint: (data) => data.overrideKillOnZone ? 'Kill override on zone entry' : 'Keep override in zones' },
   { key: 'mbRuleConfig', label: 'MB rule FTB preset', hint: (data) => data.ftbPresetId ? `Preset ${data.ftbPresetId}` : 'Pure black (on:false fallback)' },

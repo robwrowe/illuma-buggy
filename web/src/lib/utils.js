@@ -110,9 +110,89 @@ export const PRESET_COLORS = [
   '#888888', '#444444', '#000000', '#ff6666', '#66ff66', '#6666ff', '#ffaa44', '#44aaff',
 ];
 
+/** Identity 0–255 curve used as the default for each RGB channel. */
+export const IDENTITY_CALIBRATION_CURVE = [[0, 0], [128, 128], [255, 255]];
+
+export function createEmptyColorCalibration(overrides = {}) {
+  return {
+    enabled: false,
+    curves: {
+      r: IDENTITY_CALIBRATION_CURVE.map((p) => [...p]),
+      g: IDENTITY_CALIBRATION_CURVE.map((p) => [...p]),
+      b: IDENTITY_CALIBRATION_CURVE.map((p) => [...p]),
+    },
+    ...overrides,
+  };
+}
+
+/** Piecewise-linear lookup on sorted [[input, output], ...] control points (0–255). */
+export function applyCurve(points, input) {
+  if (!points || points.length === 0) return input;
+  const x = Math.max(0, Math.min(255, Number(input) || 0));
+  if (x <= points[0][0]) return points[0][1];
+  if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x0, y0] = points[i];
+    const [x1, y1] = points[i + 1];
+    if (x >= x0 && x <= x1) {
+      if (x1 === x0) return y0;
+      const t = (x - x0) / (x1 - x0);
+      return Math.round(y0 + t * (y1 - y0));
+    }
+  }
+  return input;
+}
+
+export function applyColorCalibration(rgb, cal) {
+  const [r, g, b] = rgb;
+  if (!cal?.enabled) return [r, g, b];
+  const curves = cal.curves || {};
+  return [
+    applyCurve(curves.r, r),
+    applyCurve(curves.g, g),
+    applyCurve(curves.b, b),
+  ];
+}
+
+function normalizeCurvePoints(raw) {
+  const fallback = IDENTITY_CALIBRATION_CURVE.map((p) => [...p]);
+  if (!Array.isArray(raw) || raw.length < 2) return fallback;
+  const pts = raw
+    .map((p) => {
+      if (!Array.isArray(p) || p.length < 2) return null;
+      const x = Math.max(0, Math.min(255, Math.round(Number(p[0]))));
+      const y = Math.max(0, Math.min(255, Math.round(Number(p[1]))));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return [x, y];
+    })
+    .filter(Boolean)
+    .sort((a, b) => a[0] - b[0]);
+  if (pts.length < 2) return fallback;
+  // Ensure endpoints at 0 and 255 (keep first/last y if already present).
+  if (pts[0][0] !== 0) pts.unshift([0, pts[0][1]]);
+  if (pts[pts.length - 1][0] !== 255) pts.push([255, pts[pts.length - 1][1]]);
+  pts[0][0] = 0;
+  pts[pts.length - 1][0] = 255;
+  return pts;
+}
+
+export function normalizeColorCalibration(raw) {
+  const d = createEmptyColorCalibration();
+  if (!raw || typeof raw !== 'object') return d;
+  return {
+    enabled: !!raw.enabled,
+    curves: {
+      r: normalizeCurvePoints(raw.curves?.r),
+      g: normalizeCurvePoints(raw.curves?.g),
+      b: normalizeCurvePoints(raw.curves?.b),
+    },
+  };
+}
+
 export const DEFAULT_DATA = {
   version: '3.0', presets: [], zones: [], indoorZones: [], parks: [],
   brightnessConfig: { daytime: 200, nighttime: 80, indoor: 120, transitionMinutes: 30, solarThresholdDeg: 6 },
+  colorCalibration: createEmptyColorCalibration(),
   recallState: { effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never' },
   overrideKillOnZone: false, magicBandFivePoint: true, bleEffectTransitionMs: 700,
   starlightEnabled: true, starlightTimeoutSec: 15,

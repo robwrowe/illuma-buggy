@@ -20,6 +20,7 @@
 #include "DebugLog.h"
 #include "NvsLargeString.h"
 #include "MbRulesStore.h"
+#include "MbCalibrationStore.h"
 
 void setup() {
   Serial.begin(115200);
@@ -31,6 +32,8 @@ void setup() {
                 (unsigned)ESP.getMaxAllocHeap(),
                 (unsigned)ESP.getPsramSize(),
                 ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+
+  mbCalibrationInitIdentity();
 
   // Load NVS config
   prefs.begin("config", true);
@@ -118,6 +121,10 @@ void setup() {
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
   loadMbRulesFromJson();
   mbMappingLoadedFromNvs = mbRulesJson.length() > 0 || mbMappingJson.length() > 0;
+  {
+    String calJson = mbCalibrationFsLoad();
+    if (calJson.length() > 0) mbCalibrationApply(calJson);
+  }
   loadWledBaselineFromNvs();
   Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums role=%u\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,

@@ -14,6 +14,14 @@
 #include <stdlib.h>
 #include <ctype.h>
 
+/** Apply per-channel LUT to raw BLE RGB (not palette-indexed colors). */
+static inline void applyMbRgbCalibration(uint8_t& r, uint8_t& g, uint8_t& b) {
+  if (!mbCalibrationEnabled) return;
+  r = mbCalCurveR[r];
+  g = mbCalCurveG[g];
+  b = mbCalCurveB[b];
+}
+
 // Cached rules document — refreshed by applyMbRulesJson / loadMbRulesFromJson.
 static DynamicJsonDocument gRulesDoc(BLE_JSON_DOC_SIZE);
 
@@ -444,6 +452,7 @@ static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t
     r = extractChannel("r");
     g = extractChannel("g");
     b = extractChannel("b");
+    applyMbRgbCalibration(r, g, b);
     return;
   }
 
@@ -1201,6 +1210,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         r = extractChannel("r", &flashR);
         g = extractChannel("g", &flashG);
         b = extractChannel("b", &flashB);
+        applyMbRgbCalibration(r, g, b);
         mapped = 0.0f;
         Serial.printf("[Rule] channelGroup rgb=%u,%u,%u flash=%u%u%u\n",
                       r, g, b, flashR ? 1u : 0u, flashG ? 1u : 0u, flashB ? 1u : 0u);

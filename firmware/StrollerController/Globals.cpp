@@ -133,6 +133,11 @@ uint8_t mbRandomPoolCount = 0;
 uint8_t mbRandomCustom[MB_MAX_RANDOM_CUSTOM][3];
 uint8_t mbRandomCustomCount = 0;
 
+bool mbCalibrationEnabled = false;
+uint8_t mbCalCurveR[256];
+uint8_t mbCalCurveG[256];
+uint8_t mbCalCurveB[256];
+
 MbSegmentLayout mbLayouts[MB_MAX_LAYOUTS];
 uint8_t mbLayoutCount = 0;
 uint8_t mbActiveLayoutIdx = 0;

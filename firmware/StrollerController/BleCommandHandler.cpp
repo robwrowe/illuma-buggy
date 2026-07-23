@@ -15,6 +15,7 @@
 #include "NvsLargeString.h"
 #include "DisneyBleScan.h"
 #include "MbRulesStore.h"
+#include "MbCalibrationStore.h"
 #include <WiFi.h>
 
 void handleBLECommand(const String& msg) {
@@ -374,6 +375,34 @@ void handleBLECommand(const String& msg) {
       }
     }
     bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");
+  }
+
+  else if (type == "set_color_calibration") {
+    String calJson;
+    if (doc.containsKey("calibration") && doc["calibration"].is<JsonObject>()) {
+      serializeJson(doc["calibration"], calJson);
+    } else if (doc.containsKey("enabled") || doc.containsKey("curves")) {
+      // Top-level { enabled, curves } without nesting.
+      DynamicJsonDocument calDoc(2048);
+      calDoc["enabled"] = doc["enabled"] | false;
+      if (doc.containsKey("curves")) {
+        calDoc["curves"] = doc["curves"];
+      }
+      serializeJson(calDoc, calJson);
+    } else {
+      calJson = "{\"enabled\":false}";
+    }
+    bool persisted = mbCalibrationFsSave(calJson);
+    mbCalibrationApply(calJson);
+    Serial.printf("[Cal] BLE update (%u bytes, fs=%s, enabled=%d)\n",
+                  (unsigned)calJson.length(),
+                  persisted ? "ok" : "FAIL",
+                  mbCalibrationEnabled ? 1 : 0);
+    if (!persisted) {
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_color_calibration\",\"ok\":false,\"reason\":\"fs_persist\"}");
+      return;
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"set_color_calibration\",\"ok\":true}");
   }
 
   else if (type == "mb_layout_set") {
