@@ -1476,7 +1476,7 @@ export function compactMbPayloadForBle(mbMapping) {
  * On-device ArduinoJson document budget for set_mb_rules (Config.h BLE_JSON_DOC_SIZE).
  * Keep in sync with firmware — this is the soft ceiling the capacity gauge tracks.
  */
-export const BLE_JSON_DOC_BUDGET_BYTES = 131072;
+export const BLE_JSON_DOC_BUDGET_BYTES = 524288;
 
 /**
  * Multiplier from serialized JSON bytes → approximate ArduinoJson pool usage.

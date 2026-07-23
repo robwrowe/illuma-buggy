@@ -51,15 +51,15 @@
 /** ESP-NOW → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
 #define PARSED_PACKET_QUEUE_DEPTH 32
 /**
- * Chunk reassembly + ArduinoJson rules-cache budget.
- * Current full set_mb_rules payloads are ~50KB compact (~67KB verbose editor shape);
- * 128KB leaves headroom for growth. See docs/ble-packets-details/mb-rules-wire-format.md.
- * before ArduinoJson node overhead. Prefer PSRAM for the long-lived rules doc
- * (see JsonPsram.h / gRulesDoc).
+ * Chunk reassembly + ArduinoJson rules-cache budget (512KB).
+ * Soft software cap only — both buffers are PSRAM-backed (8MB pool via JsonPsram.h /
+ * gRulesDoc) with internal-heap fallback if PSRAM alloc fails; this is not a hardware
+ * ceiling. Compact wire payloads stay far below this
+ * (see docs/ble-packets-details/mb-rules-wire-format.md).
  */
-#define BLE_CMD_BUF_SIZE 131072
+#define BLE_CMD_BUF_SIZE 524288
 /** ArduinoJson pool for BLE command parse + cached rules document (must track BLE_CMD_BUF_SIZE). */
-#define BLE_JSON_DOC_SIZE 131072
+#define BLE_JSON_DOC_SIZE 524288
 /**
  * Scratch budget for maps/models-only merge when in-place assignment is not enough.
  * Measured segmentMaps+timingModels+paradeDetection ≈ <10KB; leave headroom.
