@@ -186,7 +186,11 @@ bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBla
   if (json.length() == 0) return false;
   if (dipToBlackFirst && fadeMs > 0) {
     sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
-    delay(fadeMs + 100);
+    pendingRestoreKind = PENDING_RESTORE_SNAPSHOT;
+    pendingRestoreDeadlineMs = millis() + fadeMs + 100;
+    pendingRestoreFadeMs = fadeMs;
+    pendingRestoreSnapshot = json;
+    return true; // dip sent; restore applied later by servicePendingRestore()
   }
   disableAllSplitSegments();
   String payload = injectWledTransition(buildWledRestorePayload(json), fadeMs);
@@ -286,6 +290,15 @@ void clearOverride() {
   }
   resetMbRuleLifecycle();
 
+  // Cancel any in-flight async restore so this clear owns the next one.
+  pendingRestoreKind = PENDING_RESTORE_NONE;
+  pendingRestoreSnapshot = "";
+  pendingRestorePresetId = "";
+  pendingRestoreDeadlineMs = 0;
+  pendingRestoreFadeMs = 0;
+  pendingRestoreBlendingStyle = -1;
+  pendingRestoreAfterOverride = NONE;
+
   if (overrideBeforeInterrupt == SHOW_MODE && (prev == BLE_MAGIC || prev == BLE_STARLIGHT)) {
     overrideBeforeInterrupt = NONE;
     currentOverride = SHOW_MODE;
@@ -307,27 +320,38 @@ void clearOverride() {
 
   bool dipToBlack = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) && fadeMs > 0;
   bool restored = false;
+  bool pending = false;
+
   if (snapshot.length() > 0) {
     restored = restoreWledSnapshot(prepareWledRestorePayload(snapshot), fadeMs, dipToBlack);
-    if (restored) {
+    if (dipToBlack) {
+      // Scheduled in restoreWledSnapshot — finish bookkeeping in servicePendingRestore().
+      pending = restored;
+    } else if (restored) {
       Serial.printf("[Override] Restored snapshot (%u bytes)\n", (unsigned)snapshot.length());
     } else {
       Serial.printf("[Override] Snapshot restore POST failed (%u bytes)\n", (unsigned)snapshot.length());
     }
   }
-  if (!restored && presetId.length() > 0) {
+  if (!restored && !pending && presetId.length() > 0) {
     if (dipToBlack) {
       sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
-      delay(fadeMs + 100);
-    }
-    restored = restorePresetWithTransition(presetId, fadeMs);
-    if (restored) {
-      Serial.printf("[Override] Restored preset: %s\n", presetId.c_str());
+      pendingRestoreKind = PENDING_RESTORE_PRESET;
+      pendingRestoreDeadlineMs = millis() + fadeMs + 100;
+      pendingRestoreFadeMs = fadeMs;
+      pendingRestoreBlendingStyle = -1;
+      pendingRestorePresetId = presetId;
+      pending = true;
     } else {
-      Serial.printf("[Override] Preset restore failed: %s\n", presetId.c_str());
+      restored = restorePresetWithTransition(presetId, fadeMs);
+      if (restored) {
+        Serial.printf("[Override] Restored preset: %s\n", presetId.c_str());
+      } else {
+        Serial.printf("[Override] Preset restore failed: %s\n", presetId.c_str());
+      }
     }
   }
-  if (!restored && baselineWledState.length() > 0) {
+  if (!restored && !pending && baselineWledState.length() > 0) {
     restored = restoreWledSnapshot(prepareWledRestorePayload(baselineWledState), fadeMs);
     if (restored) {
       Serial.println("[Override] Restored baseline WLED state");
@@ -335,6 +359,12 @@ void clearOverride() {
       Serial.println("[Override] Baseline restore POST failed");
     }
   }
+
+  if (pending) {
+    pendingRestoreAfterOverride = restoreOverride;
+    return;
+  }
+
   if (!restored) {
     Serial.println("[Override] Restore failed — strip may stay on last MB effect");
   } else {
@@ -353,6 +383,61 @@ void clearOverride() {
     setOverride(restoreOverride);
   } else if (restored && presetId.length() > 0) {
     setOverride(restoreOverride == MANUAL ? MANUAL : ZONE);
+  }
+}
+
+void servicePendingRestore() {
+  if (pendingRestoreKind == PENDING_RESTORE_NONE) return;
+  if ((long)(millis() - pendingRestoreDeadlineMs) < 0) return;
+
+  PendingRestoreKind kind = pendingRestoreKind;
+  unsigned long fadeMs = pendingRestoreFadeMs;
+  String snapshot = pendingRestoreSnapshot;
+  String presetId = pendingRestorePresetId;
+  int blendingStyle = pendingRestoreBlendingStyle;
+  OverrideSource afterOverride = pendingRestoreAfterOverride;
+
+  pendingRestoreKind = PENDING_RESTORE_NONE;
+  pendingRestoreSnapshot = "";
+  pendingRestorePresetId = "";
+  pendingRestoreDeadlineMs = 0;
+  pendingRestoreFadeMs = 0;
+  pendingRestoreBlendingStyle = -1;
+  pendingRestoreAfterOverride = NONE;
+
+  bool restored = false;
+
+  if (kind == PENDING_RESTORE_SNAPSHOT) {
+    disableAllSplitSegments();
+    String payload = injectWledTransition(buildWledRestorePayload(snapshot), fadeMs);
+    restored = sendToWLED(payload, 8000, 2);
+    if (restored) {
+      Serial.printf("[Override] Restored snapshot (%u bytes)\n", (unsigned)snapshot.length());
+      liveWledState = snapshot;
+      lastLiveStatePollMs = millis();
+    } else {
+      Serial.printf("[Override] Snapshot restore POST failed (%u bytes)\n", (unsigned)snapshot.length());
+    }
+  } else if (kind == PENDING_RESTORE_PRESET) {
+    restored = restorePresetWithTransitionStyled(presetId, fadeMs, blendingStyle);
+    if (restored) {
+      Serial.printf("[Override] Restored preset: %s\n", presetId.c_str());
+      liveWledState = "";
+      lastLiveStatePollMs = 0;
+    } else {
+      Serial.printf("[Override] Preset restore failed: %s\n", presetId.c_str());
+    }
+  }
+
+  if (!restored) {
+    Serial.println("[Override] Restore failed — strip may stay on last MB effect");
+    return;
+  }
+
+  if (afterOverride == ZONE || afterOverride == MANUAL) {
+    setOverride(afterOverride);
+  } else if (kind == PENDING_RESTORE_PRESET) {
+    setOverride(afterOverride == MANUAL ? MANUAL : ZONE);
   }
 }
 

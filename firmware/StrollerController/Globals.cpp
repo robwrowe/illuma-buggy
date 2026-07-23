@@ -123,6 +123,14 @@ unsigned long      mbRuleCooldownMs = 10000;
 MbCooldownResetMode mbActiveRuleCooldownMode = MB_COOLDOWN_ON_MATCH;
 char               mbActiveRuleId[MB_RULE_ID_LEN] = "";
 
+PendingRestoreKind pendingRestoreKind = PENDING_RESTORE_NONE;
+unsigned long      pendingRestoreDeadlineMs = 0;
+unsigned long      pendingRestoreFadeMs = 0;
+int                pendingRestoreBlendingStyle = -1;
+String             pendingRestoreSnapshot = "";
+String             pendingRestorePresetId = "";
+OverrideSource     pendingRestoreAfterOverride = NONE;
+
 
 DisneyPayloadJob disneyJob = {};
 portMUX_TYPE disneyJobMux = portMUX_INITIALIZER_UNLOCKED;

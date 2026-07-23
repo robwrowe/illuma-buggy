@@ -115,6 +115,15 @@ extern unsigned long      mbRuleCooldownMs;
 extern MbCooldownResetMode mbActiveRuleCooldownMode;
 extern char               mbActiveRuleId[MB_RULE_ID_LEN];
 
+// Non-blocking dip-to-black restore
+extern PendingRestoreKind pendingRestoreKind;
+extern unsigned long      pendingRestoreDeadlineMs;
+extern unsigned long      pendingRestoreFadeMs;
+extern int                pendingRestoreBlendingStyle; // preset path only, -1 = none
+extern String             pendingRestoreSnapshot;      // snapshot path payload
+extern String             pendingRestorePresetId;      // preset path id
+extern OverrideSource     pendingRestoreAfterOverride;
+
 
 extern DisneyPayloadJob disneyJob;
 extern portMUX_TYPE disneyJobMux;

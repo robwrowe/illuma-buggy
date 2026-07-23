@@ -228,6 +228,7 @@ void loop() {
 
   serviceMbRuleLifecycle();
   serviceParadeCooldown();
+  servicePendingRestore();
 
   if (bleCaptureToApp && bleCaptureUntilMs > 0 && millis() >= bleCaptureUntilMs) {
     stopBleCapture("timeout");

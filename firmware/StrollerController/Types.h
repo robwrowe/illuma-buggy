@@ -82,6 +82,13 @@ enum MbRulePhase : uint8_t {
   MB_RULE_COOLDOWN,
 };
 
+// Non-blocking replacement for the old dip-then-delay-then-restore pattern.
+enum PendingRestoreKind : uint8_t {
+  PENDING_RESTORE_NONE = 0,
+  PENDING_RESTORE_SNAPSHOT,   // restoreWledSnapshot()'s post-dip continuation
+  PENDING_RESTORE_PRESET,     // clearOverride()'s preset-restore continuation
+};
+
 enum MbCooldownResetMode : uint8_t {
   MB_COOLDOWN_ON_MATCH = 0,
   MB_COOLDOWN_FIXED    = 1,
