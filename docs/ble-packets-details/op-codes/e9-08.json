@@ -1,0 +1,72 @@
+[
+  {
+    "id": "mrp5aagjms12",
+    "ts": 1784305265779,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e9080065d255000000b0",
+    "origBytes": "e9080065d255000000b0",
+    "tag": "unknown",
+    "note": "Wand goes to black, which indicates it received the command but is missing some data"
+  },
+  {
+    "id": "mrp59y8mnle6",
+    "ts": 1784305249942,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e908008fd255000000b0",
+    "origBytes": "e908008fd255000000b0",
+    "tag": "unknown",
+    "note": "Wand goes to black, which indicates it received the command but is missing some data"
+  },
+  {
+    "id": "mrp59njw2nig",
+    "ts": 1784305236092,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90800cfd255000000b0",
+    "origBytes": "e90800cfd255000000b0",
+    "tag": "unknown",
+    "note": "Wand goes to black, which indicates it received the command but is missing some data"
+  },
+  {
+    "id": "mrp598ckguji",
+    "ts": 1784305216388,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e9080073d255000000b0",
+    "origBytes": "e9080073d255000000b0",
+    "tag": "unknown",
+    "note": "Wand goes to black, which indicates it received the command but is missing some data"
+  },
+  {
+    "id": "mrp58wz28s4z",
+    "ts": 1784305201646,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e9080043d255000000b0",
+    "origBytes": "e9080043d255000000b0",
+    "tag": "unknown",
+    "note": "Wand goes to black, which indicates it received the command but is missing some data"
+  },
+  {
+    "id": "mrqv21z5gspd",
+    "ts": 1784409017729,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e9080021d255456461ba",
+    "origBytes": "e200e9080021d255456461ba",
+    "tag": "unknown",
+    "note": "Solid white\nOn for ~3s\nFade out ~0.5s"
+  },
+  {
+    "id": "mrqv0io66b6j",
+    "ts": 1784408946054,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e908004f0fafa4b5b5a4",
+    "origBytes": "e100e908004f0fafa4b5b5a4",
+    "tag": "unknown",
+    "note": "UL + UR > Blue\nBL + BR > Red\nCenter Yellow\nSteady on\nTotal ~48s"
+  }
+]

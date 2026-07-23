@@ -1,0 +1,22 @@
+[
+  {
+    "id": "mr9xy5pih0jy",
+    "ts": 1783385949798,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90b0b0f0f5c5d48a5d1453205",
+    "origBytes": "e90b0b0f0f5c5d48a5d1453205",
+    "tag": "unknown",
+    "note": "SW: shooting upwards\nMB: circle animation\nOne color, very long (~26 s)"
+  },
+  {
+    "id": "mrqwvnu4u265",
+    "ts": 1784412078700,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90b00680fafb5afb5bd307b02",
+    "origBytes": "e100e90b00680fafb5afb5bd307b02",
+    "tag": "unknown",
+    "note": "On for ~25s, fade out (maybe 0.5s)\nCycle ~1s\nUL > BL > BR > UR > C\nYellow x2, Red x2, Black/off x1"
+  }
+]

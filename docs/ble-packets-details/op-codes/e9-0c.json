@@ -1,0 +1,112 @@
+[
+  {
+    "id": "mr9xzqzkwdkf",
+    "ts": 1783386024032,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90c000f0f5d465bf00532374895",
+    "origBytes": "e100e90c000f0f5d465bf00532374895",
+    "tag": "unknown",
+    "note": "cuts on, slowly fades out, repeats for ~22 s"
+  },
+  {
+    "id": "mr9xubn1wvd9",
+    "ts": 1783385770861,
+    "kind": "single",
+    "presetKey": "palette5",
+    "bytes": "e100e90c000f0fb1b9b5b1a2307b7db0",
+    "origBytes": "e100e90c000f0fb1b9b5b1a2307b7db0",
+    "tag": "unknown",
+    "note": "SW: yellowx2, red, green, cyan, cycling/chasing\nMB: solid white"
+  },
+  {
+    "id": "mr9xtn2eslpw",
+    "ts": 1783385739014,
+    "kind": "single",
+    "presetKey": "blink",
+    "bytes": "e100e90c000f0f5d465bf00532374895",
+    "origBytes": "e100e90c000f0f5d465bf00532374895",
+    "tag": "unknown",
+    "note": "solid color cuts on outer, slowly fades out"
+  },
+  {
+    "id": "mr9xt7q6afcx",
+    "ts": 1783385719134,
+    "kind": "single",
+    "presetKey": "rainbow",
+    "bytes": "e100e90c000f0f5d465bf005323748b0",
+    "origBytes": "e100e90c000f0f5d465bf005323748b0",
+    "tag": "unknown",
+    "note": "rainbow, all 5 async"
+  },
+  {
+    "id": "mr9eh3ipe2b6",
+    "ts": 1783353241105,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90c00ef0f4f4f5bf0fb14374895",
+    "origBytes": "e100e90c00ef0f4f4f5bf0fb14374895",
+    "tag": "unknown",
+    "note": "orange blink/slow strobe"
+  },
+  {
+    "id": "mr9egmcjgx91",
+    "ts": 1783353218851,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90c000f0f5d465bf00532374895",
+    "origBytes": "e100e90c000f0f5d465bf00532374895",
+    "tag": "unknown",
+    "note": "white, lightning style flash"
+  },
+  {
+    "id": "mrp64kl6u0qh",
+    "ts": 1784306678586,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90c00640fb2a4b5b2b5307b7db0",
+    "origBytes": "e90c00640fb2a4b5b2b5307b7db0",
+    "tag": "unknown",
+    "note": "~14s on time, ~0.5s fade out time\nred x2, yellow x2, blue x1\nUL > BL > BR > UR > Center\n~3s cycle time"
+  },
+  {
+    "id": "mrp629t8lfij",
+    "ts": 1784306571308,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90c00cf0fb9a4b9a4a8307b7bb0",
+    "origBytes": "e90c00cf0fb9a4b9a4a8307b7bb0",
+    "tag": "unknown",
+    "note": "~2.5s cycle time\ngreen x2, blue x2, purple x1\nUL > BL > BR > UR > Center\n~3 min 49 sec total time"
+  },
+  {
+    "id": "mrp5wn2wuqp1",
+    "ts": 1784306308568,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90c000f0fa9b9b5b1a2307b7db0",
+    "origBytes": "e90c000f0fb1b9b5b1a2307b7db0",
+    "tag": "unknown",
+    "note": "~1.5s cycle time\n~26s total time\n3 points in the loop,\nGreen: UR, Center, UL\nPurple: Center, UL, BR\nBlue: UL, BL, BR\nYellow: BL, BR, UR\nRed: BR, UR, Center"
+  },
+  {
+    "id": "mrqx493yf2wd",
+    "ts": 1784412479518,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90c00ef0f4f4f5bf0fb14374895",
+    "origBytes": "e200e90c00ef0f4f4f5bf0fb14374895",
+    "tag": "unknown",
+    "note": "Flash on for 0.5s\nFlash off for 1.5s\nYellow\nTotal run time over 3 min (and counting)"
+  },
+  {
+    "id": "mrqwx9o0sqad",
+    "ts": 1784412153648,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90c00010f5c5c5bf000fc374895",
+    "origBytes": "e100e90c00010f5c5c5bf000fc374895",
+    "tag": "unknown",
+    "note": "Solid white for 1.5s"
+  }
+]

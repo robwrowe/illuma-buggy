@@ -1,0 +1,22 @@
+[
+  {
+    "id": "mr9xqiqf8lip",
+    "ts": 1783385593431,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90700220f444441b0",
+    "origBytes": "e200e90700220f444441b0",
+    "tag": "unknown",
+    "note": "Blue cuts on, holds for 3s, then slowly fades out over 1s"
+  },
+  {
+    "id": "mr9xpjum9ypw",
+    "ts": 1783385548222,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90700220f434341b0",
+    "origBytes": "e200e90700220f434341b0",
+    "tag": "unknown",
+    "note": "Blue cuts on, holds for 3s, then slowly fades out over 1s"
+  }
+]

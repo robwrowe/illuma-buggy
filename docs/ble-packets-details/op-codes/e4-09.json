@@ -1,0 +1,12 @@
+[
+  {
+    "id": "mr9xmeoxxbx0",
+    "ts": 1783385401569,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e4090000ff000000040004e50104ef0501a6200d00",
+    "origBytes": "e4090000ff000000040004e50104ef0501a6200d00",
+    "tag": "unknown",
+    "note": "Burst via /show: 5 reps, 100ms dwell"
+  }
+]

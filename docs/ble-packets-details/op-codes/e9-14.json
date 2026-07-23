@@ -1,0 +1,122 @@
+[
+  {
+    "id": "mr9zzqb7mpwn",
+    "ts": 1783389382387,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91400420f555b58f44882d0651bd1462a02307b5db0",
+    "origBytes": "e200e91400420f555b58f44882d0651bd1462a02307b5db0",
+    "tag": "unknown",
+    "note": "~6s total\neither 2 or 3 colors, fast twinkling between them.\nSW: red / yellow / off-yellow/white\nMB: Pink / purple / cyan?"
+  },
+  {
+    "id": "mr9zxh4lpftr",
+    "ts": 1783389277173,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e914002cd037f0d23d0212000eea8983510ee30c1eb0",
+    "origBytes": "e200e914002cd037f0d23d0212000eea8983510ee30c1eb0",
+    "tag": "unknown",
+    "note": "slow fade in/out, purple, all five leds.\n~19s total, ~1.5s cycle"
+  },
+  {
+    "id": "mr9pofq88ekf",
+    "ts": 1783372059296,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e914006ad037f0d23d040f010eed8983510ee70c80b0",
+    "origBytes": "e200e914006ad037f0d23d040f010eed8983510ee70c80b0",
+    "tag": "e9_12",
+    "note": "pink/lavender slow pulse in/out"
+  },
+  {
+    "id": "mr9pmk1904ee",
+    "ts": 1783371971565,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e914004fd037f0d23d0213060ef58983510ee40c80bb",
+    "origBytes": "e100e914004fd037f0d23d0213060ef58983510ee40c80bb",
+    "tag": "e9_12",
+    "note": "Cuts on, slowly fades out, all leds, red"
+  },
+  {
+    "id": "mrp5pxt4rnhi",
+    "ts": 1784305995880,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91400680f404358f44882d0653fd1462af6307ba1b0",
+    "origBytes": "e91400680f404358f44882d0653fd1462af6307ba1b0",
+    "tag": "unknown",
+    "note": "shimmer\nblue & cyan\nconsistent pattern\nseems to flash/shimmer for 0.25s from one color to the next \n~30s total time"
+  },
+  {
+    "id": "mrp5og65dt1e",
+    "ts": 1784305926365,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e914007f0f5d4458f44882d0650ad14602c8307b00b0",
+    "origBytes": "e914007f0f5d4458f44882d0650ad14602c8307b00b0",
+    "tag": "unknown",
+    "note": "all blue\ncircle animation?\n~50s total time\n~1s cycle time\n~1.5s fade out time\nblue seems to be pulsing down the wand, then have a trail behind it fade out"
+  },
+  {
+    "id": "mrp5kakxv069",
+    "ts": 1784305732497,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e914004c0f515d58f44882d06500d14657ff307b00b0",
+    "origBytes": "e914004c0f515d58f44882d06500d14657ff307b00b0",
+    "tag": "unknown",
+    "note": "circle animation on outer\ninner is on for ~0.75s, off for ~0.25s\nyellow x4, off/black x1\n~1s cycle time\n~40s total time"
+  },
+  {
+    "id": "mrqxdj6bois2",
+    "ts": 1784412912467,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91400450f564258f44882d06500d146040a307b26b0",
+    "origBytes": "e100e91400450f564258f44882d06500d146040a307b26b0",
+    "tag": "unknown",
+    "note": "Teal & blue\nOn for ~16s\nCircle animation"
+  },
+  {
+    "id": "mrqxcoysh4jw",
+    "ts": 1784412873316,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91400490f564258f44882d06500d146040a307b26b0",
+    "origBytes": "e100e91400490f564258f44882d06500d146040a307b26b0",
+    "tag": "unknown",
+    "note": "Teal & blue\nOn for ~26s\nCircle animation"
+  },
+  {
+    "id": "mrqxb96gll6i",
+    "ts": 1784412806200,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91400070f564258f44882d06500d146040a307b26b0",
+    "origBytes": "e100e91400070f564258f44882d06500d146040a307b26b0",
+    "tag": "unknown",
+    "note": "Teal & blue\nOn for ~11s\nSeems to be a circle animation"
+  },
+  {
+    "id": "mrqxgcb8omh3",
+    "ts": 1784413043540,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91400450f564258f44882d06500d146040a307b26b0",
+    "origBytes": "e200e91400450f564258f44882d06500d146040a307b26b0",
+    "tag": "unknown",
+    "note": "Teal & blue\nOn for ~16s\nCircle animation"
+  },
+  {
+    "id": "mrqxfe6jbsfd",
+    "ts": 1784412999307,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91400490f564258f44882d06500d146040a307b26b0",
+    "origBytes": "e200e91400490f564258f44882d06500d146040a307b26b0",
+    "tag": "unknown",
+    "note": "Teal & blue\nOn for ~26s\nCircle animation"
+  }
+]

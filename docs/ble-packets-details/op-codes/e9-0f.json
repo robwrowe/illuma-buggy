@@ -1,0 +1,112 @@
+[
+  {
+    "id": "mr9ykoohwdip",
+    "ts": 1783387000817,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90f002a0f46435812488dd246021200b0",
+    "origBytes": "e100e90f002a0f46435812488dd246021200b0",
+    "tag": "unknown",
+    "note": "inner (blue) / outer (blue), alternating flash, ~16 s, ~1.5 s pulse (time lit), off ~0.5s"
+  },
+  {
+    "id": "mr9yh5ym8xjr",
+    "ts": 1783386836590,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90f00110f4f425807488dd2462a0717b8",
+    "origBytes": "e100e90f00110f4f425807488dd2462a0717b8",
+    "tag": "unknown",
+    "note": "inner (yellow) / outer (blue), shimmer, 2 sec"
+  },
+  {
+    "id": "mrp5h4cuyyr8",
+    "ts": 1784305584462,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90f00110ef17aec5c012814281448abb0",
+    "origBytes": "e90f00110ef17aec5c012814281448abb0",
+    "tag": "unknown",
+    "note": "Very quick strobe (can't even get a stop watch on it).\nall yellow.\n~3.5s on\n~0.25s fade out"
+  },
+  {
+    "id": "mrp5fckpg3xs",
+    "ts": 1784305501801,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90f000f0eef7aec5c022814281448abb0",
+    "origBytes": "e90f000f0eef7aec5c022814281448abb0",
+    "tag": "unknown",
+    "note": "outer only\nyellow alternating flashes in unison\nseems to flash for a period, then slow, then resume same cadence\n~26s total time\n~0.25s strobe time"
+  },
+  {
+    "id": "mrp5ddz2ittv",
+    "ts": 1784305410302,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e90f00520ef17aec5c022814281448abb0",
+    "origBytes": "e90f00520ef17aec5c022814281448abb0",
+    "tag": "unknown",
+    "note": "Outer only\nYellow\nalternating flashes (UR + BL / UL + BR) in unison\n~0.5s cycle (0.25s flash)\nquick fade out (est 0.25s)"
+  },
+  {
+    "id": "mrqxsolox4zn",
+    "ts": 1784413619340,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90f00ff0f5d5b5803488dd246020300b0",
+    "origBytes": "e100e90f00ff0f5d5b5803488dd246020300b0",
+    "tag": "unknown",
+    "note": "Slow Flashing white, on for over 3min 50s  approx, seems to be a different pattern, 4s cycle time, never fades all the way out during the sequence"
+  },
+  {
+    "id": "mrqxnpx4tdlm",
+    "ts": 1784413387768,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90f000a0f5d5b5803488dd246020300b0",
+    "origBytes": "e100e90f000a0f5d5b5803488dd246020300b0",
+    "tag": "unknown",
+    "note": "Flashing white, 16s, seems to be a different pattern"
+  },
+  {
+    "id": "mrqxm1dhu5d7",
+    "ts": 1784413309301,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90f00020f5d5b5803488dd246020300b0",
+    "origBytes": "e100e90f00020f5d5b5803488dd246020300b0",
+    "tag": "unknown",
+    "note": "~3s, all white, Flash\n3 flashes, then quicky starts a second 3 flashes (not the same pause between flash 3 & 4)"
+  },
+  {
+    "id": "mrqxjo69lxua",
+    "ts": 1784413198881,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90f00000f5d5b5803488dd246020300b0",
+    "origBytes": "e100e90f00000f5d5b5803488dd246020300b0",
+    "tag": "unknown",
+    "note": "All white flash, 3s, 5 flashes\nWhite doesn't fade all the way out between flashes"
+  },
+  {
+    "id": "mrqxibp0exj8",
+    "ts": 1784413136052,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90f00010f5d5b5803488dd246020300b0",
+    "origBytes": "e200e90f00010f5d5b5803488dd246020300b0",
+    "tag": "unknown",
+    "note": "All white flash, 1.5s, 3 flashes"
+  },
+  {
+    "id": "mrqxi1nwrh74",
+    "ts": 1784413123052,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90f00010f5d5b5803488dd246020300b0",
+    "origBytes": "e100e90f00010f5d5b5803488dd246020300b0",
+    "tag": "unknown",
+    "note": "All white flash, 1.5s, 3 flashes"
+  }
+]
