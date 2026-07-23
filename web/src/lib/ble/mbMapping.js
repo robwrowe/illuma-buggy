@@ -1372,6 +1372,88 @@ export function mbMappingToBlePayload(config) {
 }
 
 /**
+ * On-device ArduinoJson document budget for set_mb_rules (Config.h BLE_JSON_DOC_SIZE).
+ * Keep in sync with firmware — this is the soft ceiling the capacity gauge tracks.
+ */
+export const BLE_JSON_DOC_BUDGET_BYTES = 131072;
+
+/**
+ * Multiplier from serialized JSON bytes → approximate ArduinoJson pool usage.
+ *
+ * Calibration method (do this on a live board after any major rule-shape change):
+ *   1. Note totalRawBytes from estimateMbPayloadFootprint() for the config you will push.
+ *   2. Push set_mb_rules; read serial `[Rules] before cache write` / `after full replace`
+ *      psramFree deltas (and/or `[BLE] cmdChunkBuffer ready` / `Chunk assembly complete`).
+ *   3. parsedBytes ≈ psramFree_before − psramFree_after around gRulesDoc deserialize
+ *      (prefer the rules-cache lines, not the chunk buffer alone).
+ *   4. Set ARDUINOJSON_OVERHEAD_FACTOR = parsedBytes / totalRawBytes.
+ *
+ * Provisional value 1.55: mid of the typical 1.4–1.7 range for nested rule trees
+ * (match.children / extract.targets / segmentOverrides) on ArduinoJson 7. Replace after
+ * measuring against a known ~60–70KB payload on your ESP32-S3.
+ */
+export const ARDUINOJSON_OVERHEAD_FACTOR = 1.55;
+
+function utf8ByteLength(value) {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+
+/**
+ * Client-side footprint of the set_mb_rules blob — no device connection required.
+ * Returns raw + estimated-parsed sizes, category totals, and per-item heavies.
+ */
+export function estimateMbPayloadFootprint(mbMapping) {
+  const payload = mbMappingToBlePayload(mbMapping);
+  const breakdown = {};
+  let totalRaw = 0;
+  for (const key of Object.keys(payload)) {
+    const bytes = utf8ByteLength(payload[key]);
+    breakdown[key] = bytes;
+    totalRaw += bytes;
+  }
+
+  const ruleItems = (payload.rules || []).map((r, i) => ({
+    kind: 'rule',
+    id: r?.id || `rule-${i}`,
+    name: r?.name || r?.id || `Rule ${i + 1}`,
+    bytes: utf8ByteLength(r),
+  }));
+  const mapItems = (payload.segmentMaps || []).map((m, i) => ({
+    kind: 'segmentMap',
+    id: m?.id || `map-${i}`,
+    name: m?.name || m?.id || `Map ${i + 1}`,
+    bytes: utf8ByteLength(m),
+  }));
+  const timingItems = (payload.timingModels || []).map((t, i) => ({
+    kind: 'timingModel',
+    id: t?.id || `tm-${i}`,
+    name: t?.name || t?.id || `Timing ${i + 1}`,
+    bytes: utf8ByteLength(t),
+  }));
+
+  const heaviest = [...ruleItems, ...mapItems, ...timingItems]
+    .sort((a, b) => b.bytes - a.bytes)
+    .slice(0, 8);
+
+  const estimatedParsedBytes = Math.round(totalRaw * ARDUINOJSON_OVERHEAD_FACTOR);
+  const budget = BLE_JSON_DOC_BUDGET_BYTES;
+  const pctOfBudget = budget > 0 ? (estimatedParsedBytes / budget) * 100 : 0;
+
+  return {
+    totalRawBytes: totalRaw,
+    estimatedParsedBytes,
+    budgetBytes: budget,
+    pctOfBudget,
+    breakdown,
+    ruleCount: ruleItems.length,
+    segmentMapCount: mapItems.length,
+    timingModelCount: timingItems.length,
+    items: { rules: ruleItems, segmentMaps: mapItems, timingModels: timingItems },
+    heaviest,
+  };
+}
+
+/**
  * Convert a segment-map segment into a WLED-shaped seg def for recall / board sync.
  * Map segments use string ids + wledSegId + blend id + hex colors[]; WLED wants
  * numeric id, bm, and col RGB arrays.

@@ -25,7 +25,9 @@ extern NimBLEServer*         bleServer;
 extern NimBLECharacteristic* notifyChar;
 extern bool                  bleConnected;
 
-extern String cmdChunkBuffer;
+extern char*  cmdChunkBuffer;
+extern size_t cmdChunkBufferLen;
+extern size_t cmdChunkBufferCap;
 extern int    cmdChunkNextSeq;
 
 extern OverrideSource currentOverride;

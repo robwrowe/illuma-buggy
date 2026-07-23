@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import { BleMappingTabBar } from '../ble/BleMappingTabBar';
 import { DefaultPresetField } from '../ble/DefaultPresetField';
+import { MbPayloadCapacityGauge } from '../ble/MbPayloadCapacityGauge';
 import { RandomPoolEditor } from '../ble/RandomPoolEditor';
 import { RuleEditor } from '../ble/RuleEditor';
 import { SegmentMapEditor } from '../ble/SegmentMapEditor';
@@ -69,6 +70,10 @@ export function SettingsTab({ data, update }) {
         </Text>
 
         <BleMappingTabBar active={bleTab} onChange={setBleTab} />
+
+        {(bleTab === 'rules' || bleTab === 'segmentMaps' || bleTab === 'timingModels') && (
+          <MbPayloadCapacityGauge mbMapping={mb} />
+        )}
 
         {(bleTab === 'rules') && (
           <DefaultPresetField mb={mb} presets={presets} onChange={setMb} />

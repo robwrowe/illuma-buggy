@@ -34,7 +34,9 @@ NimBLEServer*         bleServer    = nullptr;
 NimBLECharacteristic* notifyChar   = nullptr;
 bool                  bleConnected = false;
 
-String cmdChunkBuffer;
+char*  cmdChunkBuffer = nullptr;
+size_t cmdChunkBufferLen = 0;
+size_t cmdChunkBufferCap = 0;
 int    cmdChunkNextSeq = 0;
 
 OverrideSource currentOverride    = NONE;

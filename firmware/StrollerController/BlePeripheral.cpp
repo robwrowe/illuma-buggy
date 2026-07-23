@@ -5,7 +5,12 @@
 #include <esp_heap_caps.h>
 
 void resetCmdChunkBuffer() {
-  cmdChunkBuffer = "";
+  if (cmdChunkBuffer) {
+    heap_caps_free(cmdChunkBuffer);
+    cmdChunkBuffer = nullptr;
+  }
+  cmdChunkBufferLen = 0;
+  cmdChunkBufferCap = 0;
   cmdChunkNextSeq = 0;
 }
 
@@ -69,10 +74,30 @@ void bleNotifyChunked(const String& type, const String& payload) {
 void processBleCmdChunk(int seq, bool last, const String& data) {
   if (seq == 0) {
     resetCmdChunkBuffer();
-    // Avoid ~N realloc/copies while assembling large set_mb_rules payloads —
-    // repeated String growth fragments the internal heap and can make the
-    // subsequent enqueueBleCommand malloc fail even when freeHeap looks fine.
-    cmdChunkBuffer.reserve(BLE_CMD_BUF_SIZE);
+    // +1 for NUL when handing off to enqueueBleCommandOwned / handleBLECommand.
+    cmdChunkBufferCap = BLE_CMD_BUF_SIZE;
+    const size_t alloc = cmdChunkBufferCap + 1;
+    cmdChunkBuffer = (char*)heap_caps_malloc(alloc, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!cmdChunkBuffer) {
+      cmdChunkBuffer = (char*)heap_caps_malloc(alloc, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (!cmdChunkBuffer) {
+      Serial.printf("[BLE] cmdChunkBuffer alloc failed (%u, freeHeap=%u, psramFree=%u)\n",
+                    (unsigned)alloc,
+                    (unsigned)ESP.getFreeHeap(),
+                    ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+      bleNotify("{\"type\":\"chunk_sync_failed\",\"reason\":\"alloc_failed\"}");
+      return;
+    }
+    cmdChunkBufferLen = 0;
+    Serial.printf("[BLE] cmdChunkBuffer ready cap=%u psramFree=%u freeHeap=%u\n",
+                  (unsigned)cmdChunkBufferCap,
+                  ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u,
+                  (unsigned)ESP.getFreeHeap());
+  }
+  if (!cmdChunkBuffer) {
+    bleNotify("{\"type\":\"chunk_sync_failed\",\"reason\":\"alloc_failed\"}");
+    return;
   }
   if (seq != cmdChunkNextSeq) {
     Serial.printf("[BLE] Chunk seq mismatch (got %d, expected %d)\n", seq, cmdChunkNextSeq);
@@ -81,27 +106,58 @@ void processBleCmdChunk(int seq, bool last, const String& data) {
     resetCmdChunkBuffer();
     return;
   }
-  if (cmdChunkBuffer.length() + data.length() > BLE_CMD_BUF_SIZE) {
+  if (cmdChunkBufferLen + data.length() > cmdChunkBufferCap) {
     Serial.printf("[BLE] Chunk buffer overflow (have=%u +%u > %u), aborting\n",
-                  (unsigned)cmdChunkBuffer.length(), (unsigned)data.length(),
-                  (unsigned)BLE_CMD_BUF_SIZE);
+                  (unsigned)cmdChunkBufferLen, (unsigned)data.length(),
+                  (unsigned)cmdChunkBufferCap);
     bleNotify("{\"type\":\"chunk_sync_failed\",\"reason\":\"overflow\"}");
     resetCmdChunkBuffer();
     return;
   }
-  cmdChunkBuffer += data;
+  memcpy(cmdChunkBuffer + cmdChunkBufferLen, data.c_str(), data.length());
+  cmdChunkBufferLen += data.length();
   cmdChunkNextSeq++;
   if (last) {
-    String complete = cmdChunkBuffer;
-    resetCmdChunkBuffer();
-    Serial.printf("[BLE] Chunk assembly complete (%u bytes)\n", (unsigned)complete.length());
-    enqueueBleCommand(complete);
+    // Transfer ownership — no second full-size copy into a String.
+    char* owned = cmdChunkBuffer;
+    size_t len = cmdChunkBufferLen;
+    cmdChunkBuffer = nullptr;
+    cmdChunkBufferLen = 0;
+    cmdChunkBufferCap = 0;
+    cmdChunkNextSeq = 0;
+    Serial.printf("[BLE] Chunk assembly complete (%u bytes, freeHeap=%u, psramFree=%u)\n",
+                  (unsigned)len,
+                  (unsigned)ESP.getFreeHeap(),
+                  ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+    enqueueBleCommandOwned(owned, len);
+  }
+}
+
+void enqueueBleCommandOwned(char* buf, size_t len) {
+  if (!buf) return;
+  if (!bleConnected || bleCmdQueue == nullptr) {
+    heap_caps_free(buf);
+    return;
+  }
+  if (len == 0 || len > BLE_CMD_BUF_SIZE) {
+    Serial.printf("[BLE] Command size %u rejected\n", (unsigned)len);
+    heap_caps_free(buf);
+    return;
+  }
+  buf[len] = '\0';
+  PendingBleCmd item = { buf };
+  if (xQueueSend(bleCmdQueue, &item, 0) != pdTRUE) {
+    static uint32_t bleCmdDropCount = 0;
+    bleCmdDropCount++;
+    Serial.printf("[BLE] Command queue full (depth=%u, dropped=%lu)\n",
+                  (unsigned)BLE_CMD_QUEUE_DEPTH, (unsigned long)bleCmdDropCount);
+    heap_caps_free(buf);
   }
 }
 
 void enqueueBleCommand(const String& msg) {
   if (!bleConnected || bleCmdQueue == nullptr) return;
-  if (msg.length() == 0 || msg.length() >= BLE_CMD_BUF_SIZE) {
+  if (msg.length() == 0 || msg.length() > BLE_CMD_BUF_SIZE) {
     Serial.printf("[BLE] Command size %u rejected\n", (unsigned)msg.length());
     return;
   }
@@ -110,7 +166,7 @@ void enqueueBleCommand(const String& msg) {
   // fragment the internal heap used by BLE / ESP-NOW / HTTP.
   char* buf = (char*)heap_caps_malloc(need, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) {
-    buf = (char*)malloc(need);
+    buf = (char*)heap_caps_malloc(need, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   }
   if (!buf) {
     Serial.printf("[BLE] Command alloc failed (%u bytes, freeHeap=%u, largestFreeBlock=%u, psramFree=%u)\n",
@@ -124,21 +180,14 @@ void enqueueBleCommand(const String& msg) {
     return;
   }
   memcpy(buf, msg.c_str(), need);
-  PendingBleCmd item = { buf };
-  if (xQueueSend(bleCmdQueue, &item, 0) != pdTRUE) {
-    static uint32_t bleCmdDropCount = 0;
-    bleCmdDropCount++;
-    Serial.printf("[BLE] Command queue full (depth=%u, dropped=%lu)\n",
-                  (unsigned)BLE_CMD_QUEUE_DEPTH, (unsigned long)bleCmdDropCount);
-    free(buf);
-  }
+  enqueueBleCommandOwned(buf, msg.length());
 }
 
 void drainBleCmdQueue() {
   if (bleCmdQueue == nullptr) return;
   PendingBleCmd item;
   while (xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
-    if (item.data) free(item.data);
+    if (item.data) heap_caps_free(item.data);
   }
 }
 
@@ -150,7 +199,7 @@ void processBleCmdQueue() {
          xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
     if (item.data) {
       handleBLECommand(String(item.data));
-      free(item.data);
+      heap_caps_free(item.data);
     }
     drained++;
   }
