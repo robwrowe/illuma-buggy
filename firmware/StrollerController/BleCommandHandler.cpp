@@ -47,7 +47,8 @@ void handleBLECommand(const String& msg) {
     String id = doc["id"].as<String>();
     String name = doc["name"].as<String>();
     String wled; serializeJson(doc["wled"], wled);
-    savePreset(id, name, wled);
+    String segmentMapId = doc["segmentMapId"] | "";
+    savePreset(id, name, wled, segmentMapId);
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_save\",\"id\":\"" + id + "\"}");
   }
   else if (type == "preset_apply") {

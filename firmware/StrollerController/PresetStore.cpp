@@ -2,11 +2,18 @@
 #include "Globals.h"
 #include "WledClient.h"
 #include "OverrideManager.h"
+#include "MbRuleEngine.h"
+#include "Config.h"
 
-void savePreset(const String& id, const String& name, const String& wledJson) {
+void savePreset(const String& id, const String& name, const String& wledJson,
+                const String& segmentMapId) {
   prefs.begin("presets", false);
   String key = "p_" + id;
-  String val = "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"wled\":" + wledJson + "}";
+  String val = "{\"id\":\"" + id + "\",\"name\":\"" + name + "\"";
+  if (segmentMapId.length() > 0) {
+    val += ",\"segmentMapId\":\"" + segmentMapId + "\"";
+  }
+  val += ",\"wled\":" + wledJson + "}";
   prefs.putString(key.c_str(), val);
   String index = prefs.getString("index", "");
   if (index.indexOf(id) == -1) {
@@ -94,8 +101,21 @@ bool applyPreset(const String& id) {
     Serial.printf("[Preset] JSON parse failed for %s (%u bytes)\n", id.c_str(), (unsigned)preset.length());
     return false;
   }
+  DynamicJsonDocument wledDoc(WLED_RESTORE_JSON_CAP);
+  if (deserializeJson(wledDoc, doc["wled"]) != DeserializationError::Ok) return false;
+
+  // Inherit device-global ledmap from the linked segment map (same lookup as rules).
+  const char* mapId = doc["segmentMapId"] | "";
+  if (mapId[0]) {
+    JsonObject segMap = findSegmentMapById(mapId);
+    if (!segMap.isNull()) {
+      int ledmapId = segMap["ledmap"] | 0;
+      if (ledmapId > 0) wledDoc["ledmap"] = ledmapId;
+    }
+  }
+
   String wledJson;
-  serializeJson(doc["wled"], wledJson);
+  serializeJson(wledDoc, wledJson);
   if (wledJson.length() == 0) return false;
   currentPresetId = id;
   String payload = preparePresetApplyPayload(wledJson);
@@ -113,4 +133,3 @@ bool setBrightness(int bri) {
   currentBrightness = bri;
   return sendToWLED("{\"bri\":" + String(bri) + "}");
 }
-

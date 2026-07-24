@@ -26,6 +26,20 @@ import {
   wledSegmentToSegmentMapSegment,
 } from '../../lib/ble/mbMapping';
 import { fetchWledSegmentsFromIp } from '../../lib/wled/capture';
+
+const LEDMAP_OPTS = [
+  { value: '0', label: 'Default (ledmap.json)', searchText: '0 default ledmap.json' },
+  { value: '1', label: 'Map 1 (ledmap1.json)', searchText: '1 ledmap1.json' },
+  { value: '2', label: 'Map 2 (ledmap2.json)', searchText: '2 ledmap2.json' },
+  { value: '3', label: 'Map 3 (ledmap3.json)', searchText: '3 ledmap3.json' },
+  { value: '4', label: 'Map 4 (ledmap4.json)', searchText: '4 ledmap4.json' },
+  { value: '5', label: 'Map 5 (ledmap5.json)', searchText: '5 ledmap5.json' },
+  { value: '6', label: 'Map 6 (ledmap6.json)', searchText: '6 ledmap6.json' },
+  { value: '7', label: 'Map 7 (ledmap7.json)', searchText: '7 ledmap7.json' },
+  { value: '8', label: 'Map 8 (ledmap8.json)', searchText: '8 ledmap8.json' },
+  { value: '9', label: 'Map 9 (ledmap9.json)', searchText: '9 ledmap9.json' },
+];
+
 const MASK_OPTS = [
   { value: 'ignore', label: 'ignore', searchText: 'ignore' },
   ...MB_SEGMENT_META.map((s) => ({
@@ -456,7 +470,21 @@ export function SegmentMapEditor({
             <Field label="Id">
               <TextInput value={selected.id} disabled styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }} />
             </Field>
+            <Field label="LED map">
+              <SearchableSelect
+                value={String(selected.ledmap ?? 0)}
+                onChange={(v) => updateMap(selected.id, { ledmap: parseInt(v, 10) || 0 })}
+                options={LEDMAP_OPTS}
+                allowEmpty={false}
+              />
+            </Field>
           </SimpleGrid>
+          <Text size="xs" c="dimmed" mb="sm" lh={1.45}>
+            WLED device-global pixel remap (<code style={{ fontFamily: 'monospace' }}>ledmap.json</code> /
+            <code style={{ fontFamily: 'monospace' }}>ledmap1–9.json</code>).
+            Rules and presets that reference this map inherit the selection. Files must already
+            exist on the GLEDOPTO — selecting a map only sends the index.
+          </Text>
           <Group gap="xs" mb="md" wrap="wrap">
             <AppButton size="compact-xs" variant="default" onClick={() => duplicateMap(selected)}>
               Duplicate

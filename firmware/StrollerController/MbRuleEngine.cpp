@@ -528,7 +528,7 @@ static float resolveBlendRatio(JsonObject ratioObj, const uint8_t* payload, size
   return v;
 }
 
-static JsonObject findSegmentMapById(const char* mapId) {
+JsonObject findSegmentMapById(const char* mapId) {
   JsonObject empty;
   if (!mapId || !mapId[0]) return empty;
   JsonArray maps = gRulesDoc["segmentMaps"].as<JsonArray>();
@@ -1149,6 +1149,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   const char* mapId = rule["segmentMapId"] | "";
   JsonObject segMap = findSegmentMapById(mapId);
+  int ledmapId = segMap.isNull() ? -1 : (int)(segMap["ledmap"] | 0);
 
   String presetId = rule["presetId"] | "";
   JsonArray extracts = rule["extract"].as<JsonArray>();
@@ -1556,6 +1557,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   if (wled.overflowed()) {
     Serial.println("[Rule] WLED doc overflowed while building — abort apply");
     return;
+  }
+
+  // Device-global remap — inject at the end so every build branch keeps it.
+  // Skip 0/absent: WLED default ledmap.json; avoid noise on every POST.
+  if (ledmapId > 0) {
+    wled["ledmap"] = ledmapId;
   }
 
   String wledJson;

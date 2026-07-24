@@ -1,7 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
-void savePreset(const String& id, const String& name, const String& wledJson);
+void savePreset(const String& id, const String& name, const String& wledJson,
+                const String& segmentMapId = "");
 String getPreset(const String& id);
 String getAllPresets();
 int countBoardPresets();

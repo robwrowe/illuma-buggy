@@ -88,7 +88,17 @@ Not compacted in this pass. Revisit only if payload still presses the 128KB budg
 
 ---
 
-## 4. Measured impact (2026-07-23 export)
+## 4. `segmentMaps[].ledmap`
+
+Plain integer `0`–`9` on the segment map object (not a `segmentOverrides` field, not
+mode-wrapped). `0`/absent = default (`ledmap.json`). Read by both the rules apply path
+(`applyMatchedRule` in `MbRuleEngine.cpp`) and the preset apply path (`applyPreset` in
+`PresetStore.cpp`) via `segmentMapId` lookup, injected into the outbound WLED payload
+as `{"ledmap": N}` only when N > 0.
+
+---
+
+## 5. Measured impact (2026-07-23 export)
 
 Config: 19 rules / 9 segment maps (`illuma-buggy-export-2026-07-23 (6).json`).
 

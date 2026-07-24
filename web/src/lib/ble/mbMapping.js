@@ -319,6 +319,7 @@ export function createEmptySegmentMap(overrides = {}) {
   return {
     id: shortSegmentMapId(),
     name: 'New segment map',
+    ledmap: 0,
     segments: [createEmptySegment()],
     ...overrides,
   };
@@ -1205,9 +1206,14 @@ export function normalizeSegmentMap(raw) {
   const segments = Array.isArray(raw.segments) && raw.segments.length
     ? raw.segments.map(normalizeSegment)
     : [createEmptySegment()];
+  const ledmapN = Number(raw.ledmap);
+  const ledmap = Number.isFinite(ledmapN)
+    ? Math.max(0, Math.min(9, Math.round(ledmapN)))
+    : 0;
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentMapId(),
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'Untitled map',
+    ledmap,
     segments,
   };
 }
@@ -1664,6 +1670,13 @@ export function presetWledForBoard(preset, segmentMaps) {
   } else {
     wled.seg = [buildRecalledSegment({ id: 0 }, wled, always, m, 0)];
   }
+  // Device-global ledmap from the linked segment map (0/absent = omit; WLED keeps last map).
+  const linked = preset?.segmentMapId
+    ? (segmentMaps || []).find((m) => m.id === preset.segmentMapId)
+    : undefined;
+  const ledmapId = Number(linked?.ledmap);
+  if (Number.isFinite(ledmapId) && ledmapId > 0) wled.ledmap = ledmapId;
+  else delete wled.ledmap;
   return wled;
 }
 

@@ -113,6 +113,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
         id: p.id,
         name: p.name,
         wled: presetWledForBoard(p, segmentMaps),
+        ...(p.segmentMapId ? { segmentMapId: p.segmentMapId } : {}),
       });
       await delay(BLE_SEND_DELAY_MS + 30);
     }
