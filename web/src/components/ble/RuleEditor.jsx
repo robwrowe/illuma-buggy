@@ -1045,35 +1045,44 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
   const colorBlend = extract.colorBlend || createEmptyColorBlend();
   const blend = Array.isArray(extract.blend) ? extract.blend : [createEmptyColorSourceBlendEntry()];
   const isReciprocal = curve.type === 'reciprocal';
-  const extractMode = isColorSourceBlendSource(extract.source)
-    ? 'colorSourceBlend'
-    : (isFixedColorSource(extract.source)
-      ? 'fixedColor'
-      : (extract.channelGroup
-        ? 'channelGroup'
-        : (extract.colorBlend
-          ? 'colorBlend'
-          : (extract.paletteMap ? 'palette' : 'curve'))));
+  const isSingleSourcePassthrough = isColorSourceBlendSource(extract.source)
+    && Array.isArray(extract.blend)
+    && extract.blend.length === 1;
+  const extractMode = isSingleSourcePassthrough
+    ? 'namedSource'
+    : isColorSourceBlendSource(extract.source)
+      ? 'colorSourceBlend'
+      : (isFixedColorSource(extract.source)
+        ? 'fixedColor'
+        : (extract.channelGroup
+          ? 'channelGroup'
+          : (extract.colorBlend
+            ? 'colorBlend'
+            : (extract.paletteMap ? 'palette' : 'curve'))));
   const blendWeightSum = colorSourceBlendWeightSum(blend);
   const blendWeightOk = Math.abs(blendWeightSum - 100) < 0.5;
   const title = extract.name?.trim() ? extract.name.trim() : 'Packet extract';
   const summary = [
     extractMode === 'fixedColor'
       ? (extract.value || '#ffffff')
-      : (extractMode === 'channelGroup'
-        ? 'rgb channel group'
-        : (extractMode === 'colorSourceBlend'
-          ? 'named blend'
-          : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`))),
+      : (extractMode === 'namedSource'
+        ? `→ ${extract.blend?.[0]?.source || '(none)'}`
+        : (extractMode === 'channelGroup'
+          ? 'rgb channel group'
+          : (extractMode === 'colorSourceBlend'
+            ? 'named blend'
+            : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`)))),
     extractMode === 'fixedColor'
       ? 'hard-coded'
-      : (extractMode === 'channelGroup'
-        ? (channelGroup.scale || 'bitReplicate6to8')
-        : (extractMode === 'colorSourceBlend'
-          ? `${blend.length} src · ${blendWeightSum.toFixed(0)}%`
-          : (extractMode === 'colorBlend'
-            ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
-            : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve'))))),
+      : (extractMode === 'namedSource'
+        ? 'named source'
+        : (extractMode === 'channelGroup'
+          ? (channelGroup.scale || 'bitReplicate6to8')
+          : (extractMode === 'colorSourceBlend'
+            ? `${blend.length} src · ${blendWeightSum.toFixed(0)}%`
+            : (extractMode === 'colorBlend'
+              ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
+              : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve')))))),
     `${targets.length} target${targets.length === 1 ? '' : 's'}`,
   ].join(' · ');
 
@@ -1142,17 +1151,39 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       onChange({ ...rest, colorBlend: extract.colorBlend || createEmptyColorBlend() });
       return;
     }
+    if (mode === 'namedSource') {
+      const rest = createEmptyColorSourceBlendExtract(extract.name || '');
+      onChange({
+        ...rest,
+        name: extract.name || '',
+        source: 'colorSourceBlend',
+        targets: Array.isArray(extract.targets) && extract.targets.length
+          ? extract.targets
+          : rest.targets,
+        blend: [{
+          source: (Array.isArray(extract.blend) && extract.blend[0]?.source) || '',
+          weightPct: 100,
+        }],
+      });
+      return;
+    }
     if (mode === 'colorSourceBlend') {
       const rest = createEmptyColorSourceBlendExtract(extract.name || '');
+      // Single-entry blends render as "Named source"; promote to two slots so the
+      // multi-source Named blend UI can stay selected.
+      let nextBlend = Array.isArray(extract.blend) && extract.blend.length
+        ? extract.blend
+        : rest.blend;
+      if (nextBlend.length === 1) {
+        nextBlend = [...nextBlend, createEmptyColorSourceBlendEntry({ weightPct: 0 })];
+      }
       onChange({
         ...rest,
         name: extract.name || '',
         targets: Array.isArray(extract.targets) && extract.targets.length
           ? extract.targets
           : rest.targets,
-        blend: Array.isArray(extract.blend) && extract.blend.length
-          ? extract.blend
-          : rest.blend,
+        blend: nextBlend,
       });
       return;
     }
@@ -1212,6 +1243,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
             { label: 'Palette', value: 'palette' },
             { label: 'Curve', value: 'curve' },
             { label: 'RGB', value: 'channelGroup' },
+            { label: 'Named source', value: 'namedSource' },
             { label: 'Blend', value: 'colorBlend' },
             { label: 'Named blend', value: 'colorSourceBlend' },
           ]}
@@ -1228,7 +1260,41 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           />
         </Stack>
       )}
-      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && extractMode !== 'colorSourceBlend' && extractMode !== 'fixedColor' && (
+      {extractMode === 'namedSource' && (
+        <Stack gap="xs" mt="xs">
+          <Field label="Name">
+            <TextInput
+              value={extract.name || ''}
+              onChange={(e) => onChange({
+                ...extract,
+                source: 'colorSourceBlend',
+                name: e.target.value,
+                blend: [{ source: (extract.blend?.[0]?.source) || '', weightPct: 100 }],
+              })}
+              placeholder="topLeftColor"
+            />
+          </Field>
+          {!colorSourceOpts.length && (
+            <Text size="xs" c="orange">
+              No color sources defined yet — add one under &quot;Color sources&quot; above.
+            </Text>
+          )}
+          <Field label="Source">
+            <SearchableSelect
+              value={extract.blend?.[0]?.source || ''}
+              onChange={(value) => onChange({
+                ...extract,
+                source: 'colorSourceBlend',
+                blend: [{ source: value || '', weightPct: 100 }],
+              })}
+              options={colorSourceOpts}
+              placeholder="Choose a named color source"
+              allowEmpty
+            />
+          </Field>
+        </Stack>
+      )}
+      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && extractMode !== 'colorSourceBlend' && extractMode !== 'fixedColor' && extractMode !== 'namedSource' && (
         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
           <Field label="Name">
             <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />
