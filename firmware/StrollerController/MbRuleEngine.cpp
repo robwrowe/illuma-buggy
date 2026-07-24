@@ -598,7 +598,8 @@ static void applyPresetVariables(JsonObject segObj, JsonObject presetVariables) 
 static void setSegColorSlot(JsonObject segObj, int colorSlot, uint8_t r, uint8_t g, uint8_t b) {
   if (colorSlot < 0) colorSlot = 0;
   if (colorSlot > 2) colorSlot = 2;
-  segObj["pal"] = WLED_PAL_COLORS_ONLY;
+  // pal fallback now handled by callers — see setSegColorSlot call sites in
+  // seedWledFromSegmentMap() and applySegmentOverridesOntoWled().
   JsonArray col = segObj["col"].as<JsonArray>();
   if (col.isNull()) col = segObj.createNestedArray("col");
   if (col.isNull()) return;  // document full — do not spin
@@ -703,11 +704,13 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
     if (def.containsKey("ix")) seg["ix"] = def["ix"];
     else if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
     int pal = def["pal"] | -1;
+    bool palSet = false;
     if (pal >= 0) {
       seg["pal"] = pal;
+      palSet = true;
     } else if (hasRuleEffect) {
       int rpal = ruleEffect["pal"] | -1;
-      if (rpal >= 0) seg["pal"] = rpal;
+      if (rpal >= 0) { seg["pal"] = rpal; palSet = true; }
     }
 
     JsonArray colors = def["colors"].as<JsonArray>();
@@ -719,6 +722,7 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
         parseHexColor(hex, r, g, b);
         setSegColorSlot(seg, i, r, g, b);
       }
+      if (!palSet) seg["pal"] = WLED_PAL_COLORS_ONLY;
     }
 
     const char* presetId = def["presetId"] | "";
@@ -789,6 +793,7 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
         seg["fx"] = fx >= 0 ? fx : 0;
       }
     };
+    bool palSet = seg.containsKey("pal");
     auto applyPal = [&]() {
       if (!ov.containsKey("pal")) return;
       JsonVariant pv = ov["pal"];
@@ -796,19 +801,19 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
         const char* mode = pv["mode"] | "stored";
         if (strcmp(mode, "custom") == 0) {
           int pal = pv["value"] | -1;
-          if (pal >= 0) seg["pal"] = pal;
+          if (pal >= 0) { seg["pal"] = pal; palSet = true; }
         } else if (strcmp(mode, "default") == 0 && hasRuleEffect) {
           int rpal = ruleEffect["pal"] | -1;
-          if (rpal >= 0) seg["pal"] = rpal;
+          if (rpal >= 0) { seg["pal"] = rpal; palSet = true; }
         }
       } else if (isDefaultSentinel(pv)) {
         if (hasRuleEffect) {
           int rpal = ruleEffect["pal"] | -1;
-          if (rpal >= 0) seg["pal"] = rpal;
+          if (rpal >= 0) { seg["pal"] = rpal; palSet = true; }
         }
       } else {
         int pal = pv.as<int>();
-        if (pal >= 0) seg["pal"] = pal;
+        if (pal >= 0) { seg["pal"] = pal; palSet = true; }
       }
     };
     auto applySx = [&]() {
@@ -894,6 +899,7 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
         parseHexColor(hex, r, g, b);
         setSegColorSlot(seg, slot, r, g, b);
       }
+      if (!palSet) seg["pal"] = WLED_PAL_COLORS_ONLY;
     }
   }
 }
@@ -1421,6 +1427,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
               if (strcmp(assign, mask) != 0) continue;
               JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
               setSegColorSlot(segObj, 0, r, g, b);
+              if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
             }
           }
           return;
@@ -1445,6 +1452,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
             segObj["on"] = true;
           }
           setSegColorSlot(segObj, 0, r, g, b);
+          if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
         }
       };
 
@@ -1473,6 +1481,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
               if (def.isNull()) continue;
               JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
               setSegColorSlot(segObj, slot, r, g, b);
+              if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
             }
             return;
           }
@@ -1481,6 +1490,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
           if (def.isNull()) return;
           JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
           setSegColorSlot(segObj, slot, r, g, b);
+          if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
           return;
         }
         if (strcmp(kind, "maskColor") == 0) {
