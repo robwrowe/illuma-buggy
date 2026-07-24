@@ -1917,6 +1917,13 @@ function RuleCard({
                 disabled={!timing.enabled}
               />
             </Field>
+            {timing.enabled && timing.timingModelId && !timingModelOpts.some((m) => m.value === timing.timingModelId) && (
+              <Text size="xs" c="orange" mt={4}>
+                Timing model &quot;{timing.timingModelId}&quot; is missing from Timing Models —
+                on-time still runs with firmware defaults; speed buckets / strobe will not apply.
+                Pick another model or recreate the deleted one.
+              </Text>
+            )}
             {onEditTimingModels && (
               <AppButton size="compact-xs" variant="default" mt={4} onClick={onEditTimingModels}>
                 Edit timing models →

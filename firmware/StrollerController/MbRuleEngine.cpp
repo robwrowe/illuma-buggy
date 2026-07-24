@@ -261,12 +261,16 @@ static JsonObject findTimingModelById(const char* modelId) {
   JsonObject empty;
   if (!modelId || !modelId[0]) return empty;
   JsonArray models = gRulesDoc["timingModels"].as<JsonArray>();
-  if (models.isNull()) return empty;
+  if (models.isNull()) {
+    Serial.printf("[Rule] WARNING: timingModelId '%s' not found in timingModels\n", modelId);
+    return empty;
+  }
   for (JsonVariant v : models) {
     if (!v.is<JsonObject>()) continue;
     JsonObject m = v.as<JsonObject>();
     if (strcmp(m["id"] | "", modelId) == 0) return m;
   }
+  Serial.printf("[Rule] WARNING: timingModelId '%s' not found in timingModels\n", modelId);
   return empty;
 }
 
@@ -1247,6 +1251,30 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     haveWled = true;
   }
 
+  // Timing-model speed buckets / strobe seed before extracts so packet extracts win
+  // last (same precedence as segmentOverrides → extracts). timing.enabled also drives
+  // on-time lifecycle; that path is separate (beginTimedRuleOnPhase).
+  if (timingEn && payload && plen > 0) {
+    JsonObject timingObj = rule["timing"].as<JsonObject>();
+    const char* tmId = timingObj.isNull() ? "" : (timingObj["timingModelId"] | "");
+    JsonObject tm = findTimingModelById(tmId);
+    uint8_t tOff = (uint8_t)(timingObj.isNull() ? 5 : (timingObj["offset"] | 5));
+    uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
+
+    int bucketValue = 0;
+    const char* bucketField = nullptr;
+    if (resolveSpeedBucketValue(tm, tByte, &bucketValue, &bucketField)) {
+      JsonArray segs = wled["seg"].as<JsonArray>();
+      if (!segs.isNull()) {
+        for (JsonObject seg : segs) setSegNumericField(seg, bucketField, (float)bucketValue);
+      }
+      Serial.printf("[Rule] speedBuckets %s=%d (timing=0x%02X)\n",
+                    bucketField ? bucketField : "sx", bucketValue, tByte);
+    } else {
+      applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
+    }
+  }
+
   // Extract → fan-out targets
   // Resolve all named color sources once per apply — avoids re-parsing the same
   // bytes if multiple segment targets reference the same source.
@@ -1529,28 +1557,6 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       } else if (ex.containsKey("target") && ex["target"].is<JsonObject>()) {
         dispatchTarget(ex["target"].as<JsonObject>());
       }
-    }
-  }
-
-  // Timing-model speed buckets (author table) take precedence over strobe when enabled.
-  if (timingEn && payload && plen > 0) {
-    JsonObject timingObj = rule["timing"].as<JsonObject>();
-    const char* tmId = timingObj.isNull() ? "" : (timingObj["timingModelId"] | "");
-    JsonObject tm = findTimingModelById(tmId);
-    uint8_t tOff = (uint8_t)(timingObj.isNull() ? 5 : (timingObj["offset"] | 5));
-    uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
-
-    int bucketValue = 0;
-    const char* bucketField = nullptr;
-    if (resolveSpeedBucketValue(tm, tByte, &bucketValue, &bucketField)) {
-      JsonArray segs = wled["seg"].as<JsonArray>();
-      if (!segs.isNull()) {
-        for (JsonObject seg : segs) setSegNumericField(seg, bucketField, (float)bucketValue);
-      }
-      Serial.printf("[Rule] speedBuckets %s=%d (timing=0x%02X)\n",
-                    bucketField ? bucketField : "sx", bucketValue, tByte);
-    } else {
-      applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
     }
   }
 
