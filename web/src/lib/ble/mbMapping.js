@@ -1,4 +1,4 @@
-import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId } from './mbConstants';
+import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId, blendModeIdToBm } from './mbConstants';
 import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
 
 const BYTE_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
@@ -65,6 +65,110 @@ export function createEmptyExtractTarget(kind = 'maskColor') {
   if (kind === 'segmentField') return { kind: 'segmentField', segmentId: '', field: '' };
   if (kind === 'ignore') return { kind: 'ignore' };
   return { kind: 'maskColor', mask: 'all' };
+}
+
+export function createEmptyColorBlendSource(overrides = {}) {
+  return {
+    kind: 'palette',
+    offset: 0,
+    bitStart: 0,
+    bitCount: 8,
+    paletteMap: true,
+    ...overrides,
+  };
+}
+
+export function createEmptyColorBlend(overrides = {}) {
+  return {
+    a: createEmptyColorBlendSource({ offset: 6 }),
+    b: createEmptyColorBlendSource({ offset: 7 }),
+    ratio: { mode: 'fixed', value: 0.5 },
+    ...overrides,
+  };
+}
+
+export function createEmptyColorSource(overrides = {}) {
+  return {
+    name: '',
+    kind: 'palette',
+    offset: 0,
+    bitStart: 0,
+    bitCount: 8,
+    ...overrides,
+  };
+}
+
+export function createEmptyColorSourceRgb(overrides = {}) {
+  return createEmptyColorSource({
+    kind: 'rgb',
+    channelGroup: {
+      r: { offset: 8, bitStart: 0, bitCount: 8 },
+      g: { offset: 9, bitStart: 0, bitCount: 8 },
+      b: { offset: 10, bitStart: 0, bitCount: 8 },
+      scale: 'direct8',
+    },
+    ...overrides,
+  });
+}
+
+export function createEmptyColorSourceFixed(overrides = {}) {
+  return createEmptyColorSource({
+    kind: 'fixed',
+    value: '#ffffff',
+    ...overrides,
+  });
+}
+
+export function createEmptyColorSourceBlendEntry(overrides = {}) {
+  return {
+    source: '',
+    weightPct: 100,
+    ...overrides,
+  };
+}
+
+export function createEmptyColorSourceBlendExtract(name = '') {
+  return {
+    name,
+    source: 'colorSourceBlend',
+    blend: [createEmptyColorSourceBlendEntry({ weightPct: 100 })],
+    targets: [{ kind: 'maskColor', mask: 'all' }],
+  };
+}
+
+/** Duplicate non-empty names in rule.colorSources (should block authoring). */
+export function findDuplicateColorSourceNames(sources) {
+  const seen = new Set();
+  const dups = new Set();
+  (sources || []).forEach((s) => {
+    const n = typeof s?.name === 'string' ? s.name.trim() : '';
+    if (!n) return;
+    if (seen.has(n)) dups.add(n);
+    else seen.add(n);
+  });
+  return [...dups];
+}
+
+/** Sum of weightPct across a colorSourceBlend extract. */
+export function colorSourceBlendWeightSum(blend) {
+  return (blend || []).reduce((sum, e) => {
+    const n = Number(e?.weightPct);
+    return sum + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
+export function createEmptySpeedBuckets(overrides = {}) {
+  return {
+    enabled: false,
+    field: 'sx',
+    buckets: [
+      { maxByte: 15, value: 220 },
+      { maxByte: 70, value: 140 },
+      { maxByte: 150, value: 90 },
+      { maxByte: 255, value: 40 },
+    ],
+    ...overrides,
+  };
 }
 
 export function createEmptyExtract(name = '') {
@@ -215,6 +319,7 @@ export function createEmptySegmentMap(overrides = {}) {
   return {
     id: shortSegmentMapId(),
     name: 'New segment map',
+    ledmap: 0,
     segments: [createEmptySegment()],
     ...overrides,
   };
@@ -228,6 +333,32 @@ export function createEmptyRuleTiming() {
     cooldownResetMode: 'onMatch',
     timingModelId: '',
     fadeOverrideMs: null,
+  };
+}
+
+export function createEmptyFallbackDuration(overrides = {}) {
+  return {
+    enabled: false,
+    onSec: 10,
+    fadeSec: 0,
+    cooldownSec: null, // null = inherit from timing block or default 2
+    ...overrides,
+  };
+}
+
+export function normalizeFallbackDuration(raw) {
+  const d = createEmptyFallbackDuration();
+  if (!raw || typeof raw !== 'object') return { ...d };
+  let cooldownSec = null;
+  if (raw.cooldownSec !== null && raw.cooldownSec !== undefined && raw.cooldownSec !== '') {
+    const n = Number(raw.cooldownSec);
+    if (Number.isFinite(n) && n >= 0) cooldownSec = n;
+  }
+  return {
+    enabled: !!raw.enabled,
+    onSec: Number.isFinite(raw.onSec) ? Math.max(0, Number(raw.onSec)) : d.onSec,
+    fadeSec: Number.isFinite(raw.fadeSec) ? Math.max(0, Number(raw.fadeSec)) : d.fadeSec,
+    cooldownSec,
   };
 }
 
@@ -268,6 +399,7 @@ export function createEmptyTimingModel(overrides = {}) {
     name: 'New timing model',
     ...DEFAULT_TIMING_MODEL_VALUES,
     strobeEffect: createEmptyStrobeEffect(),
+    speedBuckets: createEmptySpeedBuckets(),
     ...overrides,
   };
 }
@@ -324,6 +456,36 @@ export function normalizeStrobeEffect(raw) {
   };
 }
 
+export function normalizeSpeedBuckets(raw) {
+  const d = createEmptySpeedBuckets();
+  if (!raw || typeof raw !== 'object') return { ...d, buckets: d.buckets.map((b) => ({ ...b })) };
+  const field = typeof raw.field === 'string' && raw.field.trim() ? raw.field.trim() : 'sx';
+  const buckets = Array.isArray(raw.buckets)
+    ? raw.buckets
+      .filter((b) => b && typeof b === 'object')
+      .map((b) => ({
+        maxByte: Math.min(255, Math.max(0, Number.isFinite(b.maxByte) ? Math.floor(Number(b.maxByte)) : 255)),
+        value: Number.isFinite(b.value) ? Math.floor(Number(b.value)) : 128,
+      }))
+    : d.buckets.map((b) => ({ ...b }));
+  const out = {
+    enabled: !!raw.enabled,
+    field,
+    buckets: buckets.length > 0 ? buckets : d.buckets.map((b) => ({ ...b })),
+  };
+  if (raw.maskBits && typeof raw.maskBits === 'object') {
+    out.maskBits = {
+      bitStart: Number.isFinite(raw.maskBits.bitStart)
+        ? Math.min(7, Math.max(0, Number(raw.maskBits.bitStart)))
+        : 0,
+      bitCount: Number.isFinite(raw.maskBits.bitCount)
+        ? Math.min(8, Math.max(1, Number(raw.maskBits.bitCount)))
+        : 8,
+    };
+  }
+  return out;
+}
+
 export function normalizeTimingModel(raw, index = 0) {
   const d = createEmptyTimingModel({ name: `Timing model ${index + 1}` });
   if (!raw || typeof raw !== 'object') return d;
@@ -356,6 +518,7 @@ export function normalizeTimingModel(raw, index = 0) {
     /** @deprecated Kept so older saved JSON round-trips; lifecycle uses fadeBitsStretchSec. */
     fadeStepSec: clampPos(raw.fadeStepSec, d.fadeStepSec),
     strobeEffect: normalizeStrobeEffect(raw.strobeEffect),
+    speedBuckets: normalizeSpeedBuckets(raw.speedBuckets),
   };
 }
 
@@ -564,11 +727,13 @@ export function createEmptyRule(overrides = {}) {
     enabled: true,
     priority: 0,
     match: createEmptyMatchGroup('all'),
+    colorSources: [],
     extract: [],
     presetId: '',
     segmentMapId: '',
     effect: createEmptyRuleEffect(),
     timing: createEmptyRuleTiming(),
+    fallbackDuration: createEmptyFallbackDuration(),
     startTransition: createEmptyStartTransition(),
     stopTransition: createEmptyStopTransition(),
     /** 'global' = one fx/pal/sx/ix source for every map segment; 'perSegment' = per-row overrides. */
@@ -684,10 +849,17 @@ export function normalizeExtractTarget(raw) {
   const kind = raw.kind;
   if (kind === 'segmentColor') {
     const slot = Number(raw.colorSlot);
+    const colorSlot = slot === 1 || slot === 2 ? slot : 0;
+    const segmentIds = Array.isArray(raw.segmentIds)
+      ? raw.segmentIds.filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim())
+      : [];
+    if (segmentIds.length > 0) {
+      return { kind: 'segmentColor', segmentIds, colorSlot };
+    }
     return {
       kind: 'segmentColor',
       segmentId: typeof raw.segmentId === 'string' ? raw.segmentId : '',
-      colorSlot: slot === 1 || slot === 2 ? slot : 0,
+      colorSlot,
     };
   }
   if (kind === 'maskColor') {
@@ -705,19 +877,199 @@ export function normalizeExtractTarget(raw) {
   return createEmptyExtractTarget('maskColor');
 }
 
-const EXTRACT_SOURCES = new Set(['payloadBits', ...TIMING_DERIVED_SOURCE_SET]);
+const CHANNEL_SCALES = new Set(['bitReplicate6to8', 'direct8', 'none']);
+
+function normalizeColorBlendSource(raw, fallbackOffset = 0) {
+  const d = createEmptyColorBlendSource({ offset: fallbackOffset });
+  if (!raw || typeof raw !== 'object') return d;
+
+  // Hard-coded hex — no packet extract.
+  if (raw.kind === 'fixed') {
+    return {
+      kind: 'fixed',
+      value: normalizeCustomHex(raw.value) || '#ffffff',
+    };
+  }
+
+  if (raw.kind === 'rgb' || (raw.channelGroup && typeof raw.channelGroup === 'object')) {
+    const foOr = (ch, fallback) => (
+      Number.isFinite(ch?.offset) ? Math.max(0, Number(ch.offset)) : fallback
+    );
+    const normCh = (ch, fo) => {
+      const src = ch && typeof ch === 'object' ? ch : {};
+      return {
+        offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fo,
+        bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : 0,
+        bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : 8,
+      };
+    };
+    const cg = raw.channelGroup && typeof raw.channelGroup === 'object' ? raw.channelGroup : {};
+    const scale = CHANNEL_SCALES.has(cg.scale) ? cg.scale : 'direct8';
+    return {
+      kind: 'rgb',
+      paletteMap: false,
+      channelGroup: {
+        r: normCh(cg.r, foOr(cg.r, fallbackOffset)),
+        g: normCh(cg.g, foOr(cg.g, fallbackOffset + 1)),
+        b: normCh(cg.b, foOr(cg.b, fallbackOffset + 2)),
+        scale,
+      },
+    };
+  }
+
+  return {
+    kind: 'palette',
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : fallbackOffset,
+    bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
+    bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
+    paletteMap: raw.paletteMap !== false,
+  };
+}
+
+function normalizeColorBlend(raw) {
+  const d = createEmptyColorBlend();
+  if (!raw || typeof raw !== 'object') return d;
+  const ratioRaw = raw.ratio && typeof raw.ratio === 'object' ? raw.ratio : {};
+  const mode = ratioRaw.mode === 'extract' ? 'extract' : 'fixed';
+  const ratio = mode === 'extract'
+    ? {
+      mode: 'extract',
+      offset: Number.isFinite(ratioRaw.offset) ? Math.max(0, Number(ratioRaw.offset)) : 0,
+      bitStart: Number.isFinite(ratioRaw.bitStart) ? Math.min(7, Math.max(0, Number(ratioRaw.bitStart))) : 0,
+      bitCount: Number.isFinite(ratioRaw.bitCount) ? Math.min(32, Math.max(1, Number(ratioRaw.bitCount))) : 8,
+    }
+    : {
+      mode: 'fixed',
+      value: (() => {
+        const n = Number(ratioRaw.value);
+        if (!Number.isFinite(n)) return 0.5;
+        return Math.min(1, Math.max(0, n));
+      })(),
+    };
+  return {
+    a: normalizeColorBlendSource(raw.a, 6),
+    b: normalizeColorBlendSource(raw.b, 7),
+    ratio,
+  };
+}
+
+function normalizeChannelGroup(raw, fallbackOffset = 8) {
+  const src = raw && typeof raw === 'object' ? raw : {};
+  const normCh = (ch, fo) => {
+    const c = ch && typeof ch === 'object' ? ch : {};
+    return {
+      offset: Number.isFinite(c.offset) ? Math.max(0, Number(c.offset)) : fo,
+      bitStart: Number.isFinite(c.bitStart) ? Math.min(7, Math.max(0, Number(c.bitStart))) : 0,
+      bitCount: Number.isFinite(c.bitCount) ? Math.min(32, Math.max(1, Number(c.bitCount))) : 8,
+    };
+  };
+  const scale = CHANNEL_SCALES.has(src.scale) ? src.scale : 'direct8';
+  return {
+    r: normCh(src.r, fallbackOffset),
+    g: normCh(src.g, fallbackOffset + 1),
+    b: normCh(src.b, fallbackOffset + 2),
+    scale,
+  };
+}
+
+export function normalizeColorSource(raw, index = 0) {
+  const d = createEmptyColorSource({ name: `color${index + 1}` });
+  if (!raw || typeof raw !== 'object') return d;
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (raw.kind === 'fixed') {
+    return {
+      name: name || d.name,
+      kind: 'fixed',
+      value: normalizeCustomHex(raw.value) || '#ffffff',
+    };
+  }
+  if (raw.kind === 'rgb') {
+    return {
+      name: name || d.name,
+      kind: 'rgb',
+      channelGroup: normalizeChannelGroup(raw.channelGroup, 8),
+    };
+  }
+  return {
+    name: name || d.name,
+    kind: 'palette',
+    offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+    bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
+    bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
+  };
+}
+
+/** Keep first occurrence of each name; drop later duplicates (firmware uses first match). */
+export function normalizeColorSources(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  raw.forEach((item, i) => {
+    const src = normalizeColorSource(item, i);
+    const key = src.name.trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(src);
+  });
+  return out;
+}
+
+export function normalizeColorSourceBlend(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return [createEmptyColorSourceBlendEntry({ weightPct: 100 })];
+  }
+  return raw
+    .filter((e) => e && typeof e === 'object')
+    .map((e) => ({
+      source: typeof e.source === 'string' ? e.source.trim() : '',
+      weightPct: (() => {
+        const n = Number(e.weightPct);
+        if (!Number.isFinite(n)) return 0;
+        return Math.min(1000, Math.max(0, n));
+      })(),
+    }));
+}
+
+const EXTRACT_SOURCES = new Set(['payloadBits', 'colorSourceBlend', 'fixedColor', ...TIMING_DERIVED_SOURCE_SET]);
+
+export function isColorSourceBlendSource(source) {
+  return source === 'colorSourceBlend';
+}
+
+export function isFixedColorSource(source) {
+  return source === 'fixedColor';
+}
+
+export function createEmptyFixedColorExtract(name = '') {
+  return {
+    name,
+    source: 'fixedColor',
+    value: '#ffffff',
+    targets: [{ kind: 'maskColor', mask: 'all' }],
+  };
+}
 
 export function normalizeExtract(raw) {
   if (!raw || typeof raw !== 'object') return createEmptyExtract();
   const source = EXTRACT_SOURCES.has(raw.source) ? raw.source : 'payloadBits';
   const isTiming = isTimingDerivedSource(source);
-  const paletteMap = isTiming ? false : !!raw.paletteMap;
-  const curve = paletteMap ? null : normalizeCurve(raw.curve);
+  const isColorSourceBlend = isColorSourceBlendSource(source);
+  const isFixedColor = isFixedColorSource(source);
+  const hasChannelGroup = !isTiming && !isColorSourceBlend && !isFixedColor
+    && raw.channelGroup && typeof raw.channelGroup === 'object';
+  const hasColorBlend = !isTiming && !isColorSourceBlend && !isFixedColor && !hasChannelGroup
+    && raw.colorBlend && typeof raw.colorBlend === 'object';
+  const paletteMap = isTiming || isColorSourceBlend || isFixedColor || hasChannelGroup || hasColorBlend
+    ? false
+    : !!raw.paletteMap;
+  const curve = (paletteMap || hasChannelGroup || hasColorBlend || isColorSourceBlend || isFixedColor)
+    ? null
+    : normalizeCurve(raw.curve);
   // Legacy single `target` is ignored (no migration) — prefer `targets[]`.
   const targets = Array.isArray(raw.targets)
     ? raw.targets.map(normalizeExtractTarget)
     : [createEmptyExtractTarget(isTiming ? 'segmentField' : 'maskColor')];
-  return {
+  const out = {
     name: typeof raw.name === 'string' ? raw.name : '',
     source,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
@@ -727,6 +1079,39 @@ export function normalizeExtract(raw) {
     ...(curve ? { curve } : {}),
     targets,
   };
+  if (isFixedColor) {
+    out.value = normalizeCustomHex(raw.value) || '#ffffff';
+    return out;
+  }
+  if (isColorSourceBlend) {
+    out.blend = normalizeColorSourceBlend(raw.blend);
+    return out;
+  }
+  if (hasChannelGroup) {
+    const scaleIsDirect = raw.channelGroup.scale === 'direct8';
+    const normCh = (ch, fallbackOffset) => {
+      const src = ch && typeof ch === 'object' ? ch : {};
+      const defaultBitStart = scaleIsDirect ? 0 : 1;
+      const defaultBitCount = scaleIsDirect ? 8 : 6;
+      return {
+        offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fallbackOffset,
+        bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : defaultBitStart,
+        bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : defaultBitCount,
+      };
+    };
+    const scale = CHANNEL_SCALES.has(raw.channelGroup.scale)
+      ? raw.channelGroup.scale
+      : 'bitReplicate6to8';
+    out.channelGroup = {
+      r: normCh(raw.channelGroup.r, 8),
+      g: normCh(raw.channelGroup.g, 9),
+      b: normCh(raw.channelGroup.b, 10),
+      scale,
+    };
+  } else if (hasColorBlend) {
+    out.colorBlend = normalizeColorBlend(raw.colorBlend);
+  }
+  return out;
 }
 
 export function normalizeConditionNode(raw) {
@@ -821,9 +1206,14 @@ export function normalizeSegmentMap(raw) {
   const segments = Array.isArray(raw.segments) && raw.segments.length
     ? raw.segments.map(normalizeSegment)
     : [createEmptySegment()];
+  const ledmapN = Number(raw.ledmap);
+  const ledmap = Number.isFinite(ledmapN)
+    ? Math.max(0, Math.min(9, Math.round(ledmapN)))
+    : 0;
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentMapId(),
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : 'Untitled map',
+    ledmap,
     segments,
   };
 }
@@ -894,11 +1284,13 @@ export function normalizeMbRule(raw, index = 0) {
     enabled: raw.enabled !== false,
     priority: Number.isFinite(raw.priority) ? Number(raw.priority) : index * 10,
     match: normalizeConditionNode(raw.match || createEmptyMatchGroup('all')),
+    colorSources: normalizeColorSources(raw.colorSources),
     extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],
     presetId: typeof raw.presetId === 'string' ? raw.presetId : '',
     segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
     effect: normalizeRuleEffect(raw.effect),
     timing: normalizeRuleTiming(raw.timing),
+    fallbackDuration: normalizeFallbackDuration(raw.fallbackDuration),
     startTransition: normalizeStartTransition(raw.startTransition),
     stopTransition: normalizeStopTransition(raw.stopTransition),
     segmentSourceMode: normalizeSegmentSourceMode(raw.segmentSourceMode),
@@ -985,16 +1377,306 @@ export function mbMappingToBlePayload(config) {
   };
 }
 
-export function presetWledForBoard(preset, customSegmentLayouts) {
+/** Wire sentinel for segmentOverrides mode "default" (use rule effect). Absent = stored. */
+export const SEG_OVERRIDE_DEFAULT_SENTINEL = 'd';
+
+/**
+ * Compact segmentOverrides for BLE: omit stored/extract no-ops; custom → bare value;
+ * default → sentinel "d". Colors only emit custom slots.
+ */
+export function compactSegmentOverrides(segmentOverrides) {
+  if (!segmentOverrides || typeof segmentOverrides !== 'object') return undefined;
+  const out = {};
+  for (const [segId, seg] of Object.entries(segmentOverrides)) {
+    if (!seg || typeof seg !== 'object') continue;
+    const compactSeg = {};
+    for (const field of SEG_OVERRIDE_PROPS) {
+      const ov = seg[field];
+      if (!ov || typeof ov !== 'object') continue;
+      if (ov.mode === 'custom' && ov.value !== undefined && ov.value !== null && ov.value !== '') {
+        compactSeg[field] = ov.value;
+      } else if (ov.mode === 'default') {
+        compactSeg[field] = SEG_OVERRIDE_DEFAULT_SENTINEL;
+      }
+      // stored / extract / missing → omit (firmware treats absence as stored)
+    }
+    if (Array.isArray(seg.colors)) {
+      const compactColors = [];
+      seg.colors.forEach((c, i) => {
+        if (c?.mode === 'custom' && c.value) {
+          compactColors.push({ i, v: c.value });
+        }
+      });
+      if (compactColors.length) compactSeg.colors = compactColors;
+    }
+    if (Object.keys(compactSeg).length) out[segId] = compactSeg;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Compact extract[].targets[] for BLE:
+ *   segmentColor → { s, c? } (kind omitted; firmware defaults)
+ *   maskColor → { k: 'maskColor', m }
+ *   ignore → dropped
+ */
+export function compactExtractTargets(targets) {
+  if (!Array.isArray(targets)) return undefined;
+  const out = [];
+  for (const t of targets) {
+    if (!t || typeof t !== 'object') continue;
+    const kind = t.kind || 'segmentColor';
+    if (kind === 'ignore') continue;
+    if (kind === 'segmentColor') {
+      const entry = {};
+      if (typeof t.segmentId === 'string' && t.segmentId) entry.s = t.segmentId;
+      if (Array.isArray(t.segmentIds) && t.segmentIds.length) entry.ss = t.segmentIds;
+      if (t.colorSlot !== undefined && t.colorSlot !== null) entry.c = t.colorSlot;
+      if (entry.s || entry.ss) out.push(entry);
+      continue;
+    }
+    if (kind === 'maskColor') {
+      out.push({ k: 'maskColor', m: t.mask || 'all' });
+      continue;
+    }
+    // Unknown / future kinds: keep verbose shape
+    out.push({ ...t });
+  }
+  return out.length ? out : undefined;
+}
+
+export function compactExtractEntry(ex) {
+  if (!ex || typeof ex !== 'object') return ex;
+  const targets = compactExtractTargets(ex.targets);
+  const { targets: _drop, ...rest } = ex;
+  if (targets) return { ...rest, targets };
+  return { ...rest };
+}
+
+export function compactRule(rule) {
+  if (!rule || typeof rule !== 'object') return rule;
+  const next = { ...rule };
+  const ov = compactSegmentOverrides(rule.segmentOverrides);
+  if (ov) next.segmentOverrides = ov;
+  else delete next.segmentOverrides;
+  if (Array.isArray(rule.extract)) {
+    next.extract = rule.extract.map(compactExtractEntry);
+  }
+  return next;
+}
+
+/**
+ * Compact set_mb_rules payload for BLE transport only.
+ * Editor / normalize / preview keep using mbMappingToBlePayload()'s verbose shape.
+ * See docs/ble-packets-details/mb-rules-wire-format.md.
+ */
+export function compactMbPayloadForBle(mbMapping) {
+  const verbose = mbMappingToBlePayload(mbMapping);
+  return {
+    ...verbose,
+    rules: (verbose.rules || []).map(compactRule),
+  };
+}
+
+/**
+ * On-device ArduinoJson document budget for set_mb_rules (Config.h BLE_JSON_DOC_SIZE).
+ * Keep in sync with firmware — this is the soft ceiling the capacity gauge tracks.
+ */
+export const BLE_JSON_DOC_BUDGET_BYTES = 524288;
+
+/**
+ * Multiplier from serialized JSON bytes → approximate ArduinoJson pool usage.
+ *
+ * Calibration method (do this on a live board after any major rule-shape change):
+ *   1. Note totalRawBytes from estimateMbPayloadFootprint() for the config you will push.
+ *   2. Push set_mb_rules; read serial `[Rules] before cache write` / `after full replace`
+ *      psramFree deltas (and/or `[BLE] cmdChunkBuffer ready` / `Chunk assembly complete`).
+ *   3. parsedBytes ≈ psramFree_before − psramFree_after around gRulesDoc deserialize
+ *      (prefer the rules-cache lines, not the chunk buffer alone).
+ *   4. Set ARDUINOJSON_OVERHEAD_FACTOR = parsedBytes / totalRawBytes.
+ *
+ * Provisional value 1.55: mid of the typical 1.4–1.7 range for nested rule trees
+ * on ArduinoJson 7. **Re-measure after compact wire format** (fewer keys / smaller
+ * trees) — factor may need a bump or drop vs the old verbose payload calibration.
+ */
+export const ARDUINOJSON_OVERHEAD_FACTOR = 1.55;
+
+function utf8ByteLength(value) {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+
+/**
+ * Client-side footprint of the set_mb_rules blob — no device connection required.
+ * Returns raw + estimated-parsed sizes, category totals, and per-item heavies.
+ */
+export function estimateMbPayloadFootprint(mbMapping) {
+  // Gauge tracks what actually goes over BLE (compact wire), not the verbose editor shape.
+  const payload = compactMbPayloadForBle(mbMapping);
+  const breakdown = {};
+  let totalRaw = 0;
+  for (const key of Object.keys(payload)) {
+    const bytes = utf8ByteLength(payload[key]);
+    breakdown[key] = bytes;
+    totalRaw += bytes;
+  }
+
+  const ruleItems = (payload.rules || []).map((r, i) => ({
+    kind: 'rule',
+    id: r?.id || `rule-${i}`,
+    name: r?.name || r?.id || `Rule ${i + 1}`,
+    bytes: utf8ByteLength(r),
+  }));
+  const mapItems = (payload.segmentMaps || []).map((m, i) => ({
+    kind: 'segmentMap',
+    id: m?.id || `map-${i}`,
+    name: m?.name || m?.id || `Map ${i + 1}`,
+    bytes: utf8ByteLength(m),
+  }));
+  const timingItems = (payload.timingModels || []).map((t, i) => ({
+    kind: 'timingModel',
+    id: t?.id || `tm-${i}`,
+    name: t?.name || t?.id || `Timing ${i + 1}`,
+    bytes: utf8ByteLength(t),
+  }));
+
+  const heaviest = [...ruleItems, ...mapItems, ...timingItems]
+    .sort((a, b) => b.bytes - a.bytes)
+    .slice(0, 8);
+
+  const estimatedParsedBytes = Math.round(totalRaw * ARDUINOJSON_OVERHEAD_FACTOR);
+  const budget = BLE_JSON_DOC_BUDGET_BYTES;
+  const pctOfBudget = budget > 0 ? (estimatedParsedBytes / budget) * 100 : 0;
+
+  return {
+    totalRawBytes: totalRaw,
+    estimatedParsedBytes,
+    budgetBytes: budget,
+    pctOfBudget,
+    breakdown,
+    ruleCount: ruleItems.length,
+    segmentMapCount: mapItems.length,
+    timingModelCount: timingItems.length,
+    items: { rules: ruleItems, segmentMaps: mapItems, timingModels: timingItems },
+    heaviest,
+  };
+}
+
+/**
+ * Convert a segment-map segment into a WLED-shaped seg def for recall / board sync.
+ * Map segments use string ids + wledSegId + blend id + hex colors[]; WLED wants
+ * numeric id, bm, and col RGB arrays.
+ */
+export function segmentMapSegmentToWledDef(seg) {
+  if (!seg) return null;
+  const start = Number(seg.start ?? 0);
+  const stop = Number(seg.stop ?? 0);
+  if (stop <= start) return null;
+  const out = {
+    id: Number.isFinite(seg.wledSegId) ? Number(seg.wledSegId) : Number(seg.id ?? 0),
+    start,
+    stop,
+    grp: seg.grp ?? 1,
+    spc: seg.spc ?? 0,
+    of: seg.of ?? 0,
+    rev: !!seg.rev,
+    mi: !!seg.mi,
+    bm: blendModeIdToBm(seg.blend),
+  };
+  if (Number.isFinite(seg.fx) && seg.fx >= 0) out.fx = seg.fx;
+  if (Number.isFinite(seg.pal) && seg.pal >= 0) out.pal = seg.pal;
+  if (Number.isFinite(seg.sx)) out.sx = seg.sx;
+  if (Number.isFinite(seg.ix)) out.ix = seg.ix;
+  const colors = Array.isArray(seg.colors) ? seg.colors : [];
+  const col = [];
+  for (let i = 0; i < 3; i++) {
+    const hex = colors[i];
+    if (typeof hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(hex)) {
+      col.push([
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16),
+      ]);
+    }
+  }
+  if (col.length) out.col = col;
+  return out;
+}
+
+/**
+ * One-time migration: fold legacy top-level `customSegmentLayouts` into
+ * `mbMapping.segmentMaps`. Returns a NEW data object; does not mutate input.
+ * Idempotent — if customSegmentLayouts is absent/empty, strips the key (when present)
+ * and leaves segmentMaps untouched.
+ *
+ * Also returns idMap { oldLayoutId -> newSegmentMapId } so callers can rewrite
+ * preset.segmentLayoutId -> preset.segmentMapId in the same pass.
+ */
+export function migrateLegacySegmentLayouts(data) {
+  if (!data || typeof data !== 'object') return { data, idMap: {} };
+  const legacy = Array.isArray(data.customSegmentLayouts) ? data.customSegmentLayouts : [];
+  if (legacy.length === 0) {
+    if (!('customSegmentLayouts' in data)) return { data, idMap: {} };
+    const { customSegmentLayouts, ...rest } = data;
+    return { data: rest, idMap: {} };
+  }
+
+  const mapping = normalizeMbMapping(data.mbMapping);
+  const existingMaps = mapping.segmentMaps || [];
+  const idMap = {};
+  const migratedMaps = legacy.map((layout) => {
+    const newMap = normalizeSegmentMap({
+      id: undefined, // force fresh id — legacy layout ids may collide with segment map ids
+      name: layout.name ? `${layout.name} (migrated)` : 'Migrated layout',
+      segments: (layout.segments || []).map((s) => {
+        const legacyId = Number.isFinite(s?.wledSegId)
+          ? Number(s.wledSegId)
+          : (Number.isFinite(s?.id) ? Number(s.id) : 0);
+        const colors = Array.isArray(s?.colors)
+          ? s.colors
+          : (Array.isArray(s?.col) ? s.col.map(rgbArrayToHex) : undefined);
+        return {
+          ...s,
+          id: undefined,
+          wledSegId: legacyId,
+          maskAssignment: s?.maskAssignment || 'all',
+          blend: s?.blend ?? s?.bm,
+          colors,
+          rev: !!s?.rev,
+          mi: !!s?.mi,
+        };
+      }),
+    });
+    if (layout.id) idMap[layout.id] = newMap.id;
+    return newMap;
+  });
+
+  const { customSegmentLayouts, ...rest } = data;
+  return {
+    data: {
+      ...rest,
+      mbMapping: { ...mapping, segmentMaps: [...existingMaps, ...migratedMaps] },
+    },
+    idMap,
+  };
+}
+
+export function presetWledForBoard(preset, segmentMaps) {
   const wled = JSON.parse(JSON.stringify(preset.wled || { on: true }));
   const always = () => true;
   const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
-  const activeSegments = activeSegmentsFromPreset(preset, customSegmentLayouts);
+  const activeSegments = activeSegmentsFromPreset(preset, segmentMaps);
   if (activeSegments.length > 0) {
     wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i));
   } else {
     wled.seg = [buildRecalledSegment({ id: 0 }, wled, always, m, 0)];
   }
+  // Device-global ledmap from the linked segment map (0/absent = omit; WLED keeps last map).
+  const linked = preset?.segmentMapId
+    ? (segmentMaps || []).find((m) => m.id === preset.segmentMapId)
+    : undefined;
+  const ledmapId = Number(linked?.ledmap);
+  if (Number.isFinite(ledmapId) && ledmapId > 0) wled.ledmap = ledmapId;
+  else delete wled.ledmap;
   return wled;
 }
 

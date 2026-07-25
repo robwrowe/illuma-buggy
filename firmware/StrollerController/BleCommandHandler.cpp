@@ -6,7 +6,6 @@
 #include "OverrideManager.h"
 #include "MbMapping.h"
 #include "MbRuleEngine.h"
-#include "MbEffects.h"
 #include "ColorPalette.h"
 #include "WiFiManager.h"
 #include "DebugLog.h"
@@ -16,14 +15,21 @@
 #include "NvsLargeString.h"
 #include "DisneyBleScan.h"
 #include "MbRulesStore.h"
+#include "MbCalibrationStore.h"
 #include <WiFi.h>
+#include "JsonPsram.h"
 
 void handleBLECommand(const String& msg) {
+  // Large set_mb_rules bodies parse on PSRAM so we do not pin ~128KB of internal SRAM.
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc(&jsonPsramAllocator());
+#else
   size_t cap = msg.length() + 512;
   if (cap < 4096) cap = 4096;
   if (cap > BLE_JSON_DOC_SIZE) cap = BLE_JSON_DOC_SIZE;
-  DynamicJsonDocument doc(cap);
-  DeserializationError err = deserializeJson(doc, msg);
+  PsramJsonDocument doc(cap);
+#endif
+  DeserializationError err = deserializeJson(doc, msg, DeserializationOption::NestingLimit(32));
   if (err) {
     Serial.printf("[BLE] JSON parse error: %s\n", err.c_str());
     return;
@@ -41,7 +47,8 @@ void handleBLECommand(const String& msg) {
     String id = doc["id"].as<String>();
     String name = doc["name"].as<String>();
     String wled; serializeJson(doc["wled"], wled);
-    savePreset(id, name, wled);
+    String segmentMapId = doc["segmentMapId"] | "";
+    savePreset(id, name, wled, segmentMapId);
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_save\",\"id\":\"" + id + "\"}");
   }
   else if (type == "preset_apply") {
@@ -375,6 +382,34 @@ void handleBLECommand(const String& msg) {
       }
     }
     bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");
+  }
+
+  else if (type == "set_color_calibration") {
+    String calJson;
+    if (doc.containsKey("calibration") && doc["calibration"].is<JsonObject>()) {
+      serializeJson(doc["calibration"], calJson);
+    } else if (doc.containsKey("enabled") || doc.containsKey("curves")) {
+      // Top-level { enabled, curves } without nesting.
+      DynamicJsonDocument calDoc(2048);
+      calDoc["enabled"] = doc["enabled"] | false;
+      if (doc.containsKey("curves")) {
+        calDoc["curves"] = doc["curves"];
+      }
+      serializeJson(calDoc, calJson);
+    } else {
+      calJson = "{\"enabled\":false}";
+    }
+    bool persisted = mbCalibrationFsSave(calJson);
+    mbCalibrationApply(calJson);
+    Serial.printf("[Cal] BLE update (%u bytes, fs=%s, enabled=%d)\n",
+                  (unsigned)calJson.length(),
+                  persisted ? "ok" : "FAIL",
+                  mbCalibrationEnabled ? 1 : 0);
+    if (!persisted) {
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_color_calibration\",\"ok\":false,\"reason\":\"fs_persist\"}");
+      return;
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"set_color_calibration\",\"ok\":true}");
   }
 
   else if (type == "mb_layout_set") {

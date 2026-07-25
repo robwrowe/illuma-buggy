@@ -96,6 +96,7 @@ function getFingerprint() {
     presets: s.presets,
     mbMapping: s.mbMapping,
     showModeConfig: s.showModeConfig,
+    colorCalibration: s.colorCalibration,
     starlightEnabled: s.starlightEnabled,
     magicBandEnabled: s.magicBandEnabled,
     bleEffectTransitionMs: s.bleEffectTransitionMs,
@@ -190,12 +191,16 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
   }
 
   await bleService.sendMbMappingConfig(
-    mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
+    mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState),
   );
   await delay(500);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
-  // Mapped presets (wand cast, MB animations) must exist on board NVS.
+  await bleService.sendColorCalibration(s.colorCalibration);
+  await delay(300);
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
+
+  // Mapped default preset must exist on board NVS (rules may reference more — see collectMappingPresetIds).
   const mappingSyncOk = await ensureMappingPresetsOnBoard(
     s.mbMapping,
     s.presets,
@@ -384,7 +389,7 @@ export async function runConnectBootstrap(): Promise<void> {
     });
     if (status && !status.mbMappingLoaded) {
       await bleService.sendMbMappingConfig(
-        mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState, s.customSegmentLayouts),
+        mbMappingEssentialPayload(s.mbMapping, s.presets, s.recallState),
       );
       await delay(500);
       if (!bleService.isConnected() || token !== bootstrapToken) return;

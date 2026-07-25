@@ -18,9 +18,6 @@ extern uint8_t mbChaseSpeed;
 extern uint8_t mbChaseThickness;
 
 extern const char* MB_SEG_KEYS[];
-extern const char* MB_ANIM_KEYS[];
-extern const char* MB_PAT_KEYS[];
-extern const char* SW_ANIM_KEYS[];
 extern const uint8_t MB_DEFAULT_COLORS[32][3];
 
 extern Preferences prefs;
@@ -28,7 +25,9 @@ extern NimBLEServer*         bleServer;
 extern NimBLECharacteristic* notifyChar;
 extern bool                  bleConnected;
 
-extern String cmdChunkBuffer;
+extern char*  cmdChunkBuffer;
+extern size_t cmdChunkBufferLen;
+extern size_t cmdChunkBufferCap;
 extern int    cmdChunkNextSeq;
 
 extern OverrideSource currentOverride;
@@ -118,6 +117,15 @@ extern unsigned long      mbRuleCooldownMs;
 extern MbCooldownResetMode mbActiveRuleCooldownMode;
 extern char               mbActiveRuleId[MB_RULE_ID_LEN];
 
+// Non-blocking dip-to-black restore
+extern PendingRestoreKind pendingRestoreKind;
+extern unsigned long      pendingRestoreDeadlineMs;
+extern unsigned long      pendingRestoreFadeMs;
+extern int                pendingRestoreBlendingStyle; // preset path only, -1 = none
+extern String             pendingRestoreSnapshot;      // snapshot path payload
+extern String             pendingRestorePresetId;      // preset path id
+extern OverrideSource     pendingRestoreAfterOverride;
+
 
 extern DisneyPayloadJob disneyJob;
 extern portMUX_TYPE disneyJobMux;
@@ -128,14 +136,16 @@ extern uint8_t mbRandomPoolCount;
 extern uint8_t mbRandomCustom[MB_MAX_RANDOM_CUSTOM][3];
 extern uint8_t mbRandomCustomCount;
 
+/** Per-channel RGB correction LUTs for BLE channelGroup / kind:rgb extracts. */
+extern bool mbCalibrationEnabled;
+extern uint8_t mbCalCurveR[256];
+extern uint8_t mbCalCurveG[256];
+extern uint8_t mbCalCurveB[256];
+
 extern MbSegmentLayout mbLayouts[MB_MAX_LAYOUTS];
 extern uint8_t mbLayoutCount;
 extern uint8_t mbActiveLayoutIdx;
 extern String  mbLayoutsJson;
-extern MbEffectMap mbAnimMap[8];
-extern MbEffectMap swAnimMap[SW_ANIM_COUNT];
-extern MbEffectMap mbPatMap[5];
-
 extern unsigned long lastWifiRetry;
 extern volatile bool wifiConnectInProgress;
 

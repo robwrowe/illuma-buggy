@@ -12,7 +12,8 @@ import { buildRecalledSegmentsFromPreset, finalizeWledSegmentPayload, parseWledS
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
 import type { MbMappingConfig } from './mbConfig';
-import { collectMappingPresetIds, mbMappingToBlePayload } from './mbConfig';
+import { collectMappingPresetIds, compactMbPayloadForBle } from './mbConfig';
+import { TRANSITION_STYLE_TO_BS } from './transitionStyles';
 
 const BOARD_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: true, segments: true,
@@ -24,28 +25,13 @@ const BOARD_RECALL: RecallState = {
 
 export { clearBoardPresetSyncCache } from './blePresetCache';
 
-/** MB mapping for BLE — embeds wand (and other SW) preset wled so cast works without NVS. */
+/** MB mapping for BLE — colors, segments, rules, segmentMaps, paradeDetection (compact wire). */
 export function mbMappingEssentialPayload(
   mbMapping: MbMappingConfig,
-  presets: Preset[],
-  recall: RecallState,
-  layouts: CustomSegmentLayout[],
+  _presets?: Preset[],
+  _recall?: RecallState,
 ): object {
-  const payload = mbMappingToBlePayload(mbMapping) as Record<string, unknown>;
-  const swAnimations = {
-    ...(payload.swAnimations as Record<string, { presetId?: string; colorSlots?: number[]; wled?: object }>),
-  };
-  for (const [key, mapping] of Object.entries(mbMapping.swAnimations ?? {})) {
-    if (!mapping?.presetId) continue;
-    const preset = presets.find(p => p.id === mapping.presetId);
-    if (!preset) continue;
-    swAnimations[key] = {
-      presetId: mapping.presetId,
-      colorSlots: mapping.colorSlots ?? [],
-      wled: presetWledForBoard(preset, layouts, recall),
-    };
-  }
-  return { ...payload, swAnimations };
+  return compactMbPayloadForBle(mbMapping);
 }
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -99,7 +85,7 @@ export async function ensurePresetOnBoard(
   return ok;
 }
 
-/** Sync presets referenced in MB/SW mapping (wand cast, animations, etc.) to board NVS. */
+/** Sync presets referenced in MB mapping (defaultPresetId) to board NVS. */
 export async function ensureMappingPresetsOnBoard(
   mbMapping: MbMappingConfig,
   presets: Preset[],
@@ -142,8 +128,16 @@ export function presetWledForBoard(
     seg: buildRecalledSegmentsFromPreset(preset, recall, layouts, BOARD_PRESET_MEMORY),
   });
   const out: Record<string, unknown> = { ...base };
-  if (w.transition !== undefined) out.transition = w.transition;
-  if (w.pd !== undefined) out.pd = w.pd;
+
+  // transitionMs → WLED `transition` (100ms units). Omitted when unset → WLED default.
+  if (Number.isFinite(w.transitionMs)) {
+    out.transition = Math.max(0, Math.round((w.transitionMs as number) / 100));
+  }
+  // transitionStyle → WLED `bs` (numeric). Omitted when unset → no style override.
+  if (w.transitionStyle && TRANSITION_STYLE_TO_BS[w.transitionStyle] !== undefined) {
+    out.bs = TRANSITION_STYLE_TO_BS[w.transitionStyle];
+  }
+
   return out;
 }
 

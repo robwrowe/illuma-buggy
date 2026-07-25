@@ -21,15 +21,15 @@ export function finalizeWledSegmentPayload(payload) {
   return { ...payload, on: true, seg: merged };
 }
 
-export function buildTestPresetPayload(preset, customSegmentLayouts) {
+export function buildTestPresetPayload(preset, segmentMaps) {
   const p = { ...preset, memory: { ...TEST_PRESET_MEMORY } };
-  return finalizeWledSegmentPayload(buildRecallPayload(p, TEST_PRESET_RECALL, customSegmentLayouts));
+  return finalizeWledSegmentPayload(buildRecallPayload(p, TEST_PRESET_RECALL, segmentMaps));
 }
 
 export async function testPresetOnWled(ip, preset, data) {
   const host = ip.trim();
   if (!host) throw new Error('Enter a WLED IP');
-  const payload = buildTestPresetPayload(preset, data.customSegmentLayouts);
+  const payload = buildTestPresetPayload(preset, data.mbMapping?.segmentMaps);
   await postWledState(host, payload);
 }
 
@@ -83,6 +83,7 @@ export class WebBleBoard {
     this.sendRunning = false;
     this.sendQueue = [];
     this.connListeners = new Set();
+    this._chunkFailListeners = new Set();
     this._onNotify = this._onNotify.bind(this);
     this._onDisconnect = this._onDisconnect.bind(this);
   }
@@ -138,9 +139,10 @@ export class WebBleBoard {
       this.notifyBuffer = '';
       if (msg?.type === 'chunk_sync_failed') {
         console.error('[BLE] chunk_sync_failed', msg);
+        this._chunkFailListeners.forEach((fn) => fn(msg));
       }
     } catch {
-      if (this.notifyBuffer.length > 65536) this.notifyBuffer = '';
+      if (this.notifyBuffer.length > 131072) this.notifyBuffer = '';
     }
   }
 
@@ -164,18 +166,42 @@ export class WebBleBoard {
       return 1;
     }
     const pieces = splitCommandForBleChunks(jsonStr);
-    for (let seq = 0; seq < pieces.length; seq++) {
-      const chunk = {
-        type: 'ble_cmd_chunk',
-        seq,
-        last: seq === pieces.length - 1,
-        data: pieces[seq],
-      };
-      const chunkBytes = new TextEncoder().encode(JSON.stringify(chunk));
-      await this.cmdChar.writeValueWithResponse(chunkBytes);
-      if (seq < pieces.length - 1) {
-        await new Promise(r => setTimeout(r, BLE_CHUNK_INTER_MS));
+    let syncFailed = null;
+    const onFail = (msg) => { syncFailed = msg; };
+    this._chunkFailListeners.add(onFail);
+    try {
+      for (let seq = 0; seq < pieces.length; seq++) {
+        if (syncFailed) {
+          const reason = syncFailed.reason
+            || `expected ${syncFailed.expectedSeq}, got ${syncFailed.gotSeq}`;
+          throw new Error(
+            `Chunk sync failed at seq ${seq}/${pieces.length}: ${reason}`,
+          );
+        }
+        const chunk = {
+          type: 'ble_cmd_chunk',
+          seq,
+          last: seq === pieces.length - 1,
+          data: pieces[seq],
+        };
+        const chunkBytes = new TextEncoder().encode(JSON.stringify(chunk));
+        await this.cmdChar.writeValueWithResponse(chunkBytes);
+        if (seq < pieces.length - 1) {
+          await new Promise(r => setTimeout(r, BLE_CHUNK_INTER_MS));
+        } else {
+          // Let a trailing chunk_sync_failed notify arrive before we declare success.
+          await new Promise(r => setTimeout(r, BLE_CHUNK_INTER_MS));
+        }
+        if (syncFailed) {
+          const reason = syncFailed.reason
+            || `expected ${syncFailed.expectedSeq}, got ${syncFailed.gotSeq}`;
+          throw new Error(
+            `Chunk sync failed at seq ${seq}/${pieces.length}: ${reason}`,
+          );
+        }
       }
+    } finally {
+      this._chunkFailListeners.delete(onFail);
     }
     return pieces.length;
   }

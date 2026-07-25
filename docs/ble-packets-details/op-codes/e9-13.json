@@ -1,0 +1,72 @@
+[
+  {
+    "id": "mr9zu0vxd9df",
+    "ts": 1783389116157,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91300650fbdb5bcb5bc7aec5c0a2915291548abb0",
+    "origBytes": "e200e91300650fbdb5bcb5bc7aec5c0a2915291548abb0",
+    "tag": "unknown",
+    "note": "SW: 1st & 3rd seg white, 2 & 4th seg red\nMB: UL & BR white, UR + BL red\nalternates with fade\n~16.5s total, ~1s cycle time"
+  },
+  {
+    "id": "mr9zrfejucyn",
+    "ts": 1783388995003,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e9130002d037f0d23d0505000efa8983510ee7a0b0",
+    "origBytes": "e100e9130002d037f0d23d0505000efa8983510ee7a0b0",
+    "tag": "unknown",
+    "note": "SW: purple/pink\nMB: lime green\n~3s total, ~1.5s cycle\npulse on twice, pause, pulse on twice"
+  },
+  {
+    "id": "mr9yu7qil3v4",
+    "ts": 1783387445418,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91300b60f404458f44882d06519d146060a307bff",
+    "origBytes": "e91300b60f404458f44882d06519d146060a307bff",
+    "tag": "unknown",
+    "note": "seems to be switching between 3 colors async, ~49s"
+  },
+  {
+    "id": "mr9xvpz1tehy",
+    "ts": 1783385836093,
+    "kind": "single",
+    "presetKey": "pulse",
+    "bytes": "e100e9130002d037f0d23d0505000efa8983510ee7a0b0",
+    "origBytes": "e100e9130002d037f0d23d0505000efa8983510ee7a0b0",
+    "tag": "unknown",
+    "note": "SW: purple, pulses on/off\nMB: lime green, pulses on/off"
+  },
+  {
+    "id": "mrp66t7xrs4k",
+    "ts": 1784306783085,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e913000f0fbda4a4a4a47aec5c022915291548abb0",
+    "origBytes": "e913000f0fbda4a4a4a47aec5c022915291548abb0",
+    "tag": "unknown",
+    "note": "outer only\nblue\nUR/BL & UL/BR flashing in unison\nalternating\n~0.25s cycle time\n~26s total time"
+  },
+  {
+    "id": "mrqwetrho1ik",
+    "ts": 1784411293229,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e9130044d037f0d23d0507000ef58983510ef50c46",
+    "origBytes": "e200e9130044d037f0d23d0507000ef58983510ef50c46",
+    "tag": "unknown",
+    "note": "all red\n~1.5s cycle time\n~12.5s total time\nfade from red to black smoothly"
+  },
+  {
+    "id": "mrqwcr5tf7pq",
+    "ts": 1784411196545,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91300080f5d5c58f44882d065fcd14602fa307b00",
+    "origBytes": "e100e91300080f5d5c58f44882d065fcd14602fa307b00",
+    "tag": "unknown",
+    "note": "~13s total time, ~0.75s cycle time\ncircle shimmer (UL, BL, BR, UL, C, repeat)\nwhite and maybe off-white or reduced brightness?"
+  }
+]

@@ -27,6 +27,29 @@ export function disneyPayload(bytes) {
   return arr;
 }
 
+/** E9 opcode from Disney payload (mirrors app/src/utils/e9Parser.ts). */
+export function extractE9Opcode(payload) {
+  const p = Array.from(payload || []);
+  if (p.length >= 4 && (p[0] === 0xe1 || p[0] === 0xe2) && p[2] === 0xe9) {
+    return (p[2] << 8) | p[3];
+  }
+  if (p.length >= 2 && p[0] === 0xe9) return (p[0] << 8) | p[1];
+  return null;
+}
+
+export function opcodeToHex(op) {
+  if (op == null || Number.isNaN(op)) return '';
+  return Number(op).toString(16).toUpperCase().padStart(4, '0');
+}
+
+/** Derive display opcode string from a hex packet (optional CID prefix OK). */
+export function deriveOpcodeFromHex(hex) {
+  const bytes = hexToBytes(hex);
+  const payload = disneyPayload(bytes);
+  const op = extractE9Opcode(payload);
+  return op != null ? opcodeToHex(op) : '';
+}
+
 /**
  * LSB-first bit extraction within a single byte (matches firmware extractBits).
  * @param {number[]} payload
@@ -43,6 +66,143 @@ export function extractBits(payload, offset, bitStart, bitCount) {
   if (count > avail) count = avail;
   const mask = count === 32 ? 0xffffffff : (1 << count) - 1;
   return (byte >>> bitStart) & mask;
+}
+
+/** Matches firmware scale6To8 (bit-replicate 6→8). */
+export function scale6To8(v) {
+  const n = (Number(v) || 0) & 0x3f;
+  return ((n << 2) | (n >> 4)) & 0xff;
+}
+
+/**
+ * WLED Chase (fx=28 / FX_MODE_CHASE_COLOR) cycle → sx.
+ * FX.cpp: counter = now * ((sx>>2)+1); full lap when counter += 65536
+ *   → T_ms = 65536 / ((sx>>2)+1)
+ * Inverse: sx = round(4 * (65536/T_ms - 1)), clamped 0–255.
+ * Use Disney on_time_ms as T_ms so one chase lap matches wand on-time (step ≈ on/5).
+ * @param {number} cycleMs
+ * @returns {number} sx 0–255
+ */
+export function chaseSxFromCycleMs(cycleMs) {
+  const ms = Number(cycleMs);
+  if (!Number.isFinite(ms) || ms <= 0) return 255;
+  let rate = 65536 / ms;
+  if (rate < 1) rate = 1;
+  if (rate > 64) rate = 64;
+  return Math.max(0, Math.min(255, Math.round((rate - 1) * 4)));
+}
+
+/** Build per-tval speedBuckets for E9 0C chase (maskBits = tval nibble). */
+export function e90cChaseSpeedBuckets(mult = 1.5) {
+  const m = Number(mult);
+  const buckets = [];
+  for (let t = 1; t <= 15; t++) {
+    buckets.push({ maxByte: t, value: chaseSxFromCycleMs(m * t * 1000) });
+  }
+  return {
+    enabled: true,
+    field: 'sx',
+    maskBits: { bitStart: 0, bitCount: 4 },
+    buckets,
+  };
+}
+
+function hexToRgb(hex) {
+  if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+function previewChannelGroupRgb(channelGroup, payloadBytes) {
+  if (!channelGroup || typeof channelGroup !== 'object') return [0, 0, 0];
+  const scale = channelGroup.scale || 'bitReplicate6to8';
+  const one = (key) => {
+    const ch = channelGroup[key] || {};
+    const raw = extractBits(
+      payloadBytes,
+      Number(ch.offset ?? 0),
+      Number(ch.bitStart ?? (scale === 'direct8' ? 0 : 1)),
+      Number(ch.bitCount ?? (scale === 'direct8' ? 8 : 6)),
+    );
+    if (scale === 'bitReplicate6to8') return scale6To8(raw);
+    return raw & 0xff;
+  };
+  return [one('r'), one('g'), one('b')];
+}
+
+function previewColorSource(srcObj, payloadBytes, colors) {
+  if (!srcObj || typeof srcObj !== 'object') return [0, 0, 0];
+  if (srcObj.kind === 'fixed') {
+    return hexToRgb(srcObj.value) || [0, 0, 0];
+  }
+  if (srcObj.kind === 'rgb' || srcObj.channelGroup) {
+    return previewChannelGroupRgb(srcObj.channelGroup, payloadBytes);
+  }
+  const raw = extractBits(
+    payloadBytes,
+    Number(srcObj.offset ?? 0),
+    Number(srcObj.bitStart ?? 0),
+    Number(srcObj.bitCount ?? 8),
+  );
+  if (srcObj.kind === 'palette' || srcObj.paletteMap !== false) {
+    const pal = raw & 0x1f;
+    return hexToRgb(Array.isArray(colors) ? colors[pal] : null) || [0, 0, 0];
+  }
+  return [raw & 0xff, raw & 0xff, raw & 0xff];
+}
+
+function previewBlendRatio(ratioObj, payloadBytes) {
+  if (!ratioObj || typeof ratioObj !== 'object') return 0.5;
+  if (ratioObj.mode === 'extract') {
+    const bitCount = Number(ratioObj.bitCount ?? 8);
+    const raw = extractBits(
+      payloadBytes,
+      Number(ratioObj.offset ?? 0),
+      Number(ratioObj.bitStart ?? 0),
+      bitCount,
+    );
+    const maxVal = bitCount >= 32 ? 0xffffffff : (1 << bitCount) - 1;
+    return maxVal > 0 ? raw / maxVal : 0.5;
+  }
+  const v = Number(ratioObj.value);
+  if (!Number.isFinite(v)) return 0.5;
+  return Math.min(1, Math.max(0, v));
+}
+
+/** Resolve speedBuckets table for a timing byte (mirrors firmware). */
+export function resolveSpeedBucketValue(model, timingByte) {
+  const sb = model?.speedBuckets;
+  if (!sb?.enabled || !Array.isArray(sb.buckets) || sb.buckets.length === 0) return null;
+  let key = timingByte & 0xff;
+  if (sb.maskBits && typeof sb.maskBits === 'object') {
+    key = extractBits([timingByte & 0xff], 0, Number(sb.maskBits.bitStart ?? 0), Number(sb.maskBits.bitCount ?? 8));
+  }
+  let chosen = null;
+  let chosenMax = 256;
+  let fallback = null;
+  let fallbackMax = -1;
+  for (const b of sb.buckets) {
+    if (!b || typeof b !== 'object') continue;
+    const maxByte = Number.isFinite(b.maxByte) ? Number(b.maxByte) : 255;
+    if (maxByte > fallbackMax) {
+      fallbackMax = maxByte;
+      fallback = b;
+    }
+    if (key <= maxByte && maxByte < chosenMax) {
+      chosenMax = maxByte;
+      chosen = b;
+    }
+  }
+  const pick = chosen || fallback;
+  if (!pick) return null;
+  return {
+    field: typeof sb.field === 'string' && sb.field ? sb.field : 'sx',
+    value: Number.isFinite(pick.value) ? Number(pick.value) : 128,
+    key,
+  };
 }
 
 /**
@@ -246,16 +406,22 @@ export function computeTimingLifecycle(byte, cooldownSec = 2, model = null) {
   const cooldown = Number.isFinite(cooldownSec) ? Math.max(0, Number(cooldownSec)) : 2;
 
   let strobe = null;
-  const se = m?.strobeEffect;
-  if (se?.enabled) {
-    let hz = se.flashRateNormalHz ?? 2;
-    if (extended) hz = se.flashRateExtendedHz ?? 0.35;
-    else if (scaler) hz = se.flashRateScalerHz ?? 1;
-    strobe = {
-      fx: Number.isFinite(se.fx) ? se.fx : 23,
-      sx: strobeSxFromFlashRateHz(hz),
-      flashRateHz: hz,
-    };
+  let speedBucket = null;
+  const bucket = resolveSpeedBucketValue(m, byte);
+  if (bucket) {
+    speedBucket = bucket;
+  } else {
+    const se = m?.strobeEffect;
+    if (se?.enabled) {
+      let hz = se.flashRateNormalHz ?? 2;
+      if (extended) hz = se.flashRateExtendedHz ?? 0.35;
+      else if (scaler) hz = se.flashRateScalerHz ?? 1;
+      strobe = {
+        fx: Number.isFinite(se.fx) ? se.fx : 23,
+        sx: strobeSxFromFlashRateHz(hz),
+        flashRateHz: hz,
+      };
+    }
   }
 
   return {
@@ -269,6 +435,7 @@ export function computeTimingLifecycle(byte, cooldownSec = 2, model = null) {
     // Fade is inside onSec (final-cycle stretch); do not add a separate fade phase.
     totalSec: onSec + cooldown,
     strobe,
+    speedBucket,
   };
 }
 
@@ -285,8 +452,12 @@ export function formatExtractTargetLabel(target, segmentMap) {
     return s ? `${s.id} (${s.start}-${s.stop})` : id || '(no seg)';
   };
   switch (target.kind) {
-    case 'segmentColor':
-      return `segColor ${segName(target.segmentId)} col${target.colorSlot ?? 0}`;
+    case 'segmentColor': {
+      const ids = Array.isArray(target.segmentIds) && target.segmentIds.length
+        ? target.segmentIds
+        : [target.segmentId];
+      return `segColor ${ids.map(segName).join('+')} col${target.colorSlot ?? 0}`;
+    }
     case 'maskColor': {
       const mask = target.mask || 'all';
       const hits = segs.filter((s) => s.maskAssignment === mask);
@@ -358,6 +529,27 @@ export function resolveFlashRateHz(rule, payloadBytes, timingModels = []) {
   return hz;
 }
 
+function previewNamedColorSources(colorSources, payloadBytes, colors) {
+  const map = {};
+  (colorSources || []).forEach((src) => {
+    const name = typeof src?.name === 'string' ? src.name.trim() : '';
+    if (!name || map[name]) return;
+    if (src.kind === 'fixed') {
+      map[name] = hexToRgb(src.value) || [0, 0, 0];
+    } else if (src.kind === 'rgb' && src.channelGroup) {
+      map[name] = previewChannelGroupRgb(src.channelGroup, payloadBytes);
+    } else {
+      map[name] = previewColorSource({
+        offset: src.offset,
+        bitStart: src.bitStart,
+        bitCount: src.bitCount,
+        paletteMap: true,
+      }, payloadBytes, colors);
+    }
+  });
+  return map;
+}
+
 /**
  * Preview extract slots: raw bit value + mapped (palette index or curve output).
  * @param {number[]} payloadBytes
@@ -370,17 +562,24 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
   if (!Array.isArray(extracts)) return [];
   const rule = opts.rule || null;
   const timingModels = Array.isArray(opts.timingModels) ? opts.timingModels : [];
+  const namedColors = previewNamedColorSources(rule?.colorSources, payloadBytes, colors);
   return extracts.map((ex) => {
     const name = ex?.name || '';
     const source = ex?.source || 'payloadBits';
     const isTiming = source === 'timingFlashRate' || source === 'timingOnSec' || source === 'timingFadeSec';
+    const isColorSourceBlend = source === 'colorSourceBlend';
+    const isFixedColor = source === 'fixedColor';
     const targets = Array.isArray(ex?.targets) ? ex.targets : [];
     let raw = 0;
     let derivedValue;
     let mapped;
     let paletteIndex;
     let rgb = null;
-    const paletteMap = isTiming ? false : !!ex?.paletteMap;
+    const paletteMap = isTiming || isColorSourceBlend || isFixedColor ? false : !!ex?.paletteMap;
+    const hasChannelGroup = !isTiming && !isColorSourceBlend && !isFixedColor
+      && ex?.channelGroup && typeof ex.channelGroup === 'object';
+    const hasColorBlend = !isTiming && !isColorSourceBlend && !isFixedColor && !hasChannelGroup
+      && ex?.colorBlend && typeof ex.colorBlend === 'object';
 
     if (isTiming) {
       derivedValue = resolveTimingDerivedValue(rule, payloadBytes, timingModels, source);
@@ -389,6 +588,43 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
       if (ex?.curve && typeof ex.curve === 'object') {
         mapped = applyCurve(derivedValue, ex.curve);
       }
+    } else if (isFixedColor) {
+      rgb = hexToRgb(ex.value) || [0, 0, 0];
+      mapped = 0;
+      raw = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
+    } else if (hasChannelGroup) {
+      rgb = previewChannelGroupRgb(ex.channelGroup, payloadBytes);
+      mapped = 0;
+      raw = (rgb[0] << 16) | (rgb[1] << 8) | rgb[2];
+    } else if (hasColorBlend) {
+      const a = previewColorSource(ex.colorBlend.a, payloadBytes, colors);
+      const b = previewColorSource(ex.colorBlend.b, payloadBytes, colors);
+      const ratio = previewBlendRatio(ex.colorBlend.ratio, payloadBytes);
+      rgb = [
+        Math.round(a[0] + (b[0] - a[0]) * ratio),
+        Math.round(a[1] + (b[1] - a[1]) * ratio),
+        Math.round(a[2] + (b[2] - a[2]) * ratio),
+      ];
+      mapped = ratio;
+      raw = Math.round(ratio * 1000) / 1000;
+    } else if (isColorSourceBlend) {
+      const blend = Array.isArray(ex.blend) ? ex.blend : [];
+      let sumWeight = blend.reduce((s, e) => s + (Number(e?.weightPct) || 0), 0);
+      if (sumWeight <= 0) sumWeight = 100;
+      let rf = 0;
+      let gf = 0;
+      let bf = 0;
+      blend.forEach((entry) => {
+        const srcRgb = namedColors[entry?.source];
+        if (!srcRgb) return;
+        const w = (Number(entry.weightPct) || 0) / sumWeight;
+        rf += srcRgb[0] * w;
+        gf += srcRgb[1] * w;
+        bf += srcRgb[2] * w;
+      });
+      rgb = [Math.round(rf), Math.round(gf), Math.round(bf)];
+      mapped = sumWeight;
+      raw = Math.round(sumWeight * 10) / 10;
     } else {
       const offset = Number(ex?.offset ?? 0);
       const bitStart = Number(ex?.bitStart ?? 0);
@@ -398,16 +634,7 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
       if (paletteMap) {
         paletteIndex = raw & 0x1f;
         mapped = paletteIndex;
-        if (Array.isArray(colors) && colors[paletteIndex]) {
-          const hex = colors[paletteIndex];
-          if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
-            rgb = [
-              parseInt(hex.slice(1, 3), 16),
-              parseInt(hex.slice(3, 5), 16),
-              parseInt(hex.slice(5, 7), 16),
-            ];
-          }
-        }
+        rgb = hexToRgb(Array.isArray(colors) ? colors[paletteIndex] : null);
       } else if (ex?.curve && typeof ex.curve === 'object') {
         mapped = applyCurve(raw, ex.curve);
       }

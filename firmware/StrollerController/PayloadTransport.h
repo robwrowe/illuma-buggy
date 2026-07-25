@@ -6,6 +6,7 @@ extern BoardRole boardRole;
 extern uint8_t scannerPeerMac[6];
 extern bool scannerPeerConfigured;
 extern unsigned long lastScannerPacketMs;
+extern bool localScanFallbackActive;  // logic board local BLE scan while scanner silent
 extern uint32_t espNowRxCount;         // valid ParsedDisneyPackets received over ESP-NOW
 extern uint32_t espNowRxRejected;      // ESP-NOW frames dropped (wrong length)
 extern uint32_t parsedPacketDropCount; // ring buffer overflows (oldest dropped)

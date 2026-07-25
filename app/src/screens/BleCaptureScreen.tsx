@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, Alert, Switch,
+  TextInput, Alert, Switch, Modal,
 } from 'react-native';
 import IconBolt from '@tabler/icons-react-native/dist/esm/icons/IconBolt';
 import IconDownload from '@tabler/icons-react-native/dist/esm/icons/IconDownload';
@@ -26,6 +26,9 @@ import {
   startPhoneBleScan,
 } from '../utils/phoneBleScan';
 import { getGattActivitySince } from '../services/BLEService';
+import { getParkShowtimesCache } from '../services/parkShowtimesCache';
+import { buildUpcomingShows } from '../hooks/useParkShows';
+import { drainSheetsQueue, retrySheetsUploadNow } from '../services/sheetsSync';
 
 function formatElapsed(ms: number): string {
   const sec = Math.floor(ms / 1000);
@@ -107,6 +110,8 @@ export default function BleCaptureScreen() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [healthNow, setHealthNow] = useState(Date.now());
   const [customMinutes, setCustomMinutes] = useState('');
+  const [queueModalOpen, setQueueModalOpen] = useState(false);
+  const [liveShowTick, setLiveShowTick] = useState(0);
   const scanUnsubRef = useRef<(() => void) | null>(null);
 
   const {
@@ -118,7 +123,32 @@ export default function BleCaptureScreen() {
     startBleCapture, stopBleCapture, appendBleCapturePacket,
     deleteBleCaptureSession,
     updateBleCapturePacketNote,
+    sheetsUploadQueue,
+    activePark, showBindings, showInstanceOverrides, activeZoneIds,
   } = useAppStore();
+
+  const liveShows = useMemo(() => {
+    void liveShowTick;
+    const park = activePark;
+    const { raw, entityId } = getParkShowtimesCache();
+    if (!park?.id || !raw.length || entityId !== park.themeParksApiEntityId) return [];
+    return buildUpcomingShows(
+      raw,
+      showBindings,
+      park.id,
+      showSettings,
+      showInstanceOverrides,
+      Date.now(),
+      activeZoneIds,
+    ).filter((show) => show.status === 'pre' || show.status === 'live');
+  }, [
+    liveShowTick, activePark, showBindings, showSettings, showInstanceOverrides, activeZoneIds,
+  ]);
+
+  useEffect(() => {
+    const id = setInterval(() => setLiveShowTick((n) => n + 1), 15_000);
+    return () => clearInterval(id);
+  }, []);
 
   const toggleIgnoreTag = (tag: string, on: boolean) => {
     const next = on
@@ -222,6 +252,7 @@ export default function BleCaptureScreen() {
   };
 
   return (
+    <>
     <ScrollView style={s.container} contentContainerStyle={s.content}>
       <Text style={s.intro}>
         Record Disney BLE packets during a parade or fireworks show, straight off your phone's
@@ -292,6 +323,18 @@ export default function BleCaptureScreen() {
           placeholderTextColor={colors.textMuted}
         />
         <View style={s.chipRow}>
+          {liveShows.map((show) => (
+            <TouchableOpacity
+              key={show.id}
+              style={s.chip}
+              onPress={() => !bleCaptureActive && setBleCaptureDraftName(show.name)}
+              disabled={bleCaptureActive}
+            >
+              <Text style={s.chipText}>
+                {show.status === 'live' ? '🔴 ' : ''}{show.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
           {SESSION_LABEL_SUGGESTIONS.map(label => (
             <TouchableOpacity
               key={label}
@@ -432,7 +475,19 @@ export default function BleCaptureScreen() {
 
       {/* Saved sessions */}
       <View style={s.card}>
-        <Text style={s.cardTitle}>Saved sessions ({bleCaptureSessions.length})</Text>
+        <View style={s.row}>
+          <Text style={[s.cardTitle, { flex: 1 }]}>
+            Saved sessions ({bleCaptureSessions.length})
+          </Text>
+          {sheetsUploadQueue.length > 0 && (
+            <TouchableOpacity onPress={() => setQueueModalOpen(true)}>
+              <Text style={s.queueBadge}>
+                {sheetsUploadQueue.length} pending upload
+                {sheetsUploadQueue.length === 1 ? '' : 's'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
         {bleCaptureSessions.length === 0 ? (
           <Text style={s.sub}>No recordings yet.</Text>
         ) : (
@@ -569,6 +624,55 @@ export default function BleCaptureScreen() {
         )}
       </View>
     </ScrollView>
+
+      <Modal
+        visible={queueModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setQueueModalOpen(false)}
+      >
+        <View style={s.modalBackdrop}>
+          <View style={s.modalCard}>
+            <Text style={s.cardTitle}>Sheets upload queue</Text>
+            <Text style={s.sub}>
+              Sessions wait here until the phone is online. Failed items stop after 8 attempts.
+            </Text>
+            {sheetsUploadQueue.map((item) => {
+              const session = bleCaptureSessions.find((x) => x.id === item.sessionId);
+              return (
+                <View key={item.sessionId} style={s.queueItem}>
+                  <Text style={s.sessionName}>
+                    {session?.name || item.sessionId}
+                  </Text>
+                  <Text style={s.sub}>
+                    attempts {item.attempts}
+                    {item.lastError ? ` · ${item.lastError}` : ''}
+                  </Text>
+                  <TouchableOpacity
+                    style={s.actionBtn}
+                    onPress={() => retrySheetsUploadNow(item.sessionId)}
+                  >
+                    <Text style={s.actionText}>Retry now</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+            <TouchableOpacity
+              style={[s.actionBtn, { marginTop: 8 }]}
+              onPress={() => { void drainSheetsQueue(); }}
+            >
+              <Text style={s.actionText}>Drain now</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.startBtn}
+              onPress={() => setQueueModalOpen(false)}
+            >
+              <Text style={s.startBtnText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -587,6 +691,15 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
     chipActive:{ borderColor: c.primary, backgroundColor: c.primaryDim },
     chipText:  { color: c.textMuted, fontSize: 12, fontWeight: '500' },
     chipTextActive: { color: c.primary },
+    queueBadge: { color: c.warning ?? c.primary, fontSize: 11, fontWeight: '700' },
+    modalBackdrop: {
+      flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 24,
+    },
+    modalCard: {
+      backgroundColor: c.surface, borderRadius: 12, padding: 16, gap: 10,
+      borderWidth: 1, borderColor: c.border,
+    },
+    queueItem: { gap: 4, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: c.border },
     customDurationRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     customDurationLabel: { color: c.textSecondary, fontSize: 12, fontWeight: '600' },
     customDurationInput: { flex: 0, width: 72, paddingVertical: 8, textAlign: 'center' },

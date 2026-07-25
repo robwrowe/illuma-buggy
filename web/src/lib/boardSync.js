@@ -1,12 +1,13 @@
 import { BLE_SEND_DELAY_MS, webBleBoard } from './ble/chunking';
-import { mbMappingToBlePayload, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
-import { DEFAULT_DATA } from './utils';
+import { compactMbPayloadForBle, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
+import { DEFAULT_DATA, normalizeColorCalibration } from './utils';
 
 export const BOARD_SYNC_LS_KEY = 'illuma-buggy-board-sync';
 
 export const DEFAULT_BOARD_SYNC_OPTIONS = {
   presets: true,
   mbMapping: true,
+  colorCalibration: true,
   effectTransition: true,
   overrideMode: true,
   showMode: true,
@@ -30,7 +31,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
   const opts = { ...DEFAULT_BOARD_SYNC_OPTIONS, ...options };
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
   const presets = data.presets || [];
-  const layouts = data.customSegmentLayouts || [];
+  const segmentMaps = normalizeMbMapping(data.mbMapping).segmentMaps || [];
   const mb = normalizeMbMapping(data.mbMapping);
   const sent = [];
 
@@ -46,11 +47,29 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 
   if (opts.mbMapping) {
     onProgress?.('Sending MB rules…');
-    await webBleBoard.send({
-      type: 'set_mb_rules',
-      mapping: mbMappingToBlePayload(mb),
-    });
+    try {
+      await webBleBoard.send({
+        type: 'set_mb_rules',
+        mapping: compactMbPayloadForBle(mb),
+      });
+    } catch (e) {
+      const detail = e?.message || String(e);
+      throw new Error(`MB rules push failed: ${detail}`);
+    }
     sent.push(`MB rules (${(mb.rules || []).length})`);
+    await delay(BLE_SEND_DELAY_MS);
+  }
+
+  if (opts.colorCalibration) {
+    onProgress?.('Sending color calibration…');
+    const calibration = normalizeColorCalibration(
+      data.colorCalibration || DEFAULT_DATA.colorCalibration,
+    );
+    await webBleBoard.send({
+      type: 'set_color_calibration',
+      calibration,
+    });
+    sent.push(calibration.enabled ? 'color calibration (on)' : 'color calibration (off)');
     await delay(BLE_SEND_DELAY_MS);
   }
 
@@ -93,7 +112,8 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
         type: 'preset_save',
         id: p.id,
         name: p.name,
-        wled: presetWledForBoard(p, layouts),
+        wled: presetWledForBoard(p, segmentMaps),
+        ...(p.segmentMapId ? { segmentMapId: p.segmentMapId } : {}),
       });
       await delay(BLE_SEND_DELAY_MS + 30);
     }
@@ -108,6 +128,14 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 export const BOARD_SYNC_ITEMS = [
   { key: 'presets', label: 'Presets', hint: (data) => `${(data.presets || []).length} preset${(data.presets || []).length === 1 ? '' : 's'} (ESP32 NVS, not WLED slots)` },
   { key: 'mbMapping', label: 'MB rules + mapping', hint: (data) => `${(data.mbMapping?.rules || []).length} rules, colors, segments` },
+  {
+    key: 'colorCalibration',
+    label: 'Color calibration',
+    hint: (data) => {
+      const cal = data.colorCalibration || DEFAULT_DATA.colorCalibration;
+      return cal?.enabled ? 'Per-channel RGB curves (enabled)' : 'Per-channel RGB curves (disabled)';
+    },
+  },
   { key: 'effectTransition', label: 'Effect transitions', hint: (data) => `${data.bleEffectTransitionMs ?? 700} ms fade` },
   { key: 'overrideMode', label: 'Override mode', hint: (data) => data.overrideKillOnZone ? 'Kill override on zone entry' : 'Keep override in zones' },
   { key: 'mbRuleConfig', label: 'MB rule FTB preset', hint: (data) => data.ftbPresetId ? `Preset ${data.ftbPresetId}` : 'Pure black (on:false fallback)' },

@@ -15,6 +15,7 @@ import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
 import {
   createEmptyTimingModel,
+  createEmptySpeedBuckets,
   normalizeMbMapping,
   normalizeTimingModel,
 } from '../../lib/ble/mbMapping';
@@ -35,6 +36,8 @@ function TimingModelCard({
   const set = (patch) => onChange(normalizeTimingModel({ ...m, ...patch }));
   const se = m.strobeEffect || {};
   const setStrobe = (patch) => set({ strobeEffect: { ...se, ...patch } });
+  const sb = m.speedBuckets || createEmptySpeedBuckets();
+  const setBuckets = (patch) => set({ speedBuckets: { ...sb, ...patch } });
 
   const fxOpts = (effectOptions || []).map((e) => ({
     value: String(e.id),
@@ -155,11 +158,17 @@ function TimingModelCard({
         </Text>
       )}
 
-      <Paper p="xs" withBorder bg="var(--bg)">
+      <Paper p="xs" withBorder bg="var(--bg)" mb="sm">
         <Checkbox
           label="Auto-set Strobe effect from decoded flash rate"
           checked={!!se.enabled}
-          onChange={(e) => setStrobe({ enabled: e.target.checked })}
+          onChange={(e) => {
+            const enabled = e.target.checked;
+            set({
+              strobeEffect: { ...se, enabled },
+              ...(enabled ? { speedBuckets: { ...sb, enabled: false } } : {}),
+            });
+          }}
           mb="xs"
         />
         {se.enabled && (
@@ -208,6 +217,150 @@ function TimingModelCard({
                 />
               </Field>
             </SimpleGrid>
+          </Stack>
+        )}
+      </Paper>
+
+      <Paper p="xs" withBorder bg="var(--bg)">
+        <Checkbox
+          label="Speed buckets (manual timing→field gate)"
+          checked={!!sb.enabled}
+          onChange={(e) => {
+            const enabled = e.target.checked;
+            set({
+              speedBuckets: { ...sb, enabled },
+              ...(enabled ? { strobeEffect: { ...se, enabled: false } } : {}),
+            });
+          }}
+          mb="xs"
+        />
+        <Text size="xs" c="dimmed" mb="xs">
+          Author-sized table: smallest maxByte ≥ timing key wins. Takes precedence over strobe when
+          enabled. Optional maskBits lets you bucket on a sub-field of the timing byte.
+        </Text>
+        {sb.enabled && (
+          <Stack gap="xs">
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+              <Field label="WLED field">
+                <SearchableSelect
+                  value={sb.field || 'sx'}
+                  onChange={(field) => setBuckets({ field: field || 'sx' })}
+                  options={[
+                    { value: 'sx', label: 'sx (speed)' },
+                    { value: 'ix', label: 'ix (intensity)' },
+                    { value: 'c1', label: 'c1' },
+                    { value: 'c2', label: 'c2' },
+                    { value: 'c3', label: 'c3' },
+                  ]}
+                  allowEmpty={false}
+                />
+              </Field>
+              <Field label="Custom field">
+                <TextInput
+                  size="xs"
+                  value={sb.field || 'sx'}
+                  onChange={(e) => setBuckets({ field: e.target.value.trim() || 'sx' })}
+                  placeholder="sx"
+                  styles={{ input: { fontFamily: 'monospace' } }}
+                />
+              </Field>
+            </SimpleGrid>
+            <Checkbox
+              label="Mask timing byte bits"
+              checked={!!sb.maskBits}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setBuckets({ maskBits: { bitStart: 0, bitCount: 4 } });
+                } else {
+                  const next = { ...sb };
+                  delete next.maskBits;
+                  set({ speedBuckets: next });
+                }
+              }}
+            />
+            {sb.maskBits && (
+              <SimpleGrid cols={2} spacing="xs">
+                <Field label="mask bitStart">
+                  <NumberInput
+                    size="xs"
+                    min={0}
+                    max={7}
+                    value={sb.maskBits.bitStart ?? 0}
+                    onChange={(v) => setBuckets({
+                      maskBits: {
+                        ...sb.maskBits,
+                        bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                      },
+                    })}
+                  />
+                </Field>
+                <Field label="mask bitCount">
+                  <NumberInput
+                    size="xs"
+                    min={1}
+                    max={8}
+                    value={sb.maskBits.bitCount ?? 8}
+                    onChange={(v) => setBuckets({
+                      maskBits: {
+                        ...sb.maskBits,
+                        bitCount: Math.min(8, Math.max(1, parseInt(v, 10) || 1)),
+                      },
+                    })}
+                  />
+                </Field>
+              </SimpleGrid>
+            )}
+            <Text size="xs" fw={600} c="dimmed">Buckets (maxByte → value)</Text>
+            {(sb.buckets || []).map((b, i) => (
+              <Group key={i} gap="xs" align="flex-end" wrap="wrap">
+                <Field label="maxByte">
+                  <NumberInput
+                    size="xs"
+                    min={0}
+                    max={255}
+                    value={b.maxByte ?? 255}
+                    onChange={(v) => {
+                      const buckets = [...(sb.buckets || [])];
+                      buckets[i] = {
+                        ...buckets[i],
+                        maxByte: Math.min(255, Math.max(0, parseInt(v, 10) || 0)),
+                      };
+                      setBuckets({ buckets });
+                    }}
+                  />
+                </Field>
+                <Field label="value">
+                  <NumberInput
+                    size="xs"
+                    value={b.value ?? 128}
+                    onChange={(v) => {
+                      const buckets = [...(sb.buckets || [])];
+                      buckets[i] = { ...buckets[i], value: parseInt(v, 10) || 0 };
+                      setBuckets({ buckets });
+                    }}
+                  />
+                </Field>
+                <AppButton
+                  size="compact-xs"
+                  variant="danger"
+                  onClick={() => {
+                    const buckets = (sb.buckets || []).filter((_, j) => j !== i);
+                    setBuckets({ buckets: buckets.length ? buckets : [{ maxByte: 255, value: 128 }] });
+                  }}
+                >
+                  Delete
+                </AppButton>
+              </Group>
+            ))}
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              onClick={() => setBuckets({
+                buckets: [...(sb.buckets || []), { maxByte: 255, value: 128 }],
+              })}
+            >
+              Add bucket
+            </AppButton>
           </Stack>
         )}
       </Paper>

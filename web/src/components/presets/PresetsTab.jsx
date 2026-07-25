@@ -24,13 +24,23 @@ import { TagChipRow } from '../shared/TagChipRow';
 import { TagEditor } from '../shared/TagEditor';
 import { TagFilterBar } from '../shared/TagFilterBar';
 import { AppButton } from '../shared/styles';
+import { SegmentMapEditor } from '../ble/SegmentMapEditor';
 import { testPresetOnWled } from '../../lib/ble/chunking';
+import { normalizeMbMapping, segmentMapSegmentToWledDef } from '../../lib/ble/mbMapping';
 import { duplicateTaggedName, itemMatchesTagFilter } from '../../lib/tags';
 import { MAX_EFFECT_COLORS, buildPaletteSelectOptions, generateId, hexListToWledCol, paletteSelectValue, saveColorToLibrary, wledColToHexList } from '../../lib/utils';
 import { DEFAULT_WLED_CAPTURE_OPTS, applyWledStateCapture, fetchWledFullStateFromIp, formatSegLabel, summarizeLayout, wledCaptureLabels } from '../../lib/wled/capture';
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
 
 const PRESET_SUB_TABS = ['effect', 'palette', 'colors', 'segments', 'params', 'memory'];
+
+function segmentMapPreview(map) {
+  return {
+    id: map.id,
+    name: map.name,
+    segments: (map.segments || []).map((s) => segmentMapSegmentToWledDef(s)).filter(Boolean),
+  };
+}
 
 export function PresetsTab({ data, update }) {
   const [sel, setSel] = useState(null);
@@ -57,6 +67,10 @@ export function PresetsTab({ data, update }) {
   const [captureUpdateMemory, setCaptureUpdateMemory] = useState(true);
   const [capturing, setCapturing] = useState(false);
   const [captureErr, setCaptureErr] = useState('');
+  const [showMapEditor, setShowMapEditor] = useState(false);
+
+  const segmentMaps = data.mbMapping?.segmentMaps || [];
+  const mb = data.mbMapping;
 
   useEffect(() => {
     const cached = loadCachedWledCatalog();
@@ -298,9 +312,9 @@ export function PresetsTab({ data, update }) {
                   <TagChipRow tags={p.tags} />
                   <Text size="xs" c="dimmed">
                     {p.wled.fxName || '—'} · {p.wled.palName || '—'}
-                    {p.segmentLayoutId && (() => {
-                      const lay = (data.customSegmentLayouts || []).find(l => l.id === p.segmentLayoutId);
-                      return lay ? ` · ${lay.name}` : ' · layout';
+                    {p.segmentMapId && (() => {
+                      const map = segmentMaps.find(m => m.id === p.segmentMapId);
+                      return map ? ` · ${map.name}` : ' · map';
                     })()}
                   </Text>
                 </Stack>
@@ -577,13 +591,23 @@ export function PresetsTab({ data, update }) {
               </Stack>
             )}
 
-            {/* Segments tab — link saved layout library item */}
+            {/* Segments tab — link shared segment map */}
             {ptab === 'segments' && (
               <Stack gap="sm" maw={520}>
                 <Text size="sm" c="dimmed">
-                  Linked layout applies when recall includes segments (Settings → Recall State). Import from WLED to capture inline layout, or pick a saved layout from Palettes → Segments.
+                  Linked map applies when recall includes segments (Settings → Recall State).
+                  Edit maps here or in Settings → Segment Maps — both edit the same store.
                 </Text>
-                {sel.wled.seg?.length > 0 && !sel.segmentLayoutId && (
+                <AppButton
+                  type="button"
+                  variant="default"
+                  size="compact-sm"
+                  onClick={() => setShowMapEditor(true)}
+                  style={{ alignSelf: 'flex-start' }}
+                >
+                  Edit segment maps…
+                </AppButton>
+                {sel.wled.seg?.length > 0 && !sel.segmentMapId && (
                   <Paper p="sm" radius="md" bg="var(--primary-dim)" style={{ border: '1px solid var(--primary)' }}>
                     <Group gap="sm" mb={6} wrap="nowrap">
                       <Text size="sm" fw={600} style={{ flex: 1 }}>Inline layout (imported)</Text>
@@ -609,43 +633,46 @@ export function PresetsTab({ data, update }) {
                 <Paper
                   p="sm"
                   radius="md"
-                  bg={!sel.segmentLayoutId && !sel.wled.seg?.length ? 'var(--primary-dim)' : 'var(--surface2)'}
+                  bg={!sel.segmentMapId && !sel.wled.seg?.length ? 'var(--primary-dim)' : 'var(--surface2)'}
                   style={{ border: '1px solid var(--border)', cursor: 'pointer' }}
-                  onClick={() => setSel(s => ({ ...s, segmentLayoutId: undefined, wled: { ...s.wled, seg: undefined }, memory: { ...s.memory, segments: false } }))}
+                  onClick={() => setSel(s => ({ ...s, segmentMapId: undefined, wled: { ...s.wled, seg: undefined }, memory: { ...s.memory, segments: false } }))}
                 >
                   <Group gap="sm" wrap="nowrap">
                     <Text size="sm" style={{ flex: 1 }}>None (single segment only)</Text>
-                    {!sel.segmentLayoutId && !sel.wled.seg?.length && (
+                    {!sel.segmentMapId && !sel.wled.seg?.length && (
                       <Text c="var(--primary)">✓</Text>
                     )}
                   </Group>
                 </Paper>
-                {(data.customSegmentLayouts || []).length === 0 && (
-                  <Text size="sm" c="dimmed">No segment layouts yet — add them on the Palettes tab.</Text>
+                {segmentMaps.length === 0 && (
+                  <Text size="sm" c="dimmed">No segment maps yet — open the editor above to create one.</Text>
                 )}
-                {(data.customSegmentLayouts || []).map(layout => (
-                  <Paper
-                    key={layout.id}
-                    p="sm"
-                    radius="md"
-                    bg={sel.segmentLayoutId === layout.id ? 'var(--primary-dim)' : 'var(--surface2)'}
-                    style={{ border: '1px solid var(--border)', cursor: 'pointer' }}
-                    onClick={() => setSel(s => ({
-                      ...s, segmentLayoutId: layout.id, memory: { ...s.memory, segments: true },
-                      wled: { ...s.wled, seg: undefined },
-                    }))}
-                  >
-                    <Group gap="sm" mb={6} wrap="nowrap">
-                      <Text size="sm" fw={600} style={{ flex: 1 }}>{layout.name}</Text>
-                      {sel.segmentLayoutId === layout.id && (
-                        <Text c="var(--primary)">✓</Text>
-                      )}
-                    </Group>
-                    <SegmentBar segments={layout.segments} />
-                    <Text size="xs" c="dimmed" mt={4} ff="monospace">{summarizeLayout(layout)}</Text>
-                  </Paper>
-                ))}
-                {(sel.segmentLayoutId || sel.wled.seg?.length > 0) && (
+                {segmentMaps.map(map => {
+                  const preview = segmentMapPreview(map);
+                  return (
+                    <Paper
+                      key={map.id}
+                      p="sm"
+                      radius="md"
+                      bg={sel.segmentMapId === map.id ? 'var(--primary-dim)' : 'var(--surface2)'}
+                      style={{ border: '1px solid var(--border)', cursor: 'pointer' }}
+                      onClick={() => setSel(s => ({
+                        ...s, segmentMapId: map.id, memory: { ...s.memory, segments: true },
+                        wled: { ...s.wled, seg: undefined },
+                      }))}
+                    >
+                      <Group gap="sm" mb={6} wrap="nowrap">
+                        <Text size="sm" fw={600} style={{ flex: 1 }}>{map.name}</Text>
+                        {sel.segmentMapId === map.id && (
+                          <Text c="var(--primary)">✓</Text>
+                        )}
+                      </Group>
+                      <SegmentBar segments={preview.segments} />
+                      <Text size="xs" c="dimmed" mt={4} ff="monospace">{summarizeLayout(preview)}</Text>
+                    </Paper>
+                  );
+                })}
+                {(sel.segmentMapId || sel.wled.seg?.length > 0) && (
                   <Field label="Remember segments at recall">
                     <Checkbox
                       checked={sel.memory.segments}
@@ -759,6 +786,43 @@ export function PresetsTab({ data, update }) {
                 {capturing ? 'Reading…' : 'Import'}
               </AppButton>
             </Group>
+          </Stack>
+        </Modal>
+      )}
+
+      {showMapEditor && (
+        <Modal title="Segment maps" onClose={() => setShowMapEditor(false)} width={720}>
+          <Stack gap="sm">
+            <Group gap="sm" wrap="wrap" align="center">
+              <Text size="xs" fw={600} c="dimmed">WLED IP</Text>
+              <TextInput
+                value={wledIp}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setWledIp(v);
+                  if (v.trim()) localStorage.setItem('wled-ip', v.trim());
+                }}
+                placeholder="4.3.2.1"
+                w={140}
+                styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+              />
+              <Text size="xs" c="dimmed">Import / replace from live strip</Text>
+            </Group>
+            <SegmentMapEditor
+              mb={mb}
+              presets={data.presets || []}
+              wledIp={wledIp}
+              effectOptions={wledEffects}
+              paletteOptions={wledPalettes}
+              onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
+              onPresetsChange={(nextPresets) => {
+                update({ presets: nextPresets });
+                if (sel) {
+                  const updated = nextPresets.find((p) => p.id === sel.id);
+                  if (updated) setSel((s) => ({ ...s, segmentMapId: updated.segmentMapId }));
+                }
+              }}
+            />
           </Stack>
         </Modal>
       )}

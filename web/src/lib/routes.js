@@ -21,5 +21,5 @@ export const WAND_LAB_SECTIONS = [
 /** Top-level tab id from react-router location pathname. */
 export function tabFromPathname(pathname) {
   const segment = (pathname || '/').replace(/^\//, '').split('/')[0];
-  return APP_TABS.some((t) => t.path === segment) ? segment : 'map';
+  return APP_TABS.some((t) => t.path === segment) ? segment : 'presets';
 }

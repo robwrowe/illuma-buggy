@@ -6,6 +6,7 @@ int overridePriority(OverrideSource src);
 bool canTakeOverride(OverrideSource incoming);
 void setOverride(OverrideSource src);
 void clearOverride();
+void servicePendingRestore();
 void saveWledStateForOverride();
 String buildWledRestorePayload(const String& savedJson);
 String prepareWledRestorePayload(const String& json);

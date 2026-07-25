@@ -1,0 +1,172 @@
+[
+  {
+    "id": "mr9zom69utls",
+    "ts": 1783388863809,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91200030fa2a2a4a4a230d037f4d2460064fcb0",
+    "origBytes": "e200e91200030fa2a2a4a4a230d037f4d2460064fcb0",
+    "tag": "unknown",
+    "note": "~5s total, ~0.75-1s cycle. cyan base, switching to blue.\nsw: chase down\nmb: twinkle"
+  },
+  {
+    "id": "mr9zmh3mi4c4",
+    "ts": 1783388763922,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91200012904020211114896d00effd1460707b0",
+    "origBytes": "e100e91200012904020211114896d00effd1460707b0",
+    "tag": "unknown",
+    "note": "~2s total, blue > yellow > blue, cuts between, ~0.75s cycle"
+  },
+  {
+    "id": "mr9zkpllus3q",
+    "ts": 1783388681625,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91200010fbcbdbdbdbd30d037f4d2460000fcbb",
+    "origBytes": "e100e91200010fbcbdbdbdbd30d037f4d2460000fcbb",
+    "tag": "unknown",
+    "note": "~1.75s total, white.\nSW: goes down\nMB: circle animation"
+  },
+  {
+    "id": "mr9zjytkf7w0",
+    "ts": 1783388646920,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91200010fbcbdbdbdbd30d037f4d2460000fcbb",
+    "origBytes": "e91200010fbcbdbdbdbd30d037f4d2460000fcbb",
+    "tag": "unknown",
+    "note": "~5.5s total, white.\nSW: goes down\nMB: circle animation"
+  },
+  {
+    "id": "mr9xw78609lc",
+    "ts": 1783385858454,
+    "kind": "single",
+    "presetKey": "circle",
+    "bytes": "e200e91200030fa2a2a4a4a230d037f4d2460064fcb8",
+    "origBytes": "e200e91200030fa2a2a4a4a230d037f4d2460064fcb8",
+    "tag": "unknown",
+    "note": "chase/circle animation, two colors"
+  },
+  {
+    "id": "mr9pm1y52vlj",
+    "ts": 1783371948125,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91200480fbbb5a4b5a430d037f4d246001340b0",
+    "origBytes": "e200e91200480fbbb5a4b5a430d037f4d246001340b0",
+    "tag": "e9_12",
+    "note": "Red x2, Blue x2, White x1, fast circle animation"
+  },
+  {
+    "id": "mr9o4cjsi08m",
+    "ts": 1783369442440,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91200c30fb1a4b5b5a430d037f4d246000cfcb0",
+    "origBytes": "e100e91200c30fb1a4b5b5a430d037f4d246000cfcb0",
+    "tag": "e9_12",
+    "note": "3 colors (blue x2, red x2, yellow x1).\nMB: UL, BL, BR, UR, Center, repeat\nWand: top to bottom"
+  },
+  {
+    "id": "mr9o3g0vjda7",
+    "ts": 1783369400287,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e100e91200c30fb1a4b5b5a430d037f4d246000cfcb0",
+    "origBytes": "e100e91200c30fb1a4b5b5a430d037f4d246000cfcb0",
+    "tag": "e9_10",
+    "note": "Burst via /show: 10 reps, 1000ms dwell"
+  },
+  {
+    "id": "mr9o2bf4hki4",
+    "ts": 1783369347664,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91200184896d00e86d04d83d037f0d13d050ab0",
+    "origBytes": "e200e91200184896d00e86d04d83d037f0d13d050ab0",
+    "tag": "e9_10",
+    "note": "Fade up / down, one color, all 5 leds"
+  },
+  {
+    "id": "mr9m77ta0v6v",
+    "ts": 1783366217038,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e91200184896d00e86d04d83d037f0d13d050ab0",
+    "origBytes": "e200e91200184896d00e86d04d83d037f0d13d050ab0",
+    "tag": "unknown",
+    "note": "Burst via /show: 10 reps, 100ms dwell"
+  },
+  {
+    "id": "mrp57jl3hcdb",
+    "ts": 1784305137639,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91200cf0fbca4bca4bc30d037f4d246001978b0",
+    "origBytes": "e91200cf0fbca4bca4bc30d037f4d246001978b0",
+    "tag": "unknown",
+    "note": "Circle animation\n~3 min 50s total time\nlights stay in one spot for ~0.5s, then change\nsequence: UL > BL > BR > UR > Center\nWhite x3, Blue x2"
+  },
+  {
+    "id": "mrp55vtvrh8z",
+    "ts": 1784305060195,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91200cf0fb9b3aba4bc30d037f4d246001978b0",
+    "origBytes": "e91200cf0fb9b3aba4bc30d037f4d246001978b0",
+    "tag": "unknown",
+    "note": "Circle animation\n~3 min 50s total time\nlights stay in one spot for ~0.5s, then change\nsequence: UL > BL > BR > UR > Center\nWhite, Green, Yellow, Purple, Blue"
+  },
+  {
+    "id": "mrp4ybvsk7xm",
+    "ts": 1784304707752,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91200c30fbcbcbdbcbd30d037f4d246000cfcb0",
+    "origBytes": "e91200c30fbcbcbdbcbd30d037f4d246000cfcb0",
+    "tag": "unknown",
+    "note": "Circle animation\n~47s total time\nlights stay in one spot for ~0.5s, then change\nsequence: UL > BL > BR > UR > Center\nWhite x3, Off/black x2"
+  },
+  {
+    "id": "mrp4voiuyi6n",
+    "ts": 1784304584166,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91200d20fa4b9a8afb530d037f4d2460064fcb0",
+    "origBytes": "e91200d20fa4b9a8afb530d037f4d2460064fcb0",
+    "tag": "unknown",
+    "note": "Circle animation\n~32s total time\n~0.25s fade time (tho may be closer to 0.5s)\nlights stay in one spot for ~1s, then change\nsequence: UL > BL > BR > UR > Center\nGreen, Purple, Yellow, Red, Blue"
+  },
+  {
+    "id": "mrp4sctz15tq",
+    "ts": 1784304429047,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e91200c30fb1a4b5b5a430d037f4d246000cfcb0",
+    "origBytes": "e91200c30fb1a4b5b5a430d037f4d246000cfcb0",
+    "tag": "unknown",
+    "note": "Circle animation\n~47 total time\nlights stay in one spot for ~1s, then change\nsequence: UL > BL > BR > UR > Center\nBlue x2, Red x2, Yellow x1"
+  },
+  {
+    "id": "mrqwj5i8ec78",
+    "ts": 1784411495072,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91200010fbdbcbcbcbc7aec5c982915291548ab",
+    "origBytes": "e200e91200010fbdbcbcbcbc7aec5c982915291548ab",
+    "tag": "unknown",
+    "note": "Outer only\nWhite\nFast shimmer\n~1.5s total time"
+  },
+  {
+    "id": "mrqwi1jxcvva",
+    "ts": 1784411443293,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91200110fbdb9b9b9b97aec5c982915291548ab",
+    "origBytes": "e200e91200110fbdb9b9b9b97aec5c982915291548ab",
+    "tag": "unknown",
+    "note": "Outer only\nGreen\nFast shimmer\nOn for ~1.5s\nfade out for ~0.25s"
+  }
+]

@@ -24,6 +24,9 @@ int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules
 
 void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t plen);
 
+/** Look up a segment map by id in the cached MB rules doc. Null object if missing. */
+JsonObject findSegmentMapById(const char* mapId);
+
 // Load/parse the rules document (rules + segmentMaps + colors + paradeDetection + …).
 void applyMbRulesJson(JsonObject root);
 void loadMbRulesFromJson();

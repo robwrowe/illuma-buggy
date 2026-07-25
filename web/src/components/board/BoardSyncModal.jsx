@@ -85,7 +85,8 @@ export function BoardSyncModal({ data, onClose }) {
           ))}
         </Paper>
         <Text size="xs" c="dimmed" lh={1.5}>
-          GPS zones, brightness, recall state, and segment layouts stay in the browser / phone — export JSON to move those.
+          GPS zones, brightness, and recall state stay in the browser / phone — export JSON to move those.
+          Segment geometry for presets is resolved into concrete WLED seg[] before push.
         </Text>
         {!supported && (
           <Text size="xs" c="red">Web Bluetooth is not available in this browser.</Text>

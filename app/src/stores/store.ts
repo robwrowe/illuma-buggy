@@ -4,6 +4,7 @@
  */
 
 import { normalizeTags } from '../utils/tags';
+import { KNOWN_TRANSITION_STYLES } from '../utils/transitionStyles';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
@@ -12,6 +13,14 @@ import { create } from 'zustand';
 // ─────────────────────────────────────────────
 
 export type RecallValue = 'always' | 'never' | 'memory';
+
+export interface SheetsUploadItem {
+  sessionId: string;
+  enqueuedAt: number;
+  attempts: number;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+}
 
 export interface RecallState {
   effect:     RecallValue;
@@ -71,6 +80,21 @@ export interface PresetWled {
   o3?:     boolean;
   col?:    number[][];
   seg?:    object[];
+  /**
+   * WLED transition duration in ms for this preset's activation.
+   * null/undefined = use WLED's current default (unchanged behavior).
+   */
+  transitionMs?: number | null;
+  /**
+   * Transition style — same set as rule-engine stopTransition / blendingStyleFromTypeString.
+   * null/undefined = no style override.
+   */
+  transitionStyle?:
+    | 'instant' | 'fairyDust' | 'swipeRight' | 'swipeLeft' | 'outsideIn' | 'insideOut'
+    | 'swipeUp' | 'swipeDown' | 'openH' | 'openV' | 'swipeTL' | 'swipeTR' | 'swipeBR' | 'swipeBL'
+    | 'circularOut' | 'circularIn' | 'pushRight' | 'pushLeft' | 'pushUp' | 'pushDown'
+    | 'pushTL' | 'pushTR' | 'pushBR' | 'pushBL'
+    | null;
 }
 
 export interface PresetMemory {
@@ -160,6 +184,11 @@ import {
   type ParkConfig, type ShowModeConfig, type WandLabConfig,
 } from '../utils/configMigration';
 import {
+  createEmptyColorCalibration,
+  normalizeColorCalibration,
+  type ColorCalibrationConfig,
+} from '../utils/colorCalibration';
+import {
   MbMappingConfig, DEFAULT_MB_MAPPING, normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
 import {
@@ -195,10 +224,9 @@ export {
 export { fetchWledSegmentsFromDevice } from '../utils/bleBoardSync';
 
 export type { ParkConfig, ShowModeConfig } from '../utils/configMigration';
-export type { MbMappingConfig, MbSegmentId, MbAnimationKey, MbPatternKey, MbEffectMapping, WledSegRef } from '../utils/mbConfig';
+export type { MbMappingConfig, MbSegmentId, WledSegRef } from '../utils/mbConfig';
 export {
-  DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META, MB_ANIMATION_META, MB_PATTERN_META,
-  SW_ANIMATION_META,
+  DEFAULT_MB_MAPPING, MB_COLOR_NAMES, MB_SEGMENT_META,
   normalizeMbMapping, mbMappingToBlePayload,
 } from '../utils/mbConfig';
 
@@ -269,6 +297,10 @@ interface AppState {
   // Brightness
   brightnessConfig:    BrightnessConfig;
   setBrightnessConfig: (config: Partial<BrightnessConfig>) => void;
+
+  /** Per-channel RGB curves — authored on web; app persists/pushes/toggles enabled. */
+  colorCalibration: ColorCalibrationConfig;
+  setColorCalibration: (config: Partial<ColorCalibrationConfig> | ColorCalibrationConfig) => void;
 
   // Device status
   deviceStatus:    DeviceStatus | null;
@@ -391,6 +423,15 @@ interface AppState {
   updateBleCapturePacketNote: (boardTs: number, hex: string, note: string) => void;
   deleteBleCaptureSession:  (id: string) => void;
   renameBleCaptureSession:  (id: string, name: string) => void;
+
+  /** Apps Script Web App URL for Wand Lab Sheets (user-supplied, like Maps key). */
+  sheetsEndpoint:           string;
+  setSheetsEndpoint:        (val: string) => void;
+  sheetsUploadQueue:        SheetsUploadItem[];
+  /** Runtime only — not persisted. */
+  sheetsUploadInFlight:     boolean;
+  enqueueSheetsUpload:      (item: SheetsUploadItem) => void;
+  dequeueSheetsUpload:      (sessionId: string) => void;
 }
 
 // ─────────────────────────────────────────────
@@ -422,10 +463,33 @@ const DEFAULT_PRESET_MEMORY: PresetMemory = {
 
 /** Normalize preset from board sync or legacy imports (firmware stores id/name/wled only). */
 export function normalizePreset(p: Partial<Preset> & { id: string; name: string }): Preset {
+  const rawWled = (p.wled ?? { on: true }) as PresetWled & {
+    pd?: unknown;
+    transition?: unknown;
+  };
+  // Drop dead/unconfirmed `pd` and legacy raw WLED `transition` tenths field —
+  // app authors use transitionMs / transitionStyle instead.
+  const { pd: _pd, transition: _legacyTransition, ...wledRest } = rawWled;
+
+  const transitionMs = Number.isFinite(rawWled.transitionMs)
+    ? Number(rawWled.transitionMs)
+    : (rawWled.transitionMs === null ? null : undefined);
+  const transitionStyle = (
+    typeof rawWled.transitionStyle === 'string'
+    && KNOWN_TRANSITION_STYLES.has(rawWled.transitionStyle)
+  )
+    ? rawWled.transitionStyle
+    : (rawWled.transitionStyle === null ? null : undefined);
+
   return {
     id:        p.id,
     name:      p.name,
-    wled:      p.wled ?? { on: true },
+    wled: {
+      ...wledRest,
+      on: wledRest.on ?? true,
+      ...(transitionMs !== undefined ? { transitionMs } : {}),
+      ...(transitionStyle !== undefined ? { transitionStyle } : {}),
+    },
     memory:    p.memory ?? DEFAULT_PRESET_MEMORY,
     tags:      normalizeTags(p.tags),
     segmentLayoutId: p.segmentLayoutId,
@@ -521,6 +585,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   wledPass:            '',
   wledIp:              '',
   wledPort:            80,
+  sheetsEndpoint:      '',
+  sheetsUploadQueue:   [],
+  sheetsUploadInFlight: false,
   locationPollSec:     DEFAULT_LOCATION_POLL_SEC,
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
@@ -529,6 +596,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   boardRole:           'standalone',
   scannerMac:          '',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
+  colorCalibration:    createEmptyColorCalibration(),
   bleCaptureActive:       false,
   bleCaptureDurationSec:  900,
   bleCaptureStartedAt:    null,
@@ -668,6 +736,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Brightness
   setBrightnessConfig: (config) => set(s => ({ brightnessConfig: { ...s.brightnessConfig, ...config } })),
+  setColorCalibration: (config) => set(s => ({
+    colorCalibration: normalizeColorCalibration({ ...s.colorCalibration, ...config }),
+  })),
 
   // Device
   setDeviceStatus:       (deviceStatus) => set({ deviceStatus }),
@@ -698,6 +769,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWledPass:           (val)          => set({ wledPass: val }),
   setWledIp:             (val)          => set({ wledIp: val }),
   setWledPort:           (val)          => set({ wledPort: val }),
+  setSheetsEndpoint:     (val)          => { set({ sheetsEndpoint: val }); get().saveToStorage(); },
+  enqueueSheetsUpload:   (item)         => set((s) => {
+    if (s.sheetsUploadQueue.some((q) => q.sessionId === item.sessionId)) return s;
+    return { sheetsUploadQueue: [...s.sheetsUploadQueue, item] };
+  }),
+  dequeueSheetsUpload:   (sessionId)    => {
+    set((s) => ({
+      sheetsUploadQueue: s.sheetsUploadQueue.filter((q) => q.sessionId !== sessionId),
+    }));
+    get().saveToStorage();
+  },
   setLocationPollSec:    (val)          => set({
     locationPollSec: Math.min(LOCATION_POLL_SEC_MAX, Math.max(LOCATION_POLL_SEC_MIN, val)),
   }),
@@ -760,6 +842,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       captureForcedLocationTracking: false,
       bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
     });
+    if (packets.length > 0) {
+      get().enqueueSheetsUpload({
+        sessionId: session.id,
+        enqueuedAt: Date.now(),
+        attempts: 0,
+        lastAttemptAt: null,
+        lastError: null,
+      });
+    }
     get().saveToStorage();
     console.log(`[Capture] Stopped (${reason}): ${packets.length} packets`);
   },
@@ -776,6 +867,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureLiveCount: 0,
       bleCaptureStartedAt: endedAt,
       bleCaptureSegment: nextSegment,
+    });
+    get().enqueueSheetsUpload({
+      sessionId: session.id,
+      enqueuedAt: Date.now(),
+      attempts: 0,
+      lastAttemptAt: null,
+      lastError: null,
     });
     get().saveToStorage();
     console.log(
@@ -839,11 +937,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Persistence
   loadFromStorage: async () => {
     try {
-      const keys = ['presets','zones','indoorZones','brightnessConfig','overrideKillOnZone',
+      const keys = ['presets','zones','indoorZones','brightnessConfig','colorCalibration','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandFivePoint','magicBandTimeoutSec','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
-                    'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','boardConnectEnabled',
+                    'wledSsid','wledPass','wledIp','wledPort','sheetsEndpoint','sheetsUploadQueue',
+                    'zonesEnabled','syncMode','boardConnectEnabled',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'bleCaptureIgnoreTags',
@@ -873,6 +972,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         zones:              (d.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
         indoorZones:        (d.indoorZones ?? []).map((z: IndoorZone) => normalizeZonePolygon(z)),
         brightnessConfig:   d.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
+        colorCalibration:   normalizeColorCalibration(d.colorCalibration),
         overrideKillOnZone: d.overrideKillOnZone ?? false,
         starlightEnabled:   d.starlightEnabled   ?? true,
         starlightTimeoutSec:d.starlightTimeoutSec ?? 15,
@@ -885,6 +985,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         wledPass:           d.wledPass           ?? '',
         wledIp:             d.wledIp             ?? '',
         wledPort:           d.wledPort           ?? 80,
+        sheetsEndpoint:     typeof d.sheetsEndpoint === 'string' ? d.sheetsEndpoint : '',
+        sheetsUploadQueue:  Array.isArray(d.sheetsUploadQueue) ? d.sheetsUploadQueue : [],
         zonesEnabled:       d.zonesEnabled       ?? true,
         syncMode:           d.syncMode           ?? 'auto',
         boardConnectEnabled:d.boardConnectEnabled ?? true,
@@ -929,6 +1031,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['zones',              JSON.stringify(s.zones)],
         ['indoorZones',        JSON.stringify(s.indoorZones)],
         ['brightnessConfig',   JSON.stringify(s.brightnessConfig)],
+        ['colorCalibration',   JSON.stringify(s.colorCalibration)],
         ['overrideKillOnZone', JSON.stringify(s.overrideKillOnZone)],
         ['starlightEnabled',   JSON.stringify(s.starlightEnabled)],
         ['starlightTimeoutSec',JSON.stringify(s.starlightTimeoutSec)],
@@ -941,6 +1044,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['wledPass',           JSON.stringify(s.wledPass)],
         ['wledIp',             JSON.stringify(s.wledIp)],
         ['wledPort',           JSON.stringify(s.wledPort)],
+        ['sheetsEndpoint',     JSON.stringify(s.sheetsEndpoint)],
+        ['sheetsUploadQueue',  JSON.stringify(s.sheetsUploadQueue)],
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
         ['syncMode',           JSON.stringify(s.syncMode)],
         ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],
@@ -1049,6 +1154,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       version: CURRENT_CONFIG_VERSION, exportedAt: new Date().toISOString(),
       presets: s.presets, zones: s.zones, indoorZones: s.indoorZones,
       brightnessConfig: s.brightnessConfig, recallState: s.recallState,
+      colorCalibration: s.colorCalibration,
       overrideKillOnZone: s.overrideKillOnZone,
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
       magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
@@ -1075,6 +1181,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       zones:              (m.zones ?? []).map((z: Zone) => normalizeZonePolygon(z)),
       indoorZones:        (m.indoorZones ?? []).map((z: IndoorZone) => normalizeZonePolygon(z)),
       brightnessConfig:   m.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
+      colorCalibration:   normalizeColorCalibration(m.colorCalibration),
       recallState:        m.recallState        ?? DEFAULT_RECALL,
       overrideKillOnZone: m.overrideKillOnZone ?? false,
       starlightEnabled:   m.starlightEnabled   ?? true,

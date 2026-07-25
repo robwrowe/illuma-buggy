@@ -7,14 +7,11 @@
 
 // LED strip / WLED
 #define STRIP_LED_COUNT 100
-#define WLED_CHASE_FX   28
-#define WLED_MB_PAL_SLOT 0
 #define WLED_PAL_COLORS_ONLY 5
 #define WLED_RESTORE_JSON_CAP 24576
 
 // MagicBand mapping limits
 #define MB_MAX_SEG_REFS 8
-#define MB_MAX_COLOR_SLOTS 16
 #define MB_SEG_KEY_COUNT 16
 #define MB_MAX_LAYOUTS 6
 #define MB_WLED_MAX_SEG 16
@@ -45,7 +42,6 @@
 
 
 // Starlight wand
-#define SW_ANIM_COUNT 10
 #define WAND_CAST_LEN 13
 
 // Disney / BLE buffers
@@ -54,9 +50,21 @@
 #define PARSED_PACKET_RAW_MAX 32
 /** ESP-NOW → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
 #define PARSED_PACKET_QUEUE_DEPTH 32
-#define BLE_CMD_BUF_SIZE 65536
+/**
+ * Chunk reassembly + ArduinoJson rules-cache budget (512KB).
+ * Soft software cap only — both buffers are PSRAM-backed (8MB pool via JsonPsram.h /
+ * gRulesDoc) with internal-heap fallback if PSRAM alloc fails; this is not a hardware
+ * ceiling. Compact wire payloads stay far below this
+ * (see docs/ble-packets-details/mb-rules-wire-format.md).
+ */
+#define BLE_CMD_BUF_SIZE 524288
 /** ArduinoJson pool for BLE command parse + cached rules document (must track BLE_CMD_BUF_SIZE). */
-#define BLE_JSON_DOC_SIZE 65536
+#define BLE_JSON_DOC_SIZE 524288
+/**
+ * Scratch budget for maps/models-only merge when in-place assignment is not enough.
+ * Measured segmentMaps+timingModels+paradeDetection ≈ <10KB; leave headroom.
+ */
+#define BLE_RULES_MERGE_SCRATCH 16384
 /** Depth for complete BLE commands (reconnect burst is ~5–8; leave headroom). */
 #define BLE_CMD_QUEUE_DEPTH 24
 /** Max commands handled per loop() — empty a full burst in ~2 iterations. */
@@ -71,6 +79,15 @@
 // Timing
 #define WIFI_RETRY_MS 5000
 #define LIVE_STATE_POLL_MS 12000
+
+// ESP-NOW scanner link health (shared by PayloadTransport + StatusLed)
+#define SCANNER_ABSENT_MS 20000
+#define SCANNER_ALIVE_MS  10000
+
+// Local board-health NeoPixel (not the show strip / GLEDOPTO).
+// DevKitC-1 v1.1+ (incl. v1.3) onboard RGB = GPIO 38; v1.0 used GPIO 48.
+#define STATUS_LED_PIN 38
+#define STATUS_LED_COUNT 1
 
 #include <stdint.h>
 #include <stddef.h>

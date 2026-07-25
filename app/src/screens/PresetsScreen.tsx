@@ -1,30 +1,48 @@
 /**
  * PresetsScreen.tsx
- * List, apply, view/edit, and delete presets.
+ * List, apply, edit transition, and delete presets.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  FlatList, TextInput, Alert, ActivityIndicator,
+  FlatList, TextInput, Alert, ActivityIndicator, Modal, ScrollView,
 } from 'react-native';
-import IconPlus from '@tabler/icons-react-native/dist/esm/icons/IconPlus';
 import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 import IconCheck from '@tabler/icons-react-native/dist/esm/icons/IconCheck';
 import IconTrash from '@tabler/icons-react-native/dist/esm/icons/IconTrash';
 import IconSparkles from '@tabler/icons-react-native/dist/esm/icons/IconSparkles';
 import IconCopy from '@tabler/icons-react-native/dist/esm/icons/IconCopy';
+import IconPencil from '@tabler/icons-react-native/dist/esm/icons/IconPencil';
+import IconX from '@tabler/icons-react-native/dist/esm/icons/IconX';
 
-import { TagEditor, TagFilterBar, TagChipRow, filterTaggedItems } from '../components/TagFields';
+import { TagFilterBar, TagChipRow, filterTaggedItems } from '../components/TagFields';
 import { duplicatePreset } from '../utils/tags';
 import { useBLE } from '../hooks/useBLE';
 import { useBoardSync } from '../hooks/useBoardSync';
-import { useAppStore, Preset, summarizeLayout } from '../stores/store';
+import { useAppStore, Preset, PresetWled } from '../stores/store';
 import { bleService } from '../services/BLEService';
 import { generateId } from '../utils/utils';
 import { applyPresetToBoard, presetWledForBoard } from '../utils/bleBoardSync';
 import { formatSyncStatusLabel } from '../utils/boardSyncState';
 import { useTheme } from '../utils/theme';
+import {
+  TRANSITION_STYLES,
+  transitionStyleLabel,
+  type TransitionStyle,
+} from '../utils/transitionStyles';
+
+const MAX_TRANSITION_SEC = 60;
+
+function transitionMeta(wled: PresetWled): string | null {
+  const style = wled.transitionStyle;
+  const ms = wled.transitionMs;
+  if ((style == null || style === undefined) && (ms == null || ms === undefined)) return null;
+  const parts: string[] = [];
+  if (style != null) parts.push(transitionStyleLabel(style));
+  if (Number.isFinite(ms)) parts.push(`${((ms as number) / 1000).toFixed(ms! % 1000 === 0 ? 0 : 1)}s`);
+  return parts.length ? `Transition · ${parts.join(' · ')}` : null;
+}
 
 export default function PresetsScreen() {
   const { colors } = useTheme();
@@ -35,13 +53,16 @@ export default function PresetsScreen() {
   const [syncing, setSyncing]       = useState(false);
   const [search, setSearch]         = useState('');
   const [activeTag, setActiveTag]   = useState<string | null>(null);
+  const [editing, setEditing]       = useState<Preset | null>(null);
+  const [editStyle, setEditStyle]   = useState<TransitionStyle | null>(null);
+  const [editSec, setEditSec]       = useState('');
+  const [pickingStyle, setPickingStyle] = useState(false);
 
   const filteredPresets = useMemo(
     () => filterTaggedItems(presets, search, activeTag),
     [presets, search, activeTag],
   );
 
-  // Background board sync (App.tsx triggers on connect); manual refresh available
   const refreshFromBoard = () => {
     if (!isConnected) return;
     setSyncing(true);
@@ -60,6 +81,50 @@ export default function PresetsScreen() {
     const timer = setTimeout(() => setSyncing(false), 10000);
     return () => clearTimeout(timer);
   }, [syncing]);
+
+  const openEdit = (preset: Preset) => {
+    setEditing(preset);
+    setEditStyle(
+      preset.wled.transitionStyle && typeof preset.wled.transitionStyle === 'string'
+        ? preset.wled.transitionStyle
+        : null,
+    );
+    const ms = preset.wled.transitionMs;
+    setEditSec(Number.isFinite(ms) ? String((ms as number) / 1000) : '');
+    setPickingStyle(false);
+  };
+
+  const saveEdit = () => {
+    if (!editing) return;
+    const secTrim = editSec.trim();
+    let transitionMs: number | null | undefined;
+    if (secTrim === '') {
+      transitionMs = undefined;
+    } else {
+      const sec = Number(secTrim);
+      if (!Number.isFinite(sec) || sec < 0) {
+        Alert.alert('Invalid duration', `Enter a number from 0–${MAX_TRANSITION_SEC} seconds.`);
+        return;
+      }
+      transitionMs = Math.round(Math.min(MAX_TRANSITION_SEC, sec) * 1000);
+    }
+
+    const { transitionMs: _prevMs, transitionStyle: _prevStyle, ...wledBase } = editing.wled;
+    const nextWled: PresetWled = {
+      ...wledBase,
+      transitionStyle: editStyle,
+      ...(transitionMs !== undefined ? { transitionMs } : {}),
+    };
+    const next: Preset = { ...editing, wled: nextWled };
+
+    addOrUpdatePreset(next);
+    saveToStorage();
+    if (bleService.isSessionReady()) {
+      const { customSegmentLayouts: layouts } = useAppStore.getState();
+      bleService.sendPresetSave(next.id, next.name, presetWledForBoard(next, layouts));
+    }
+    setEditing(null);
+  };
 
   const applyPreset = async (preset: Preset) => {
     if (!isConnected) {
@@ -111,6 +176,7 @@ export default function PresetsScreen() {
 
   const renderPreset = ({ item }: { item: Preset }) => {
     const isActive = deviceStatus?.currentPreset === item.id;
+    const trMeta = transitionMeta(item.wled);
     return (
       <View style={[s.presetCard, isActive && { borderColor: colors.primary }]}>
         <View style={{ flex: 1 }}>
@@ -124,6 +190,7 @@ export default function PresetsScreen() {
                 {customSegmentLayouts.find(l => l.id === item.segmentLayoutId)?.name ?? 'Layout'}
               </Text>
             )}
+            {trMeta && <Text style={s.metaTag}>{trMeta}</Text>}
             {isActive && (
               <View style={s.activePill}>
                 <IconCheck size={10} color={colors.primary} />
@@ -132,6 +199,9 @@ export default function PresetsScreen() {
             )}
           </View>
         </View>
+        <TouchableOpacity style={s.iconBtn} onPress={() => openEdit(item)}>
+          <IconPencil size={16} color={colors.textSecondary} />
+        </TouchableOpacity>
         <TouchableOpacity style={s.iconBtn} onPress={() => duplicateItem(item)}>
           <IconCopy size={16} color={colors.textSecondary} />
         </TouchableOpacity>
@@ -196,6 +266,65 @@ export default function PresetsScreen() {
         </>
       )}
 
+      <Modal visible={!!editing} animationType="slide" transparent onRequestClose={() => setEditing(null)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modal}>
+            <View style={s.modalHeader}>
+              <Text style={s.modalTitle}>{editing?.name ?? 'Preset'}</Text>
+              <TouchableOpacity onPress={() => setEditing(null)} hitSlop={12}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={s.modalBody} keyboardShouldPersistTaps="handled">
+              <Text style={s.fieldLabel}>Start transition style</Text>
+              <Text style={s.fieldHint}>
+                Same styles as rule stop-transitions. &quot;Use default&quot; leaves WLED&apos;s current transition alone.
+              </Text>
+              <TouchableOpacity style={s.selectRow} onPress={() => setPickingStyle(!pickingStyle)}>
+                <Text style={s.selectValue}>{transitionStyleLabel(editStyle)}</Text>
+                <Text style={s.selectChevron}>{pickingStyle ? '▴' : '▾'}</Text>
+              </TouchableOpacity>
+              {pickingStyle && (
+                <View style={s.styleList}>
+                  <TouchableOpacity
+                    style={[s.styleOption, editStyle == null && s.styleOptionActive]}
+                    onPress={() => { setEditStyle(null); setPickingStyle(false); }}
+                  >
+                    <Text style={s.styleOptionText}>Use default</Text>
+                  </TouchableOpacity>
+                  {TRANSITION_STYLES.map((t) => (
+                    <TouchableOpacity
+                      key={t.value}
+                      style={[s.styleOption, editStyle === t.value && s.styleOptionActive]}
+                      onPress={() => { setEditStyle(t.value); setPickingStyle(false); }}
+                    >
+                      <Text style={s.styleOptionText}>{t.label}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              <Text style={[s.fieldLabel, { marginTop: 16 }]}>Transition duration (seconds)</Text>
+              <Text style={s.fieldHint}>
+                Independent of style — leave blank for WLED&apos;s current duration. Max {MAX_TRANSITION_SEC}s.
+              </Text>
+              <TextInput
+                style={s.input}
+                value={editSec}
+                onChangeText={setEditSec}
+                placeholder="(default)"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+              />
+
+              <TouchableOpacity style={s.saveBtn} onPress={saveEdit}>
+                <Text style={s.saveBtnText}>Save</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -222,4 +351,19 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   emptyText:    { color: c.textPrimary, fontSize: 16, fontWeight: '500' },
   modalOverlay: { flex: 1, backgroundColor: '#00000088', justifyContent: 'flex-end' },
   modal:        { backgroundColor: c.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '90%' },
+  modalHeader:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 },
+  modalTitle:   { color: c.textPrimary, fontSize: 17, fontWeight: '600', flex: 1, paddingRight: 12 },
+  modalBody:    { padding: 16, paddingBottom: 36, gap: 6 },
+  fieldLabel:   { color: c.textPrimary, fontSize: 14, fontWeight: '600' },
+  fieldHint:    { color: c.textMuted, fontSize: 12, marginBottom: 6, lineHeight: 16 },
+  selectRow:    { flexDirection: 'row', alignItems: 'center', backgroundColor: c.surfaceAlt, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, borderWidth: 1, borderColor: c.border },
+  selectValue:  { color: c.textPrimary, fontSize: 14, flex: 1 },
+  selectChevron:{ color: c.textMuted, fontSize: 14 },
+  styleList:    { maxHeight: 220, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.background, marginBottom: 4 },
+  styleOption:  { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border },
+  styleOptionActive: { backgroundColor: c.primary + '22' },
+  styleOptionText: { color: c.textPrimary, fontSize: 14 },
+  input:        { backgroundColor: c.surfaceAlt, borderRadius: 10, borderWidth: 1, borderColor: c.border, color: c.textPrimary, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 },
+  saveBtn:      { marginTop: 20, backgroundColor: c.primary, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  saveBtnText:  { color: '#fff', fontWeight: '700', fontSize: 15 },
 });

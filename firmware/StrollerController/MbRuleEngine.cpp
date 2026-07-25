@@ -2,20 +2,46 @@
 #include "Globals.h"
 #include "ColorPalette.h"
 #include "MbMapping.h"
-#include "MbEffects.h"
+#include "MbPacketDecode.h"
 #include "OverrideManager.h"
 #include "PresetStore.h"
 #include "WledClient.h"
 #include "BlePeripheral.h"
 #include "DebugLog.h"
 #include "DisneyBleFilter.h"
+#include "JsonPsram.h"
+#include "Config.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
 
+/** Apply per-channel LUT to raw BLE RGB (not palette-indexed colors). */
+static inline void applyMbRgbCalibration(uint8_t& r, uint8_t& g, uint8_t& b) {
+  if (!mbCalibrationEnabled) return;
+  r = mbCalCurveR[r];
+  g = mbCalCurveG[g];
+  b = mbCalCurveB[b];
+}
+
+static void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b);
+
 // Cached rules document — refreshed by applyMbRulesJson / loadMbRulesFromJson.
-static DynamicJsonDocument gRulesDoc(BLE_JSON_DOC_SIZE);
+// Lives in PSRAM so a ~128KB rules tree does not compete with BLE/WiFi/ESP-NOW on internal SRAM.
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+static SpiRamAllocator gRulesAlloc;
+static JsonDocument gRulesDoc(&gRulesAlloc);
+#else
+static PsramJsonDocument gRulesDoc(BLE_JSON_DOC_SIZE);
+#endif
+
+static void logRulesHeap(const char* tag) {
+  Serial.printf("[Rules] %s freeHeap=%u maxAlloc=%u psramFree=%u\n",
+                tag,
+                (unsigned)ESP.getFreeHeap(),
+                (unsigned)ESP.getMaxAllocHeap(),
+                ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+}
 
 static JsonArray rulesArray() {
   return gRulesDoc["rules"].as<JsonArray>();
@@ -235,12 +261,16 @@ static JsonObject findTimingModelById(const char* modelId) {
   JsonObject empty;
   if (!modelId || !modelId[0]) return empty;
   JsonArray models = gRulesDoc["timingModels"].as<JsonArray>();
-  if (models.isNull()) return empty;
+  if (models.isNull()) {
+    Serial.printf("[Rule] WARNING: timingModelId '%s' not found in timingModels\n", modelId);
+    return empty;
+  }
   for (JsonVariant v : models) {
     if (!v.is<JsonObject>()) continue;
     JsonObject m = v.as<JsonObject>();
     if (strcmp(m["id"] | "", modelId) == 0) return m;
   }
+  Serial.printf("[Rule] WARNING: timingModelId '%s' not found in timingModels\n", modelId);
   return empty;
 }
 
@@ -301,6 +331,24 @@ static TimingDecode decodeTimingByte(uint8_t b, JsonObject model) {
 static int strobeSxFromHz(float hz) {
   if (hz <= 0.01f) return 128;
   int sx = (int)lroundf(255.0f - (50.0f / hz));
+  if (sx < 0) sx = 0;
+  if (sx > 255) sx = 255;
+  return sx;
+}
+
+/**
+ * WLED Chase (FX_MODE_CHASE_COLOR / fx=28) in FX.cpp:
+ *   counter = strip.now * ((SEGMENT.speed >> 2) + 1);
+ *   a = (counter * SEGLEN) >> 16;
+ * Full lap when counter advances 65536 → T_ms = 65536 / ((sx >> 2) + 1).
+ * Inverse used to map Disney on_time (or on_time/5 × 5 zones) onto sx.
+ */
+static int chaseSxFromCycleMs(unsigned long cycleMs) {
+  if (cycleMs == 0) return 255;
+  float rate = 65536.0f / (float)cycleMs;
+  if (rate < 1.0f) rate = 1.0f;
+  if (rate > 64.0f) rate = 64.0f;  // sx=255 → (255>>2)+1 = 64
+  int sx = (int)lroundf((rate - 1.0f) * 4.0f);
   if (sx < 0) sx = 0;
   if (sx > 255) sx = 255;
   return sx;
@@ -378,7 +426,113 @@ static void applyStrobeFromTimingModel(JsonObject wled, const JsonObject& rule,
   Serial.printf("[Rule] strobe fx=%d sx=%d (%.2f Hz)\n", fx, sx, hz);
 }
 
-static JsonObject findSegmentMapById(const char* mapId) {
+/** Author-sized timing→WLED field buckets (optional; mutually exclusive with strobe). */
+static bool resolveSpeedBucketValue(JsonObject model, uint8_t timingByte,
+                                    int* outValue, const char** outField) {
+  if (model.isNull() || !outValue || !outField) return false;
+  JsonObject sb = model["speedBuckets"].as<JsonObject>();
+  if (sb.isNull() || !(sb["enabled"] | false)) return false;
+  JsonArray buckets = sb["buckets"].as<JsonArray>();
+  if (buckets.isNull() || buckets.size() == 0) return false;
+
+  uint8_t key = timingByte;
+  JsonObject maskBits = sb["maskBits"].as<JsonObject>();
+  if (!maskBits.isNull()) {
+    uint8_t bitStart = (uint8_t)(maskBits["bitStart"] | 0);
+    uint8_t bitCount = (uint8_t)(maskBits["bitCount"] | 8);
+    key = (uint8_t)extractBits(&timingByte, 1, 0, bitStart, bitCount);
+  }
+
+  JsonObject chosen;
+  int chosenMax = 256;
+  int fallbackMax = -1;
+  JsonObject fallback;
+  for (JsonVariant v : buckets) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject b = v.as<JsonObject>();
+    int maxByte = b["maxByte"] | 255;
+    if (maxByte > fallbackMax) { fallbackMax = maxByte; fallback = b; }
+    if ((int)key <= maxByte && maxByte < chosenMax) {
+      chosenMax = maxByte;
+      chosen = b;
+    }
+  }
+  if (chosen.isNull()) chosen = fallback;
+  if (chosen.isNull()) return false;
+
+  *outValue = chosen["value"] | 128;
+  *outField = sb["field"] | "sx";
+  return true;
+}
+
+/** Resolve one color source to RGB (fixed hex, palette index, raw gray, or channel group). */
+static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t plen,
+                               uint8_t& r, uint8_t& g, uint8_t& b) {
+  r = g = b = 0;
+  if (srcObj.isNull()) return;
+
+  const char* kind = srcObj["kind"] | "";
+  // Authored constant — do not apply BLE RGB calibration (display values as written).
+  if (strcmp(kind, "fixed") == 0) {
+    parseHexColor(srcObj["value"] | "#000000", r, g, b);
+    return;
+  }
+
+  JsonObject channelGroup = srcObj["channelGroup"].as<JsonObject>();
+  // Named sources use kind:"rgb"; legacy colorBlend a/b may embed channelGroup without kind.
+  bool useRgb = (strcmp(kind, "rgb") == 0) || (kind[0] == 0 && !channelGroup.isNull());
+  if (useRgb) {
+    if (channelGroup.isNull()) return;
+    auto extractChannel = [&](const char* key) -> uint8_t {
+      JsonObject ch = channelGroup[key].as<JsonObject>();
+      if (ch.isNull()) return 0;
+      uint8_t offset = (uint8_t)(ch["offset"] | 0);
+      uint8_t bitStart = (uint8_t)(ch["bitStart"] | 0);
+      uint8_t bitCount = (uint8_t)(ch["bitCount"] | 6);
+      uint32_t chRaw = extractBits(payload, plen, offset, bitStart, bitCount);
+      const char* scale = channelGroup["scale"] | "bitReplicate6to8";
+      if (strcmp(scale, "bitReplicate6to8") == 0) return scale6To8((uint8_t)chRaw);
+      // "direct8" / "none" / unrecognized → pass through full extracted value
+      return (uint8_t)chRaw;
+    };
+    r = extractChannel("r");
+    g = extractChannel("g");
+    b = extractChannel("b");
+    applyMbRgbCalibration(r, g, b);
+    return;
+  }
+
+  uint8_t offset = (uint8_t)(srcObj["offset"] | 0);
+  uint8_t bitStart = (uint8_t)(srcObj["bitStart"] | 0);
+  uint8_t bitCount = (uint8_t)(srcObj["bitCount"] | 8);
+  uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
+  // kind:"palette" always maps; legacy colorBlend a/b uses paletteMap (default true).
+  bool asPalette = (strcmp(kind, "palette") == 0) || (srcObj["paletteMap"] | true);
+  if (asPalette) {
+    paletteToRGB((uint8_t)(raw & 0x1F), r, g, b);
+  } else {
+    r = g = b = (uint8_t)raw;
+  }
+}
+
+static float resolveBlendRatio(JsonObject ratioObj, const uint8_t* payload, size_t plen) {
+  if (ratioObj.isNull()) return 0.5f;
+  const char* mode = ratioObj["mode"] | "fixed";
+  if (strcmp(mode, "extract") == 0) {
+    uint8_t offset = (uint8_t)(ratioObj["offset"] | 0);
+    uint8_t bitStart = (uint8_t)(ratioObj["bitStart"] | 0);
+    uint8_t bitCount = (uint8_t)(ratioObj["bitCount"] | 8);
+    uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
+    uint32_t maxVal = (bitCount >= 32) ? 0xFFFFFFFFu : ((1u << bitCount) - 1u);
+    return maxVal > 0 ? ((float)raw / (float)maxVal) : 0.5f;
+  }
+  float v = ratioObj["value"] | 0.5f;
+  if (v < 0.0f) v = 0.0f;
+  if (v > 1.0f) v = 1.0f;
+  return v;
+}
+
+JsonObject findSegmentMapById(const char* mapId) {
   JsonObject empty;
   if (!mapId || !mapId[0]) return empty;
   JsonArray maps = gRulesDoc["segmentMaps"].as<JsonArray>();
@@ -448,7 +602,8 @@ static void applyPresetVariables(JsonObject segObj, JsonObject presetVariables) 
 static void setSegColorSlot(JsonObject segObj, int colorSlot, uint8_t r, uint8_t g, uint8_t b) {
   if (colorSlot < 0) colorSlot = 0;
   if (colorSlot > 2) colorSlot = 2;
-  segObj["pal"] = WLED_PAL_COLORS_ONLY;
+  // pal fallback now handled by callers — see setSegColorSlot call sites in
+  // seedWledFromSegmentMap() and applySegmentOverridesOntoWled().
   JsonArray col = segObj["col"].as<JsonArray>();
   if (col.isNull()) col = segObj.createNestedArray("col");
   if (col.isNull()) return;  // document full — do not spin
@@ -553,11 +708,13 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
     if (def.containsKey("ix")) seg["ix"] = def["ix"];
     else if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
     int pal = def["pal"] | -1;
+    bool palSet = false;
     if (pal >= 0) {
       seg["pal"] = pal;
+      palSet = true;
     } else if (hasRuleEffect) {
       int rpal = ruleEffect["pal"] | -1;
-      if (rpal >= 0) seg["pal"] = rpal;
+      if (rpal >= 0) { seg["pal"] = rpal; palSet = true; }
     }
 
     JsonArray colors = def["colors"].as<JsonArray>();
@@ -569,6 +726,7 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
         parseHexColor(hex, r, g, b);
         setSegColorSlot(seg, i, r, g, b);
       }
+      if (!palSet) seg["pal"] = WLED_PAL_COLORS_ONLY;
     }
 
     const char* presetId = def["presetId"] | "";
@@ -594,8 +752,9 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
   }
 }
 
-/** Apply rule.segmentOverrides custom/default modes onto seeded WLED segs.
- *  stored/extract/missing leave the map (or preset) seed alone; extracts run later. */
+/** Apply rule.segmentOverrides onto seeded WLED segs.
+ *  Accepts verbose editor shape {mode,value} and compact wire shape
+ *  (bare custom value, or sentinel "d" for default). Absence = stored (no-op). */
 static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
                                           JsonObject ruleEffect, bool hasRuleEffect,
                                           JsonObject segmentOverrides) {
@@ -604,6 +763,12 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
   if (defs.isNull()) return;
   int fallbackFx = hasRuleEffect ? (ruleEffect["fx"] | 0) : 0;
   if (fallbackFx < 0) fallbackFx = 0;
+
+  auto isDefaultSentinel = [](JsonVariant v) -> bool {
+    if (!v.is<const char*>()) return false;
+    const char* s = v.as<const char*>();
+    return s && strcmp(s, "d") == 0;
+  };
 
   for (JsonVariant v : defs) {
     if (!v.is<JsonObject>()) continue;
@@ -614,63 +779,131 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
     if (ov.isNull()) continue;
     JsonObject seg = ensureWledSegByLocalId(wled, def);
 
-    if (ov.containsKey("fx") && ov["fx"].is<JsonObject>()) {
-      const char* mode = ov["fx"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) {
-        int fx = ov["fx"]["value"] | 0;
-        seg["fx"] = fx >= 0 ? fx : 0;
-      } else if (strcmp(mode, "default") == 0) {
+    auto applyFx = [&]() {
+      if (!ov.containsKey("fx")) return;
+      JsonVariant fxv = ov["fx"];
+      if (fxv.is<JsonObject>()) {
+        const char* mode = fxv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          int fx = fxv["value"] | 0;
+          seg["fx"] = fx >= 0 ? fx : 0;
+        } else if (strcmp(mode, "default") == 0) {
+          seg["fx"] = fallbackFx;
+        }
+      } else if (isDefaultSentinel(fxv)) {
         seg["fx"] = fallbackFx;
+      } else {
+        int fx = fxv.as<int>();
+        seg["fx"] = fx >= 0 ? fx : 0;
       }
-    }
-    if (ov.containsKey("pal") && ov["pal"].is<JsonObject>()) {
-      const char* mode = ov["pal"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) {
-        int pal = ov["pal"]["value"] | -1;
-        if (pal >= 0) seg["pal"] = pal;
-      } else if (strcmp(mode, "default") == 0 && hasRuleEffect) {
-        int rpal = ruleEffect["pal"] | -1;
-        if (rpal >= 0) seg["pal"] = rpal;
+    };
+    bool palSet = seg.containsKey("pal");
+    auto applyPal = [&]() {
+      if (!ov.containsKey("pal")) return;
+      JsonVariant pv = ov["pal"];
+      if (pv.is<JsonObject>()) {
+        const char* mode = pv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          int pal = pv["value"] | -1;
+          if (pal >= 0) { seg["pal"] = pal; palSet = true; }
+        } else if (strcmp(mode, "default") == 0 && hasRuleEffect) {
+          int rpal = ruleEffect["pal"] | -1;
+          if (rpal >= 0) { seg["pal"] = rpal; palSet = true; }
+        }
+      } else if (isDefaultSentinel(pv)) {
+        if (hasRuleEffect) {
+          int rpal = ruleEffect["pal"] | -1;
+          if (rpal >= 0) { seg["pal"] = rpal; palSet = true; }
+        }
+      } else {
+        int pal = pv.as<int>();
+        if (pal >= 0) { seg["pal"] = pal; palSet = true; }
       }
-    }
-    if (ov.containsKey("sx") && ov["sx"].is<JsonObject>()) {
-      const char* mode = ov["sx"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) seg["sx"] = ov["sx"]["value"] | 128;
-      else if (strcmp(mode, "default") == 0) {
+    };
+    auto applySx = [&]() {
+      if (!ov.containsKey("sx")) return;
+      JsonVariant sv = ov["sx"];
+      if (sv.is<JsonObject>()) {
+        const char* mode = sv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) seg["sx"] = sv["value"] | 128;
+        else if (strcmp(mode, "default") == 0) {
+          if (hasRuleEffect && ruleEffect.containsKey("sx")) seg["sx"] = ruleEffect["sx"];
+          else seg["sx"] = 128;
+        }
+      } else if (isDefaultSentinel(sv)) {
         if (hasRuleEffect && ruleEffect.containsKey("sx")) seg["sx"] = ruleEffect["sx"];
         else seg["sx"] = 128;
+      } else {
+        seg["sx"] = sv.as<int>();
       }
-    }
-    if (ov.containsKey("ix") && ov["ix"].is<JsonObject>()) {
-      const char* mode = ov["ix"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) seg["ix"] = ov["ix"]["value"] | 128;
-      else if (strcmp(mode, "default") == 0) {
+    };
+    auto applyIx = [&]() {
+      if (!ov.containsKey("ix")) return;
+      JsonVariant iv = ov["ix"];
+      if (iv.is<JsonObject>()) {
+        const char* mode = iv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) seg["ix"] = iv["value"] | 128;
+        else if (strcmp(mode, "default") == 0) {
+          if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
+          else seg["ix"] = 128;
+        }
+      } else if (isDefaultSentinel(iv)) {
         if (hasRuleEffect && ruleEffect.containsKey("ix")) seg["ix"] = ruleEffect["ix"];
         else seg["ix"] = 128;
+      } else {
+        seg["ix"] = iv.as<int>();
       }
-    }
-    if (ov.containsKey("blend") && ov["blend"].is<JsonObject>()) {
-      const char* mode = ov["blend"]["mode"] | "stored";
-      if (strcmp(mode, "custom") == 0) {
-        if (ov["blend"]["value"].is<int>()) seg["bm"] = ov["blend"]["value"] | 0;
-        else seg["bm"] = blendModeToBm(ov["blend"]["value"] | "top");
-      } else if (strcmp(mode, "default") == 0) {
+    };
+    auto applyBlend = [&]() {
+      if (!ov.containsKey("blend")) return;
+      JsonVariant bv = ov["blend"];
+      if (bv.is<JsonObject>()) {
+        const char* mode = bv["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          if (bv["value"].is<int>()) seg["bm"] = bv["value"] | 0;
+          else seg["bm"] = blendModeToBm(bv["value"] | "top");
+        } else if (strcmp(mode, "default") == 0) {
+          seg["bm"] = 0;
+        }
+      } else if (isDefaultSentinel(bv)) {
         seg["bm"] = 0;
+      } else if (bv.is<int>()) {
+        seg["bm"] = bv.as<int>();
+      } else {
+        seg["bm"] = blendModeToBm(bv.as<const char*>() ? bv.as<const char*>() : "top");
       }
-    }
+    };
+
+    applyFx();
+    applyPal();
+    applySx();
+    applyIx();
+    applyBlend();
+
     JsonArray ovColors = ov["colors"].as<JsonArray>();
     if (!ovColors.isNull()) {
-      for (int i = 0; i < 3 && i < (int)ovColors.size(); i++) {
-        if (!ovColors[i].is<JsonObject>()) continue;
-        JsonObject cOv = ovColors[i].as<JsonObject>();
-        const char* cmode = cOv["mode"] | "stored";
-        if (strcmp(cmode, "custom") != 0) continue;
-        const char* hex = cOv["value"] | "";
+      for (size_t idx = 0; idx < ovColors.size(); idx++) {
+        if (!ovColors[idx].is<JsonObject>()) continue;
+        JsonObject cOv = ovColors[idx].as<JsonObject>();
+        int slot;
+        const char* hex = nullptr;
+        if (cOv.containsKey("v")) {
+          // Compact wire: { i, v }
+          slot = cOv.containsKey("i") ? (cOv["i"] | 0) : (int)idx;
+          hex = cOv["v"] | "";
+        } else {
+          // Verbose editor: [{mode,value}, ...] by array index
+          const char* cmode = cOv["mode"] | "stored";
+          if (strcmp(cmode, "custom") != 0) continue;
+          slot = (int)idx;
+          hex = cOv["value"] | "";
+        }
         if (!hex || !hex[0]) continue;
         uint8_t r, g, b;
         parseHexColor(hex, r, g, b);
-        setSegColorSlot(seg, i, r, g, b);
+        setSegColorSlot(seg, slot, r, g, b);
       }
+      if (!palSet) seg["pal"] = WLED_PAL_COLORS_ONLY;
     }
   }
 }
@@ -722,25 +955,59 @@ static void sendMbRuleOff(unsigned long fadeMs) {
 
 static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload, size_t plen) {
   JsonObject timing = rule["timing"].as<JsonObject>();
-  if (timing.isNull() || !(timing["enabled"] | false)) {
+  bool timingActive = !timing.isNull() && (timing["enabled"] | false);
+
+  TimingDecode td = {};
+  int cooldownSec = 2;
+  bool haveSchedule = false;
+  uint8_t timingByte = 0;
+  const char* timingModelId = "";
+
+  if (timingActive) {
+    uint8_t offset = (uint8_t)(timing["offset"] | 5);
+    timingByte = (payload && offset < plen) ? payload[offset] : 0;
+    timingModelId = timing["timingModelId"] | "";
+    JsonObject timingModel = findTimingModelById(timingModelId);
+    td = decodeTimingByte(timingByte, timingModel);
+    cooldownSec = timing["cooldownSec"] | 2;
+    haveSchedule = true;
+  } else {
+    JsonObject fb = rule["fallbackDuration"].as<JsonObject>();
+    if (!fb.isNull() && (fb["enabled"] | false)) {
+      float onSec = fb["onSec"] | 10.0f;
+      float fadeSec = fb["fadeSec"] | 0.0f;
+      if (onSec < 0) onSec = 0;
+      if (fadeSec < 0) fadeSec = 0;
+      td.onTimeMs = (unsigned long)(onSec * 1000.0f + 0.5f);
+      td.stretchMs = (unsigned long)(fadeSec * 1000.0f + 0.5f);
+      td.extended = false;
+      td.scaler = false;
+      // cooldownSec: fallback's own value, else inherit timing block's (even if disabled), else 2.
+      if (fb.containsKey("cooldownSec") && !fb["cooldownSec"].isNull()) {
+        cooldownSec = fb["cooldownSec"] | 2;
+      } else if (!timing.isNull() && timing.containsKey("cooldownSec")) {
+        cooldownSec = timing["cooldownSec"] | 2;
+      } else {
+        cooldownSec = 2;
+      }
+      haveSchedule = true;
+    }
+  }
+
+  if (!haveSchedule) {
     resetMbRuleLifecycle();
     return;
   }
-  uint8_t offset = (uint8_t)(timing["offset"] | 5);
-  uint8_t byte = (payload && offset < plen) ? payload[offset] : 0;
-  const char* timingModelId = timing["timingModelId"] | "";
-  JsonObject timingModel = findTimingModelById(timingModelId);
-  TimingDecode td = decodeTimingByte(byte, timingModel);
-  int cooldownSec = timing["cooldownSec"] | 2;
   if (cooldownSec < 0) cooldownSec = 0;
-  const char* mode = timing["cooldownResetMode"] | "onMatch";
+
+  const char* mode = timing.isNull() ? "onMatch" : (timing["cooldownResetMode"] | "onMatch");
 
   strncpy(mbActiveRuleId, rule["id"] | "", MB_RULE_ID_LEN - 1);
   mbActiveRuleId[MB_RULE_ID_LEN - 1] = '\0';
   mbActiveRuleCooldownMode =
     (strcmp(mode, "fixed") == 0) ? MB_COOLDOWN_FIXED : MB_COOLDOWN_ON_MATCH;
   long fadeOverride = -1;
-  if (timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
+  if (!timing.isNull() && timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
     fadeOverride = (long)(timing["fadeOverrideMs"] | -1);
   }
   // stretchMs drives the FTB transition during the final flash cycle (timingFade mode).
@@ -772,10 +1039,17 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
     onHoldMs = 1;
   }
   mbRulePhaseDeadlineMs = millis() + (onHoldMs > 0 ? onHoldMs : 1);
-  Serial.printf("[Rule] timing ON hold=%lums (totalOn=%lums) stretch/fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X stopBs=%d\n",
-                onHoldMs, td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
-                mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
-                timingModelId[0] ? timingModelId : "(default)", byte, mbRuleStopBlendingStyle);
+  if (timingActive) {
+    Serial.printf("[Rule] timing ON hold=%lums (totalOn=%lums) stretch/fade=%lums blackHold=%lums mode=%s model=%s byte=0x%02X stopBs=%d\n",
+                  onHoldMs, td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
+                  mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
+                  timingModelId[0] ? timingModelId : "(default)", timingByte, mbRuleStopBlendingStyle);
+  } else {
+    Serial.printf("[Rule] fallbackDuration ON hold=%lums (totalOn=%lums) stretch/fade=%lums blackHold=%lums mode=%s stopBs=%d\n",
+                  onHoldMs, td.onTimeMs, mbRuleFadeMs, mbRuleCooldownMs,
+                  mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED ? "fixed" : "onMatch",
+                  mbRuleStopBlendingStyle);
+  }
 }
 
 void resetMbRuleLifecycle() {
@@ -879,6 +1153,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
   const char* mapId = rule["segmentMapId"] | "";
   JsonObject segMap = findSegmentMapById(mapId);
+  int ledmapId = segMap.isNull() ? -1 : (int)(segMap["ledmap"] | 0);
 
   String presetId = rule["presetId"] | "";
   JsonArray extracts = rule["extract"].as<JsonArray>();
@@ -976,7 +1251,60 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     haveWled = true;
   }
 
+  // Timing-model speed buckets / strobe seed before extracts so packet extracts win
+  // last (same precedence as segmentOverrides → extracts). timing.enabled also drives
+  // on-time lifecycle; that path is separate (beginTimedRuleOnPhase).
+  if (timingEn && payload && plen > 0) {
+    JsonObject timingObj = rule["timing"].as<JsonObject>();
+    const char* tmId = timingObj.isNull() ? "" : (timingObj["timingModelId"] | "");
+    JsonObject tm = findTimingModelById(tmId);
+    uint8_t tOff = (uint8_t)(timingObj.isNull() ? 5 : (timingObj["offset"] | 5));
+    uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
+
+    int bucketValue = 0;
+    const char* bucketField = nullptr;
+    if (resolveSpeedBucketValue(tm, tByte, &bucketValue, &bucketField)) {
+      JsonArray segs = wled["seg"].as<JsonArray>();
+      if (!segs.isNull()) {
+        for (JsonObject seg : segs) setSegNumericField(seg, bucketField, (float)bucketValue);
+      }
+      Serial.printf("[Rule] speedBuckets %s=%d (timing=0x%02X)\n",
+                    bucketField ? bucketField : "sx", bucketValue, tByte);
+    } else {
+      applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
+    }
+  }
+
   // Extract → fan-out targets
+  // Resolve all named color sources once per apply — avoids re-parsing the same
+  // bytes if multiple segment targets reference the same source.
+  struct NamedColor { const char* name; uint8_t r, g, b; };
+  NamedColor resolvedSources[8];
+  int resolvedSourceCount = 0;
+
+  JsonArray colorSources = rule["colorSources"].as<JsonArray>();
+  if (!colorSources.isNull()) {
+    for (JsonVariant v : colorSources) {
+      if (resolvedSourceCount >= 8) break;
+      if (!v.is<JsonObject>()) continue;
+      JsonObject src = v.as<JsonObject>();
+      const char* name = src["name"] | "";
+      if (!name[0]) continue;
+      uint8_t sr = 0, sg = 0, sb = 0;
+      resolveColorSource(src, payload, plen, sr, sg, sb);
+      resolvedSources[resolvedSourceCount++] = { name, sr, sg, sb };
+      Serial.printf("[Rule] colorSource '%s' rgb=%u,%u,%u\n", name, sr, sg, sb);
+    }
+  }
+
+  auto findResolvedSource = [&](const char* name) -> const NamedColor* {
+    if (!name || !name[0]) return nullptr;
+    for (int i = 0; i < resolvedSourceCount; i++) {
+      if (strcmp(resolvedSources[i].name, name) == 0) return &resolvedSources[i];
+    }
+    return nullptr;
+  };
+
   if (!extracts.isNull()) {
     for (JsonVariant ev : extracts) {
       if (!ev.is<JsonObject>()) continue;
@@ -985,11 +1313,17 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       uint32_t raw = 0;
       float derivedValue = -1.0f;  // sentinel: not a timing-derived extract
       bool paletteMap = ex["paletteMap"] | false;
+      bool hasFixedColor = (strcmp(source, "fixedColor") == 0);
+      JsonObject channelGroup = ex["channelGroup"].as<JsonObject>();
+      bool hasChannelGroup = !hasFixedColor && !channelGroup.isNull();
+      JsonObject colorBlend = ex["colorBlend"].as<JsonObject>();
+      bool hasColorBlend = !hasFixedColor && !colorBlend.isNull();
+      bool hasColorSourceBlend = (strcmp(source, "colorSourceBlend") == 0);
 
       if (isTimingDerivedSource(source)) {
         derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
         paletteMap = false;
-      } else {
+      } else if (!hasFixedColor && !hasChannelGroup && !hasColorBlend && !hasColorSourceBlend) {
         uint8_t offset = (uint8_t)(ex["offset"] | 0);
         uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
         uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
@@ -998,7 +1332,90 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
       uint8_t r = 0, g = 0, b = 0;
       float mapped = (derivedValue >= 0.0f) ? derivedValue : (float)raw;
-      if (paletteMap) {
+      if (hasFixedColor) {
+        parseHexColor(ex["value"] | "#000000", r, g, b);
+        mapped = 0.0f;
+        Serial.printf("[Rule] fixedColor rgb=%u,%u,%u\n", r, g, b);
+      } else if (hasChannelGroup) {
+        auto extractChannel = [&](const char* key, bool* flashOut) -> uint8_t {
+          JsonObject ch = channelGroup[key].as<JsonObject>();
+          if (ch.isNull()) {
+            if (flashOut) *flashOut = false;
+            return 0;
+          }
+          uint8_t offset = (uint8_t)(ch["offset"] | 0);
+          uint8_t bitStart = (uint8_t)(ch["bitStart"] | 0);
+          uint8_t bitCount = (uint8_t)(ch["bitCount"] | 6);
+          uint32_t chRaw = extractBits(payload, plen, offset, bitStart, bitCount);
+          if (flashOut) {
+            *flashOut = false;
+            JsonObject flashBit = ch["flashBit"].as<JsonObject>();
+            if (!flashBit.isNull()) {
+              uint8_t fOff = (uint8_t)(flashBit["offset"] | offset);
+              uint8_t fBit = (uint8_t)(flashBit["bit"] | 7);
+              *flashOut = extractBits(payload, plen, fOff, fBit, 1) != 0;
+            }
+          }
+          const char* scale = channelGroup["scale"] | "bitReplicate6to8";
+          if (strcmp(scale, "bitReplicate6to8") == 0) return scale6To8((uint8_t)chRaw);
+          if (strcmp(scale, "direct8") == 0) return (uint8_t)chRaw;
+          return (uint8_t)chRaw;  // "none" or unrecognized
+        };
+        bool flashR = false, flashG = false, flashB = false;
+        r = extractChannel("r", &flashR);
+        g = extractChannel("g", &flashG);
+        b = extractChannel("b", &flashB);
+        applyMbRgbCalibration(r, g, b);
+        mapped = 0.0f;
+        Serial.printf("[Rule] channelGroup rgb=%u,%u,%u flash=%u%u%u\n",
+                      r, g, b, flashR ? 1u : 0u, flashG ? 1u : 0u, flashB ? 1u : 0u);
+      } else if (hasColorBlend) {
+        uint8_t ar, ag, ab, br_, bg, bb;
+        resolveColorSource(colorBlend["a"].as<JsonObject>(), payload, plen, ar, ag, ab);
+        resolveColorSource(colorBlend["b"].as<JsonObject>(), payload, plen, br_, bg, bb);
+        float ratio = resolveBlendRatio(colorBlend["ratio"].as<JsonObject>(), payload, plen);
+        r = (uint8_t)lroundf((float)ar + ((float)br_ - (float)ar) * ratio);
+        g = (uint8_t)lroundf((float)ag + ((float)bg - (float)ag) * ratio);
+        b = (uint8_t)lroundf((float)ab + ((float)bb - (float)ab) * ratio);
+        mapped = 0.0f;
+        Serial.printf("[Rule] colorBlend rgb=%u,%u,%u ratio=%.3f\n", r, g, b, ratio);
+      } else if (hasColorSourceBlend) {
+        JsonArray blend = ex["blend"].as<JsonArray>();
+        float sumWeight = 0.0f;
+        if (!blend.isNull()) {
+          for (JsonVariant v : blend) {
+            if (!v.is<JsonObject>()) continue;
+            sumWeight += (float)(v.as<JsonObject>()["weightPct"] | 0.0f);
+          }
+        }
+        if (sumWeight <= 0.0f) sumWeight = 100.0f;
+
+        float rf = 0.0f, gf = 0.0f, bf = 0.0f;
+        int used = 0;
+        if (!blend.isNull()) {
+          for (JsonVariant v : blend) {
+            if (!v.is<JsonObject>()) continue;
+            JsonObject be = v.as<JsonObject>();
+            const char* srcName = be["source"] | "";
+            float w = (float)(be["weightPct"] | 0.0f) / sumWeight;
+            const NamedColor* nc = findResolvedSource(srcName);
+            if (!nc) {
+              Serial.printf("[Rule] colorSourceBlend unknown source '%s'\n", srcName);
+              continue;
+            }
+            rf += (float)nc->r * w;
+            gf += (float)nc->g * w;
+            bf += (float)nc->b * w;
+            used++;
+          }
+        }
+        r = (uint8_t)lroundf(rf);
+        g = (uint8_t)lroundf(gf);
+        b = (uint8_t)lroundf(bf);
+        mapped = 0.0f;
+        Serial.printf("[Rule] colorSourceBlend rgb=%u,%u,%u (%d/%d entries)\n",
+                      r, g, b, used, blend.isNull() ? 0 : (int)blend.size());
+      } else if (paletteMap) {
         uint8_t pal = (uint8_t)(raw & 0x1F);
         paletteToRGB(pal, r, g, b);
         mapped = (float)pal;
@@ -1039,6 +1456,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
               if (strcmp(assign, mask) != 0) continue;
               JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
               setSegColorSlot(segObj, 0, r, g, b);
+              if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
             }
           }
           return;
@@ -1063,28 +1481,54 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
             segObj["on"] = true;
           }
           setSegColorSlot(segObj, 0, r, g, b);
+          if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
         }
       };
 
+      // Verbose editor: {kind,segmentId,colorSlot,...}
+      // Compact wire:   segmentColor → {s|ss,c?} (kind omitted); maskColor → {k,m}
       auto dispatchTarget = [&](JsonObject tgt) {
         const char* kind = tgt["kind"] | "";
-        if (strcmp(kind, "ignore") == 0 || !kind[0]) return;
+        if (!kind[0] && tgt.containsKey("k")) kind = tgt["k"] | "";
+        if (!kind[0] && (tgt.containsKey("s") || tgt.containsKey("ss") ||
+                         tgt.containsKey("segmentId") || tgt.containsKey("segmentIds"))) {
+          kind = "segmentColor";
+        }
+        if (strcmp(kind, "ignore") == 0) return;
+        if (!kind[0]) return;
 
         if (strcmp(kind, "segmentColor") == 0) {
-          const char* segId = tgt["segmentId"] | "";
-          int slot = tgt["colorSlot"] | 0;
+          int slot = tgt.containsKey("c") ? (tgt["c"] | 0) : (tgt["colorSlot"] | 0);
+          JsonArray segIds = tgt.containsKey("ss")
+                                 ? tgt["ss"].as<JsonArray>()
+                                 : tgt["segmentIds"].as<JsonArray>();
+          if (!segIds.isNull() && segIds.size() > 0) {
+            for (JsonVariant sv : segIds) {
+              const char* segId = sv.as<const char*>();
+              if (!segId || !segId[0]) continue;
+              JsonObject def = findSegInMap(segMap, segId);
+              if (def.isNull()) continue;
+              JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
+              setSegColorSlot(segObj, slot, r, g, b);
+              if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
+            }
+            return;
+          }
+          const char* segId = tgt.containsKey("s") ? (tgt["s"] | "") : (tgt["segmentId"] | "");
           JsonObject def = findSegInMap(segMap, segId);
           if (def.isNull()) return;
           JsonObject segObj = ensureWledSegByLocalId(wled.as<JsonObject>(), def);
           setSegColorSlot(segObj, slot, r, g, b);
+          if (!segObj.containsKey("pal")) segObj["pal"] = WLED_PAL_COLORS_ONLY;
           return;
         }
         if (strcmp(kind, "maskColor") == 0) {
-          applyMaskColor(tgt["mask"] | "all");
+          const char* mask = tgt.containsKey("m") ? (tgt["m"] | "all") : (tgt["mask"] | "all");
+          applyMaskColor(mask);
           return;
         }
         if (strcmp(kind, "segmentField") == 0) {
-          const char* segId = tgt["segmentId"] | "";
+          const char* segId = tgt.containsKey("s") ? (tgt["s"] | "") : (tgt["segmentId"] | "");
           const char* field = tgt["field"] | "";
           JsonObject def = findSegInMap(segMap, segId);
           if (def.isNull()) return;
@@ -1116,14 +1560,15 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     }
   }
 
-  // Timing-model strobe: set WLED Strobe fx/sx from flash-rate bits on the timing byte.
-  if (timingEn && payload && plen > 0) {
-    applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
-  }
-
   if (wled.overflowed()) {
     Serial.println("[Rule] WLED doc overflowed while building — abort apply");
     return;
+  }
+
+  // Device-global remap — inject at the end so every build branch keeps it.
+  // Skip 0/absent: WLED default ledmap.json; avoid noise on every POST.
+  if (ledmapId > 0) {
+    wled["ledmap"] = ledmapId;
   }
 
   String wledJson;
@@ -1151,7 +1596,10 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   }
 
   setOverride(src);
-  if (timingEn && src == BLE_MAGIC) {
+  // Fallback duration reuses the timed ON→FADE→COOLDOWN machine when timing is off.
+  // Keep BLE_MAGIC-only (same restriction as the packet-timing path).
+  bool hasFallback = !timingEn && (rule["fallbackDuration"]["enabled"] | false);
+  if ((timingEn || hasFallback) && src == BLE_MAGIC) {
     beginTimedRuleOnPhase(rule, payload, plen);
   } else {
     resetMbRuleLifecycle();
@@ -1183,41 +1631,40 @@ void applyMbRulesJson(JsonObject doc) {
 
   // Cache rules[] / segmentMaps[] / timingModels[] when any are present —
   // colors-only pushes must not wipe them.
+  // Wire may be compact (segmentOverrides bare values / "d"; extract targets {s,c}).
+  // Apply/match paths dual-read compact+verbose; we keep compact in gRulesDoc
+  // (no expand-to-verbose) so the PSRAM cache stays smaller.
   if (doc.containsKey("rules") || doc.containsKey("segmentMaps") || doc.containsKey("timingModels")) {
-    String raw;
-    serializeJson(doc, raw);
-    // If only maps/models arrived without rules, merge onto existing cache
+    logRulesHeap("before cache write");
+    // Maps/models-only: mutate gRulesDoc in place (deep-copy from incoming doc).
+    // Avoids a second full-size DynamicJsonDocument while gRulesDoc is live.
     if (!doc.containsKey("rules") && gRulesDoc.containsKey("rules")) {
-      DynamicJsonDocument merged(BLE_JSON_DOC_SIZE);
-      String existing;
-      serializeJson(gRulesDoc, existing);
-      DeserializationError existingErr = deserializeJson(merged, existing);
-      if (!existingErr) {
-        if (doc.containsKey("segmentMaps")) merged["segmentMaps"] = doc["segmentMaps"];
-        if (doc.containsKey("timingModels")) merged["timingModels"] = doc["timingModels"];
-        if (doc.containsKey("paradeDetection")) merged["paradeDetection"] = doc["paradeDetection"];
-        if (doc.containsKey("defaultPresetId")) merged["defaultPresetId"] = doc["defaultPresetId"];
-        gRulesDoc.clear();
-        serializeJson(merged, raw);
-        DeserializationError mergeErr = deserializeJson(gRulesDoc, raw);
-        if (mergeErr) {
-          Serial.printf("[Rules] cache deserialize failed (merge writeback): %s\n", mergeErr.c_str());
-        }
-      } else {
-        Serial.printf("[Rules] existing cache deserialize failed: %s — replacing with incoming doc\n",
-                      existingErr.c_str());
-        gRulesDoc.clear();
-        DeserializationError replaceErr = deserializeJson(gRulesDoc, raw);
-        if (replaceErr) {
-          Serial.printf("[Rules] cache deserialize failed (replace): %s\n", replaceErr.c_str());
-        }
+      if (doc.containsKey("segmentMaps")) {
+        gRulesDoc.remove("segmentMaps");
+        gRulesDoc["segmentMaps"] = doc["segmentMaps"];
       }
+      if (doc.containsKey("timingModels")) {
+        gRulesDoc.remove("timingModels");
+        gRulesDoc["timingModels"] = doc["timingModels"];
+      }
+      if (doc.containsKey("paradeDetection")) {
+        gRulesDoc["paradeDetection"] = doc["paradeDetection"];
+      }
+      if (doc.containsKey("defaultPresetId")) {
+        gRulesDoc["defaultPresetId"] = doc["defaultPresetId"];
+      }
+      logRulesHeap("after in-place merge");
     } else {
+      // Full replace — serialize incoming mapping once, then fill gRulesDoc from that string.
+      String raw;
+      serializeJson(doc, raw);
       gRulesDoc.clear();
-      DeserializationError cacheErr = deserializeJson(gRulesDoc, raw);
+      DeserializationError cacheErr = deserializeJson(gRulesDoc, raw, DeserializationOption::NestingLimit(32));
       if (cacheErr) {
-        Serial.printf("[Rules] cache deserialize failed: %s\n", cacheErr.c_str());
+        Serial.printf("[Rules] cache deserialize failed: %s (raw=%u)\n",
+                      cacheErr.c_str(), (unsigned)raw.length());
       }
+      logRulesHeap("after full replace");
     }
   } else if (doc.containsKey("paradeDetection") || doc.containsKey("defaultPresetId") ||
              doc.containsKey("colors") || doc.containsKey("segments") || doc.containsKey("randomPool")) {
@@ -1274,8 +1721,13 @@ void loadMbRulesFromJson() {
   bleDefaultPresetId = "";
   const String& src = mbRulesJson.length() > 0 ? mbRulesJson : mbMappingJson;
   if (src.length() == 0) return;
-  DynamicJsonDocument doc(BLE_JSON_DOC_SIZE);
-  DeserializationError err = deserializeJson(doc, src);
+  logRulesHeap("loadMbRulesFromJson start");
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc(&jsonPsramAllocator());
+#else
+  PsramJsonDocument doc(BLE_JSON_DOC_SIZE);
+#endif
+  DeserializationError err = deserializeJson(doc, src, DeserializationOption::NestingLimit(32));
   if (err) {
     Serial.printf("[Rules] JSON parse failed: %s (%u bytes)\n", err.c_str(), (unsigned)src.length());
     return;
@@ -1285,8 +1737,12 @@ void loadMbRulesFromJson() {
 
 bool mbRulesJsonUsable(const String& json) {
   if (json.length() == 0) return false;
-  DynamicJsonDocument doc(BLE_JSON_DOC_SIZE);
-  DeserializationError err = deserializeJson(doc, json);
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc(&jsonPsramAllocator());
+#else
+  PsramJsonDocument doc(BLE_JSON_DOC_SIZE);
+#endif
+  DeserializationError err = deserializeJson(doc, json, DeserializationOption::NestingLimit(32));
   if (err) return false;
   JsonArray rules = doc["rules"].as<JsonArray>();
   return !rules.isNull() && rules.size() > 0;

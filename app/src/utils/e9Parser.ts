@@ -1,14 +1,22 @@
 /**
  * MagicBand+ E9xx broadcast packet parser (Tier 1 confirmed decodes + Tier 2 fallback).
- * All protocol intelligence lives here — firmware stays command-driven.
+ * Decode/display only — WLED decisions live in firmware MbRuleEngine.
  */
 
-import type { MbMappingConfig, MbEffectClassKey } from './mbConfig';
 import { MB_COLOR_NAMES } from './mbConfig';
 
 export const STANDARD_COLOR_MASK = 0b101; // bits 7-5 — "normal color" mask
 
 export type E9Tier = 1 | 2;
+
+/** Decode-time class label for capture display (not a mapping system). */
+export type E9AnimationClass =
+  | 'singleColor'
+  | 'dualColor'
+  | 'sixBitColor'
+  | 'fivePositionPalette'
+  | 'fivePositionFlash'
+  | 'unclassified';
 
 export type E909Position = 'topLeft' | 'bottomLeft' | 'bottomRight' | 'topRight' | 'center';
 export type E90EPosition = 'center' | 'upperRight' | 'bottomRight' | 'bottomLeft' | 'upperLeft';
@@ -32,7 +40,7 @@ export interface ParsedE9Base {
   tier: E9Tier;
   opcode: number;
   opcodeHex: string;
-  animationClass: MbEffectClassKey;
+  animationClass: E9AnimationClass;
   rawHex: string;
   payloadLen: number;
   /** Tier 2 signature for per-packet mapping */
@@ -58,11 +66,22 @@ export interface ParsedE906 extends ParsedE9Base {
   vibration?: number;
 }
 
+/** Per-channel byte for E908 true-RGB (flash + 6-bit value + unk bit0). */
+export interface E908Channel {
+  raw: number;
+  flash: boolean;
+  value6: number;
+  unkBit0: boolean;
+}
+
 export interface ParsedE908 extends ParsedE9Base {
   kind: 'E908';
   tier: 1;
+  channels: { r: E908Channel; g: E908Channel; b: E908Channel };
+  /** scale6To8() per channel; flash/unkBit0 ignored */
   rgb: [number, number, number];
-  rgb6: [number, number, number];
+  /** Full-frame idx 8/9 (payload 6/7) — opaque; seen as 0xd2/0x55 in lab samples */
+  opaqueBytes: { b8?: number; b9?: number };
   timing?: E9TimingByte;
   vibration?: number;
 }
@@ -175,6 +194,15 @@ export function decode6BitChannel(byte: number): number {
   return scale6To8((byte >> 1) & 0x3f);
 }
 
+export function decode908Channel(b: number): E908Channel {
+  return {
+    raw: b,
+    flash: (b & 0x80) !== 0,
+    value6: (b >> 1) & 0x3f,
+    unkBit0: (b & 0x01) !== 0,
+  };
+}
+
 export function looksLikePaletteByte(b: number): boolean {
   return ((b >> 5) & 0x07) === STANDARD_COLOR_MASK;
 }
@@ -237,7 +265,7 @@ export function tier2Signature(payload: number[], opcode: number): string {
   return `${opcodeToHex(opcode)}:${payload.length}:${simpleStructuralHash(payload, opcode)}`;
 }
 
-function baseFields(payload: number[], opcode: number, tier: E9Tier, animClass: MbEffectClassKey, quality: ParsedE9Base['decodeQuality'], reason?: string): ParsedE9Base {
+function baseFields(payload: number[], opcode: number, tier: E9Tier, animClass: E9AnimationClass, quality: ParsedE9Base['decodeQuality'], reason?: string): ParsedE9Base {
   const hex = bytesToHex(payload);
   return {
     tier,
@@ -349,20 +377,26 @@ export function parseE9Packet(input: number[] | string): ParsedE9 | null {
       };
     }
     case 0xe908: {
+      // Payload after 8301 strip: e1/e2 00 e9 08 00 [TIMING] [opaque] [opaque] [R] [G] [B] [VIB]
       if (bytes.length < 12) return tier2(bytes, opcode, 'E908 frame too short');
-      const rgb6: [number, number, number] = [
-        (bytes[8] >> 1) & 0x3f,
-        (bytes[9] >> 1) & 0x3f,
-        (bytes[10] >> 1) & 0x3f,
-      ];
+      const channels = {
+        r: decode908Channel(bytes[8]),
+        g: decode908Channel(bytes[9]),
+        b: decode908Channel(bytes[10]),
+      };
       return {
         ...baseFields(bytes, opcode, 1, 'sixBitColor', 'full'),
         kind: 'E908',
         tier: 1,
-        rgb6,
-        rgb: [scale6To8(rgb6[0]), scale6To8(rgb6[1]), scale6To8(rgb6[2])],
-        timing: bytes.length > 6 ? decodeTimingByte(bytes[6]) : undefined,
-        vibration: bytes.length > 11 ? bytes[11] : undefined,
+        channels,
+        rgb: [
+          scale6To8(channels.r.value6),
+          scale6To8(channels.g.value6),
+          scale6To8(channels.b.value6),
+        ],
+        opaqueBytes: { b8: bytes[6], b9: bytes[7] },
+        timing: decodeTimingByte(bytes[5]),
+        vibration: bytes[11],
       };
     }
     case 0xe909: {
@@ -425,28 +459,6 @@ export function parseE9Packet(input: number[] | string): ParsedE9 | null {
       return tier2(bytes, opcode, 'Not an E9 show opcode');
     }
   }
-}
-
-// ── Effect class resolution ──────────────────────────────────────────────────
-
-export function resolveEffectClassMapping(
-  parsed: ParsedE9,
-  config: MbMappingConfig,
-): { presetId: string; useMbColors: boolean } | null {
-  const ec = config.effectClasses;
-  if (!ec) return null;
-
-  if (parsed.tier === 2 || parsed.animationClass === 'unclassified') {
-    const opKey = parsed.opcodeHex;
-    const perOpcode = ec.unclassifiedOpcodes?.[opKey];
-    if (perOpcode?.presetId) return { presetId: perOpcode.presetId, useMbColors: perOpcode.useMbColors };
-    if (ec.unclassified.presetId) return { presetId: ec.unclassified.presetId, useMbColors: ec.unclassified.useMbColors };
-    return null;
-  }
-
-  const cls = ec[parsed.animationClass];
-  if (cls?.presetId) return { presetId: cls.presetId, useMbColors: cls.useMbColors };
-  return null;
 }
 
 export function paletteIndexToHex(idx: number, colors: string[]): string {

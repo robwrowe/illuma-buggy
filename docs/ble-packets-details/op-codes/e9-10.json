@@ -1,0 +1,123 @@
+[
+  {
+    "id": "mr9ywv3hxaxb",
+    "ts": 1783387569005,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91000134897d00ea0d146060f30d04e07b0",
+    "origBytes": "e100e91000134897d00ea0d146060f30d04e07b0",
+    "tag": "unknown",
+    "note": "shimmer between two colors, seems to alternate what's foreground vs. background, ~5s total, each cycle is ~2s"
+  },
+  {
+    "id": "mr9xuw7h7yzi",
+    "ts": 1783385797517,
+    "kind": "single",
+    "presetKey": "sparkle",
+    "bytes": "e100e91000134897d00ea0d146060f30d04e07b0",
+    "origBytes": "e100e91000134897d00ea0d146060f30d04e07b0",
+    "tag": "unknown",
+    "note": "cuts on one color, then a second fades in async across all five leds"
+  },
+  {
+    "id": "mr9xou0fzhi7",
+    "ts": 1783385514735,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e910000f0f545d58f44882d146090ad065282102",
+    "origBytes": "e910000f0f545d58f44882d146090ad065282102",
+    "tag": "e9_10",
+    "note": "Orange twinkling all five"
+  },
+
+  {
+    "id": "mr9p9zoaqvso",
+    "ts": 1783371385306,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91000140f4f4fd037f2d2412a06190100b9",
+    "origBytes": "e200e91000140f4f4fd037f2d2412a06190100b9",
+    "tag": "e9_10",
+    "note": "yellow-ish flickering for ~7s"
+  },
+  {
+    "id": "mr9ozbej6omf",
+    "ts": 1783370887291,
+    "kind": "single",
+    "presetKey": "burst",
+    "bytes": "e200e91000010f5c55f4a0d037f2d241c60500b9",
+    "origBytes": "e200e91000010f5c55f4a0d037f2d241c60500b9",
+    "tag": "e9_10",
+    "note": "Burst via /show: 10 reps, 3000ms dwell"
+  },
+  {
+    "id": "mr9oxt6f9eyj",
+    "ts": 1783370817015,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91000120f4f4fd037f2d2412a06190100b9",
+    "origBytes": "e100e91000120f4f4fd037f2d2412a06190100b9",
+    "tag": "e9_10",
+    "note": "yellow-ish flickering for ~4-5 s"
+  },
+  {
+    "id": "mr9ow75aqzkf",
+    "ts": 1783370741806,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e91000010f5c55f4a0d037f2d241c60500b9",
+    "origBytes": "e100e91000010f5c55f4a0d037f2d241c60500b9",
+    "tag": "e9_10",
+    "note": "two colors, inner / outer. cuts on and fades out once"
+  },
+  {
+    "id": "mr9oua354yog",
+    "ts": 1783370652305,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e91000434896d00e97d146063730d04e25b0",
+    "origBytes": "e200e91000434896d00e97d146063730d04e25b0",
+    "tag": "e9_10",
+    "note": "Chase, center seems to be switching between colors"
+  },
+  {
+    "id": "mr9o0xrqvg7r",
+    "ts": 1783369283318,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e910004c4897d00e80d146052030d04e00b0",
+    "origBytes": "e100e910004c4897d00e80d146052030d04e00b0",
+    "tag": "e9_10",
+    "note": "Cycles through the rainbow (all 5 leds are the same color)"
+  },
+  {
+    "id": "mr9e1zaihzrk",
+    "ts": 1783352535786,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e910004c4897d00e80d146052030d04e00b0",
+    "origBytes": "e100e910004c4897d00e80d146052030d04e00b0",
+    "tag": "e9_10",
+    "note": "all five leds are cycling through the rainbow"
+  },
+  {
+    "id": "mrqux0xofup9",
+    "ts": 1784408783100,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e910000f0f535558f44882d146023ed06505",
+    "origBytes": "e200e910000f0f535558f44882d146023ed06505",
+    "tag": "unknown",
+    "note": "Inner / Outer cross fade, new cycle cuts inner yellow-ish orange > orange outer orange > yellow-ish orange 1.5s cycle time ~24s total time"
+  },
+  {
+    "id": "mrquvpesa53q",
+    "ts": 1784408721508,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e910000f0f515558f44882d146023ed06505",
+    "origBytes": "e100e910000f0f515558f44882d146023ed06505",
+    "tag": "unknown",
+    "note": "Inner / Outer cross fade, new cycle cuts\ninner yellow-ish orange > orange\nouter orange > yellow-ish orange\n1.5s cycle time\n~24s total time"
+  } 
+]

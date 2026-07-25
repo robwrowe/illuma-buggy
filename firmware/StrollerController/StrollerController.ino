@@ -12,7 +12,6 @@
 #include "OverrideManager.h"
 #include "MbMapping.h"
 #include "MbRuleEngine.h"
-#include "MbEffects.h"
 #include "BlePeripheral.h"
 #include "DisneyBleScan.h"
 #include "PayloadTransport.h"
@@ -21,6 +20,8 @@
 #include "DebugLog.h"
 #include "NvsLargeString.h"
 #include "MbRulesStore.h"
+#include "MbCalibrationStore.h"
+#include "StatusLed.h"
 
 void setup() {
   Serial.begin(115200);
@@ -32,6 +33,8 @@ void setup() {
                 (unsigned)ESP.getMaxAllocHeap(),
                 (unsigned)ESP.getPsramSize(),
                 ESP.getPsramSize() ? (unsigned)ESP.getFreePsram() : 0u);
+
+  mbCalibrationInitIdentity();
 
   // Load NVS config
   prefs.begin("config", true);
@@ -119,6 +122,10 @@ void setup() {
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
   loadMbRulesFromJson();
   mbMappingLoadedFromNvs = mbRulesJson.length() > 0 || mbMappingJson.length() > 0;
+  {
+    String calJson = mbCalibrationFsLoad();
+    if (calJson.length() > 0) mbCalibrationApply(calJson);
+  }
   loadWledBaselineFromNvs();
   Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums role=%u\n",
                 starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
@@ -133,6 +140,7 @@ void setup() {
 
   NimBLEDevice::init(BLE_NAME);
   delay(200);
+  statusLedInit();
   startBLEPeripheral();
 
   // Dual-board: logic board does NOT own the scan radio (no silent fallback).
@@ -193,6 +201,7 @@ void processPendingCommands() {
 }
 
 void loop() {
+  statusLedTick();
   // BLE first — app preset fire / status must not wait behind ESP-NOW rule applies.
   processBleCmdQueue();
   processPendingCommands();
@@ -222,6 +231,7 @@ void loop() {
 
   serviceMbRuleLifecycle();
   serviceParadeCooldown();
+  servicePendingRestore();
 
   if (bleCaptureToApp && bleCaptureUntilMs > 0 && millis() >= bleCaptureUntilMs) {
     stopBleCapture("timeout");

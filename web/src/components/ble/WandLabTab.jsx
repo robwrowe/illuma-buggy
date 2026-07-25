@@ -22,8 +22,11 @@ import {
 } from '../../lib/ble/mbConstants';
 import { buildMbDual, buildMbFive, buildMbPing, buildMbRgb, buildMbSingle } from '../../lib/ble/mbPayloads';
 import { bytesToHex, parseHexToBytes, sendHex } from '../../lib/ble/wandSimClient';
+import { deriveOpcodeFromHex } from '../../lib/ble/e9Decode';
 import { DEFAULT_DATA, generateId } from '../../lib/utils';
 import { WAND_LAB_SECTIONS } from '../../lib/routes';
+import { EMPTY_FINDING_FORM, formAfterLog } from '../../lib/sheets/wandLabFindings';
+import { postFinding } from '../../lib/sheets/wandLabSheetsClient';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
 import { WandLabLogPanel } from './WandLabLogPanel';
 import { WandLabPacketSequence } from './WandLabPacketSequence';
@@ -76,8 +79,7 @@ export function WandLabTab({ data, update }) {
   const [bytes, setBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
   const [origBytes, setOrigBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
   const [sequencePackets, setSequencePackets] = useState([]);
-  const [note, setNote] = useState('');
-  const [tag, setTag] = useState('unknown');
+  const [findingForm, setFindingForm] = useState({ ...EMPTY_FINDING_FORM });
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState('');
   const [logFilter, setLogFilter] = useState('');
@@ -193,26 +195,77 @@ export function WandLabTab({ data, update }) {
       : (sweepLivePayload ?? bytes);
     const logOrig = sweepLivePayload ?? origBytes;
     const snap = snapOverride || buildLogSnapshot(labTab, logBytes, logOrig, presetKey, sequencePackets);
+    const hex = snap.kind === 'single' ? snap.bytes : (snap.packets?.[0]?.bytes || '');
+    const derivedOp = deriveOpcodeFromHex(hex);
+    const opcode = (findingForm.opcodeOverride || derivedOp || '').trim();
+    const isEdit = !!editingLogId;
+    const prevEntry = isEdit ? (lab.log || []).find((e) => e.id === editingLogId) : null;
+    const createdAt = prevEntry?.createdAt || prevEntry?.ts || Date.now();
+    const notes = (logNote ?? findingForm.notes ?? '').trim();
     const entry = {
       id: editingLogId || generateId(),
-      ts: editingLogId
-        ? (lab.log || []).find((e) => e.id === editingLogId)?.ts || Date.now()
-        : Date.now(),
+      ts: createdAt,
+      createdAt,
       kind: snap.kind,
       presetKey: pk || snap.presetKey || presetKey,
-      bytes: snap.kind === 'single' ? snap.bytes : (snap.packets?.[0]?.bytes || ''),
+      bytes: hex,
       origBytes: snap.origBytes || snap.bytes || '',
       packets: snap.kind === 'sequence' ? snap.packets : undefined,
-      tag,
-      note: (logNote ?? note).trim(),
+      opcode,
+      deviceType: findingForm.deviceType || 'unknown',
+      totalTimeS: findingForm.totalTimeS === '' ? null : Number(findingForm.totalTimeS),
+      fadeTimeS: findingForm.fadeTimeS === '' ? null : Number(findingForm.fadeTimeS),
+      cycleTimeS: findingForm.cycleTimeS === '' ? null : Number(findingForm.cycleTimeS),
+      numCycles: findingForm.numCycles === '' ? null : Number(findingForm.numCycles),
+      colors: [...(findingForm.colors || [])],
+      layout: findingForm.layout || 'all_one',
+      show: findingForm.show || 'Other / bench test',
+      notes,
+      tag: findingForm.deviceType || 'unknown',
+      note: notes,
+      synced: isEdit ? (prevEntry?.synced ?? true) : true,
     };
     const prev = lab.log || [];
-    const log = editingLogId
+    const log = isEdit
       ? prev.map((e) => (e.id === editingLogId ? entry : e))
       : [entry, ...prev];
     update({ wandLab: { ...lab, log } });
-    setNote('');
+    // Keep device/timing/colors/layout/show/opcode for the next log; clear notes only.
+    setFindingForm(formAfterLog(findingForm));
     setEditingLogId(null);
+
+    // New findings → Sheets; edits stay local (typo fix). Desk tool: manual retry only.
+    if (!isEdit) {
+      postFinding(entry).catch((err) => {
+        console.error('Sheets write failed, will retry:', err);
+        update({
+          wandLab: {
+            ...lab,
+            log: log.map((e) => (e.id === entry.id ? { ...e, synced: false } : e)),
+          },
+        });
+      });
+    }
+  };
+
+  const retryPendingSheets = async () => {
+    const pending = (lab.log || []).filter((e) => e.synced === false);
+    for (const entry of pending) {
+      try {
+        await postFinding(entry);
+        const current = data.wandLab || lab;
+        update({
+          wandLab: {
+            ...current,
+            log: (current.log || []).map((e) =>
+              e.id === entry.id ? { ...e, synced: true } : e,
+            ),
+          },
+        });
+      } catch (err) {
+        console.error('Sheets retry failed:', err);
+      }
+    }
   };
 
   const loadLogEntry = (e) => {
@@ -232,8 +285,18 @@ export function WandLabTab({ data, update }) {
         setLabTab('bytes');
       }
     }
-    setTag(e.tag || 'unknown');
-    setNote(e.note || '');
+    setFindingForm({
+      deviceType: e.deviceType || e.tag || 'unknown',
+      totalTimeS: e.totalTimeS ?? '',
+      fadeTimeS: e.fadeTimeS ?? '',
+      cycleTimeS: e.cycleTimeS ?? '',
+      numCycles: e.numCycles ?? '',
+      colors: e.colors || [],
+      layout: e.layout || 'all_one',
+      show: e.show || 'Other / bench test',
+      notes: e.notes || e.note || '',
+      opcodeOverride: e.opcode || '',
+    });
     setEditingLogId(e.id);
   };
 
@@ -258,8 +321,17 @@ export function WandLabTab({ data, update }) {
   };
 
   const filteredLog = (lab.log || []).filter((e) =>
-    !logFilter || e.presetKey === logFilter || e.tag === logFilter,
+    !logFilter
+    || e.presetKey === logFilter
+    || e.tag === logFilter
+    || e.deviceType === logFilter
+    || e.show === logFilter
+    || e.opcode === logFilter,
   );
+
+  const currentLogHex = bytesToHex(sweepLivePayload ?? bytes);
+  const derivedOpcode = deriveOpcodeFromHex(currentLogHex);
+  const pendingCount = (lab.log || []).filter((e) => e.synced === false).length;
 
   const loadFromSequence = (arr) => {
     setByteArray(arr, 'sequence');
@@ -528,19 +600,21 @@ export function WandLabTab({ data, update }) {
         <WandLabLogPanel
           log={lab.log}
           filteredLog={filteredLog}
-          tag={tag}
-          onTagChange={setTag}
-          note={note}
-          onNoteChange={setNote}
+          form={findingForm}
+          onFormChange={setFindingForm}
+          derivedOpcode={derivedOpcode}
           logFilter={logFilter}
           onLogFilterChange={setLogFilter}
           editingLogId={editingLogId}
+          onCancelEdit={() => { setEditingLogId(null); setFindingForm((f) => formAfterLog(f)); }}
+          onResetForm={() => setFindingForm({ ...EMPTY_FINDING_FORM })}
           onAddEntry={() => addLogEntry()}
-          onCancelEdit={() => { setEditingLogId(null); setNote(''); }}
           onLoadEntry={loadLogEntry}
           onDeleteEntry={deleteLogEntry}
           onExport={exportLog}
           onPurge={purgeLog}
+          onRetryPending={retryPendingSheets}
+          pendingCount={pendingCount}
         />
       </Box>
     </Box>

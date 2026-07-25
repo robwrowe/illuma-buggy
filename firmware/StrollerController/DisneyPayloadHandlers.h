@@ -10,7 +10,6 @@ void handleWandCast(const uint8_t* payload, size_t plen);
 void handleLegacyCf9bCast(const uint8_t* payload, size_t plen);
 void handleE1E2Payload(const uint8_t* payload, size_t plen);
 void handleShowPayload(const uint8_t* payload, size_t plen);
-void notifyWandPalette(uint8_t paletteIdx, OverrideSource src);
 bool mbEffectIsRepeatAdvert(const uint8_t* payload, size_t plen);
 void rememberMbEffect(const uint8_t* payload, size_t plen);
 void notifyMbE9ToApp(const uint8_t* payload, size_t plen);

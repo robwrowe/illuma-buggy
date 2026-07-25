@@ -13,6 +13,7 @@ import {
 } from '@mantine/core';
 import { BleMappingTabBar } from '../ble/BleMappingTabBar';
 import { DefaultPresetField } from '../ble/DefaultPresetField';
+import { MbPayloadCapacityGauge } from '../ble/MbPayloadCapacityGauge';
 import { RandomPoolEditor } from '../ble/RandomPoolEditor';
 import { RuleEditor } from '../ble/RuleEditor';
 import { SegmentMapEditor } from '../ble/SegmentMapEditor';
@@ -27,8 +28,9 @@ import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping'
 import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
 import { webBleBoard } from '../../lib/ble/chunking';
+import { normalizeSheetsEndpoint } from '../../lib/sheets/config';
 
-export function SettingsTab({ data, update }) {
+export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoint }) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const presets = data.presets || [];
   const savedColors = data.savedColors || [];
@@ -70,6 +72,10 @@ export function SettingsTab({ data, update }) {
 
         <BleMappingTabBar active={bleTab} onChange={setBleTab} />
 
+        {(bleTab === 'rules' || bleTab === 'segmentMaps' || bleTab === 'timingModels') && (
+          <MbPayloadCapacityGauge mbMapping={mb} />
+        )}
+
         {(bleTab === 'rules') && (
           <DefaultPresetField mb={mb} presets={presets} onChange={setMb} />
         )}
@@ -110,6 +116,7 @@ export function SettingsTab({ data, update }) {
               effectOptions={segFxOptions}
               paletteOptions={segPalOptions}
               onChange={(next) => update({ mbMapping: normalizeMbMapping(next) })}
+              onPresetsChange={(nextPresets) => update({ presets: nextPresets })}
             />
           </>
         )}
@@ -218,6 +225,19 @@ export function SettingsTab({ data, update }) {
                 onChange={(v) => update({ bleEffectTransitionMs: Math.max(0, parseInt(v, 10) || 0) })}
                 styles={{ input: { fontFamily: 'monospace' } }}
               />
+            </Field>
+            <SectionHead>Wand Lab Sheets</SectionHead>
+            <Field label="Wand Lab Sheets endpoint">
+              <TextInput
+                value={sheetsEndpoint}
+                onChange={(e) => setSheetsEndpoint?.(normalizeSheetsEndpoint(e.target.value))}
+                placeholder="https://script.google.com/macros/s/…/exec"
+                styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+              />
+              <Text size="xs" c="dimmed" mt={4}>
+                Apps Script Web App deployment URL (https://…/exec, no quotes) for findings /
+                raw_captures. Leave blank to keep logging local-only.
+              </Text>
             </Field>
             <SectionHead>Recall State</SectionHead>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mb="lg">

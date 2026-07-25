@@ -1,0 +1,42 @@
+[
+  {
+    "id": "mrquqzszvgkx",
+    "ts": 1784408501699,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90d001f0fb9b9b9b9b959190248ae",
+    "origBytes": "e100e90d001f0fb9b9b9b9b959190248ae",
+    "tag": "unknown",
+    "note": "all green\nstrobe pattern\n~24s total time\nnon-repeatable pattern"
+  },
+  {
+    "id": "mrqunyhwr0ur",
+    "ts": 1784408360037,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90d00130fb4b5b5b5b3590ffb48ae",
+    "origBytes": "e100e90d00130fb4b5b5b5b3590ffb48ae",
+    "tag": "unknown",
+    "note": "Total time ~5.5s\nNon-repeatable strobe\nfour LEDs red, one yellow (sw - top band)"
+  },
+  {
+    "id": "mrqull6uztd6",
+    "ts": 1784408249478,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e200e90d0064d255fc0000d25864420078",
+    "origBytes": "e200e90d0064d255fc0000d25864420078",
+    "tag": "unknown",
+    "note": "Yellow Outer, Red Inner\nTotal time ~13s\nFade time ~0.75s"
+  },
+  {
+    "id": "mrqujsjguz88",
+    "ts": 1784408165692,
+    "kind": "single",
+    "presetKey": "paste",
+    "bytes": "e100e90d0067d2552b2e00d2582400fc78",
+    "origBytes": "e100e90d0067d2552b2e00d2582400fc78",
+    "tag": "unknown",
+    "note": "Purple Outer, Yellow Inner\nSolid\nTotal time ~23s\nFade out ~0.75s - 1s"
+  }
+]

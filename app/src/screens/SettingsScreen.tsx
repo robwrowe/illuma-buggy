@@ -33,6 +33,7 @@ import ShowsScreen from './ShowsScreen';
 import { bleService } from '../services/BLEService';
 import { useBLE } from '../hooks/useBLE';
 import { requestFullBoardSync } from '../utils/connectBootstrap';
+import { normalizeColorCalibration } from '../utils/colorCalibration';
 import { useTheme, ThemeMode } from '../utils/theme';
 import {
   scanForScanners,
@@ -57,10 +58,12 @@ export default function SettingsScreen() {
     wledPass, setWledPass,
     wledIp, setWledIp,
     wledPort, setWledPort,
+    sheetsEndpoint, setSheetsEndpoint,
     deviceStatus,
     locationPollSec, setLocationPollSec,
     ftbPresetId, setFtbPresetId, presets,
     brightnessConfig, setBrightnessConfig,
+    colorCalibration, setColorCalibration,
     recallState, setRecallState,
     syncMode, setSyncMode,
     boardConnectEnabled, setBoardConnectEnabled,
@@ -189,6 +192,13 @@ export default function SettingsScreen() {
   const updateOverrideMode = (val: boolean) => {
     setOverrideKillOnZone(val);
     bleService.sendOverrideMode(val);
+    saveToStorage();
+  };
+
+  const updateColorCalibrationEnabled = (val: boolean) => {
+    const next = normalizeColorCalibration({ ...colorCalibration, enabled: val });
+    setColorCalibration(next);
+    if (isConnected) bleService.sendColorCalibration(next);
     saveToStorage();
   };
 
@@ -325,6 +335,26 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* Color calibration — curves authored on web; toggle here for field use */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Color Calibration</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Apply RGB curves</Text>
+            <Text style={s.rowHint}>
+              Curves are edited in the web tool (Palettes → Calibration) and pushed on connect.
+              Toggle off to troubleshoot colors in the field.
+            </Text>
+          </View>
+          <Switch
+            value={colorCalibration.enabled}
+            onValueChange={updateColorCalibrationEnabled}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+      </View>
+
       {/* WLED Network */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>WLED Network</Text>
@@ -369,6 +399,21 @@ export default function SettingsScreen() {
             autoCorrect={false}
           />
         </View>
+        <View style={s.wledField}>
+          <Text style={s.rowLabel}>Wand Lab Sheets endpoint</Text>
+          <TextInput
+            style={s.wledInput}
+            value={sheetsEndpoint}
+            onChangeText={setSheetsEndpoint}
+            placeholder="https://script.google.com/macros/s/…/exec"
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <Text style={s.sectionHint}>
+          Apps Script Web App URL for capture uploads to raw_captures. Leave blank to queue locally only.
+        </Text>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>Port</Text>

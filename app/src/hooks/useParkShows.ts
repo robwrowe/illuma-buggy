@@ -18,6 +18,7 @@ import {
 } from '../utils/showBindings';
 import { runShowPhase, stopShowMode } from '../services/showControl';
 import { bleService } from '../services/BLEService';
+import { setParkShowtimesCache } from '../services/parkShowtimesCache';
 
 const POLL_MS = 15 * 60 * 1000;
 const STATUS_TICK_MS = 30_000;
@@ -200,6 +201,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       setShows([]);
       setFetchError(null);
       lastRawRef.current = [];
+      setParkShowtimesCache([], null);
       useAppStore.getState().setShowProtectsZones(false);
       return;
     }
@@ -207,6 +209,7 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
       const data = await getEntityLiveData(entityId);
       const raw = extractShowtimes(data.liveData || []);
       lastRawRef.current = raw;
+      setParkShowtimesCache(raw, entityId);
       const now = Date.now();
       const upcoming = buildUpcomingShows(
         raw,

@@ -1,14 +1,40 @@
-import { migrateWandLabDefaults, normalizeMbMapping, withSegRefDefaults } from './ble/mbMapping';
+import {
+  migrateLegacySegmentLayouts,
+  migrateWandLabDefaults,
+  normalizeMbMapping,
+  withSegRefDefaults,
+} from './ble/mbMapping';
 import { normalizeTags } from './tags';
-import { DEFAULT_DATA, compareVersions, normalizeHex, normalizeZoneRecord } from './utils';
+import {
+  DEFAULT_DATA,
+  compareVersions,
+  normalizeColorCalibration,
+  normalizeHex,
+  normalizeZoneRecord,
+} from './utils';
 
 export function loadAppData(stored) {
-  const merged = stored ? { ...DEFAULT_DATA, ...stored } : { ...DEFAULT_DATA };
+  let merged = stored ? { ...DEFAULT_DATA, ...stored } : { ...DEFAULT_DATA };
+
+  // Fold legacy top-level customSegmentLayouts into mbMapping.segmentMaps once,
+  // before any tab / sync consumer sees the data.
+  const { data: migrated, idMap } = migrateLegacySegmentLayouts(merged);
+  merged = migrated;
+
+  merged.colorCalibration = normalizeColorCalibration(merged.colorCalibration);
   merged.mbMapping = normalizeMbMapping(merged.mbMapping);
   merged.savedColors = (merged.savedColors || [])
     .filter(c => c?.id && normalizeHex(c.hex))
     .map(c => ({ id: c.id, name: c.name || c.hex, hex: normalizeHex(c.hex), tags: normalizeTags(c.tags) }));
-  merged.presets = (merged.presets || []).map(p => ({ ...p, tags: normalizeTags(p.tags) }));
+  merged.presets = (merged.presets || []).map((p) => {
+    const next = { ...p, tags: normalizeTags(p.tags) };
+    if (!next.segmentLayoutId) return next;
+    const { segmentLayoutId, ...rest } = next;
+    return {
+      ...rest,
+      segmentMapId: idMap[segmentLayoutId] ?? next.segmentMapId,
+    };
+  });
   merged.customPalettes = [];
   merged.paletteSets = [];
   merged.zones = (merged.zones || []).map(normalizeZoneRecord);
@@ -22,6 +48,7 @@ export function loadAppData(stored) {
   // Drop legacy region-keyed layout list (superseded by mbMapping.segmentMaps).
   delete merged.mbSegmentLayouts;
   delete merged.mbActiveSegmentLayoutId;
+  delete merged.customSegmentLayouts;
   return merged;
 }
 
@@ -36,11 +63,7 @@ export function migrateSegmentMetadata(data) {
     });
     mbMapping.segments = segments;
   }
-  const customSegmentLayouts = (data.customSegmentLayouts || []).map(layout => ({
-    ...layout,
-    segments: (layout.segments || []).map(withSegRefDefaults),
-  }));
-  return { ...data, mbMapping, customSegmentLayouts };
+  return { ...data, mbMapping };
 }
 
 export function migrateParksGrouping(data) {
