@@ -1025,7 +1025,10 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
 }
 
 function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange, onDelete }) {
-  const set = (patch) => onChange({ ...extract, source: 'payloadBits', ...patch });
+  // Do not stomp `source` here — mode-defining fields are owned by setExtractMode /
+  // setChannel / setScale. Forcing payloadBits on every plain-field edit mis-routes
+  // namedSource / colorSourceBlend extracts and interacts badly with stale paletteMap.
+  const set = (patch) => onChange({ ...extract, ...patch });
   const targets = Array.isArray(extract.targets) ? extract.targets : [];
   const curve = extract.curve || {
     type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
