@@ -28,6 +28,7 @@ import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping'
 import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
 import { webBleBoard } from '../../lib/ble/chunking';
+import { normalizeSheetsEndpoint } from '../../lib/sheets/config';
 
 export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoint }) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
@@ -229,13 +230,13 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
             <Field label="Wand Lab Sheets endpoint">
               <TextInput
                 value={sheetsEndpoint}
-                onChange={(e) => setSheetsEndpoint?.(e.target.value.trim())}
+                onChange={(e) => setSheetsEndpoint?.(normalizeSheetsEndpoint(e.target.value))}
                 placeholder="https://script.google.com/macros/s/…/exec"
                 styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
               />
               <Text size="xs" c="dimmed" mt={4}>
-                Apps Script Web App deployment URL for the findings / raw_captures research log.
-                Leave blank to keep logging local-only.
+                Apps Script Web App deployment URL (https://…/exec, no quotes) for findings /
+                raw_captures. Leave blank to keep logging local-only.
               </Text>
             </Field>
             <SectionHead>Recall State</SectionHead>

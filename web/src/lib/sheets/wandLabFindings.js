@@ -29,6 +29,27 @@ export const WAND_LAB_SHOWS = [
   'Other / bench test',
 ];
 
+const SHOWS_STORAGE = 'wandlab-shows';
+
+/** User-editable show list (falls back to defaults). */
+export function getWandLabShows() {
+  try {
+    const raw = localStorage.getItem(SHOWS_STORAGE);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) {
+        return parsed.map((s) => String(s).trim()).filter(Boolean);
+      }
+    }
+  } catch { /* ignore */ }
+  return [...WAND_LAB_SHOWS];
+}
+
+export function setWandLabShows(shows) {
+  const next = (shows || []).map((s) => String(s).trim()).filter(Boolean);
+  localStorage.setItem(SHOWS_STORAGE, JSON.stringify(next.length ? next : [...WAND_LAB_SHOWS]));
+}
+
 export const EMPTY_FINDING_FORM = {
   deviceType: 'unknown',
   totalTimeS: '',
@@ -41,3 +62,23 @@ export const EMPTY_FINDING_FORM = {
   notes: '',
   opcodeOverride: '',
 };
+
+/** Per-section defaults for "Reset group" buttons. */
+export const FINDING_FORM_SECTIONS = {
+  device: { deviceType: 'unknown' },
+  timing: {
+    totalTimeS: '',
+    fadeTimeS: '',
+    cycleTimeS: '',
+    numCycles: '',
+  },
+  colors: { colors: [] },
+  layout: { layout: 'all_one' },
+  show: { show: 'Other / bench test' },
+  opcodeNotes: { opcodeOverride: '', notes: '' },
+};
+
+/** Keep sticky fields after log; only clear notes (and editing state). */
+export function formAfterLog(form) {
+  return { ...form, notes: '' };
+}

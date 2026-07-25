@@ -18,6 +18,18 @@
  */
 const SCRIPT_TOKEN = ''; // e.g. 'your-secret' — leave blank to disable
 
+/**
+ * Browser GET /exec (and some POST→redirect→GET cases) hits doGet.
+ * Without this, Google returns 404 "Script function not found: doGet".
+ */
+function doGet() {
+  return ContentService.createTextOutput(JSON.stringify({
+    ok: true,
+    service: 'illuma-wandlab',
+    hint: 'POST JSON { sheet, rows } to write. Redeploy as New version after edits.',
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
 function doPost(e) {
   const body = JSON.parse(e.postData.contents);
   if (SCRIPT_TOKEN && body.token !== SCRIPT_TOKEN) {
@@ -87,7 +99,7 @@ function doPost(e) {
     });
   }
 
-  return ContentService.createTextOutput(JSON.stringify({ ok: true }))
+  return ContentService.createTextOutput(JSON.stringify({ ok: true, wrote: body.sheet || null }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 

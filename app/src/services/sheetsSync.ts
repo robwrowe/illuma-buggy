@@ -30,9 +30,25 @@ async function postToSheets(
   if (body.rows.length === 0) return;
   const res = await fetch(endpoint, {
     method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Sheets write failed (${body.sheet}): ${res.status}`);
+  const text = await res.text();
+  let data: { ok?: boolean; wrote?: string; error?: string } | null = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    /* non-JSON */
+  }
+  if (!res.ok) {
+    throw new Error(`Sheets write failed (${body.sheet}): ${res.status}`);
+  }
+  if (!data?.ok || !data.wrote) {
+    throw new Error(
+      data?.error
+        || `Sheets write failed (${body.sheet}): response missing wrote — check doPost deployment`,
+    );
+  }
 }
 
 async function postSessionToSheets(session: BleCaptureSession, endpoint: string) {

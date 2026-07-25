@@ -25,7 +25,7 @@ import { bytesToHex, parseHexToBytes, sendHex } from '../../lib/ble/wandSimClien
 import { deriveOpcodeFromHex } from '../../lib/ble/e9Decode';
 import { DEFAULT_DATA, generateId } from '../../lib/utils';
 import { WAND_LAB_SECTIONS } from '../../lib/routes';
-import { EMPTY_FINDING_FORM } from '../../lib/sheets/wandLabFindings';
+import { EMPTY_FINDING_FORM, formAfterLog } from '../../lib/sheets/wandLabFindings';
 import { postFinding } from '../../lib/sheets/wandLabSheetsClient';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
 import { WandLabLogPanel } from './WandLabLogPanel';
@@ -230,7 +230,8 @@ export function WandLabTab({ data, update }) {
       ? prev.map((e) => (e.id === editingLogId ? entry : e))
       : [entry, ...prev];
     update({ wandLab: { ...lab, log } });
-    setFindingForm({ ...EMPTY_FINDING_FORM });
+    // Keep device/timing/colors/layout/show/opcode for the next log; clear notes only.
+    setFindingForm(formAfterLog(findingForm));
     setEditingLogId(null);
 
     // New findings → Sheets; edits stay local (typo fix). Desk tool: manual retry only.
@@ -605,8 +606,9 @@ export function WandLabTab({ data, update }) {
           logFilter={logFilter}
           onLogFilterChange={setLogFilter}
           editingLogId={editingLogId}
+          onCancelEdit={() => { setEditingLogId(null); setFindingForm((f) => formAfterLog(f)); }}
+          onResetForm={() => setFindingForm({ ...EMPTY_FINDING_FORM })}
           onAddEntry={() => addLogEntry()}
-          onCancelEdit={() => { setEditingLogId(null); setFindingForm({ ...EMPTY_FINDING_FORM }); }}
           onLoadEntry={loadLogEntry}
           onDeleteEntry={deleteLogEntry}
           onExport={exportLog}
