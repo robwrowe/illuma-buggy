@@ -1659,7 +1659,7 @@ void applyMbRulesJson(JsonObject doc) {
       String raw;
       serializeJson(doc, raw);
       gRulesDoc.clear();
-      DeserializationError cacheErr = deserializeJson(gRulesDoc, raw);
+      DeserializationError cacheErr = deserializeJson(gRulesDoc, raw, DeserializationOption::NestingLimit(32));
       if (cacheErr) {
         Serial.printf("[Rules] cache deserialize failed: %s (raw=%u)\n",
                       cacheErr.c_str(), (unsigned)raw.length());
@@ -1727,7 +1727,7 @@ void loadMbRulesFromJson() {
 #else
   PsramJsonDocument doc(BLE_JSON_DOC_SIZE);
 #endif
-  DeserializationError err = deserializeJson(doc, src);
+  DeserializationError err = deserializeJson(doc, src, DeserializationOption::NestingLimit(32));
   if (err) {
     Serial.printf("[Rules] JSON parse failed: %s (%u bytes)\n", err.c_str(), (unsigned)src.length());
     return;
@@ -1742,7 +1742,7 @@ bool mbRulesJsonUsable(const String& json) {
 #else
   PsramJsonDocument doc(BLE_JSON_DOC_SIZE);
 #endif
-  DeserializationError err = deserializeJson(doc, json);
+  DeserializationError err = deserializeJson(doc, json, DeserializationOption::NestingLimit(32));
   if (err) return false;
   JsonArray rules = doc["rules"].as<JsonArray>();
   return !rules.isNull() && rules.size() > 0;

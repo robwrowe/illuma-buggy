@@ -29,7 +29,7 @@ void handleBLECommand(const String& msg) {
   if (cap > BLE_JSON_DOC_SIZE) cap = BLE_JSON_DOC_SIZE;
   PsramJsonDocument doc(cap);
 #endif
-  DeserializationError err = deserializeJson(doc, msg);
+  DeserializationError err = deserializeJson(doc, msg, DeserializationOption::NestingLimit(32));
   if (err) {
     Serial.printf("[BLE] JSON parse error: %s\n", err.c_str());
     return;
