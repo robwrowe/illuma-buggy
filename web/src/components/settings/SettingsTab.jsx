@@ -29,7 +29,7 @@ import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../l
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
 import { webBleBoard } from '../../lib/ble/chunking';
 
-export function SettingsTab({ data, update }) {
+export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoint }) {
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const presets = data.presets || [];
   const savedColors = data.savedColors || [];
@@ -224,6 +224,19 @@ export function SettingsTab({ data, update }) {
                 onChange={(v) => update({ bleEffectTransitionMs: Math.max(0, parseInt(v, 10) || 0) })}
                 styles={{ input: { fontFamily: 'monospace' } }}
               />
+            </Field>
+            <SectionHead>Wand Lab Sheets</SectionHead>
+            <Field label="Wand Lab Sheets endpoint">
+              <TextInput
+                value={sheetsEndpoint}
+                onChange={(e) => setSheetsEndpoint?.(e.target.value.trim())}
+                placeholder="https://script.google.com/macros/s/…/exec"
+                styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+              />
+              <Text size="xs" c="dimmed" mt={4}>
+                Apps Script Web App deployment URL for the findings / raw_captures research log.
+                Leave blank to keep logging local-only.
+              </Text>
             </Field>
             <SectionHead>Recall State</SectionHead>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mb="lg">

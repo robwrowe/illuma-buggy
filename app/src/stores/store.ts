@@ -14,6 +14,14 @@ import { create } from 'zustand';
 
 export type RecallValue = 'always' | 'never' | 'memory';
 
+export interface SheetsUploadItem {
+  sessionId: string;
+  enqueuedAt: number;
+  attempts: number;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+}
+
 export interface RecallState {
   effect:     RecallValue;
   palette:    RecallValue;
@@ -415,6 +423,15 @@ interface AppState {
   updateBleCapturePacketNote: (boardTs: number, hex: string, note: string) => void;
   deleteBleCaptureSession:  (id: string) => void;
   renameBleCaptureSession:  (id: string, name: string) => void;
+
+  /** Apps Script Web App URL for Wand Lab Sheets (user-supplied, like Maps key). */
+  sheetsEndpoint:           string;
+  setSheetsEndpoint:        (val: string) => void;
+  sheetsUploadQueue:        SheetsUploadItem[];
+  /** Runtime only — not persisted. */
+  sheetsUploadInFlight:     boolean;
+  enqueueSheetsUpload:      (item: SheetsUploadItem) => void;
+  dequeueSheetsUpload:      (sessionId: string) => void;
 }
 
 // ─────────────────────────────────────────────
@@ -568,6 +585,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   wledPass:            '',
   wledIp:              '',
   wledPort:            80,
+  sheetsEndpoint:      '',
+  sheetsUploadQueue:   [],
+  sheetsUploadInFlight: false,
   locationPollSec:     DEFAULT_LOCATION_POLL_SEC,
   mbMapping:           DEFAULT_MB_MAPPING,
   zonesEnabled:        true,
@@ -749,6 +769,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWledPass:           (val)          => set({ wledPass: val }),
   setWledIp:             (val)          => set({ wledIp: val }),
   setWledPort:           (val)          => set({ wledPort: val }),
+  setSheetsEndpoint:     (val)          => { set({ sheetsEndpoint: val }); get().saveToStorage(); },
+  enqueueSheetsUpload:   (item)         => set((s) => {
+    if (s.sheetsUploadQueue.some((q) => q.sessionId === item.sessionId)) return s;
+    return { sheetsUploadQueue: [...s.sheetsUploadQueue, item] };
+  }),
+  dequeueSheetsUpload:   (sessionId)    => {
+    set((s) => ({
+      sheetsUploadQueue: s.sheetsUploadQueue.filter((q) => q.sessionId !== sessionId),
+    }));
+    get().saveToStorage();
+  },
   setLocationPollSec:    (val)          => set({
     locationPollSec: Math.min(LOCATION_POLL_SEC_MAX, Math.max(LOCATION_POLL_SEC_MIN, val)),
   }),
@@ -811,6 +842,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       captureForcedLocationTracking: false,
       bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
     });
+    if (packets.length > 0) {
+      get().enqueueSheetsUpload({
+        sessionId: session.id,
+        enqueuedAt: Date.now(),
+        attempts: 0,
+        lastAttemptAt: null,
+        lastError: null,
+      });
+    }
     get().saveToStorage();
     console.log(`[Capture] Stopped (${reason}): ${packets.length} packets`);
   },
@@ -827,6 +867,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureLiveCount: 0,
       bleCaptureStartedAt: endedAt,
       bleCaptureSegment: nextSegment,
+    });
+    get().enqueueSheetsUpload({
+      sessionId: session.id,
+      enqueuedAt: Date.now(),
+      attempts: 0,
+      lastAttemptAt: null,
+      lastError: null,
     });
     get().saveToStorage();
     console.log(
@@ -894,7 +941,8 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandFivePoint','magicBandTimeoutSec','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
-                    'wledSsid','wledPass','wledIp','wledPort','zonesEnabled','syncMode','boardConnectEnabled',
+                    'wledSsid','wledPass','wledIp','wledPort','sheetsEndpoint','sheetsUploadQueue',
+                    'zonesEnabled','syncMode','boardConnectEnabled',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'bleCaptureIgnoreTags',
@@ -937,6 +985,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         wledPass:           d.wledPass           ?? '',
         wledIp:             d.wledIp             ?? '',
         wledPort:           d.wledPort           ?? 80,
+        sheetsEndpoint:     typeof d.sheetsEndpoint === 'string' ? d.sheetsEndpoint : '',
+        sheetsUploadQueue:  Array.isArray(d.sheetsUploadQueue) ? d.sheetsUploadQueue : [],
         zonesEnabled:       d.zonesEnabled       ?? true,
         syncMode:           d.syncMode           ?? 'auto',
         boardConnectEnabled:d.boardConnectEnabled ?? true,
@@ -994,6 +1044,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['wledPass',           JSON.stringify(s.wledPass)],
         ['wledIp',             JSON.stringify(s.wledIp)],
         ['wledPort',           JSON.stringify(s.wledPort)],
+        ['sheetsEndpoint',     JSON.stringify(s.sheetsEndpoint)],
+        ['sheetsUploadQueue',  JSON.stringify(s.sheetsUploadQueue)],
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
         ['syncMode',           JSON.stringify(s.syncMode)],
         ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],

@@ -26,6 +26,7 @@ import { useAppStore } from "./src/stores/store";
 import { runConnectBootstrap, cancelConnectBootstrap } from "./src/utils/connectBootstrap";
 import { useZoneManager } from "./src/hooks/useZoneManager";
 import { useCaptureAutomation } from "./src/hooks/useCaptureAutomation";
+import { useSheetsQueueDrain } from "./src/hooks/useSheetsQueueDrain";
 import { useTheme, useThemeStore } from "./src/utils/theme";
 import * as Notifications from "expo-notifications";
 import { initStrollerNotifications } from "./src/services/strollerNotification";
@@ -59,6 +60,7 @@ function ZonesWrapper() {
 function AppNavigator() {
   useZoneManager();
   useCaptureAutomation();
+  useSheetsQueueDrain();
   const { colors, isDark } = useTheme();
 
   const navTheme = {

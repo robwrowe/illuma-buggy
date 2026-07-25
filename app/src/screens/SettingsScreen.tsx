@@ -58,6 +58,7 @@ export default function SettingsScreen() {
     wledPass, setWledPass,
     wledIp, setWledIp,
     wledPort, setWledPort,
+    sheetsEndpoint, setSheetsEndpoint,
     deviceStatus,
     locationPollSec, setLocationPollSec,
     ftbPresetId, setFtbPresetId, presets,
@@ -398,6 +399,21 @@ export default function SettingsScreen() {
             autoCorrect={false}
           />
         </View>
+        <View style={s.wledField}>
+          <Text style={s.rowLabel}>Wand Lab Sheets endpoint</Text>
+          <TextInput
+            style={s.wledInput}
+            value={sheetsEndpoint}
+            onChangeText={setSheetsEndpoint}
+            placeholder="https://script.google.com/macros/s/…/exec"
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <Text style={s.sectionHint}>
+          Apps Script Web App URL for capture uploads to raw_captures. Leave blank to queue locally only.
+        </Text>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>Port</Text>

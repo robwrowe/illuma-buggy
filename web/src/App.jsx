@@ -49,19 +49,17 @@ export function App() {
   const [profilesOpened, { open: openProfiles, close: closeProfiles }] = useDisclosure(false);
   const [showBoardSync, setShowBoardSync] = useState(false);
   const [mapsKey, setMapsKey] = useLocalStorage({ key: 'maps-api-key', defaultValue: '' });
+  const [sheetsEndpoint, setSheetsEndpoint] = useLocalStorage({ key: 'wandlab-sheets-endpoint', defaultValue: '' });
   const [keyInput, setKeyInput] = useState(mapsKey);
-  const [keyModalOpened, setKeyModalOpened] = useState(() => !mapsKey);
   const [newProfileName, setNewProfileName] = useState('');
+  // Prompt for Maps key only when visiting Map without a key configured.
+  const keyModalOpened = tab === 'map' && !mapsKey;
 
+  // Only load Maps JS when the Map tab is visited (not on every app start).
   useEffect(() => {
-    if (!mapsKey) return;
+    if (!mapsKey || tab !== 'map' || mapsReady) return;
     loadGoogleMaps(mapsKey).then(() => setMapsReady(true)).catch(() => {});
-  }, [mapsKey]);
-
-  useEffect(() => {
-    setKeyModalOpened(!mapsKey);
-    if (mapsKey) setKeyInput(mapsKey);
-  }, [mapsKey]);
+  }, [mapsKey, tab, mapsReady]);
 
   const replaceData = useCallback((next) => {
     setData(next);
@@ -80,7 +78,6 @@ export function App() {
     const k = keyInput.trim();
     if (!k) return;
     setMapsKey(k);
-    setKeyModalOpened(false);
     loadGoogleMaps(k).then(() => setMapsReady(true)).catch(() => {});
   };
 
@@ -171,7 +168,7 @@ export function App() {
       <AppShell.Main>
         <Box h="100%">
           <Routes>
-            <Route path="/" element={<Navigate to="/map" replace />} />
+            <Route path="/" element={<Navigate to="/presets" replace />} />
             <Route path="/map" element={<MapZonesTab data={data} update={update} mapsReady={mapsReady} />} />
             <Route path="/presets" element={<PresetsTab data={data} update={update} />} />
             <Route path="/palettes" element={<PalettesTab data={data} update={update} />} />
@@ -179,13 +176,20 @@ export function App() {
             <Route path="/brightness" element={<BrightnessTab data={data} update={update} />} />
             <Route path="/wandlab" element={<Navigate to="/wandlab/quick" replace />} />
             <Route path="/wandlab/:section" element={<WandLabTab data={data} update={update} />} />
-            <Route path="/settings" element={<SettingsTab data={data} update={update} />} />
-            <Route path="*" element={<Navigate to="/map" replace />} />
+            <Route path="/settings" element={
+              <SettingsTab
+                data={data}
+                update={update}
+                sheetsEndpoint={sheetsEndpoint}
+                setSheetsEndpoint={setSheetsEndpoint}
+              />
+            } />
+            <Route path="*" element={<Navigate to="/presets" replace />} />
           </Routes>
         </Box>
       </AppShell.Main>
 
-      <Modal opened={keyModalOpened} onClose={() => setKeyModalOpened(false)} withCloseButton={!!mapsKey} title="🔑 Google Maps API Key" size="md">
+      <Modal opened={keyModalOpened} onClose={() => {}} withCloseButton={false} title="🔑 Google Maps API Key" size="md">
         <Stack gap="md">
           <Text size="sm" c="dimmed">
             Stored only in your browser. Get a key at{' '}
@@ -203,7 +207,6 @@ export function App() {
             autoFocus
           />
           <Group>
-            {mapsKey && <Button variant="default" onClick={() => setKeyModalOpened(false)} style={{ flex: 1 }}>Cancel</Button>}
             <Button onClick={saveMapsKey} disabled={!keyInput.trim()} style={{ flex: 1 }}>Save & Load Map</Button>
           </Group>
         </Stack>

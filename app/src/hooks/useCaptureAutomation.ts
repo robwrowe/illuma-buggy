@@ -6,6 +6,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { getEntityLiveData, extractShowtimes } from '../services/themeParksApi';
 import { useAppStore } from '../stores/store';
 import { buildUpcomingShows, type UpcomingShow } from './useParkShows';
+import { setParkShowtimesCache } from '../services/parkShowtimesCache';
 import { startPhoneBleScan } from '../utils/phoneBleScan';
 import type { ParkConfig } from '../utils/configMigration';
 
@@ -130,12 +131,14 @@ export function useCaptureAutomation() {
     const parkId = park?.id;
     if (!entityId || !parkId) {
       lastRawRef.current = [];
+      setParkShowtimesCache([], null);
       return;
     }
     try {
       const data = await getEntityLiveData(entityId);
       const raw = extractShowtimes(data.liveData || []);
       lastRawRef.current = raw;
+      setParkShowtimesCache(raw, entityId);
       const upcoming = buildUpcomingShows(
         raw,
         bindingsRef.current,

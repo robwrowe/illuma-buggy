@@ -27,6 +27,29 @@ export function disneyPayload(bytes) {
   return arr;
 }
 
+/** E9 opcode from Disney payload (mirrors app/src/utils/e9Parser.ts). */
+export function extractE9Opcode(payload) {
+  const p = Array.from(payload || []);
+  if (p.length >= 4 && (p[0] === 0xe1 || p[0] === 0xe2) && p[2] === 0xe9) {
+    return (p[2] << 8) | p[3];
+  }
+  if (p.length >= 2 && p[0] === 0xe9) return (p[0] << 8) | p[1];
+  return null;
+}
+
+export function opcodeToHex(op) {
+  if (op == null || Number.isNaN(op)) return '';
+  return Number(op).toString(16).toUpperCase().padStart(4, '0');
+}
+
+/** Derive display opcode string from a hex packet (optional CID prefix OK). */
+export function deriveOpcodeFromHex(hex) {
+  const bytes = hexToBytes(hex);
+  const payload = disneyPayload(bytes);
+  const op = extractE9Opcode(payload);
+  return op != null ? opcodeToHex(op) : '';
+}
+
 /**
  * LSB-first bit extraction within a single byte (matches firmware extractBits).
  * @param {number[]} payload

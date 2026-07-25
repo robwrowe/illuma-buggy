@@ -2,22 +2,31 @@ import {
   Badge,
   Button,
   Group,
+  NumberInput,
   ScrollArea,
+  SegmentedControl,
+  SimpleGrid,
   Stack,
   Text,
+  TextInput,
   Textarea,
 } from '@mantine/core';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
-import { WAND_LAB_MB_CMDS, WAND_LAB_TAGS, SW_FX_PRESET_BYTES } from '../../lib/ble/mbConstants';
+import { WAND_LAB_MB_CMDS, SW_FX_PRESET_BYTES } from '../../lib/ble/mbConstants';
+import {
+  WAND_LAB_COLORS,
+  WAND_LAB_DEVICE_TYPES,
+  WAND_LAB_LAYOUTS,
+  WAND_LAB_SHOWS,
+} from '../../lib/sheets/wandLabFindings';
 
 export function WandLabLogPanel({
   log,
   filteredLog,
-  tag,
-  onTagChange,
-  note,
-  onNoteChange,
+  form,
+  onFormChange,
+  derivedOpcode,
   logFilter,
   onLogFilterChange,
   editingLogId,
@@ -27,33 +36,130 @@ export function WandLabLogPanel({
   onDeleteEntry,
   onExport,
   onPurge,
+  onRetryPending,
+  pendingCount,
 }) {
+  const patch = (p) => onFormChange({ ...form, ...p });
+  const toggleColor = (c) => {
+    const colors = form.colors || [];
+    patch({
+      colors: colors.includes(c) ? colors.filter((x) => x !== c) : [...colors, c],
+    });
+  };
+
   return (
     <Stack h="100%" gap="sm" p="sm" style={{ minHeight: 0 }}>
       <SectionHead>Observation log</SectionHead>
 
+      <SegmentedControl
+        size="xs"
+        fullWidth
+        value={form.deviceType || 'unknown'}
+        onChange={(v) => patch({ deviceType: v })}
+        data={WAND_LAB_DEVICE_TYPES.map((d) => ({ value: d.value, label: d.label }))}
+      />
+
+      <SimpleGrid cols={2} spacing="xs">
+        <NumberInput
+          label="Total (s)"
+          size="xs"
+          decimalScale={2}
+          step={0.25}
+          min={0}
+          value={form.totalTimeS === '' ? undefined : form.totalTimeS}
+          onChange={(v) => patch({ totalTimeS: v === '' || v == null ? '' : v })}
+        />
+        <NumberInput
+          label="Fade (s)"
+          size="xs"
+          decimalScale={2}
+          step={0.25}
+          min={0}
+          value={form.fadeTimeS === '' ? undefined : form.fadeTimeS}
+          onChange={(v) => patch({ fadeTimeS: v === '' || v == null ? '' : v })}
+        />
+        <NumberInput
+          label="Cycle (s)"
+          size="xs"
+          decimalScale={2}
+          step={0.25}
+          min={0}
+          value={form.cycleTimeS === '' ? undefined : form.cycleTimeS}
+          onChange={(v) => patch({ cycleTimeS: v === '' || v == null ? '' : v })}
+        />
+        <NumberInput
+          label="Cycles"
+          size="xs"
+          allowDecimal={false}
+          min={0}
+          value={form.numCycles === '' ? undefined : form.numCycles}
+          onChange={(v) => patch({ numCycles: v === '' || v == null ? '' : v })}
+        />
+      </SimpleGrid>
+
+      <Text size="xs" fw={600}>Colors</Text>
       <Group gap={4} wrap="wrap">
-        {WAND_LAB_TAGS.map((t) => (
+        {WAND_LAB_COLORS.map((c) => (
           <Badge
-            key={t}
+            key={c}
             size="sm"
-            variant={tag === t ? 'filled' : 'outline'}
+            variant={(form.colors || []).includes(c) ? 'filled' : 'outline'}
             style={{ cursor: 'pointer' }}
-            onClick={() => onTagChange(t)}
+            onClick={() => toggleColor(c)}
           >
-            {t}
+            {c}
           </Badge>
         ))}
       </Group>
 
+      <Text size="xs" fw={600}>Layout</Text>
+      <Group gap={4} wrap="wrap">
+        {WAND_LAB_LAYOUTS.map((l) => (
+          <Badge
+            key={l.value}
+            size="sm"
+            variant={form.layout === l.value ? 'filled' : 'outline'}
+            style={{ cursor: 'pointer' }}
+            onClick={() => patch({ layout: l.value })}
+          >
+            {l.label}
+          </Badge>
+        ))}
+      </Group>
+
+      <Text size="xs" fw={600}>Show</Text>
+      <SearchableSelect
+        value={form.show || ''}
+        allowEmpty={false}
+        onChange={(v) => patch({ show: v })}
+        options={WAND_LAB_SHOWS.map((v) => ({ value: v, label: v, searchText: v }))}
+      />
+
+      <Group gap="xs" align="flex-end" wrap="nowrap">
+        <TextInput
+          label="Opcode"
+          size="xs"
+          style={{ flex: 1 }}
+          value={form.opcodeOverride || derivedOpcode || ''}
+          placeholder={derivedOpcode || 'auto'}
+          onChange={(e) => patch({ opcodeOverride: e.target.value.trim().toUpperCase() })}
+          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+        />
+        {form.opcodeOverride && (
+          <Button size="compact-xs" variant="default" onClick={() => patch({ opcodeOverride: '' })}>
+            Auto
+          </Button>
+        )}
+      </Group>
+
       <Textarea
-        placeholder="What happened on the strip?"
+        placeholder="Notes — what happened on the strip?"
         minRows={2}
         autosize
         maxRows={4}
         size="xs"
-        value={note}
-        onChange={(e) => onNoteChange(e.target.value)}
+        value={form.notes || ''}
+        onChange={(e) => patch({ notes: e.target.value })}
       />
 
       <Group gap="xs" grow>
@@ -67,6 +173,12 @@ export function WandLabLogPanel({
         )}
       </Group>
 
+      {pendingCount > 0 && (
+        <Button size="xs" variant="light" color="orange" onClick={onRetryPending}>
+          Retry {pendingCount} pending Sheets write{pendingCount === 1 ? '' : 's'}
+        </Button>
+      )}
+
       <Group gap={4} wrap="wrap" align="center">
         <Text size="xs" fw={600}>History ({(log || []).length})</Text>
         <SearchableSelect
@@ -77,7 +189,8 @@ export function WandLabLogPanel({
           options={[
             ...Object.keys(SW_FX_PRESET_BYTES),
             ...WAND_LAB_MB_CMDS.map((c) => `mb:${c.id}`),
-            ...WAND_LAB_TAGS,
+            ...WAND_LAB_SHOWS,
+            ...WAND_LAB_DEVICE_TYPES.map((d) => d.value),
             'paste',
             'sequence',
             'burst',
@@ -107,7 +220,9 @@ export function WandLabLogPanel({
               >
                 <Group justify="space-between" wrap="nowrap" align="flex-start" gap={4}>
                   <Text size="xs" fw={600} style={{ flex: 1, minWidth: 0 }}>
-                    {e.presetKey} · {e.tag}
+                    {e.opcode || e.presetKey}
+                    {e.deviceType ? ` · ${e.deviceType}` : e.tag ? ` · ${e.tag}` : ''}
+                    {e.synced === false ? ' · pending' : ''}
                     {e.kind === 'sequence' && e.packets?.length
                       ? ` · ${e.packets.length} pkts`
                       : ''}
@@ -117,8 +232,15 @@ export function WandLabLogPanel({
                     <Button size="compact-xs" color="red" variant="light" onClick={() => onDeleteEntry(e.id)}>✕</Button>
                   </Group>
                 </Group>
-                <Text size="xs" c="dimmed">{new Date(e.ts).toLocaleString()}</Text>
-                {e.note && <Text size="xs" c="dimmed">{e.note}</Text>}
+                <Text size="xs" c="dimmed">{new Date(e.ts || e.createdAt).toLocaleString()}</Text>
+                {(e.notes || e.note) && (
+                  <Text size="xs" c="dimmed">{e.notes || e.note}</Text>
+                )}
+                {(e.colors?.length > 0 || e.layout || e.show) && (
+                  <Text size="xs" c="dimmed">
+                    {[e.layout, (e.colors || []).join(','), e.show].filter(Boolean).join(' · ')}
+                  </Text>
+                )}
                 {e.kind === 'sequence' && e.packets?.length ? (
                   <Stack gap={2}>
                     {e.packets.slice(0, 4).map((p, i) => (
