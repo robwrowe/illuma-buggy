@@ -86,7 +86,7 @@
 
 // Local board-health NeoPixel (not the show strip / GLEDOPTO).
 // DevKitC-1 v1.1+ (incl. v1.3) onboard RGB = GPIO 38; v1.0 used GPIO 48.
-#define STATUS_LED_PIN 38
+#define STATUS_LED_PIN 48
 #define STATUS_LED_COUNT 1
 
 #include <stdint.h>
