@@ -196,8 +196,8 @@ export function activeSegmentsFromPreset(preset, segmentMaps) {
 }
 
 export function pickSegOrWled(seg, wled, key) {
-  if (seg && seg[key] !== undefined && seg[key] !== null) return seg[key];
-  return wled[key];
+  if (wled && wled[key] !== undefined && wled[key] !== null) return wled[key];
+  return seg ? seg[key] : undefined;
 }
 
 export function buildRecalledSegment(seg, wled, should, m, index) {
