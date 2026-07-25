@@ -3,6 +3,7 @@
 
 NimBLE-Arduino    by h2zero             >= 2.0.0
 ArduinoJson       by Benoit Blanchon    >= 7.0.0
+Adafruit NeoPixel by Adafruit           >= 1.12.0
 
 # Built-in to ESP32 Arduino core (no install needed):
 # WiFi, Preferences, HTTPClient, ESP-NOW

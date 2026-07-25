@@ -80,6 +80,15 @@
 #define WIFI_RETRY_MS 5000
 #define LIVE_STATE_POLL_MS 12000
 
+// ESP-NOW scanner link health (shared by PayloadTransport + StatusLed)
+#define SCANNER_ABSENT_MS 20000
+#define SCANNER_ALIVE_MS  10000
+
+// Local board-health NeoPixel (not the show strip / GLEDOPTO).
+// DevKitC-1 v1.1+ (incl. v1.3) onboard RGB = GPIO 38; v1.0 used GPIO 48.
+#define STATUS_LED_PIN 38
+#define STATUS_LED_COUNT 1
+
 #include <stdint.h>
 #include <stddef.h>
 

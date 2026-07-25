@@ -21,6 +21,7 @@
 #include "NvsLargeString.h"
 #include "MbRulesStore.h"
 #include "MbCalibrationStore.h"
+#include "StatusLed.h"
 
 void setup() {
   Serial.begin(115200);
@@ -139,6 +140,7 @@ void setup() {
 
   NimBLEDevice::init(BLE_NAME);
   delay(200);
+  statusLedInit();
   startBLEPeripheral();
 
   // Dual-board: logic board does NOT own the scan radio (no silent fallback).
@@ -199,6 +201,7 @@ void processPendingCommands() {
 }
 
 void loop() {
+  statusLedTick();
   // BLE first — app preset fire / status must not wait behind ESP-NOW rule applies.
   processBleCmdQueue();
   processPendingCommands();

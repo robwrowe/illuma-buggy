@@ -9,11 +9,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-// How long without an ESP-NOW packet before we consider the scanner absent.
-#define SCANNER_ABSENT_MS 20000
-// A packet within this window means the scanner link is healthy.
-#define SCANNER_ALIVE_MS  10000
-
 BoardRole boardRole = BoardRole::STANDALONE;
 uint8_t scannerPeerMac[6] = {0};
 bool scannerPeerConfigured = false;
@@ -196,7 +191,7 @@ static bool ensureEspNowPeer(const uint8_t mac[6]) {
 }
 
 static unsigned long lastPairSendMs = 0;
-static bool localScanFallbackActive = false;
+bool localScanFallbackActive = false;
 
 static void sendPairMessage() {
   EspNowPairMsg msg = {};
