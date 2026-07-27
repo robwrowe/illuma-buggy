@@ -14,6 +14,7 @@
 #include "MbRulesStore.h"
 #include "SdRuleLogger.h"
 #include "StatusDisplay.h"
+#include "MbEffects.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -561,6 +562,21 @@ JsonObject findSegmentInMap(JsonObject segMap, const char* segmentId) {
   return empty;
 }
 
+JsonObject mbSegMapForActiveRule() {
+  JsonObject empty;
+  if (!mbActiveRuleId[0]) return empty;
+  JsonArray rules = gRulesDoc["rules"].as<JsonArray>();
+  if (rules.isNull()) return empty;
+  for (JsonVariant v : rules) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject r = v.as<JsonObject>();
+    if (strcmp(r["id"] | "", mbActiveRuleId) == 0) {
+      return findSegmentMapById(r["segmentMapId"] | "");
+    }
+  }
+  return empty;
+}
+
 static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
   return findSegmentInMap(segMap, segmentId);
 }
@@ -952,7 +968,9 @@ static int blendingStyleFromTypeString(const char* ttype) {
 // -1 = no bs override on FTB (plain transition); set from stopTransition when enabled.
 static int mbRuleStopBlendingStyle = -1;
 
-static void sendMbRuleOff(unsigned long fadeMs) {
+// Shape-safe FTB swap (runs after DIP has already faded to black on the old shape).
+// fadeMs should normally be 0 — the visible fade already happened during DIP.
+static void sendMbRuleOffLegacy(unsigned long fadeMs) {
   int bs = mbRuleStopBlendingStyle;  // -1 if no stopTransition configured
   if (mbFadeToBlackPresetId.length() > 0) {
     if (restorePresetWithTransitionStyled(mbFadeToBlackPresetId, fadeMs, bs)) return;
@@ -962,6 +980,23 @@ static void sendMbRuleOff(unsigned long fadeMs) {
               mbFadeToBlackPresetId + "\"}");
   }
   sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+}
+
+static void beginMbRuleDip(unsigned long fadeMs) {
+  JsonObject segMap = mbSegMapForActiveRule();
+  if (segMap.isNull()) {
+    // No known shape to hold — fall back to old behavior (root on:false / FTB
+    // preset directly). Preserves current behavior for rules with no segmentMapId.
+    sendMbRuleOffLegacy(fadeMs);
+    mbRulePhase = MB_RULE_FADE;
+    mbRulePhaseDeadlineMs = millis() + (fadeMs > 0 ? fadeMs : 1);
+    return;
+  }
+  String body = buildSolidBlackPayloadForSegMap(segMap);
+  sendToWLED(injectWledTransition(body, fadeMs));
+  mbRulePhase = MB_RULE_DIP;
+  mbRulePhaseDeadlineMs = millis() + (fadeMs > 0 ? fadeMs : 1);
+  sdRuleLoggerWrite("lifecycle", "\"transition\":\"ON_TO_DIP\"");
 }
 
 static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload, size_t plen) {
@@ -1076,8 +1111,8 @@ void resetMbRuleLifecycle() {
 void forceRuleLifecycleRestore() {
   if (mbRulePhase == MB_RULE_IDLE) return;
   Serial.println("[Rule] force restore (rule disabled mid-lifecycle)");
-  if (mbRulePhase == MB_RULE_ON || mbRulePhase == MB_RULE_FADE) {
-    sendMbRuleOff(0);
+  if (mbRulePhase == MB_RULE_ON || mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
+    sendMbRuleOffLegacy(0);
   }
   unsigned long savedFade = bleEffectTransitionMs;
   bleEffectTransitionMs = 0;
@@ -1096,11 +1131,19 @@ void serviceMbRuleLifecycle() {
   if ((long)(millis() - mbRulePhaseDeadlineMs) < 0) return;
 
   if (mbRulePhase == MB_RULE_ON) {
-    Serial.printf("[Rule] ON→FADE fadeMs=%lu\n", mbRuleFadeMs);
-    sdRuleLoggerWrite("lifecycle", "\"transition\":\"ON_TO_FADE\"");
-    sendMbRuleOff(mbRuleFadeMs);
+    Serial.printf("[Rule] ON→DIP fadeMs=%lu\n", mbRuleFadeMs);
+    beginMbRuleDip(mbRuleFadeMs);
+    return;
+  }
+  if (mbRulePhase == MB_RULE_DIP) {
+    // Already black on the OLD shape. Swap shape + apply FTB/resume look now —
+    // geometry changes while color is 0,0,0 so no crossfade artifact is visible.
+    Serial.println("[Rule] DIP→FADE (shape swap at black)");
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"DIP_TO_FADE\"");
+    sendMbRuleOffLegacy(0);
     mbRulePhase = MB_RULE_FADE;
-    mbRulePhaseDeadlineMs = millis() + (mbRuleFadeMs > 0 ? mbRuleFadeMs : 1);
+    // FADE is a brief settle window before COOLDOWN — visible fade was during DIP.
+    mbRulePhaseDeadlineMs = millis() + 1;
     return;
   }
   if (mbRulePhase == MB_RULE_FADE) {
@@ -1113,7 +1156,7 @@ void serviceMbRuleLifecycle() {
   if (mbRulePhase == MB_RULE_COOLDOWN) {
     Serial.println("[Rule] BLACK_HOLD→restore");
     sdRuleLoggerWrite("lifecycle", "\"transition\":\"BLACK_HOLD_TO_RESTORE\"");
-    // Already black from FADE — restore without a second dip-to-black.
+    // Already black from DIP/FADE — restore without a second dip-to-black.
     unsigned long savedFade = bleEffectTransitionMs;
     bleEffectTransitionMs = 0;
     resetMbRuleLifecycle();
@@ -1127,10 +1170,10 @@ void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size
   const char* ruleId = rule["id"] | "";
   if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
 
-  // FADE / COOLDOWN: FTB (or black hold) already turned the effect off. A same-payload
+  // DIP / FADE / COOLDOWN: FTB (or black hold) already turned the effect off. A same-payload
   // match must re-POST WLED — flipping phase/deadline alone leaves the strip black.
-  if (mbRulePhase == MB_RULE_FADE) {
-    Serial.printf("[Rule] repeat during FTB — re-apply id=%s\n", ruleId);
+  if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
+    Serial.printf("[Rule] repeat during dip/FTB — re-apply id=%s\n", ruleId);
     applyMatchedRule(rule, payload, plen);
     return;
   }

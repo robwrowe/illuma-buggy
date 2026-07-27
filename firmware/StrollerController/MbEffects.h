@@ -2,6 +2,7 @@
 
 #include "Types.h"
 #include <Arduino.h>
+#include <ArduinoJson.h>
 
 // Serial-console debug helpers (mb five / mb <pal> [mask]) — not on the packet path.
 void applyMbFive(uint8_t topLeft, uint8_t bottomLeft, uint8_t bottomRight, uint8_t topRight, uint8_t center, OverrideSource src);
@@ -17,3 +18,6 @@ void appendDisableInactiveSegments(String& body, bool& first, const uint8_t* act
 void appendWledSolidSeg(String& body, const WledSegRef& ref, uint8_t r, uint8_t g, uint8_t b, bool& first);
 void addActiveSegId(uint8_t id, uint8_t* out, uint8_t& count);
 void collectActiveSegIds(const MbSegMap& map, uint8_t* out, uint8_t& count);
+
+/** Solid black on every segment in segMap at its current geometry (shape-safe FTB dip). */
+String buildSolidBlackPayloadForSegMap(JsonObject segMap);

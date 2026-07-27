@@ -28,6 +28,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 JsonObject findSegmentMapById(const char* mapId);
 /** Look up a segment by id within a segment map. Null object if missing. */
 JsonObject findSegmentInMap(JsonObject segMap, const char* segmentId);
+/** Segment map for the currently active timed rule (`mbActiveRuleId`). Null if none. */
+JsonObject mbSegMapForActiveRule();
 
 // Load/parse the rules document (rules + segmentMaps + colors + paradeDetection + …).
 // Returns false when a full-replace cache reparse fails (previous gRulesDoc kept).

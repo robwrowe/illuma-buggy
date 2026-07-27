@@ -75,9 +75,11 @@ enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS };
 enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
 
 // Rule-engine effect lifecycle (timing-byte driven). IDLE = use flat magicBandTimeoutMs.
+// ON → DIP (fade to black on current shape) → FADE (shape-safe FTB/off) → COOLDOWN → restore.
 enum MbRulePhase : uint8_t {
   MB_RULE_IDLE = 0,
   MB_RULE_ON,
+  MB_RULE_DIP,
   MB_RULE_FADE,
   MB_RULE_COOLDOWN,
 };
