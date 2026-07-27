@@ -15,6 +15,7 @@ import { useMediaQuery } from '@mantine/hooks';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import {
+  MB_PAL_OFF,
   MB_PATTERN_MODES,
   SW_FX_PRESET_BYTES,
   WAND_LAB_MB_CMDS,
@@ -84,7 +85,7 @@ export function WandLabTab({ data, update }) {
   const [status, setStatus] = useState('');
   const [logFilter, setLogFilter] = useState('');
   const [mbCmd, setMbCmd] = useState('single');
-  const [mbPal, setMbPal] = useState('21');
+  const [mbPal, setMbPal] = useState(String(MB_PAL_OFF));
   const [mbMask, setMbMask] = useState('0');
   const [mbInner, setMbInner] = useState('21');
   const [mbOuter, setMbOuter] = useState('0');
