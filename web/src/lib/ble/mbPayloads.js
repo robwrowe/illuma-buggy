@@ -10,6 +10,17 @@ export function mbColorByte(paletteIdx, patternNibble) {
   return ((patternNibble << 5) | (paletteIdx & 0x1F)) & 0xFF;
 }
 
+/** Decode E905-style mask (top 3 bits) + palette (bottom 5 bits) from one byte. */
+export function decodeMbColorMaskByte(byte) {
+  const b = Number(byte) & 0xff;
+  return { mask: (b >> 5) & 0x07, palette: b & 0x1F };
+}
+
+/** Encode E905-style mask + palette into one byte. */
+export function encodeMbColorMaskByte(paletteIdx, mask = 0) {
+  return mbColorByte(paletteIdx & 0x1f, mask & 0x07);
+}
+
 export function buildMbSingle(paletteIdx, mask = 0, timing = 0x09, vibration = 0) {
   const out = new Array(9);
   out[0] = 0xE1; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x05; out[4] = 0x00; out[5] = timing;

@@ -127,21 +127,61 @@ export function normalizeRandomPool(raw: Partial<MbRandomPool> | undefined): MbR
   };
 }
 
-export const MB_COLOR_NAMES: string[] = [
-  'cyan', 'purple', 'blue', 'midnight blue', 'blue 2', 'bright purple', 'lavender', 'purple',
-  'pink', 'pink 2', 'pink 3', 'pink 4', 'pink 5', 'pink 6', 'pink 7', 'yellow orange',
-  'off yellow', 'yellow orange 2', 'lime', 'orange', 'red orange', 'red',
-  'cyan 2', 'cyan 3', 'cyan 4', 'green', 'lime green', 'white', 'white 2',
-  'off', 'unique', 'random',
+export const MB_PALETTE: { color: string; description: string; hex: string }[] = [
+  { color: 'Green', description: 'Very light mint green', hex: '#e0ffe6' },
+  { color: 'Blue', description: 'Light sky blue', hex: '#99bdff' },
+  { color: 'Blue', description: 'Medium royal blue', hex: '#576aff' },
+  { color: 'Blue', description: 'Bright cornflower blue', hex: '#5985ff' },
+  { color: 'Blue', description: 'Deep vivid blue', hex: '#1c33ff' },
+  { color: 'Purple', description: 'Light lavender pink', hex: '#e2a3ff' },
+  { color: 'Purple', description: 'Very light periwinkle', hex: '#d5baff' },
+  { color: 'Purple', description: 'Light orchid', hex: '#d7a6ff' },
+  { color: 'Purple', description: 'Bright purple-pink', hex: '#d470ff' },
+  { color: 'Pink', description: 'Bright pink', hex: '#ffa3fc' },
+  { color: 'Pink', description: 'Soft bright pink', hex: '#ec9eff' },
+  { color: 'Pink', description: 'Vibrant hot pink', hex: '#f678ff' },
+  { color: 'Pink', description: 'Bright pink-purple', hex: '#e485ff' },
+  { color: 'Pink', description: 'Strong neon magenta', hex: '#f86eff' },
+  { color: 'Red', description: 'Bright cherry red', hex: '#ff3856' },
+  { color: 'Yellow', description: 'Bright golden yellow', hex: '#ffbb00' },
+  { color: 'Yellow', description: 'Pale lemon yellow', hex: '#ffff8e' },
+  { color: 'Yellow', description: 'Strong golden yellow', hex: '#ffdd00' },
+  { color: 'Yellow', description: 'Electric chartreuse', hex: '#ccff00' },
+  { color: 'Orange', description: 'Bright orange', hex: '#ff9d00' },
+  { color: 'Orange', description: 'Vivid orange', hex: '#ff7300' },
+  { color: 'Red', description: 'Bright red-orange', hex: '#ff2200' },
+  { color: 'Teal', description: 'Bright cyan', hex: '#00ffea' },
+  { color: 'Teal', description: 'Bright mint aqua', hex: '#66ffd1' },
+  { color: 'Teal', description: 'Light cyan', hex: '#8fffee' },
+  { color: 'Green', description: 'Bright lime green', hex: '#00ff26' },
+  { color: 'Yellow', description: 'Bright neon yellow-green', hex: '#afff03' },
+  { color: 'White', description: 'Very light lavender blue', hex: '#eceeff' },
+  { color: 'White', description: 'Pure white', hex: '#ffffff' },
+  { color: 'Black', description: 'Pure black', hex: '#000000' },
 ];
+
+export const MB_COLOR_NAMES: string[] = [
+  ...MB_PALETTE.map((p) => p.color),
+  'Unique',
+  'Random',
+];
+
+export function mbPaletteLabel(idx: number): string {
+  if (!Number.isInteger(idx) || idx < 0) return String(idx);
+  if (idx < MB_PALETTE.length) {
+    const p = MB_PALETTE[idx];
+    return `${idx} - ${p.color} - ${p.description}`;
+  }
+  if (idx === 30) return '30 - Unique - Runtime unique color';
+  if (idx === 31) return '31 - Random - Runtime random from pool';
+  return String(idx);
+}
 
 /** Sensible WLED defaults for each MB palette index */
 export const DEFAULT_MB_WLED_COLORS: string[] = [
-  '#00ffff', '#9900ff', '#0000ff', '#000080', '#0066ff', '#cc44ff', '#cc99ff', '#7700cc',
-  '#ff66b2', '#ff5aa8', '#ff509e', '#ff4a94', '#ff6e96', '#ff82a0', '#ffa0aa', '#ffaa00',
-  '#cccc00', '#ff8800', '#aaff00', '#ff6600', '#ff3300', '#ff0000',
-  '#3cffff', '#28f0ff', '#14c8ff', '#00ff00', '#66ff28', '#ffffff', '#f0f0f0',
-  '#000000', '#ff9933', '#ff00ff',
+  ...MB_PALETTE.map((p) => p.hex),
+  '#ff9933',
+  '#ff00ff',
 ];
 
 /**

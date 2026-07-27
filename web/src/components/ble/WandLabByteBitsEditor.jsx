@@ -1,8 +1,64 @@
 import { useEffect, useState } from 'react';
-import { Group, Stack, Text, TextInput } from '@mantine/core';
+import {
+  Checkbox,
+  Group,
+  NumberInput,
+  SegmentedControl,
+  Stack,
+  Text,
+  TextInput,
+} from '@mantine/core';
+import { Field } from '../shared/Field';
+import { SearchableSelect } from '../shared/SearchableSelect';
+import { mbPaletteOptions } from '../../lib/ble/mbConstants';
+import {
+  decodeTimingByte,
+  timingByteFromEditFields,
+  timingByteToEditFields,
+} from '../../lib/ble/e9Decode';
+import {
+  decodeMbColorMaskByte,
+  encodeMbColorMaskByte,
+} from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
 
-function ByteBitsRow({ byteIndex, byteValue, onChange }) {
+const EDIT_MODES = [
+  { value: 'binary', label: 'Bin' },
+  { value: 'timing', label: 'Time' },
+  { value: 'maskColor', label: 'C+M' },
+];
+
+const CARD_STYLE = {
+  flex: '1 1 220px',
+  maxWidth: '100%',
+  minWidth: 200,
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  background: 'var(--surface2)',
+};
+
+function ByteValueReadout({ byteValue }) {
+  const hex = (byteValue & 0xff).toString(16).padStart(2, '0').toUpperCase();
+  const bits = byteToBitString(byteValue & 0xff);
+  return (
+    <Group gap={6} align="flex-end" wrap="nowrap">
+      <TextInput
+        label="Bits"
+        value={bits}
+        disabled
+        size="xs"
+        ff="monospace"
+        w={96}
+        styles={{ input: { cursor: 'default', paddingInline: 6 } }}
+      />
+      <Text size="xs" ff="monospace" c="dimmed" pb={4}>
+        0x{hex}
+      </Text>
+    </Group>
+  );
+}
+
+function BinaryByteEditor({ byteIndex, byteValue, onChange }) {
   const [draft, setDraft] = useState('');
 
   useEffect(() => {
@@ -31,45 +87,183 @@ function ByteBitsRow({ byteIndex, byteValue, onChange }) {
     commit(padded);
   };
 
-  const hex = (byteValue & 0xff).toString(16).padStart(2, '0').toUpperCase();
-
   return (
-    <Group gap="sm" align="flex-end" wrap="wrap">
+    <Group gap={6} align="flex-end" wrap="nowrap">
       <TextInput
-        label={`Byte ${byteIndex} — binary (MSB → LSB)`}
-        description="Type 0/1 — hex updates when 8 bits are entered (or on blur)"
+        label="Bits"
         value={draft}
         onChange={handleChange}
         onBlur={handleBlur}
         size="xs"
         ff="monospace"
         placeholder="10100000"
-        maw={200}
-        style={{ flex: '1 1 200px' }}
+        w={96}
+        styles={{ input: { paddingInline: 6 } }}
       />
-      <Text size="xs" ff="monospace" c="dimmed" pb={6}>
-        = 0x{hex} ({byteValue & 0xff})
+      <Text size="xs" ff="monospace" c="dimmed" pb={4}>
+        0x{(byteValue & 0xff).toString(16).padStart(2, '0').toUpperCase()}
       </Text>
     </Group>
   );
 }
 
-export function WandLabByteBitsEditor({ selections, onChange }) {
-  if (!selections?.length) return null;
+function TimingByteEditor({ byteIndex, byteValue, onChange }) {
+  const [fields, setFields] = useState(() => timingByteToEditFields(byteValue));
+
+  useEffect(() => {
+    setFields(timingByteToEditFields(byteValue));
+  }, [byteIndex, byteValue]);
+
+  const applyFields = (next) => {
+    setFields(next);
+    onChange(byteIndex, timingByteFromEditFields(next));
+  };
+
+  const decoded = decodeTimingByte(byteValue);
 
   return (
-    <Stack gap="sm">
-      <Text size="xs" c="dimmed" fw={600} tt="uppercase">
-        {selections.length === 1 ? 'Byte bits' : 'Selected byte bits'}
-      </Text>
-      {selections.map(({ index, value }) => (
-        <ByteBitsRow
-          key={index}
-          byteIndex={index}
-          byteValue={value}
-          onChange={onChange}
+    <Stack gap={4}>
+      <Group gap={6} align="flex-start" wrap="wrap" grow>
+        <Field label="On (s)" style={{ marginBottom: 0, flex: '1 1 72px' }}>
+          <NumberInput
+            size="xs"
+            min={0}
+            step={0.1}
+            decimalScale={2}
+            value={fields.onSec}
+            onChange={(v) => applyFields({ ...fields, onSec: Number(v) || 0 })}
+          />
+        </Field>
+        <Field label="Fade (s)" style={{ marginBottom: 0, flex: '1 1 72px' }}>
+          <NumberInput
+            size="xs"
+            min={0}
+            step={0.1}
+            decimalScale={2}
+            value={fields.fadeSec}
+            onChange={(v) => applyFields({ ...fields, fadeSec: Number(v) || 0 })}
+          />
+        </Field>
+      </Group>
+      <Group gap="xs">
+        <Checkbox
+          size="xs"
+          label="3×"
+          checked={fields.scaler}
+          onChange={(e) => applyFields({ ...fields, scaler: e.currentTarget.checked })}
         />
-      ))}
+        <Checkbox
+          size="xs"
+          label="Ext"
+          checked={fields.extended}
+          onChange={(e) => applyFields({ ...fields, extended: e.currentTarget.checked })}
+        />
+      </Group>
+      <Text size="xs" c="dimmed" ff="monospace">
+        t={decoded.t} fade={decoded.fadeBits}
+      </Text>
+      <ByteValueReadout byteValue={byteValue} />
+    </Stack>
+  );
+}
+
+function MaskColorByteEditor({ byteIndex, byteValue, onChange }) {
+  const palOpts = mbPaletteOptions();
+  const [fields, setFields] = useState(() => decodeMbColorMaskByte(byteValue));
+
+  useEffect(() => {
+    setFields(decodeMbColorMaskByte(byteValue));
+  }, [byteIndex, byteValue]);
+
+  const applyFields = (next) => {
+    setFields(next);
+    onChange(byteIndex, encodeMbColorMaskByte(next.palette, next.mask));
+  };
+
+  return (
+    <Stack gap={4}>
+      <Field label="Palette" style={{ marginBottom: 0 }}>
+        <SearchableSelect
+          value={String(fields.palette)}
+          allowEmpty={false}
+          onChange={(v) => applyFields({ ...fields, palette: parseInt(v, 10) || 0 })}
+          options={palOpts}
+        />
+      </Field>
+      <Field label="Mask (0–7)" style={{ marginBottom: 0 }}>
+        <NumberInput
+          size="xs"
+          min={0}
+          max={7}
+          value={fields.mask}
+          onChange={(v) => applyFields({ ...fields, mask: Math.max(0, Math.min(7, Number(v) || 0)) })}
+        />
+      </Field>
+      <Text size="xs" c="dimmed" ff="monospace">
+        m={fields.mask} pal={fields.palette}
+      </Text>
+      <ByteValueReadout byteValue={byteValue} />
+    </Stack>
+  );
+}
+
+function ByteEditorCard({ byteIndex, byteValue, editMode, onEditModeChange, onChange }) {
+  return (
+    <Stack gap={6} p={8} style={CARD_STYLE}>
+      <Group justify="space-between" align="center" wrap="nowrap" gap={4}>
+        <Text size="xs" fw={700} ff="monospace">
+          [{byteIndex}]
+        </Text>
+        <SegmentedControl
+          size="xs"
+          value={editMode}
+          onChange={onEditModeChange}
+          data={EDIT_MODES}
+          styles={{
+            root: { flexShrink: 1 },
+            label: { paddingInline: 6, fontSize: 11 },
+          }}
+        />
+      </Group>
+      {editMode === 'binary' && (
+        <BinaryByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
+      )}
+      {editMode === 'timing' && (
+        <TimingByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
+      )}
+      {editMode === 'maskColor' && (
+        <MaskColorByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
+      )}
+    </Stack>
+  );
+}
+
+export function WandLabByteBitsEditor({ selections, onChange }) {
+  const [editModes, setEditModes] = useState({});
+
+  if (!selections?.length) return null;
+
+  const setMode = (index, mode) => {
+    setEditModes((prev) => ({ ...prev, [index]: mode }));
+  };
+
+  return (
+    <Stack gap="xs">
+      <Text size="xs" c="dimmed" fw={600} tt="uppercase">
+        {selections.length === 1 ? 'Byte editor' : 'Selected byte editors'}
+      </Text>
+      <Group gap="xs" align="stretch" wrap="wrap">
+        {selections.map(({ index, value }) => (
+          <ByteEditorCard
+            key={index}
+            byteIndex={index}
+            byteValue={value}
+            editMode={editModes[index] ?? 'binary'}
+            onEditModeChange={(mode) => setMode(index, mode)}
+            onChange={onChange}
+          />
+        ))}
+      </Group>
     </Stack>
   );
 }

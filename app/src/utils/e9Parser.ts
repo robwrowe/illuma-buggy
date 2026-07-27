@@ -3,7 +3,7 @@
  * Decode/display only — WLED decisions live in firmware MbRuleEngine.
  */
 
-import { MB_COLOR_NAMES } from './mbConfig';
+import { mbPaletteLabel } from './mbConfig';
 
 export const STANDARD_COLOR_MASK = 0b101; // bits 7-5 — "normal color" mask
 
@@ -467,7 +467,7 @@ export function paletteIndexToHex(idx: number, colors: string[]): string {
 }
 
 export function describeParsedE9(parsed: ParsedE9, colors?: string[]): string {
-  const palName = (idx: number) => colors?.[idx] ? `${idx} (${MB_COLOR_NAMES[idx] ?? 'pal'})` : String(idx);
+  const palName = (idx: number) => (colors?.[idx] ? mbPaletteLabel(idx) : String(idx));
 
   switch (parsed.kind) {
     case 'E905':

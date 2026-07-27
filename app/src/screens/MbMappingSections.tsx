@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import {
   MbMappingConfig,
-  MB_COLOR_NAMES, DEFAULT_MB_MAPPING,
+  MB_COLOR_NAMES, DEFAULT_MB_MAPPING, mbPaletteLabel,
   MB_PAL_OFF, MB_PAL_UNIQUE, MB_PAL_RANDOM,
   defaultRandomPaletteIndices, mbPaletteEligibleForRandom,
 } from '../utils/mbConfig';
@@ -302,11 +302,11 @@ export function MbMappingSections({ colors, isConnected }: { colors: Colors; isC
             themeColors={colors}
             onChange={randomPool => push({ ...mbMapping, randomPool })}
           />
-          {MB_COLOR_NAMES.map((name, idx) => (
+          {MB_COLOR_NAMES.map((_, idx) => (
             <View key={idx} style={s.colorRow}>
               <View style={[s.swatch, { backgroundColor: mbMapping.colors[idx] }]} />
               <View style={{ flex: 1 }}>
-                <Text style={s.label}>{idx} · {name}</Text>
+                <Text style={s.label}>{mbPaletteLabel(idx)}</Text>
                 {idx === MB_PAL_RANDOM && (
                   <Text style={{ color: colors.textMuted, fontSize: 10, marginTop: 2 }}>
                     Resolved at runtime from random pool above

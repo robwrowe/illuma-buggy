@@ -23,7 +23,7 @@ import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
-import { MB_COLOR_NAMES, MB_PAL_RANDOM } from '../../lib/ble/mbConstants';
+import { MB_COLOR_NAMES, MB_PAL_RANDOM, mbPaletteLabel } from '../../lib/ble/mbConstants';
 import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
 import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
@@ -176,7 +176,7 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
               onChange={randomPool => setMb({ randomPool })}
             />
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-              {MB_COLOR_NAMES.map((name, idx) => (
+              {MB_COLOR_NAMES.map((_, idx) => (
                 <Paper key={idx} p="xs" bg="var(--surface2)" radius="md">
                   <Group gap="xs" mb={6} wrap="nowrap">
                     <Paper
@@ -186,7 +186,7 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
                       style={{ background: mb.colors[idx], border: '1px solid var(--border)', flexShrink: 0 }}
                     />
                     <Stack gap={2}>
-                      <Text size="xs" fw={600}>{idx} · {name}</Text>
+                      <Text size="xs" fw={600}>{mbPaletteLabel(idx)}</Text>
                       {idx === MB_PAL_RANDOM && (
                         <Text size="xs" c="dimmed">Resolved at runtime from random pool</Text>
                       )}
