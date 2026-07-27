@@ -10,15 +10,126 @@ const CAPTURE_HEX_TAIL_RE = /(8301[0-9a-fA-F]{8,})\s*$/i;
 const CAPTURE_HEAD_RE = /^(\d{10,})\s+(-?\d+)\s+(\S+)/;
 const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/i;
 
-/** Column indices for tab-delimited Illuma capture exports. */
+/** Default Sheets / observation export header (tab- or comma-separated). */
+export const SHEETS_CAPTURE_HEADER =
+  'observation_id\tsession_id\tsession_name\thex\topcode\ttag\tboard_ts\treceived_at\trssi\tlen\tquality\tfunc\tlabel\tnote\tdevice_id\tlat\tlng\taccuracy_m\tgps_updated_at';
+
+/** Column indices for legacy tab-delimited Illuma capture exports. */
 const CAPTURE_LAYOUTS = {
   legacy: { hex: 6, tag: 2, deviceId: null, lat: null, lng: null, accuracyM: null },
   device: { hex: 7, tag: 3, deviceId: 2, lat: null, lng: null, accuracyM: null },
   gps: { hex: 10, tag: 6, deviceId: 2, lat: 3, lng: 4, accuracyM: 5 },
+  // Compact paste: hex, [opcode], tag, board_ts  — or hex, tag, board_ts
+  compact: { hex: 0, tag: -1, deviceId: null, lat: null, lng: null, accuracyM: null },
 };
 
+function looksLikeEpochMs(s) {
+  const t = String(s || '').trim();
+  // Epoch ms (~13 digits) or high-res board clocks; exclude short counters.
+  return /^\d{12,}$/.test(t);
+}
+
+function looksLikeHexPayload(s) {
+  const h = cleanHex(s);
+  return h.length >= 12 && h.toLowerCase().startsWith('8301');
+}
+
+/**
+ * Compact / sheets-subset row: hex in first column (or soon after), epoch ms in last column.
+ * Examples:
+ *   hex\topcode\ttag\tboard_ts
+ *   hex\ttag\tboard_ts
+ */
+function isCompactCaptureFields(fields) {
+  if (!fields || fields.length < 2) return false;
+  if (!looksLikeHexPayload(fields[0])) return false;
+  return looksLikeEpochMs(fields[fields.length - 1]);
+}
+
+function parseCompactCaptureLine(line) {
+  const fields = splitDelimited(line);
+  const hex = cleanHex(fields[0] || '');
+  const ts = parseTimestampMs(fields[fields.length - 1]);
+  // tag is usually the last non-empty text field before the timestamp.
+  let tag = '';
+  for (let i = fields.length - 2; i >= 1; i--) {
+    const v = (fields[i] || '').trim();
+    if (!v) continue;
+    // Skip opcode-looking tokens (E90E, CC03) if a later text tag exists; prefer MB+/DISNEY.
+    if (/^[0-9a-fA-F]{4}$/.test(v) && i === 1 && fields.length >= 4) continue;
+    tag = v;
+    break;
+  }
+  if (!tag && fields.length >= 3) tag = (fields[fields.length - 2] || '').trim();
+  return { ts_ms: ts, hex, tag };
+}
+
+function splitDelimited(line) {
+  if ((line || '').includes('\t')) return line.split('\t');
+  if ((line || '').includes(',')) return line.split(',');
+  return [line];
+}
+
+function normalizeHeaderCell(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\ufeff/, '');
+}
+
+/** True when the first content line is the observation/sheets column header. */
+export function isSheetsCaptureHeader(line) {
+  const cells = splitDelimited(line).map(normalizeHeaderCell);
+  if (!cells.includes('hex')) return false;
+  // Prefer the full observation export; also accept close variants with session_id.
+  return cells.includes('observation_id') || cells.includes('session_id');
+}
+
+function sheetsColumnMap(headerLine) {
+  const cells = splitDelimited(headerLine).map(normalizeHeaderCell);
+  const idx = (name) => {
+    const i = cells.indexOf(name);
+    return i >= 0 ? i : null;
+  };
+  return {
+    hex: idx('hex'),
+    tag: idx('tag'),
+    label: idx('label'),
+    boardTs: idx('board_ts'),
+    receivedAt: idx('received_at'),
+    deviceId: idx('device_id'),
+    lat: idx('lat'),
+    lng: idx('lng'),
+    accuracyM: idx('accuracy_m'),
+    opcode: idx('opcode'),
+    note: idx('note'),
+  };
+}
+
+function fieldAt(fields, idx) {
+  if (idx == null || idx < 0 || idx >= fields.length) return '';
+  return (fields[idx] || '').trim();
+}
+
+function parseTimestampMs(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  // Pure integers are epoch/board ms (boot millis can be short; epoch is 13 digits).
+  if (/^\d+$/.test(s)) return Number(s);
+  // ISO / date strings only — never Date.parse bare numbers (year 1000, etc.).
+  if (/[T\-\/:]/.test(s)) {
+    const parsed = Date.parse(s);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function cleanHex(raw) {
+  return String(raw || '').replace(/[^0-9a-fA-F]/g, '');
+}
+
 function hexAtField(fields, idx) {
-  const h = (fields[idx] || '').replace(/[^0-9a-fA-F]/g, '');
+  const h = cleanHex(fields[idx] || '');
   return h.length >= 12 && h.toLowerCase().startsWith('8301') ? h : '';
 }
 
@@ -30,14 +141,25 @@ function extractCaptureHexFromFields(fields, format) {
     const h = hexAtField(fields, i);
     if (h) return h;
   }
-  return (fields[layout.hex] || '').replace(/[^0-9a-fA-F]/g, '');
+  return cleanHex(fields[layout.hex] || '');
 }
 
 function isCaptureLine(line) {
   const t = (line || '').trim();
   if (!t || t.startsWith('#')) return false;
-  if (t.includes('\t')) return true;
+  if (isSheetsCaptureHeader(t)) return false;
+  if (t.includes('\t') || (t.includes(',') && /[0-9a-fA-F]{12,}/i.test(t))) return true;
+  // One Disney packet hex per line (no tabs/spaces) — common paste from spreadsheets / exports.
+  if (isPlainHexPacketLine(t)) return true;
   return CAPTURE_HEAD_RE.test(t) && CAPTURE_HEX_TAIL_RE.test(t);
+}
+
+/** True when the whole line is a single hex payload (optional 8301 prefix). */
+function isPlainHexPacketLine(line) {
+  const t = String(line || '').trim();
+  if (!t || /[\s,]/.test(t)) return false;
+  const h = cleanHex(t);
+  return h.length >= 12 && h.length === t.length;
 }
 
 function contentLines(raw) {
@@ -63,10 +185,16 @@ function parseOptionalFloat(s) {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** Read `# ts_ms …` header comment from a capture export. */
+/**
+ * Detect capture layout from a `# ts_ms …` comment header or a sheets column header.
+ * Returns 'sheets' | 'gps' | 'device' | 'legacy' | null.
+ */
 export function detectCaptureFormatFromHeader(raw) {
-  for (const line of (raw || '').split(/\r?\n/)) {
+  const lines = (raw || '').split(/\r?\n/);
+  for (const line of lines) {
     const t = line.trim();
+    if (!t) continue;
+    if (isSheetsCaptureHeader(t)) return 'sheets';
     if (!t.startsWith('#')) continue;
     const hdr = t.replace(/^#\s*/, '').toLowerCase();
     if (!hdr.includes('ts_ms')) continue;
@@ -79,9 +207,12 @@ export function detectCaptureFormatFromHeader(raw) {
   return null;
 }
 
-/** Infer layout from a single tab-separated data row. */
+/** Infer layout from a single tab-separated data row (legacy fixed-column formats). */
 export function detectCaptureFormatFromFields(fields) {
   if (!fields?.length) return 'legacy';
+
+  // hex … board_ts (no header) — common Sheets column subset paste
+  if (isCompactCaptureFields(fields)) return 'compact';
 
   if (hexAtField(fields, CAPTURE_LAYOUTS.gps.hex)) return 'gps';
 
@@ -103,34 +234,72 @@ export function detectCaptureFormatFromFields(fields) {
 function captureFormatForRaw(raw) {
   const fromHeader = detectCaptureFormatFromHeader(raw);
   if (fromHeader) return fromHeader;
-  const first = contentLines(raw).find((l) => l.includes('\t'));
-  if (first) return detectCaptureFormatFromFields(first.split('\t'));
+  const first = contentLines(raw).find((l) => l.includes('\t') || l.includes(','));
+  if (first) {
+    if (isSheetsCaptureHeader(first)) return 'sheets';
+    // Prefer sheets-like rows that have a hex-looking cell even without a header
+    // when pasted without the header line (rare) — fall through to field detect.
+    return detectCaptureFormatFromFields(splitDelimited(first));
+  }
   return 'legacy';
 }
 
-function dedupeCaptureRows(rows) {
-  const deduped = [];
-  for (const row of rows) {
-    if (deduped.length && deduped[deduped.length - 1].hex === row.hex) continue;
-    deduped.push(row);
+function findSheetsHeaderLine(raw) {
+  for (const line of (raw || '').split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    if (isSheetsCaptureHeader(t)) return t;
   }
-  return deduped;
+  return null;
+}
+
+function parseSheetsCaptureLine(line, colMap) {
+  const fields = splitDelimited(line);
+  let hex = cleanHex(fieldAt(fields, colMap.hex));
+  if (hex.length < 12) {
+    // Fallback: scan for an 8301… cell if the hex column was empty/misaligned.
+    for (let i = 0; i < fields.length; i++) {
+      const h = hexAtField(fields, i);
+      if (h) { hex = h; break; }
+    }
+  }
+  const tag = fieldAt(fields, colMap.tag) || fieldAt(fields, colMap.label) || '';
+  const ts =
+    parseTimestampMs(fieldAt(fields, colMap.boardTs)) ??
+    parseTimestampMs(fieldAt(fields, colMap.receivedAt));
+  const deviceId = fieldAt(fields, colMap.deviceId) || undefined;
+  const lat = parseOptionalFloat(fieldAt(fields, colMap.lat));
+  const lng = parseOptionalFloat(fieldAt(fields, colMap.lng));
+  const accuracyM = parseOptionalFloat(fieldAt(fields, colMap.accuracyM));
+  const note = fieldAt(fields, colMap.note) || undefined;
+  const opcode = fieldAt(fields, colMap.opcode) || undefined;
+  return {
+    ts_ms: ts,
+    hex,
+    tag,
+    deviceId: deviceId || undefined,
+    lat,
+    lng,
+    accuracyM,
+    note,
+    opcode,
+  };
 }
 
 function hexToPayloadBytes(hex, strip8301) {
-  let h = (hex || '').replace(/[^0-9a-fA-F]/g, '');
+  let h = cleanHex(hex);
   if (!h) return [];
   if (strip8301 && hasCompanyIdPrefix(h)) h = stripCompanyId(h);
   return parseHexToBytes(h);
 }
 
 function captureRowsToPackets(rows, { defaultWaitMs, lastHoldMs, strip8301 }) {
-  const deduped = dedupeCaptureRows(rows);
-  return deduped.map((row, i) => {
+  // Keep every row — consecutive identical hex often has meaningful inter-arrival timing.
+  return rows.map((row, i) => {
     let waitMs = defaultWaitMs;
-    if (i < deduped.length - 1) {
+    if (i < rows.length - 1) {
       const a = row.ts_ms;
-      const b = deduped[i + 1].ts_ms;
+      const b = rows[i + 1].ts_ms;
       if (a != null && b != null && b > a) waitMs = Math.max(50, b - a);
     } else {
       waitMs = lastHoldMs;
@@ -177,11 +346,11 @@ export function parsePasteToPackets(raw, options = {}) {
     };
   }
 
-  if (lines.some(isCaptureLine)) {
+  if (lines.some(isCaptureLine) || lines.some(isSheetsCaptureHeader)) {
     const format = captureFormatForRaw(raw);
     const rows = lines
       .filter(isCaptureLine)
-      .map((line) => parseCaptureLine(line, format))
+      .map((line) => parseCaptureLine(line, format, raw))
       .filter((r) => r.hex.length >= 12);
     const packets = captureRowsToPackets(rows, { defaultWaitMs, lastHoldMs, strip8301 });
     return {
@@ -223,33 +392,61 @@ export function parseCapturePaste(raw) {
   const lines = contentLines(raw);
   if (!lines.length) return { mode: 'empty' };
 
-  if (lines.length > 1 || lines[0].includes('\t') || isCaptureLine(lines[0])) {
+  if (lines.length > 1 || lines[0].includes('\t') || lines[0].includes(',') || isCaptureLine(lines[0])) {
     const format = captureFormatForRaw(raw);
     const rows = lines
       .filter(isCaptureLine)
-      .map((line) => parseCaptureLine(line, format))
+      .map((line) => parseCaptureLine(line, format, raw))
       .filter((r) => r.hex.length >= 12);
     if (rows.length) return { mode: 'capture', rows, format };
   }
 
-  if (lines[0].includes('\t') || isCaptureLine(lines[0])) {
+  // Multi-line plain hex list (one packet per line) — do not collapse to lines[0].
+  if (lines.length > 1) {
+    const rows = lines
+      .map((line) => {
+        const hex = cleanHex(line);
+        return hex.length >= 12 ? { ts_ms: null, hex, tag: '' } : null;
+      })
+      .filter(Boolean);
+    if (rows.length) return { mode: 'capture', rows, format: 'hex-list' };
+  }
+
+  if (lines[0].includes('\t') || lines[0].includes(',') || isCaptureLine(lines[0])) {
     const format = captureFormatForRaw(raw);
-    const row = parseCaptureLine(lines[0], format);
+    const row = parseCaptureLine(lines[0], format, raw);
     if (row.hex.length >= 12) return { mode: 'capture', rows: [row], format };
   }
 
-  return { mode: 'hex', hex: lines[0].replace(/[^0-9a-fA-F]/g, '') };
+  return { mode: 'hex', hex: cleanHex(lines[0]) };
 }
 
-function parseCaptureLine(line, format = 'legacy') {
+function parseCaptureLine(line, format = 'legacy', rawForHeader = '') {
   const trimmed = (line || '').trim();
   if (!trimmed) return { ts_ms: null, hex: '', tag: '' };
+  if (isSheetsCaptureHeader(trimmed)) return { ts_ms: null, hex: '', tag: '' };
+
+  const fmt = format || 'legacy';
+
+  // Named-column Sheets / observation export (default when header is present).
+  if (fmt === 'sheets') {
+    const headerLine = findSheetsHeaderLine(rawForHeader) || SHEETS_CAPTURE_HEADER;
+    return parseSheetsCaptureLine(trimmed, sheetsColumnMap(headerLine));
+  }
+
+  // hex / opcode / tag / board_ts (headerless subset paste)
+  if (fmt === 'compact' || (trimmed.includes('\t') && isCompactCaptureFields(splitDelimited(trimmed)))) {
+    return parseCompactCaptureLine(trimmed);
+  }
 
   if (trimmed.includes('\t')) {
     const fields = trimmed.split('\t');
-    const fmt = format || detectCaptureFormatFromFields(fields);
-    const layout = CAPTURE_LAYOUTS[fmt] || CAPTURE_LAYOUTS.legacy;
-    const hex = extractCaptureHexFromFields(fields, fmt);
+    const detected = (fmt === 'legacy' || fmt === 'device' || fmt === 'gps')
+      ? fmt
+      : detectCaptureFormatFromFields(fields);
+    if (detected === 'compact') return parseCompactCaptureLine(trimmed);
+    const layout = CAPTURE_LAYOUTS[detected] || CAPTURE_LAYOUTS.legacy;
+    const hex = extractCaptureHexFromFields(fields, detected);
     const ts = fields[0] && /^\d+$/.test(fields[0]) ? Number(fields[0]) : null;
     const tag = fields[layout.tag] || '';
     const deviceId = layout.deviceId != null ? (fields[layout.deviceId] || '').trim() : undefined;
@@ -280,7 +477,7 @@ function parseCaptureLine(line, format = 'legacy') {
     };
   }
 
-  const hex = trimmed.replace(/[^0-9a-fA-F]/g, '');
+  const hex = cleanHex(trimmed);
   return { ts_ms: null, hex };
 }
 

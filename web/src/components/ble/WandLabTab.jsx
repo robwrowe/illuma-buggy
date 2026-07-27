@@ -141,6 +141,18 @@ export function WandLabTab({ data, update }) {
 
   const resetBytes = () => setBytes([...origBytes]);
 
+  const resetByte = (idx) => {
+    if (idx < 0 || idx >= origBytes.length) return;
+    setBytes((prev) => prev.map((b, i) => (i === idx ? (origBytes[idx] & 0xff) : b)));
+  };
+
+  const resetSelectedBytes = () => {
+    if (!sweepIndices.length) return;
+    setBytes((prev) => prev.map((b, i) => (
+      sweepIndices.includes(i) && i < origBytes.length ? (origBytes[i] & 0xff) : b
+    )));
+  };
+
   const buildMbCommandBytes = () => {
     const p = (v) => parseInt(v, 10) & 0x1F;
     switch (mbCmd) {
@@ -532,13 +544,23 @@ export function WandLabTab({ data, update }) {
                   ))}
                   <Button size="compact-xs" variant="default" onClick={addByte}>+ byte</Button>
                   {bytes.some((b, i) => b !== origBytes[i]) && (
-                    <Button size="compact-xs" variant="default" onClick={resetBytes}>Reset</Button>
+                    <Button size="compact-xs" variant="default" onClick={resetBytes}>Reset all</Button>
+                  )}
+                  {sweepIndices.some((i) => bytes[i] !== origBytes[i]) && (
+                    <Button size="compact-xs" variant="default" onClick={resetSelectedBytes}>
+                      Reset selected
+                    </Button>
                   )}
                 </Group>
 
                 <WandLabByteBitsEditor
-                  selections={sweepIndices.map((idx) => ({ index: idx, value: bytes[idx] }))}
+                  selections={sweepIndices.map((idx) => ({
+                    index: idx,
+                    value: bytes[idx],
+                    origValue: origBytes[idx],
+                  }))}
                   onChange={patchByte}
+                  onReset={resetByte}
                 />
 
                 <WandLabSweepPanel

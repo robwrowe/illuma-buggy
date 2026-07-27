@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Button,
   Checkbox,
   Group,
   NumberInput,
@@ -16,10 +17,7 @@ import {
   timingByteFromEditFields,
   timingByteToEditFields,
 } from '../../lib/ble/e9Decode';
-import {
-  decodeMbColorMaskByte,
-  encodeMbColorMaskByte,
-} from '../../lib/ble/mbPayloads';
+import { decodeMbColorMaskByte, encodeMbColorMaskByte } from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
 
 const EDIT_MODES = [
@@ -123,6 +121,7 @@ function TimingByteEditor({ byteIndex, byteValue, onChange }) {
 
   return (
     <Stack gap={4}>
+      <ByteValueReadout byteValue={byteValue} />
       <Group gap={6} align="flex-start" wrap="wrap" grow>
         <Field label="On (s)" style={{ marginBottom: 0, flex: '1 1 72px' }}>
           <NumberInput
@@ -162,7 +161,6 @@ function TimingByteEditor({ byteIndex, byteValue, onChange }) {
       <Text size="xs" c="dimmed" ff="monospace">
         t={decoded.t} fade={decoded.fadeBits}
       </Text>
-      <ByteValueReadout byteValue={byteValue} />
     </Stack>
   );
 }
@@ -182,6 +180,7 @@ function MaskColorByteEditor({ byteIndex, byteValue, onChange }) {
 
   return (
     <Stack gap={4}>
+      <ByteValueReadout byteValue={byteValue} />
       <Field label="Palette" style={{ marginBottom: 0 }}>
         <SearchableSelect
           value={String(fields.palette)}
@@ -196,34 +195,51 @@ function MaskColorByteEditor({ byteIndex, byteValue, onChange }) {
           min={0}
           max={7}
           value={fields.mask}
-          onChange={(v) => applyFields({ ...fields, mask: Math.max(0, Math.min(7, Number(v) || 0)) })}
+          onChange={(v) =>
+            applyFields({ ...fields, mask: Math.max(0, Math.min(7, Number(v) || 0)) })
+          }
         />
       </Field>
       <Text size="xs" c="dimmed" ff="monospace">
         m={fields.mask} pal={fields.palette}
       </Text>
-      <ByteValueReadout byteValue={byteValue} />
     </Stack>
   );
 }
 
-function ByteEditorCard({ byteIndex, byteValue, editMode, onEditModeChange, onChange }) {
+function ByteEditorCard({ byteIndex, byteValue, origValue, editMode, onEditModeChange, onChange, onReset }) {
+  const modified = origValue != null && (byteValue & 0xff) !== (origValue & 0xff);
   return (
     <Stack gap={6} p={8} style={CARD_STYLE}>
       <Group justify="space-between" align="center" wrap="nowrap" gap={4}>
         <Text size="xs" fw={700} ff="monospace">
           [{byteIndex}]
+          {modified ? (
+            <Text span size="xs" c="dimmed" ff="monospace"> ←0x{(origValue & 0xff).toString(16).padStart(2, '0').toUpperCase()}</Text>
+          ) : null}
         </Text>
-        <SegmentedControl
-          size="xs"
-          value={editMode}
-          onChange={onEditModeChange}
-          data={EDIT_MODES}
-          styles={{
-            root: { flexShrink: 1 },
-            label: { paddingInline: 6, fontSize: 11 },
-          }}
-        />
+        <Group gap={4} wrap="nowrap">
+          {modified && onReset && (
+            <Button
+              size="compact-xs"
+              variant="default"
+              onClick={() => onReset(byteIndex)}
+              title="Restore this byte to its original value"
+            >
+              Reset
+            </Button>
+          )}
+          <SegmentedControl
+            size="xs"
+            value={editMode}
+            onChange={onEditModeChange}
+            data={EDIT_MODES}
+            styles={{
+              root: { flexShrink: 1 },
+              label: { paddingInline: 6, fontSize: 11 },
+            }}
+          />
+        </Group>
       </Group>
       {editMode === 'binary' && (
         <BinaryByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
@@ -238,7 +254,7 @@ function ByteEditorCard({ byteIndex, byteValue, editMode, onEditModeChange, onCh
   );
 }
 
-export function WandLabByteBitsEditor({ selections, onChange }) {
+export function WandLabByteBitsEditor({ selections, onChange, onReset }) {
   const [editModes, setEditModes] = useState({});
 
   if (!selections?.length) return null;
@@ -253,14 +269,16 @@ export function WandLabByteBitsEditor({ selections, onChange }) {
         {selections.length === 1 ? 'Byte editor' : 'Selected byte editors'}
       </Text>
       <Group gap="xs" align="stretch" wrap="wrap">
-        {selections.map(({ index, value }) => (
+        {selections.map(({ index, value, origValue }) => (
           <ByteEditorCard
             key={index}
             byteIndex={index}
             byteValue={value}
+            origValue={origValue}
             editMode={editModes[index] ?? 'binary'}
             onEditModeChange={(mode) => setMode(index, mode)}
             onChange={onChange}
+            onReset={onReset}
           />
         ))}
       </Group>

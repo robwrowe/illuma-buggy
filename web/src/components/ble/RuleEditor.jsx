@@ -12,6 +12,7 @@ import {
   Slider,
   Stack,
   Switch,
+  Table,
   Text,
   Textarea,
   TextInput,
@@ -109,6 +110,17 @@ function hexPacketsFromPaste(raw) {
     return parsed.rows
       .map((r) => stripCompanyId(r.hex))
       .filter((h) => h.length >= 4);
+  }
+  // Multi-line plain hex list — never collapse to the first line only.
+  const lines = String(raw || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+  if (lines.length > 1) {
+    const hexes = lines
+      .map((l) => stripCompanyId(String(l).replace(/[^0-9a-fA-F]/g, '')))
+      .filter((h) => h.length >= 4);
+    if (hexes.length > 1) return hexes;
   }
   const hex = stripCompanyId(parsed.hex || '');
   return hex.length >= 4 ? [hex] : [];
@@ -2248,6 +2260,8 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
   const [status, setStatus] = useState('');
   const [packets, setPackets] = useState([]);
   const [matchMode, setMatchMode] = useState('first'); // first | all | selected
+  const [unmatchedOnly, setUnmatchedOnly] = useState(false);
+  const [copyStatus, setCopyStatus] = useState('');
 
   const selectedRule = useMemo(
     () => (rules || []).find((r) => r.id === selectedRuleId) || null,
@@ -2265,9 +2279,10 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
     if (!hexes.length) {
       setStatus('Paste hex or capture rows first');
       setPackets([]);
+      setCopyStatus('');
       return;
     }
-    const results = hexes.map((hex) => {
+    const results = hexes.map((hex, rowIdx) => {
       const bytes = disneyPayload(hexToBytes(hex));
       const mapFor = (rule) => (rule?.segmentMapId
         ? (segmentMaps || []).find((m) => m.id === rule.segmentMapId) || null
@@ -2292,9 +2307,12 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
           );
         }
         return {
+          rowIdx,
           hex: bytesToHex(bytes),
           matched,
+          ruleId: matched ? selectedRule.id : null,
           ruleName: matched ? selectedRule.name : null,
+          priority: matched ? selectedRule.priority : null,
           extracts,
           timing,
         };
@@ -2308,9 +2326,13 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
           timingModels,
         });
         return {
+          rowIdx,
           hex: prev.hex,
           matched: prev.matchingRules.length > 0,
+          ruleId: prev.matchingRules[0]?.rule?.id || null,
+          ruleName: prev.matchingRules.map((m) => m.rule.name).join(', ') || null,
           ruleNames: prev.matchingRules.map((m) => m.rule.name),
+          priority: prev.matchingRules[0]?.rule?.priority ?? null,
           extracts: selectedRule
             ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule), {
               rule: selectedRule,
@@ -2336,29 +2358,65 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
         );
       }
       return {
+        rowIdx,
         hex: bytesToHex(bytes),
         matched: !!first,
+        ruleId: first?.id || null,
         ruleName: first?.name || null,
+        priority: first?.priority ?? null,
         extracts,
         timing,
       };
     });
     setPackets(results);
+    setCopyStatus('');
     const hits = results.filter((r) => r.matched).length;
-    setStatus(`${results.length} packet${results.length === 1 ? '' : 's'} — ${hits} matched`);
+    const misses = results.length - hits;
+    setStatus(
+      `${results.length} packet${results.length === 1 ? '' : 's'} — ${hits} matched, ${misses} unmatched`,
+    );
+  };
+
+  const unmatchedPackets = useMemo(
+    () => packets.filter((p) => !p.matched),
+    [packets],
+  );
+
+  const visiblePackets = unmatchedOnly
+    ? unmatchedPackets
+    : packets;
+
+  const copyUnmatched = async ({ unique = false } = {}) => {
+    if (!unmatchedPackets.length) {
+      setCopyStatus('No unmatched codes to copy');
+      return;
+    }
+    let hexes = unmatchedPackets.map((p) => p.hex);
+    if (unique) hexes = [...new Set(hexes)];
+    try {
+      await navigator.clipboard.writeText(hexes.join('\n'));
+      setCopyStatus(
+        unique
+          ? `Copied ${hexes.length} unique unmatched hex`
+          : `Copied ${hexes.length} unmatched hex`,
+      );
+    } catch {
+      setCopyStatus('Clipboard copy failed');
+    }
   };
 
   return (
     <AppCard>
-      <SectionHead>Live preview</SectionHead>
+      <SectionHead>Rule coverage preview</SectionHead>
       <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
-        Paste capture rows or raw hex (8301 stripped automatically). Shows which rules match, extract→targets resolution, and timing lifecycle when enabled.
+        Paste a list of hex / capture rows (8301 stripped automatically). Preview which rule each packet
+        would hit under the current rule set, and copy any that have no match.
       </Text>
       <Textarea
         minRows={4}
         value={paste}
         onChange={(e) => setPaste(e.target.value)}
-        placeholder="Paste hex or Illuma capture export…"
+        placeholder={'E100E90500090EE5B0\n8301e100e90e00010fbda0…\nor paste Illuma / Sheets capture rows'}
         styles={{ input: { fontFamily: 'monospace', fontSize: 11 } }}
         mb="xs"
       />
@@ -2374,68 +2432,108 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
             { value: 'selected', label: 'Selected rule only' },
           ]}
         />
+        <Checkbox
+          size="xs"
+          label="Unmatched only"
+          checked={unmatchedOnly}
+          disabled={!packets.length}
+          onChange={(e) => setUnmatchedOnly(e.currentTarget.checked)}
+        />
+        <AppButton
+          size="compact-sm"
+          variant="default"
+          disabled={!unmatchedPackets.length}
+          onClick={() => copyUnmatched({ unique: false })}
+        >
+          Copy unmatched ({unmatchedPackets.length})
+        </AppButton>
+        <AppButton
+          size="compact-sm"
+          variant="default"
+          disabled={!unmatchedPackets.length}
+          onClick={() => copyUnmatched({ unique: true })}
+        >
+          Copy unique unmatched
+        </AppButton>
       </Group>
-      {status && <Text size="xs" c="dimmed" mb="xs">{status}</Text>}
-      <Stack gap="xs">
-        {packets.map((p, i) => (
-          <Paper key={i} p="xs" withBorder bg="var(--surface2)">
-            <Group gap="xs" mb={4} wrap="wrap">
-              <Badge size="xs" color={p.matched ? 'green' : 'gray'}>
-                {p.matched ? 'match' : 'no match'}
-              </Badge>
-              {p.ruleName && <Text size="xs" fw={600}>{p.ruleName}</Text>}
-              {p.ruleNames?.length > 0 && (
-                <Text size="xs" fw={600}>{p.ruleNames.join(', ')}</Text>
-              )}
-            </Group>
-            <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>{p.hex}</Text>
-            {p.timing && (
-              <Text size="xs" c="dimmed" mt={4}>
-                timing 0x{p.timing.raw.toString(16).padStart(2, '0')}
-                {' '}→ on {p.timing.onSec.toFixed(1)}s
-                {' · '}stretch {p.timing.stretchSec.toFixed(1)}s
-                {' · '}black hold {p.timing.cooldownSec}s
-                {p.timing.extended ? ' · extended' : ''}
-                {p.timing.scaler ? ' · scaler' : ''}
-                {p.timing.fadeCurve === 'decelerating' ? ' · stretch≈non-linear dim' : ''}
-                {p.timing.strobe
-                  ? ` · strobe ${p.timing.strobe.flashRateHz.toFixed(2)} Hz → fx=${p.timing.strobe.fx} sx=${p.timing.strobe.sx}`
-                  : ''}
-                {p.timing.speedBucket
-                  ? ` · speedBuckets ${p.timing.speedBucket.field}=${p.timing.speedBucket.value} (key=${p.timing.speedBucket.key})`
-                  : ''}
-              </Text>
-            )}
-            {(p.extracts || []).length > 0 && (
-              <Stack gap={2} mt={6}>
-                {p.extracts.map((ex, j) => (
-                  <Stack key={j} gap={2}>
-                    <Group gap="xs" wrap="wrap">
-                      <Text size="xs" fw={600}>{ex.name || `ex${j}`}:</Text>
-                      <Text size="xs" ff="monospace">
-                        {ex.derivedValue != null
-                          ? `${ex.source || 'timing'}: ${Number(ex.derivedValue).toFixed(2)} → ${typeof ex.mapped === 'number' ? ex.mapped.toFixed?.(2) ?? ex.mapped : ex.mapped}`
-                          : `raw=${ex.raw}${ex.paletteIndex != null ? ` → pal ${ex.paletteIndex}` : ` → ${typeof ex.mapped === 'number' ? ex.mapped.toFixed?.(2) ?? ex.mapped : ex.mapped}`}`}
+      {status && <Text size="xs" c="dimmed" mb={4}>{status}</Text>}
+      {copyStatus && <Text size="xs" c="teal" mb="xs">{copyStatus}</Text>}
+
+      {packets.length > 0 && (
+        <Table.ScrollContainer minWidth={640}>
+          <Table striped highlightOnHover withTableBorder withColumnBorders fz="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={40}>#</Table.Th>
+                <Table.Th w={90}>Status</Table.Th>
+                <Table.Th w={70}>Pri</Table.Th>
+                <Table.Th>Rule</Table.Th>
+                <Table.Th>Hex (payload)</Table.Th>
+                <Table.Th w={160}>Timing</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {visiblePackets.map((p) => (
+                <Table.Tr
+                  key={p.rowIdx}
+                  style={!p.matched
+                    ? { background: 'color-mix(in srgb, var(--mantine-color-orange-filled) 10%, transparent)' }
+                    : undefined}
+                >
+                  <Table.Td>
+                    <Text size="xs" c="dimmed">{p.rowIdx + 1}</Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Badge size="xs" color={p.matched ? 'green' : 'orange'}>
+                      {p.matched ? 'match' : 'no rule'}
+                    </Badge>
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" ff="monospace" c="dimmed">
+                      {p.matched && p.priority != null ? p.priority : '—'}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {p.matched ? (
+                      <Text size="xs" fw={600}>{p.ruleName || '(unnamed)'}</Text>
+                    ) : (
+                      <Text size="xs" c="dimmed">—</Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>{p.hex}</Text>
+                    {(p.extracts || []).length > 0 && (
+                      <Text size="xs" c="dimmed" mt={2}>
+                        {(p.extracts || []).map((ex) => ex.name || 'ex').join(', ')} extract
+                        {(p.extracts || []).length === 1 ? '' : 's'}
                       </Text>
-                      {ex.rgb && (
-                        <Paper
-                          w={14}
-                          h={14}
-                          radius={2}
-                          style={{ background: `rgb(${ex.rgb.join(',')})`, border: '1px solid var(--border)' }}
-                        />
-                      )}
-                    </Group>
-                    {(ex.targetLabels || []).map((label, k) => (
-                      <Text key={k} size="xs" c="dimmed" pl="sm">→ {label}</Text>
-                    ))}
-                  </Stack>
-                ))}
-              </Stack>
-            )}
-          </Paper>
-        ))}
-      </Stack>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {p.timing ? (
+                      <Text size="xs" c="dimmed" ff="monospace">
+                        on {p.timing.onSec.toFixed(1)}s
+                        {p.timing.stretchSec > 0 ? ` · fade ${p.timing.stretchSec.toFixed(1)}s` : ''}
+                        {p.timing.scaler ? ' · 3×' : ''}
+                        {p.timing.extended ? ' · ext' : ''}
+                      </Text>
+                    ) : (
+                      <Text size="xs" c="dimmed">—</Text>
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+              {visiblePackets.length === 0 && (
+                <Table.Tr>
+                  <Table.Td colSpan={6}>
+                    <Text size="xs" c="dimmed">No unmatched packets in this paste.</Text>
+                  </Table.Td>
+                </Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
     </AppCard>
   );
 }
