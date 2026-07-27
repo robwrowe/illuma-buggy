@@ -62,6 +62,7 @@ function AppNavigator() {
   useCaptureAutomation();
   useSheetsQueueDrain();
   const { colors, isDark } = useTheme();
+  const parkMode = useAppStore(s => s.parkMode);
 
   const navTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
@@ -106,12 +107,12 @@ function AppNavigator() {
         })}
       >
         <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen name="Capture" component={BleCaptureScreen} />
+        {!parkMode && <Tab.Screen name="Capture" component={BleCaptureScreen} />}
         <Tab.Screen name="Presets" component={PresetsScreen} />
-        <Tab.Screen name="Library" component={LibraryScreen} />
+        {!parkMode && <Tab.Screen name="Library" component={LibraryScreen} />}
         <Tab.Screen name="Zones" component={ZonesWrapper} />
         <Tab.Screen name="Settings" component={SettingsScreen} />
-        <Tab.Screen name="Palettes" component={PalettesScreen} />
+        {!parkMode && <Tab.Screen name="Palettes" component={PalettesScreen} />}
       </Tab.Navigator>
     </NavigationContainer>
   );

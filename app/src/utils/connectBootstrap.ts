@@ -353,6 +353,12 @@ export async function runConnectBootstrap(): Promise<void> {
     return;
   }
 
+  // Park Mode: minimal traffic — status only, no config/rules/preset push.
+  if (useAppStore.getState().parkMode && !forceFullSync) {
+    markSessionReadyAndStatus('quick', 'Ready — park mode (minimal BLE)');
+    return;
+  }
+
   const fingerprint = getFingerprint();
   const meta = await loadBoardSyncMeta();
   const requestedFullSync = forceFullSync;

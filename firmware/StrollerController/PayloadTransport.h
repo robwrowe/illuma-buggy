@@ -30,6 +30,12 @@ void transportSetScannerMac(const uint8_t mac[6]);
 // scanner pairs on boot / reboot / re-pair. No-op once the scanner is delivering packets.
 void transportPairResendTick();
 
+/** UART inter-board link (Part 2). Init once in setup; poll each loop(). */
+void uartScannerLinkInit();
+void uartScannerLinkPoll();
+/** Enqueue a packet received over UART (same path as ESP-NOW scan frames). */
+void transportOnUartPacket(const ParsedDisneyPacket& pkt);
+
 // Called from loop(): if the scanner stays silent, fall back to local BLE scanning on the
 // logic board; stop the local scan once the scanner is delivering packets again.
 void serviceScannerFallback();

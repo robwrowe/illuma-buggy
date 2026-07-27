@@ -4,6 +4,7 @@
 #include "MbPacketDecode.h"
 #include "ScannerPayloadTransport.h"
 #include "DebugLog.h"
+#include "SdRawLogger.h"
 #include "Config.h"
 #include <NimBLEDevice.h>
 #include <string>
@@ -23,6 +24,7 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     }
 
     if (!isDisneyMfr(data, len)) return;
+    sdRawLoggerWrite(data, len, rssi, (uint64_t)millis());
 
     const char* tag = classifyScanPacket(data, len);
     bool isNew = scanDedupIsNew(data, len);

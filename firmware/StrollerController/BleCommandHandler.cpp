@@ -16,6 +16,7 @@
 #include "DisneyBleScan.h"
 #include "MbRulesStore.h"
 #include "MbCalibrationStore.h"
+#include "RuntimeFields.h"
 #include <WiFi.h>
 #include "JsonPsram.h"
 
@@ -371,17 +372,21 @@ void handleBLECommand(const String& msg) {
         prefs.end();
       }
       mbMappingLoadedFromNvs = true;
-      applyMbRulesJson(mapping);
-      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes, fs=%s)\n",
+      bool cacheOk = applyMbRulesJson(mapping);
+      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes, fs=%s, cache=%s)\n",
                     hasRules ? 1 : 0,
                     (unsigned)(hasRules ? mbRulesJson.length() : mbMappingJson.length()),
-                    persisted ? "ok" : "FAIL");
+                    persisted ? "ok" : "FAIL",
+                    cacheOk ? "ok" : "FAIL");
       if (!persisted) {
         bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":false,\"reason\":\"fs_persist\"}");
         return;
       }
+      bleNotify(String("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true,\"cacheApplied\":") +
+                (cacheOk ? "true" : "false") + "}");
+      return;
     }
-    bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");
+    bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true,\"cacheApplied\":true}");
   }
 
   else if (type == "set_color_calibration") {
@@ -501,6 +506,137 @@ void handleBLECommand(const String& msg) {
       transportSetScannerMac(mac);
       bleNotify("{\"type\":\"ack\",\"action\":\"set_scanner_mac\",\"ok\":true,\"mac\":\"" +
                 transportMacToString(mac) + "\"}");
+    }
+  }
+
+  else if (type == "set_field") {
+    handleSetFieldCommand(doc["field"] | "", doc["value"]);
+  }
+  else if (type == "list_fields") {
+    handleListFieldsCommand();
+  }
+
+  else if (type == "list_rules") {
+    JsonArray rules = mbRulesJsonArray();
+    String out = "{\"type\":\"rules_summary\",\"rules\":[";
+    bool first = true;
+    for (JsonVariant v : rules) {
+      if (!v.is<JsonObject>()) continue;
+      JsonObject r = v.as<JsonObject>();
+      if (!first) out += ",";
+      first = false;
+      out += "{\"id\":\"";
+      out += (r["id"] | "");
+      out += "\",\"name\":\"";
+      out += (r["name"] | "");
+      out += "\",\"prio\":";
+      out += String((int)(r["priority"] | r["prio"] | 0));
+      out += ",\"enabled\":";
+      out += (r["enabled"] | true) ? "true" : "false";
+      out += "}";
+    }
+    out += "]}";
+    bleNotify(out);
+  }
+
+  else if (type == "set_rule_enabled") {
+    String ruleId = doc["ruleId"] | "";
+    bool enabled = doc["enabled"] | true;
+    JsonArray rules = mbRulesJsonArray();
+    JsonObject match;
+    for (JsonVariant v : rules) {
+      if (!v.is<JsonObject>()) continue;
+      JsonObject r = v.as<JsonObject>();
+      if (ruleId == (r["id"] | "")) { match = r; break; }
+    }
+    if (match.isNull()) {
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_rule_enabled\",\"ruleId\":\"" + ruleId +
+                "\",\"ok\":false,\"reason\":\"not_found\"}");
+    } else {
+      match["enabled"] = enabled;
+      if (!enabled && mbActiveRuleId[0] && ruleId == mbActiveRuleId) {
+        Serial.printf("[Rule] disabling currently-active rule %s — forcing restore\n", ruleId.c_str());
+        forceRuleLifecycleRestore();
+      }
+      bool persisted = persistMbRulesCache();
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_rule_enabled\",\"ruleId\":\"" + ruleId +
+                "\",\"ok\":true,\"enabled\":" + String(enabled ? "true" : "false") +
+                ",\"persisted\":" + String(persisted ? "true" : "false") + "}");
+    }
+  }
+
+  else if (type == "list_segments") {
+    String mapId = doc["mapId"] | "";
+    JsonObject segMap = findSegmentMapById(mapId.c_str());
+    if (segMap.isNull()) {
+      bleNotify("{\"type\":\"segments_summary\",\"mapId\":\"" + mapId +
+                "\",\"ok\":false,\"reason\":\"map_not_found\",\"segments\":[]}");
+    } else {
+      String out = "{\"type\":\"segments_summary\",\"mapId\":\"" + mapId + "\",\"segments\":[";
+      JsonArray segs = segMap["segments"].as<JsonArray>();
+      bool first = true;
+      for (JsonVariant v : segs) {
+        if (!v.is<JsonObject>()) continue;
+        JsonObject s = v.as<JsonObject>();
+        if (!first) out += ",";
+        first = false;
+        out += "{\"id\":\"";
+        out += (s["id"] | "");
+        out += "\",\"start\":";
+        out += String((int)(s["start"] | 0));
+        out += ",\"stop\":";
+        out += String((int)(s["stop"] | 0));
+        out += ",\"enabled\":";
+        out += (s["enabled"] | true) ? "true" : "false";
+        out += "}";
+      }
+      out += "]}";
+      bleNotify(out);
+    }
+  }
+
+  else if (type == "set_segment_field") {
+    String mapId = doc["mapId"] | "";
+    String segmentId = doc["segmentId"] | "";
+    String field = doc["field"] | "";
+    if (field != "enabled" && field != "start" && field != "stop") {
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"not_whitelisted\"}");
+    } else {
+      JsonObject segMap = findSegmentMapById(mapId.c_str());
+      if (segMap.isNull()) {
+        bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"map_not_found\"}");
+      } else {
+        JsonObject seg = findSegmentInMap(segMap, segmentId.c_str());
+        if (seg.isNull()) {
+          bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"segment_not_found\"}");
+        } else {
+          bool ok = true;
+          String reason;
+          if (field == "enabled") {
+            if (!doc["value"].is<bool>()) { ok = false; reason = "wrong_type"; }
+            else seg["enabled"] = doc["value"].as<bool>();
+          } else {
+            if (!doc["value"].is<int>()) { ok = false; reason = "wrong_type"; }
+            else {
+              int v = doc["value"].as<int>();
+              if (v < 0 || v > STRIP_LED_COUNT) { ok = false; reason = "out_of_range"; }
+              else seg[field] = v;
+            }
+          }
+          if (ok) {
+            int start = seg["start"] | 0;
+            int stop = seg["stop"] | 0;
+            bool segmentNowEmpty = (stop <= start);
+            bool persisted = persistMbRulesCache();
+            bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"mapId\":\"" + mapId +
+                      "\",\"segmentId\":\"" + segmentId + "\",\"field\":\"" + field +
+                      "\",\"ok\":true,\"persisted\":" + String(persisted ? "true" : "false") +
+                      ",\"segmentNowEmpty\":" + String(segmentNowEmpty ? "true" : "false") + "}");
+          } else {
+            bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"" + reason + "\"}");
+          }
+        }
+      }
     }
   }
 

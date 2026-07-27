@@ -13,6 +13,7 @@
 #include "ScannerPayloadTransport.h"
 #include "ScannerAdvertise.h"
 #include "ScannerSerial.h"
+#include "SdRawLogger.h"
 #include <NimBLEDevice.h>
 #include <WiFi.h>
 
@@ -50,19 +51,24 @@ void setup() {
 
   startBLEScan();
 
+  sdRawLoggerInit();  // non-fatal if no card
+
   uint8_t mac[6];
   WiFi.macAddress(mac);
-  Serial.printf("[Boot] Ready — scanner MAC %s paired=%s\n",
+  Serial.printf("[Boot] Ready — scanner MAC %s paired=%s uart=%d\n",
                 scannerMacToString(mac).c_str(),
-                logicPeerConfigured ? "yes" : "no");
+                logicPeerConfigured ? "yes" : "no",
+                USE_UART_SCANNER_LINK);
   Serial.println("[Serial] Type 'help' for commands");
 }
 
 void loop() {
   processScannerSerial();
+#if !USE_UART_SCANNER_LINK
   if (!logicPeerConfigured) {
     scannerAdvertiseRefresh();
     scannerChannelSweepTick();
   }
+#endif
   delay(10);
 }

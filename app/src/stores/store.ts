@@ -351,6 +351,9 @@ interface AppState {
   /** When off, the app never scans for or connects to the IllumaBuggy board. */
   boardConnectEnabled:   boolean;
   setBoardConnectEnabled:(val: boolean) => void;
+  /** Park Mode: minimize BLE traffic — skip config push on connect; hide setup tabs. */
+  parkMode:              boolean;
+  setParkMode:           (val: boolean) => void;
   boardRole:             BoardRoleMode;
   setBoardRole:          (role: BoardRoleMode) => void;
   scannerMac:            string;
@@ -593,6 +596,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   zonesEnabled:        true,
   syncMode:            'auto',
   boardConnectEnabled: true,
+  parkMode:            false,
   boardRole:           'standalone',
   scannerMac:          '',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
@@ -788,6 +792,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
   setSyncMode:           (val)          => { set({ syncMode: val }); get().saveToStorage(); },
   setBoardConnectEnabled:(val)          => { set({ boardConnectEnabled: val }); get().saveToStorage(); },
+  setParkMode:           (val)          => { set({ parkMode: val }); get().saveToStorage(); },
   setBoardRole:          (role)         => { set({ boardRole: role }); get().saveToStorage(); },
   setScannerMac:         (mac)          => set({ scannerMac: mac }),
 
@@ -942,7 +947,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'magicBandFivePoint','magicBandTimeoutSec','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
                     'wledSsid','wledPass','wledIp','wledPort','sheetsEndpoint','sheetsUploadQueue',
-                    'zonesEnabled','syncMode','boardConnectEnabled',
+                    'zonesEnabled','syncMode','boardConnectEnabled','parkMode',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'bleCaptureIgnoreTags',
@@ -990,6 +995,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         zonesEnabled:       d.zonesEnabled       ?? true,
         syncMode:           d.syncMode           ?? 'auto',
         boardConnectEnabled:d.boardConnectEnabled ?? true,
+        parkMode:           d.parkMode ?? false,
         boardRole:          (d.boardRole as BoardRoleMode) ?? 'standalone',
         scannerMac:         (d.scannerMac as string) ?? '',
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
@@ -1049,6 +1055,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
         ['syncMode',           JSON.stringify(s.syncMode)],
         ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],
+        ['parkMode',            JSON.stringify(s.parkMode)],
         ['boardRole',           JSON.stringify(s.boardRole)],
         ['scannerMac',          JSON.stringify(s.scannerMac)],
         ['locationPollSec',    JSON.stringify(s.locationPollSec)],

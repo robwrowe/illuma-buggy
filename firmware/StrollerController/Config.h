@@ -89,6 +89,29 @@
 #define STATUS_LED_PIN 48
 #define STATUS_LED_COUNT 1
 
+// Inter-board UART link (provisional — confirm vs ESP32-S3-DevKitC-1-N16R8 datasheet).
+// Default OFF so existing ESP-NOW field units keep working. Set to 1 for UART bench/PCB.
+#ifndef USE_UART_SCANNER_LINK
+#define USE_UART_SCANNER_LINK 0
+#endif
+#define UART_LINK_TX_PIN 17
+#define UART_LINK_RX_PIN 8
+#define UART_LINK_BAUD   115200
+
+// SD card SPI (independent card per board)
+#define SD_CS_PIN   10
+#define SD_SCK_PIN  12
+#define SD_MOSI_PIN 11
+#define SD_MISO_PIN 13
+
+// OLED I2C (logic board only)
+#define OLED_SDA_PIN 21
+#define OLED_SCL_PIN 22
+#define OLED_I2C_ADDR 0x3C
+#define OLED_WIDTH  128
+#define OLED_HEIGHT 64
+#define STATUS_DISPLAY_INTERVAL_MS 750
+
 #include <stdint.h>
 #include <stddef.h>
 

@@ -1,6 +1,7 @@
 #include "ScannerPayloadTransport.h"
 #include "Globals.h"
 #include "ScannerAdvertise.h"
+#include "UartLink.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_idf_version.h>
@@ -143,6 +144,11 @@ void scannerTransportInit() {
   static_assert(sizeof(ParsedDisneyPacket) <= 250, "ParsedDisneyPacket exceeds ESP-NOW cap");
   Serial.printf("[Transport] ParsedDisneyPacket sizeof=%u\n", (unsigned)sizeof(ParsedDisneyPacket));
 
+  uartLinkBegin(Serial1);
+#if USE_UART_SCANNER_LINK
+  Serial.println("[UART] scanner→logic packet forwarding active (ESP-NOW send disabled)");
+#endif
+
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
@@ -164,6 +170,17 @@ void scannerTransportInit() {
 }
 
 void scannerTransportSend(const ParsedDisneyPacket& pkt) {
+#if USE_UART_SCANNER_LINK
+  uartLinkSendPacket(Serial1, pkt);
+  espNowTxSeq++;
+  if (espNowTxSeq <= 40 || (espNowTxSeq % 25) == 0) {
+    Serial.printf("[UART] forwarding scan packet #%lu (len=%u kind=%u op=0x%04X)\n",
+                  (unsigned long)espNowTxSeq,
+                  (unsigned)sizeof(pkt),
+                  (unsigned)pkt.kind, (unsigned)pkt.opcode);
+  }
+  return;
+#else
   if (!logicPeerConfigured) {
     Serial.println("[ESP-NOW] skip forward — not paired");
     return;
@@ -187,4 +204,5 @@ void scannerTransportSend(const ParsedDisneyPacket& pkt) {
     Serial.printf("[ESP-NOW] esp_now_send ERR %d (queued ok/fail=%lu/%lu)\n",
                   (int)err, (unsigned long)espNowSendOk, (unsigned long)espNowSendFail);
   }
+#endif
 }

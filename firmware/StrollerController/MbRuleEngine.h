@@ -26,9 +26,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
 
 /** Look up a segment map by id in the cached MB rules doc. Null object if missing. */
 JsonObject findSegmentMapById(const char* mapId);
+/** Look up a segment by id within a segment map. Null object if missing. */
+JsonObject findSegmentInMap(JsonObject segMap, const char* segmentId);
 
 // Load/parse the rules document (rules + segmentMaps + colors + paradeDetection + …).
-void applyMbRulesJson(JsonObject root);
+// Returns false when a full-replace cache reparse fails (previous gRulesDoc kept).
+bool applyMbRulesJson(JsonObject root);
 void loadMbRulesFromJson();
 /** True when JSON parses and contains at least one entry in `rules[]`. */
 bool mbRulesJsonUsable(const String& json);
@@ -42,10 +45,16 @@ void manualParadeStop();
 // Timing-byte lifecycle for rule-engine MB effects (Part 5).
 void serviceMbRuleLifecycle();
 void resetMbRuleLifecycle();
+/** Force BLACK_HOLD→restore immediately (e.g. rule disabled mid-lifecycle). */
+void forceRuleLifecycleRestore();
 // Called when the same timed rule matches again while a lifecycle is active.
 void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen);
 
 void notifyMbUnmatched(const uint8_t* payload, size_t plen);
 JsonArray mbRulesJsonArray();
 JsonArray mbSegmentMapsArray();
+/** Serialize the live gRulesDoc cache into `out`. */
+bool mbRulesCacheSerialize(String& out);
+/** Serialize gRulesDoc → mbRulesJson/mbMappingJson → SPIFFS. */
+bool persistMbRulesCache();
 

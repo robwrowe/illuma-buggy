@@ -3,6 +3,7 @@
 #include "DisneyPayloadHandlers.h"
 #include "MbPacketDecode.h"
 #include "DisneyBleScan.h"
+#include "UartLink.h"
 #include <NimBLEDevice.h>
 #include <esp_now.h>
 #include <WiFi.h>
@@ -39,6 +40,36 @@ static void queueParsedPacket(const ParsedDisneyPacket& pkt) {
   parsedQueue.tail = (uint8_t)((parsedQueue.tail + 1) % PARSED_PACKET_QUEUE_DEPTH);
   parsedQueue.count++;
   portEXIT_CRITICAL(&parsedJobMux);
+}
+
+void transportOnUartPacket(const ParsedDisneyPacket& pkt) {
+  lastScannerPacketMs = millis();
+  static uint32_t uartRxCount = 0;
+  uartRxCount++;
+  if (uartRxCount <= 40 || (uartRxCount % 25) == 0) {
+    Serial.printf("[UART] recv packet #%lu kind=%u op=0x%04X\n",
+                  (unsigned long)uartRxCount, (unsigned)pkt.kind, (unsigned)pkt.opcode);
+  }
+  queueParsedPacket(pkt);
+}
+
+static UartLinkRx gUartRx;
+
+static void onUartPacketCb(const ParsedDisneyPacket& pkt) {
+  transportOnUartPacket(pkt);
+}
+
+void uartScannerLinkInit() {
+  uartLinkBegin(Serial1);
+  gUartRx.onPacket = onUartPacketCb;
+  gUartRx.onTime = nullptr;
+  Serial.printf("[UART] scanner link %s (USE_UART_SCANNER_LINK=%d)\n",
+                USE_UART_SCANNER_LINK ? "active" : "initialized (ESP-NOW primary)",
+                USE_UART_SCANNER_LINK);
+}
+
+void uartScannerLinkPoll() {
+  uartLinkPoll(Serial1, gUartRx);
 }
 
 String transportMacToString(const uint8_t mac[6]) {
@@ -249,6 +280,22 @@ void transportPairResendTick() {
 void serviceScannerFallback() {
   if (boardRole != BoardRole::LOGIC_BOARD) return;
 
+#if USE_UART_SCANNER_LINK
+  // UART link: age-based fallback when the wired scanner goes silent.
+  if (!localScanFallbackActive) {
+    unsigned long now = millis();
+    unsigned long silentFor = lastScannerPacketMs ? (now - lastScannerPacketMs) : now;
+    if (silentFor > SCANNER_ABSENT_MS) {
+      Serial.println("[Fallback] UART scanner silent — starting local BLE scan on logic board");
+      startBLEScan();
+      localScanFallbackActive = true;
+    }
+  } else if (scannerLinkAlive()) {
+    Serial.println("[Fallback] UART scanner back — stopping local BLE scan");
+    stopBLEScan();
+    localScanFallbackActive = false;
+  }
+#else
   // Dual-board with a configured scanner: never start local NimBLE scan.
   // Fallback re-introduces WiFi/BLE contention on the logic radio and can prevent
   // ESP-NOW RX even while the scanner reports send-cb SUCCESS — a chicken-and-egg
@@ -278,6 +325,7 @@ void serviceScannerFallback() {
     stopBLEScan();
     localScanFallbackActive = false;
   }
+#endif
 }
 
 /** Switch scan / ESP-NOW behavior immediately when boardRole changes (no reboot). */

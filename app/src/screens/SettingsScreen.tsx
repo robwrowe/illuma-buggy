@@ -65,8 +65,9 @@ export default function SettingsScreen() {
     brightnessConfig, setBrightnessConfig,
     colorCalibration, setColorCalibration,
     recallState, setRecallState,
-    syncMode, setSyncMode,
+        syncMode, setSyncMode,
     boardConnectEnabled, setBoardConnectEnabled,
+    parkMode, setParkMode,
     boardRole, setBoardRole,
     scannerMac, setScannerMac,
     saveToStorage, exportData, importData,
@@ -704,6 +705,21 @@ export default function SettingsScreen() {
             Board will run off its last-known config. Use Sync board config on Home to push changes.
           </Text>
         )}
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Park Mode</Text>
+            <Text style={s.rowHint}>
+              Minimize BLE traffic in the park. Hides Capture/Library/Palettes; skips config push on
+              connect. Use Sync board config only if you need a full push.
+            </Text>
+          </View>
+          <Switch
+            value={parkMode}
+            onValueChange={setParkMode}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
+        </View>
         <View style={s.row}>
           <View style={{ flex: 1 }}>
             <Text style={s.rowLabel}>Connect to IllumaBuggy board</Text>

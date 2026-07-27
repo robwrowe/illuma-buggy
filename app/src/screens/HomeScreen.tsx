@@ -89,6 +89,7 @@ export default function HomeScreen() {
     wledEffects,
     wledPalettes,
     syncMode,
+    parkMode,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
@@ -670,6 +671,11 @@ export default function HomeScreen() {
             Manual sync — board is running its own saved config
           </Text>
         )}
+        {isConnected && parkMode && (
+          <Text style={[s.subText, { color: colors.warning }]}>
+            Park Mode — minimal BLE (no auto config push)
+          </Text>
+        )}
         {isConnected && (
           <TouchableOpacity
             style={s.syncBtn}
@@ -677,6 +683,15 @@ export default function HomeScreen() {
           >
             <IconRefresh size={14} color={colors.primary} />
             <Text style={s.syncBtnText}>Sync board config</Text>
+          </TouchableOpacity>
+        )}
+        {isConnected && parkMode && (
+          <TouchableOpacity
+            style={[s.syncBtn, { borderColor: colors.danger }]}
+            onPress={() => { void bleService.disconnect(); }}
+          >
+            <IconBluetoothOff size={14} color={colors.danger} />
+            <Text style={[s.syncBtnText, { color: colors.danger }]}>Disconnect</Text>
           </TouchableOpacity>
         )}
         {deviceStatus && (

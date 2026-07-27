@@ -1,9 +1,11 @@
 #include "WledClient.h"
 #include "Globals.h"
+#include "StatusDisplay.h"
 
 bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[WLED] WiFi not connected");
+    statusDisplaySetWledOk(false);
     return false;
   }
   HTTPClient http;
@@ -15,6 +17,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     code = http.POST(jsonBody);
     if (code == 200) {
       http.end();
+      statusDisplaySetWledOk(true);
       return true;
     }
     if (attempt < retries) delay(80);
@@ -24,6 +27,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     Serial.printf("[WLED]   body: %s\n", jsonBody.c_str());
   }
   http.end();
+  statusDisplaySetWledOk(false);
   return false;
 }
 

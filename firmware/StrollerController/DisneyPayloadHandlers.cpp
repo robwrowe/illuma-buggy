@@ -8,6 +8,7 @@
 #include "BlePeripheral.h"
 #include "DebugLog.h"
 #include "PresetStore.h"
+#include "SdRuleLogger.h"
 #include <string.h>
 
 static const uint8_t* pktRaw(const ParsedDisneyPacket& pkt) {
@@ -117,6 +118,12 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     JsonObject rule = rules[matchIdx].as<JsonObject>();
     Serial.printf("[Rule] match idx=%d id=%s name=%s\n",
                   matchIdx, rule["id"] | "(no id)", rule["name"] | "(no name)");
+    {
+      char detail[128];
+      snprintf(detail, sizeof(detail), "\"idx\":%d,\"id\":\"%s\",\"name\":\"%s\"",
+               matchIdx, rule["id"] | "", rule["name"] | "");
+      sdRuleLoggerWrite("match", detail);
+    }
     applyMatchedRule(rule, payload, plen);
     // Only dedupe after a successful apply (setOverride). Failed/hung applies must be
     // eligible to retry on the next advert.
@@ -132,6 +139,12 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   if (infraNoise) return;
 
   // No rule matched
+  Serial.printf("[Rule] no match len=%u rssi=%d\n", (unsigned)plen, rssi);
+  {
+    char detail[64];
+    snprintf(detail, sizeof(detail), "\"len\":%u,\"rssi\":%d", (unsigned)plen, rssi);
+    sdRuleLoggerWrite("no_match", detail);
+  }
   notifyMbUnmatched(payload, plen);
 
   if (bleDefaultPresetId.length() > 0) {
@@ -150,7 +163,6 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     return;
   }
 
-  Serial.printf("[Rule] no match len=%u rssi=%d\n", (unsigned)plen, rssi);
 }
 
 void handleDisneyPayload(const uint8_t* payload, size_t plen) {

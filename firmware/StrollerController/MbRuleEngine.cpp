@@ -11,6 +11,9 @@
 #include "DisneyBleFilter.h"
 #include "JsonPsram.h"
 #include "Config.h"
+#include "MbRulesStore.h"
+#include "SdRuleLogger.h"
+#include "StatusDisplay.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -545,7 +548,7 @@ JsonObject findSegmentMapById(const char* mapId) {
   return empty;
 }
 
-static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
+JsonObject findSegmentInMap(JsonObject segMap, const char* segmentId) {
   JsonObject empty;
   if (segMap.isNull() || !segmentId) return empty;
   JsonArray segs = segMap["segments"].as<JsonArray>();
@@ -556,6 +559,10 @@ static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
     if (strcmp(s["id"] | "", segmentId) == 0) return s;
   }
   return empty;
+}
+
+static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
+  return findSegmentInMap(segMap, segmentId);
 }
 
 static JsonObject ensureWledSegByLocalId(JsonObject wled, JsonObject segDef) {
@@ -686,10 +693,14 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
   for (JsonVariant v : defs) {
     if (!v.is<JsonObject>()) continue;
     JsonObject def = v.as<JsonObject>();
+    if (!(def["enabled"] | true)) continue;  // Part 8: disabled segments skipped
+    int start = def["start"] | 0;
+    int stop = def["stop"] | STRIP_LED_COUNT;
+    if (stop <= start) continue;
     JsonObject seg = segs.createNestedObject();
     seg["id"] = def["wledSegId"] | 0;
-    seg["start"] = def["start"] | 0;
-    seg["stop"] = def["stop"] | STRIP_LED_COUNT;
+    seg["start"] = start;
+    seg["stop"] = stop;
     seg["grp"] = def["grp"] | 1;
     seg["spc"] = def["spc"] | 0;
     seg["of"] = def["of"] | 0;
@@ -1062,6 +1073,20 @@ void resetMbRuleLifecycle() {
   mbActiveRuleId[0] = '\0';
 }
 
+void forceRuleLifecycleRestore() {
+  if (mbRulePhase == MB_RULE_IDLE) return;
+  Serial.println("[Rule] force restore (rule disabled mid-lifecycle)");
+  if (mbRulePhase == MB_RULE_ON || mbRulePhase == MB_RULE_FADE) {
+    sendMbRuleOff(0);
+  }
+  unsigned long savedFade = bleEffectTransitionMs;
+  bleEffectTransitionMs = 0;
+  resetMbRuleLifecycle();
+  clearOverride();
+  bleEffectTransitionMs = savedFade;
+  bleNotify("{\"type\":\"ble_event\",\"event\":\"rule_disabled\"}");
+}
+
 void serviceMbRuleLifecycle() {
   if (mbRulePhase == MB_RULE_IDLE) return;
   if (currentOverride != BLE_MAGIC) {
@@ -1072,6 +1097,7 @@ void serviceMbRuleLifecycle() {
 
   if (mbRulePhase == MB_RULE_ON) {
     Serial.printf("[Rule] ON→FADE fadeMs=%lu\n", mbRuleFadeMs);
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"ON_TO_FADE\"");
     sendMbRuleOff(mbRuleFadeMs);
     mbRulePhase = MB_RULE_FADE;
     mbRulePhaseDeadlineMs = millis() + (mbRuleFadeMs > 0 ? mbRuleFadeMs : 1);
@@ -1079,12 +1105,14 @@ void serviceMbRuleLifecycle() {
   }
   if (mbRulePhase == MB_RULE_FADE) {
     Serial.printf("[Rule] FADE→BLACK_HOLD holdMs=%lu\n", mbRuleCooldownMs);
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"FADE_TO_BLACK_HOLD\"");
     mbRulePhase = MB_RULE_COOLDOWN;
     mbRulePhaseDeadlineMs = millis() + (mbRuleCooldownMs > 0 ? mbRuleCooldownMs : 1);
     return;
   }
   if (mbRulePhase == MB_RULE_COOLDOWN) {
     Serial.println("[Rule] BLACK_HOLD→restore");
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"BLACK_HOLD_TO_RESTORE\"");
     // Already black from FADE — restore without a second dip-to-black.
     unsigned long savedFade = bleEffectTransitionMs;
     bleEffectTransitionMs = 0;
@@ -1592,6 +1620,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   if (!ok) {
     Serial.printf("[Rule] WLED apply failed id=%s name=%s\n",
                   rule["id"] | "(no id)", rule["name"] | "(no name)");
+    sdRuleLoggerWrite("wled_apply_failed",
+                      (String("\"id\":\"") + (rule["id"] | "") + "\",\"name\":\"" + (rule["name"] | "") + "\"").c_str());
     return;
   }
 
@@ -1606,9 +1636,18 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     touchOverrideIdleTimer(src);
   }
 
+  const char* appliedName = rule["name"] | "(no name)";
+  statusDisplaySetLastRule(appliedName);
   Serial.printf("[Rule] Applied id=%s name=%s preset=%s map=%s src=%d\n",
-                rule["id"] | "(no id)", rule["name"] | "(no name)",
+                rule["id"] | "(no id)", appliedName,
                 presetId.c_str(), mapId, (int)src);
+  {
+    char detail[192];
+    snprintf(detail, sizeof(detail),
+             "\"id\":\"%s\",\"name\":\"%s\",\"preset\":\"%s\",\"map\":\"%s\",\"src\":%d",
+             rule["id"] | "", appliedName, presetId.c_str(), mapId, (int)src);
+    sdRuleLoggerWrite("applied", detail);
+  }
   bleNotify(wand
     ? "{\"type\":\"sw_event\",\"event\":\"rule\"}"
     : "{\"type\":\"ble_event\",\"event\":\"rule\"}");
@@ -1625,7 +1664,8 @@ void notifyMbUnmatched(const uint8_t* payload, size_t plen) {
 
 // ── Rules JSON load ─────────────────────────────────────────────────────
 
-void applyMbRulesJson(JsonObject doc) {
+bool applyMbRulesJson(JsonObject doc) {
+  bool cacheOk = true;
   // Reuse colors / segments / randomPool / defaultPresetId via existing mapper
   applyMbMappingJson(doc);
 
@@ -1655,16 +1695,32 @@ void applyMbRulesJson(JsonObject doc) {
       }
       logRulesHeap("after in-place merge");
     } else {
-      // Full replace — serialize incoming mapping once, then fill gRulesDoc from that string.
+      // Full replace — parse into a scratch doc first so a failed reparse
+      // cannot wipe the last-known-good gRulesDoc.
       String raw;
       serializeJson(doc, raw);
-      gRulesDoc.clear();
-      DeserializationError cacheErr = deserializeJson(gRulesDoc, raw, DeserializationOption::NestingLimit(32));
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+      JsonDocument scratch(&jsonPsramAllocator());
+#else
+      PsramJsonDocument scratch(BLE_JSON_DOC_SIZE);
+#endif
+      DeserializationError cacheErr = deserializeJson(scratch, raw, DeserializationOption::NestingLimit(32));
       if (cacheErr) {
-        Serial.printf("[Rules] cache deserialize failed: %s (raw=%u)\n",
-                      cacheErr.c_str(), (unsigned)raw.length());
+        // Transient PSRAM contention at boot — one short retry often succeeds.
+        delay(75);
+        scratch.clear();
+        cacheErr = deserializeJson(scratch, raw, DeserializationOption::NestingLimit(32));
       }
-      logRulesHeap("after full replace");
+      if (cacheErr) {
+        cacheOk = false;
+        Serial.printf("[Rules] cache deserialize failed: %s (raw=%u) — keeping previous rules cache\n",
+                      cacheErr.c_str(), (unsigned)raw.length());
+        logRulesHeap("after failed reparse (cache untouched)");
+      } else {
+        gRulesDoc.clear();
+        gRulesDoc.set(scratch.as<JsonVariantConst>());
+        logRulesHeap("after full replace");
+      }
     }
   } else if (doc.containsKey("paradeDetection") || doc.containsKey("defaultPresetId") ||
              doc.containsKey("colors") || doc.containsKey("segments") || doc.containsKey("randomPool")) {
@@ -1715,6 +1771,7 @@ void applyMbRulesJson(JsonObject doc) {
                 tms.isNull() ? 0u : (unsigned)tms.size(),
                 bleDefaultPresetId.c_str(), paradeDetectEnabled ? 1 : 0,
                 paradeBeaconPrefix, paradeRssiThreshold, paradeCooldownMs);
+  return cacheOk;
 }
 
 void loadMbRulesFromJson() {
@@ -1755,6 +1812,20 @@ JsonArray mbRulesJsonArray() {
 
 JsonArray mbSegmentMapsArray() {
   return gRulesDoc["segmentMaps"].as<JsonArray>();
+}
+
+bool mbRulesCacheSerialize(String& out) {
+  out = "";
+  serializeJson(gRulesDoc, out);
+  return out.length() > 0;
+}
+
+bool persistMbRulesCache() {
+  String updatedJson;
+  if (!mbRulesCacheSerialize(updatedJson)) return false;
+  mbRulesJson = updatedJson;
+  mbMappingJson = updatedJson;
+  return mbRulesFsSave(updatedJson);
 }
 
 // ── Parade detection ────────────────────────────────────────────────────

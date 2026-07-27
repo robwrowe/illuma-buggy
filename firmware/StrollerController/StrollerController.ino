@@ -22,6 +22,10 @@
 #include "MbRulesStore.h"
 #include "MbCalibrationStore.h"
 #include "StatusLed.h"
+#include "SdRuleLogger.h"
+#include "StatusDisplay.h"
+#include "EmbeddedRules.h"
+#include <ArduinoJson.h>
 
 void setup() {
   Serial.begin(115200);
@@ -118,6 +122,24 @@ void setup() {
     nvsRemoveLargeString(prefs, "mbMapping");
     prefs.end();
   }
+
+  // Part 9: seed from compile-time embedded_rules.json when empty or forceOverride.
+  if (kHasEmbeddedRules) {
+    StaticJsonDocument<256> peek;
+    deserializeJson(peek, kEmbeddedRulesJson, DeserializationOption::NestingLimit(2));
+    bool forceOverride = peek["forceOverride"] | false;
+    if (forceOverride || mbRulesJson.length() == 0) {
+      Serial.printf("[Rules] Seeding from embedded_rules.json (force=%d)\n", forceOverride ? 1 : 0);
+      mbRulesJson = String(kEmbeddedRulesJson);
+      mbMappingJson = mbRulesJson;
+      if (mbRulesFsSave(mbRulesJson)) {
+        Serial.println("[Rules] Embedded rules persisted to SPIFFS");
+      } else {
+        Serial.println("[Rules] WARNING: embedded rules loaded into RAM but SPIFFS persist failed");
+      }
+    }
+  }
+
   loadMbMappingDefaults();
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
   loadMbRulesFromJson();
@@ -142,12 +164,15 @@ void setup() {
   delay(200);
   statusLedInit();
   startBLEPeripheral();
+  uartScannerLinkInit();
+  sdRuleLoggerInit();   // non-fatal
+  statusDisplayInit();  // non-fatal
 
   // Dual-board: logic board does NOT own the scan radio (no silent fallback).
   if (boardRole == BoardRole::STANDALONE) {
     startBLEScan();
   } else {
-    Serial.println("[BLE] LOGIC_BOARD — scan disabled; waiting for ESP-NOW scanner");
+    Serial.println("[BLE] LOGIC_BOARD — scan disabled; waiting for UART/ESP-NOW scanner");
   }
 
   payloadTransportInit();
@@ -202,14 +227,18 @@ void processPendingCommands() {
 
 void loop() {
   statusLedTick();
+  uartScannerLinkPoll();
   // BLE first — app preset fire / status must not wait behind ESP-NOW rule applies.
   processBleCmdQueue();
   processPendingCommands();
   processParsedPacketQueue();
+#if !USE_UART_SCANNER_LINK
   transportPairResendTick();
+#endif
   serviceScannerFallback();
   processSerialCommands();
   serviceWandTx();
+  statusDisplayUpdate();
 
   // Auto-clear Starlight Wand override after timeout
   if (currentOverride == BLE_STARLIGHT && starlightTimeoutMs > 0) {
