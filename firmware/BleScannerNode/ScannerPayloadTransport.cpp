@@ -212,3 +212,17 @@ void scannerTransportSend(const ParsedDisneyPacket& pkt) {
   }
 #endif
 }
+
+void scannerUartHeartbeatTick() {
+#if USE_UART_SCANNER_LINK
+  static unsigned long lastHbMs = 0;
+  static uint32_t hbSeq = 0;
+  if (millis() - lastHbMs < 2000) return;
+  lastHbMs = millis();
+  uartLinkSendHeartbeat(Serial1);
+  hbSeq++;
+  if (hbSeq <= 5 || (hbSeq % 15) == 0) {
+    Serial.printf("[UART] heartbeat #%lu\n", (unsigned long)hbSeq);
+  }
+#endif
+}

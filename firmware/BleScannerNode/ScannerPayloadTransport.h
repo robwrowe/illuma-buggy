@@ -5,6 +5,8 @@
 
 void scannerTransportInit();
 void scannerTransportSend(const ParsedDisneyPacket& pkt);
+/** UART mode: send link keepalive so logic doesn't treat quiet scan as dead wire. */
+void scannerUartHeartbeatTick();
 void scannerSetLogicMac(const uint8_t mac[6], uint8_t channel = 0);
 bool scannerParseMacString(const char* str, uint8_t out[6]);
 String scannerMacToString(const uint8_t mac[6]);

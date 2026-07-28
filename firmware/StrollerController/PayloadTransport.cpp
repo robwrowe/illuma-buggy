@@ -53,6 +53,10 @@ void transportOnUartPacket(const ParsedDisneyPacket& pkt) {
   queueParsedPacket(pkt);
 }
 
+static void onUartHeartbeat() {
+  lastScannerPacketMs = millis();
+}
+
 static UartLinkRx gUartRx;
 
 static void onUartPacketCb(const ParsedDisneyPacket& pkt) {
@@ -63,6 +67,7 @@ void uartScannerLinkInit() {
   uartLinkBegin(Serial1);
   gUartRx.onPacket = onUartPacketCb;
   gUartRx.onTime = nullptr;
+  gUartRx.onHeartbeat = onUartHeartbeat;
   Serial.printf("[UART] scanner link %s (USE_UART_SCANNER_LINK=%d)\n",
                 USE_UART_SCANNER_LINK ? "active" : "initialized (ESP-NOW primary)",
                 USE_UART_SCANNER_LINK);
@@ -70,6 +75,20 @@ void uartScannerLinkInit() {
 
 void uartScannerLinkPoll() {
   uartLinkPoll(Serial1, gUartRx);
+#if USE_UART_SCANNER_LINK
+  static unsigned long lastUartDiagMs = 0;
+  if (millis() - lastUartDiagMs >= 5000) {
+    lastUartDiagMs = millis();
+    unsigned long age = lastScannerPacketMs ? (millis() - lastScannerPacketMs) : 0;
+    Serial.printf("[UART] rx bytes=%lu ok=%lu hb=%lu csumFail=%lu resync=%lu last=%s\n",
+                  (unsigned long)gUartRx.rawBytes,
+                  (unsigned long)gUartRx.rxOk,
+                  (unsigned long)gUartRx.heartbeats,
+                  (unsigned long)gUartRx.checksumFail,
+                  (unsigned long)gUartRx.resync,
+                  lastScannerPacketMs ? (String(age) + "ms ago").c_str() : "never");
+  }
+#endif
 }
 
 String transportMacToString(const uint8_t mac[6]) {

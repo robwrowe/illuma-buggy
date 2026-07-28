@@ -84,6 +84,7 @@ void setup() {
 void loop() {
   statusLedTick();
   processScannerSerial();
+  scannerUartHeartbeatTick();
 #if !USE_UART_SCANNER_LINK
   if (!logicPeerConfigured) {
     scannerAdvertiseRefresh();

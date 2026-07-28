@@ -3,10 +3,11 @@
 #include "Types.h"
 #include "Config.h"
 
-#define UART_LINK_MAGIC_0    0xAA
-#define UART_LINK_MAGIC_1    0x55
-#define UART_MSG_TYPE_PACKET 0x01
-#define UART_MSG_TYPE_TIME   0x02
+#define UART_LINK_MAGIC_0       0xAA
+#define UART_LINK_MAGIC_1       0x55
+#define UART_MSG_TYPE_PACKET    0x01
+#define UART_MSG_TYPE_TIME      0x02
+#define UART_MSG_TYPE_HEARTBEAT 0x03
 
 inline uint8_t uartLinkChecksum(const uint8_t* data, size_t len) {
   uint8_t x = 0;
@@ -33,12 +34,17 @@ inline void uartLinkSendRaw(HardwareSerial& port, uint8_t msgType, const uint8_t
   port.write(uartLinkChecksum(data, len));
 }
 
+inline void uartLinkSendHeartbeat(HardwareSerial& port) {
+  uartLinkSendRaw(port, UART_MSG_TYPE_HEARTBEAT, nullptr, 0);
+}
+
 enum class UartRxState : uint8_t {
   WAIT_MAGIC0, WAIT_MAGIC1, WAIT_TYPE, WAIT_LEN, WAIT_PAYLOAD, WAIT_CHECKSUM
 };
 
 using UartPacketHandler = void (*)(const ParsedDisneyPacket& pkt);
 using UartTimeHandler = void (*)(const uint8_t* data, uint8_t len);
+using UartHeartbeatHandler = void (*)();
 
 struct UartLinkRx {
   UartRxState state = UartRxState::WAIT_MAGIC0;
@@ -49,13 +55,17 @@ struct UartLinkRx {
   uint32_t rxOk = 0;
   uint32_t checksumFail = 0;
   uint32_t resync = 0;
+  uint32_t rawBytes = 0;
+  uint32_t heartbeats = 0;
   UartPacketHandler onPacket = nullptr;
   UartTimeHandler onTime = nullptr;
+  UartHeartbeatHandler onHeartbeat = nullptr;
 };
 
 inline void uartLinkPoll(HardwareSerial& port, UartLinkRx& rx) {
   while (port.available()) {
     uint8_t b = (uint8_t)port.read();
+    rx.rawBytes++;
     switch (rx.state) {
       case UartRxState::WAIT_MAGIC0:
         if (b == UART_LINK_MAGIC_0) rx.state = UartRxState::WAIT_MAGIC1;
@@ -74,7 +84,8 @@ inline void uartLinkPoll(HardwareSerial& port, UartLinkRx& rx) {
         break;
       case UartRxState::WAIT_LEN:
         if (rx.msgType == UART_MSG_TYPE_PACKET && b != sizeof(ParsedDisneyPacket)) {
-          Serial.printf("[UART] unexpected len=%u, resyncing\n", b);
+          Serial.printf("[UART] unexpected len=%u (want %u), resyncing\n",
+                        b, (unsigned)sizeof(ParsedDisneyPacket));
           rx.resync++;
           rx.state = UartRxState::WAIT_MAGIC0;
           break;
@@ -103,6 +114,9 @@ inline void uartLinkPoll(HardwareSerial& port, UartLinkRx& rx) {
             rx.onPacket(pkt);
           } else if (rx.msgType == UART_MSG_TYPE_TIME && rx.onTime) {
             rx.onTime(rx.buf, rx.expectedLen);
+          } else if (rx.msgType == UART_MSG_TYPE_HEARTBEAT) {
+            rx.heartbeats++;
+            if (rx.onHeartbeat) rx.onHeartbeat();
           }
         } else {
           rx.checksumFail++;
@@ -116,6 +130,7 @@ inline void uartLinkPoll(HardwareSerial& port, UartLinkRx& rx) {
 }
 
 inline void uartLinkBegin(HardwareSerial& port) {
+  port.setRxBufferSize(1024);
   port.begin(UART_LINK_BAUD, SERIAL_8N1, UART_LINK_RX_PIN, UART_LINK_TX_PIN);
   Serial.printf("[UART] Serial1 TX=%d RX=%d baud=%d\n",
                 UART_LINK_TX_PIN, UART_LINK_RX_PIN, UART_LINK_BAUD);
