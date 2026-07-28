@@ -109,6 +109,7 @@ String mbRulesJson = "";
 bool   mbMappingLoadedFromNvs = false;
 String bleDefaultPresetId = "";
 bool   wledWasConnected   = false;
+bool   wledHttpOk         = false;
 
 bool          mbUnmatchedLogEnabled = false;
 

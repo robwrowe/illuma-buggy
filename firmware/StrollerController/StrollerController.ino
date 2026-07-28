@@ -274,6 +274,7 @@ void loop() {
       connectToWLED();
     }
     wledWasConnected = false;
+    wledHttpOk = false;
   } else if (!wledWasConnected) {
     wledWasConnected = true;
     delay(300);  // let AP/WLED settle after STA join

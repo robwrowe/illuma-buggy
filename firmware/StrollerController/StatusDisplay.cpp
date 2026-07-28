@@ -10,11 +10,10 @@
 
 static Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 static bool displayReady = false;
-static bool wledLastCallOk = true;
 static String lastFiredRuleName = "";
 static unsigned long lastDisplayMs = 0;
 
-void statusDisplaySetWledOk(bool ok) { wledLastCallOk = ok; }
+void statusDisplaySetWledOk(bool ok) { wledHttpOk = ok; }
 
 void statusDisplaySetLastRule(const char* name) {
   lastFiredRuleName = name ? String(name) : "";
@@ -51,7 +50,7 @@ void statusDisplayUpdate() {
   display.setCursor(0, 0);
 
   display.printf("WLED:%s Role:%s\n",
-                 wledLastCallOk ? "OK" : "FAIL",
+                 wledHttpOk ? "OK" : "FAIL",
                  boardRole == BoardRole::LOGIC_BOARD ? "LOGIC" : "STD");
 
   display.printf("Uptime:%lus\n", now / 1000UL);

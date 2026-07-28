@@ -146,9 +146,11 @@ void scannerTransportInit() {
 
   uartLinkBegin(Serial1);
 #if USE_UART_SCANNER_LINK
-  Serial.println("[UART] scanner→logic packet forwarding active (ESP-NOW send disabled)");
-#endif
-
+  // UART-only: skip WiFi STA + ESP-NOW. Stacking those with NimBLE on a weak USB
+  // supply is the usual brownout trigger on this board; UART needs neither radio.
+  Serial.println("[UART] scanner→logic forwarding active (WiFi/ESP-NOW not started)");
+  return;
+#else
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
@@ -167,11 +169,13 @@ void scannerTransportInit() {
   } else {
     Serial.println("[ESP-NOW] unpaired — sweeping channels for reflected pair from logic board");
   }
+#endif
 }
 
 void scannerTransportSend(const ParsedDisneyPacket& pkt) {
 #if USE_UART_SCANNER_LINK
   uartLinkSendPacket(Serial1, pkt);
+  lastForwardMs = millis();
   espNowTxSeq++;
   if (espNowTxSeq <= 40 || (espNowTxSeq % 25) == 0) {
     Serial.printf("[UART] forwarding scan packet #%lu (len=%u kind=%u op=0x%04X)\n",
@@ -198,8 +202,10 @@ void scannerTransportSend(const ParsedDisneyPacket& pkt) {
 
   esp_err_t err = esp_now_send(pairedLogicMac, (const uint8_t*)&pkt, sizeof(pkt));
   // ESP_OK means queued for TX — delivery confirmed (or not) in onEspNowSend.
-  if (err == ESP_OK) espNowSendOk++;
-  else {
+  if (err == ESP_OK) {
+    espNowSendOk++;
+    lastForwardMs = millis();
+  } else {
     espNowSendFail++;
     Serial.printf("[ESP-NOW] esp_now_send ERR %d (queued ok/fail=%lu/%lu)\n",
                   (int)err, (unsigned long)espNowSendOk, (unsigned long)espNowSendFail);

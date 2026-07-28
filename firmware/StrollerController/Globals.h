@@ -149,5 +149,8 @@ extern String  mbLayoutsJson;
 extern unsigned long lastWifiRetry;
 extern volatile bool wifiConnectInProgress;
 
+/** True after a successful WLED HTTP call; cleared on WiFi loss / HTTP failure. */
+extern bool wledHttpOk;
+
 extern QueueHandle_t cmdQueue;
 extern QueueHandle_t bleCmdQueue;

@@ -7,9 +7,13 @@
 
 static Adafruit_NeoPixel pixel(STATUS_LED_COUNT, STATUS_LED_PIN, NEO_GRB + NEO_KHZ800);
 
-enum class LedState { BOOTING, NO_SCANNER_MAC, PAIRING, LINKED, FALLBACK, STANDALONE_OK };
+// WIFI_DOWN  = not associated with StrollerNet
+// WLED_DOWN  = WiFi up but WLED HTTP failing / never succeeded
+enum class LedState {
+  WIFI_DOWN, NO_SCANNER_MAC, PAIRING, LINKED, FALLBACK, STANDALONE_OK, WLED_DOWN
+};
 
-static LedState currentState = LedState::BOOTING;
+static LedState currentState = LedState::WIFI_DOWN;
 static unsigned long lastToggleMs = 0;
 static bool blinkOn = false;
 
@@ -19,12 +23,23 @@ static bool scannerAliveNow() {
 }
 
 static LedState computeState() {
-  if (WiFi.status() != WL_CONNECTED) return LedState::BOOTING;
+  if (WiFi.status() != WL_CONNECTED) return LedState::WIFI_DOWN;
+  // Green means "ready to drive lights" — WiFi alone is not enough.
+  if (!wledHttpOk) return LedState::WLED_DOWN;
+
   if (boardRole == BoardRole::STANDALONE) return LedState::STANDALONE_OK;
+
+#if USE_UART_SCANNER_LINK
+  // UART link: no scanner MAC required — age of last packet is the health signal.
+  if (localScanFallbackActive) return LedState::FALLBACK;
+  if (scannerAliveNow()) return LedState::LINKED;
+  return LedState::PAIRING;
+#else
   if (!scannerPeerConfigured) return LedState::NO_SCANNER_MAC;
   if (localScanFallbackActive) return LedState::FALLBACK;
   if (scannerAliveNow()) return LedState::LINKED;
   return LedState::PAIRING;
+#endif
 }
 
 void statusLedInit() {
@@ -41,12 +56,13 @@ void statusLedTick() {
   unsigned long blinkIntervalMs = 0; // 0 = solid, no blink
 
   switch (currentState) {
-    case LedState::BOOTING:        color = pixel.Color(0, 0, 255);   blinkIntervalMs = 600; break;
-    case LedState::NO_SCANNER_MAC: color = pixel.Color(255, 200, 0); blinkIntervalMs = 500; break;
-    case LedState::PAIRING:        color = pixel.Color(255, 200, 0); blinkIntervalMs = 125; break;
-    case LedState::LINKED:         color = pixel.Color(0, 255, 0);   blinkIntervalMs = 0;   break;
-    case LedState::FALLBACK:       color = pixel.Color(255, 0, 0);   blinkIntervalMs = 500; break;
-    case LedState::STANDALONE_OK:  color = pixel.Color(0, 120, 0);   blinkIntervalMs = 0;   break;
+    case LedState::WIFI_DOWN:      color = pixel.Color(0, 0, 255);   blinkIntervalMs = 600; break; // blue
+    case LedState::WLED_DOWN:      color = pixel.Color(255, 0, 255); blinkIntervalMs = 400; break; // magenta
+    case LedState::NO_SCANNER_MAC: color = pixel.Color(255, 200, 0); blinkIntervalMs = 500; break; // amber
+    case LedState::PAIRING:        color = pixel.Color(255, 200, 0); blinkIntervalMs = 125; break; // amber fast
+    case LedState::LINKED:         color = pixel.Color(0, 255, 0);   blinkIntervalMs = 0;   break; // green
+    case LedState::FALLBACK:       color = pixel.Color(255, 0, 0);   blinkIntervalMs = 500; break; // red
+    case LedState::STANDALONE_OK:  color = pixel.Color(0, 120, 0);   blinkIntervalMs = 0;   break; // dim green
   }
 
   if (blinkIntervalMs == 0) {

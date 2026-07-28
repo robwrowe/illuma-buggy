@@ -68,7 +68,10 @@ bool sendToWLEDForBleSolid(const String& jsonBody) {
 }
 
 String getFromWLED(const String& path, int timeoutMs) {
-  if (WiFi.status() != WL_CONNECTED) return "";
+  if (WiFi.status() != WL_CONNECTED) {
+    statusDisplaySetWledOk(false);
+    return "";
+  }
   HTTPClient http;
   http.begin("http://" + wledIp + ":" + String(wledPort) + path);
   http.setTimeout(timeoutMs > 0 ? timeoutMs : 5000);
@@ -76,8 +79,10 @@ String getFromWLED(const String& path, int timeoutMs) {
   String body = "";
   if (code == 200) {
     body = http.getString();
+    statusDisplaySetWledOk(true);
   } else {
     Serial.printf("[WLED] GET %s failed: %d\n", path.c_str(), code);
+    statusDisplaySetWledOk(false);
   }
   http.end();
   return body;

@@ -24,6 +24,7 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     }
 
     if (!isDisneyMfr(data, len)) return;
+    lastDisneySeenMs = millis();
     sdRawLoggerWrite(data, len, rssi, (uint64_t)millis());
 
     const char* tag = classifyScanPacket(data, len);
@@ -61,9 +62,16 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
 void startBLEScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setScanCallbacks(new DisneyBLEScanCallbacks(), true);
+#if CONFIG_IDF_TARGET_ESP32S3
   scan->setActiveScan(true);
-  scan->setInterval(80);
-  scan->setWindow(79);
+  scan->setInterval(80);   // 50 ms
+  scan->setWindow(79);     // ~continuous
+#else
+  // Classic ESP32: near-100% active window + Serial/UART in onResult trips TWDT.
+  scan->setActiveScan(true);
+  scan->setInterval(160);  // 100 ms
+  scan->setWindow(48);     // ~30% duty
+#endif
   scan->setDuplicateFilter(false);
   scan->start(0, false);
   Serial.println("[BLE] Scanner started (active, continuous, no dedup)");

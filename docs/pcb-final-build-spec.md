@@ -74,4 +74,10 @@ SD/SPI/Wire are core.
 2. Flash both boards with `USE_UART_SCANNER_LINK=1` (default).
 3. Confirm `[UART] forwarding` / `[UART] recv` serial lines under WandSimulator traffic.
 4. Keep ESP-NOW code until Part 3 — do not delete yet.
-5. OLED/SD fail soft if hardware absent.
+| Color | Scanner meaning |
+|---|---|
+| Blue blink | Boot (~3s) |
+| Amber fast | ESP-NOW unpaired (UART mode skips this) |
+| Amber slow | Quiet — no recent Disney / forward |
+| Cyan blink | Disney seen, not forwarding (e.g. unpaired ESP-NOW) |
+| Green solid | Recently forwarded packets |

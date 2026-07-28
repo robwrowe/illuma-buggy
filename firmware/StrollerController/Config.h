@@ -85,24 +85,45 @@
 #define SCANNER_ALIVE_MS  10000
 
 // Local board-health NeoPixel (not the show strip / GLEDOPTO).
-// DevKitC-1 v1.1+ (incl. v1.3) onboard RGB = GPIO 38; v1.0 used GPIO 48.
+// ESP32-S3-DevKitC-1 v1.0 = GPIO 48; v1.1+ often GPIO 38. Classic ESP32 DevKits
+// have no onboard RGB — StatusLed becomes a no-op (see HAS_STATUS_NEOPIXEL).
+#if CONFIG_IDF_TARGET_ESP32S3
+#define HAS_STATUS_NEOPIXEL 1
 #define STATUS_LED_PIN 48
 #define STATUS_LED_COUNT 1
+#else
+#define HAS_STATUS_NEOPIXEL 0
+#endif
 
 // Inter-board UART link (provisional — confirm vs ESP32-S3-DevKitC-1-N16R8 datasheet).
 // Set to 0 to fall back to ESP-NOW packet forwarding.
 #ifndef USE_UART_SCANNER_LINK
 #define USE_UART_SCANNER_LINK 1
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3
 #define UART_LINK_TX_PIN 17
 #define UART_LINK_RX_PIN 8
+#else
+// Classic ESP32 (DevKitC-32 / ESP-32D / WROOM-32D): GPIO 6–11 are flash —
+// do not use RX=8 from the S3 pin map. TX=17 / RX=16 are broken out on 38-pin kits.
+// Cross-wire to the logic (S3) board: scanner TX→logic RX(8), scanner RX←logic TX(17).
+#define UART_LINK_TX_PIN 17
+#define UART_LINK_RX_PIN 16
+#endif
 #define UART_LINK_BAUD   115200
 
-// SD card SPI (independent card per board)
+// SD card SPI (independent card per board).
+// Classic ESP32: GPIO 6–11 are tied to onboard flash — the S3 pin map (MOSI=11)
+// must NOT be used there or SPI.begin/SD.begin can hang and trip the task WDT.
+#if CONFIG_IDF_TARGET_ESP32S3
+#define HAS_SD_LOGGER 1
 #define SD_CS_PIN   10
 #define SD_SCK_PIN  12
 #define SD_MOSI_PIN 11
 #define SD_MISO_PIN 13
+#else
+#define HAS_SD_LOGGER 0
+#endif
 
 // OLED I2C (logic board only).
 // ESP32-S3-DevKitC-1 does NOT break out GPIO 22 (classic-ESP32 I2C default).
