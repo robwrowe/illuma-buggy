@@ -108,34 +108,16 @@ static int printWrapped(const String& text, int maxLines) {
 static String cachedPresetId;
 static String cachedPresetName;
 
-/** Resolve preset display name from NVS JSON; fall back to id. Cached per id. */
+/** Prefer live currentPresetName; fall back to NVS lookup. */
 static String presetDisplayName(const String& id) {
   if (id.length() == 0) return "(none)";
+  if (id == currentPresetId && currentPresetName.length() > 0) return currentPresetName;
   if (id == cachedPresetId && cachedPresetName.length() > 0) return cachedPresetName;
 
-  String raw = getPreset(id);
-  String name = id;
-  if (raw.length() > 0) {
-    int key = raw.indexOf("\"name\":\"");
-    int nameStart = -1;
-    if (key >= 0) {
-      nameStart = key + 8;
-    } else {
-      key = raw.indexOf("\"name\": \"");
-      if (key >= 0) nameStart = key + 9;
-    }
-    if (nameStart >= 0) {
-      int end = raw.indexOf('"', nameStart);
-      if (end > nameStart) {
-        String extracted = raw.substring(nameStart, end);
-        if (extracted.length() > 0) name = extracted;
-      }
-    }
-  }
-
+  String name = getPresetName(id);
   cachedPresetId = id;
-  cachedPresetName = name;
-  return name;
+  cachedPresetName = name.length() ? name : id;
+  return cachedPresetName;
 }
 
 void statusDisplayUpdate() {

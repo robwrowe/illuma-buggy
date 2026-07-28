@@ -217,7 +217,7 @@ bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, i
   String wledJson;
   serializeJson(doc["wled"], wledJson);
   if (wledJson.length() == 0) return false;
-  currentPresetId = id;
+  setCurrentPreset(id);
   disableAllSplitSegments();
   String payload = injectWledTransition(
     buildWledRestorePayload(prepareWledRestorePayload(wledJson)),
@@ -255,7 +255,7 @@ void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
   if (deserializeJson(doc, preset)) return;
   String wledJson;
   serializeJson(doc["wled"], wledJson);
-  currentPresetId = presetId;
+  setCurrentPreset(presetId);
   sendToWLED(injectWledTransition(prepareWledRestorePayload(wledJson), fadeMs));
   if (wledJson.length() > 0) liveWledState = wledJson;
 }

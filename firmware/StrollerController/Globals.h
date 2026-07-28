@@ -45,6 +45,8 @@ extern String mbFadeToBlackPresetId;
 
 extern int    currentBrightness;
 extern String currentPresetId;
+/** Human-readable name for OLED; kept in sync via setCurrentPreset(). */
+extern String currentPresetName;
 
 extern bool          starlightEnabled;
 extern unsigned long starlightTimeoutMs;

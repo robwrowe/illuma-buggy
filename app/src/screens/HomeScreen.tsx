@@ -32,6 +32,7 @@ import { useAppStore } from "../stores/store";
 import { bleService } from "../services/BLEService";
 import { fireActiveZonePreset, fadeToBlackQuick } from "../services/parkQuickActions";
 import { formatSyncStatusLabel } from "../utils/boardSyncState";
+import { fetchLiveWledSummary } from "../utils/bleBoardSync";
 import { requestFullBoardSync } from "../utils/connectBootstrap";
 import { useTheme } from "../utils/theme";
 import { PresetPickerModal } from "./MbMappingSections";
@@ -73,6 +74,7 @@ export default function HomeScreen() {
     String(deviceStatus?.brightness ?? 0),
   );
   const [editingBrightness, setEditingBrightness] = useState(false);
+  const [fetchingBrightness, setFetchingBrightness] = useState(false);
   const [events, setEvents] = useState<string[]>([]);
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
   const [firingZone, setFiringZone] = useState(false);
@@ -154,6 +156,29 @@ export default function HomeScreen() {
     const next = Math.min(255, Math.max(0, Math.round(raw)));
     applyBrightnessToUi(next);
     bleService.sendBrightness(next);
+  };
+
+  const refreshBrightness = async () => {
+    if (!isConnected || fetchingBrightness) return;
+    setFetchingBrightness(true);
+    try {
+      const summary = await fetchLiveWledSummary(8000);
+      if (summary.bri != null && Number.isFinite(summary.bri)) {
+        applyBrightnessToUi(summary.bri);
+        useAppStore.setState(s => ({
+          deviceStatus: s.deviceStatus
+            ? { ...s.deviceStatus, brightness: summary.bri as number }
+            : s.deviceStatus,
+        }));
+      } else {
+        bleService.sendStatus();
+      }
+    } catch {
+      bleService.sendStatus();
+      Alert.alert("Brightness", "Could not read WLED brightness — requested board status instead.");
+    } finally {
+      setFetchingBrightness(false);
+    }
   };
 
   // BLE Data event feed.
@@ -261,8 +286,20 @@ export default function HomeScreen() {
   );
   const commandsBlocked = isConnected && !isSessionReady;
 
+  const connectionHeadline = (() => {
+    if (connectionState === "scanning") return "Scanning…";
+    if (connectionState === "connecting") return "Connecting…";
+    if (connectionState === "disconnected") return "Disconnected";
+    if (connectionState === "error") return "Connection error";
+    if (!isSessionReady) return "Syncing…";
+    const mode =
+      boardSync.mode === "quick" ? "Quick" : boardSync.mode === "full" ? "Full" : null;
+    const head = mode ? `Ready • ${mode}` : "Ready";
+    return `${head} • ${presets.length} in app`;
+  })();
+
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content}>
+    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       {/* Connection */}
       <View style={s.card}>
         <View style={s.row}>
@@ -271,13 +308,7 @@ export default function HomeScreen() {
           ) : (
             <IconBluetoothOff size={18} color={colors.danger} />
           )}
-          <Text style={s.statusText}>
-            {connectionState === "connected"
-              ? isSessionReady ? "Connected — commands enabled" : "Connected — syncing board…"
-              : connectionState === "scanning" ? "Scanning…"
-              : connectionState === "connecting" ? "Connecting…"
-              : connectionState === "disconnected" ? "Disconnected" : "Connection error"}
-          </Text>
+          <Text style={s.statusText} numberOfLines={1}>{connectionHeadline}</Text>
           {!isConnected ? (
             <TouchableOpacity style={s.iconBtn} onPress={() => void bleService.connect()}>
               <IconRefresh size={18} color={colors.primary} />
@@ -298,7 +329,6 @@ export default function HomeScreen() {
             </TouchableOpacity>
           )}
         </View>
-        {isConnected && <Text style={s.subText}>{syncStatusLabel}</Text>}
         {(commandsBlocked || (isConnected && isSessionReady && boardSync.backgroundBusy)) && (
           <View style={[s.syncBanner, !commandsBlocked && s.syncBannerMuted]}>
             <ActivityIndicator size="small" color={commandsBlocked ? colors.primary : colors.textMuted} />
@@ -309,13 +339,6 @@ export default function HomeScreen() {
               )}
             </View>
           </View>
-        )}
-        {isConnected && boardSync.mode !== "none" && (
-          <Text style={s.subText}>
-            Sync mode: {boardSync.mode === "quick" ? "quick reconnect" : "full"}
-            {deviceStatus?.boardPresetCount != null ? ` · ${deviceStatus.boardPresetCount} preset(s) on board` : ""}
-            {presets.length > 0 ? ` · ${presets.length} in app` : ""}
-          </Text>
         )}
         {isConnected && syncMode === "manual" && <Text style={[s.subText, { color: colors.warning }]}>Manual sync — board is running its own saved config</Text>}
         {isConnected && parkMode && <Text style={[s.subText, { color: colors.warning }]}>Park Mode — minimal BLE (no auto config push)</Text>}
@@ -436,7 +459,16 @@ export default function HomeScreen() {
       <View style={s.card}>
         <View style={s.row}>
           <IconBulb size={15} color={colors.textSecondary} />
-          <Text style={s.label}>Brightness</Text>
+          <Text style={[s.label, { flex: 1 }]}>Brightness</Text>
+          <TouchableOpacity
+            style={s.iconBtn}
+            onPress={() => void refreshBrightness()}
+            disabled={!isConnected || fetchingBrightness}
+          >
+            {fetchingBrightness
+              ? <ActivityIndicator size="small" color={colors.primary} />
+              : <IconRefresh size={18} color={isConnected ? colors.primary : colors.textMuted} />}
+          </TouchableOpacity>
           <TextInput
             style={s.brightnessInput}
             keyboardType="number-pad"
@@ -643,28 +675,39 @@ export default function HomeScreen() {
 
       <Modal visible={logMarkerOpen} transparent animationType="slide" onRequestClose={() => setLogMarkerOpen(false)}>
         <View style={s.modalBackdrop}>
-          <View style={s.modalCard}>
-            <Text style={s.modalTitle}>Log marker</Text>
-            <Text style={s.subText}>{logMarkerTimestamp}</Text>
-            <TextInput style={s.markerInput} value={logMarkerDraft} onChangeText={setLogMarkerDraft} placeholder="Describe this moment" placeholderTextColor={colors.textMuted} autoFocus />
-            <View style={s.snippetRow}>
-              {logMarkerSnippets.map((snippet) => (
-                <View key={snippet.key} style={s.snippetChip}>
-                  <TouchableOpacity onPress={() => setLogMarkerDraft((draft) => `${draft}${draft ? " " : ""}${snippet.value}`)}><Text style={s.snippetText}>{snippet.key}</Text></TouchableOpacity>
-                  <TouchableOpacity onPress={() => { setLogMarkerSnippets(logMarkerSnippets.filter((item) => item.key !== snippet.key)); saveToStorage(); }}><IconTrash size={13} color={colors.danger} /></TouchableOpacity>
-                </View>
-              ))}
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ flexGrow: 1, justifyContent: "flex-end" }}
+          >
+            <View style={s.modalCard}>
+              <Text style={s.modalTitle}>Log marker</Text>
+              <Text style={s.subText}>{logMarkerTimestamp}</Text>
+              <TextInput style={s.markerInput} value={logMarkerDraft} onChangeText={setLogMarkerDraft} placeholder="Describe this moment" placeholderTextColor={colors.textMuted} autoFocus />
+              <View style={s.snippetRow}>
+                {logMarkerSnippets.map((snippet) => (
+                  <View key={snippet.key} style={s.snippetChip}>
+                    <TouchableOpacity onPress={() => setLogMarkerDraft((draft) => `${draft}${draft ? " " : ""}${snippet.value}`)}><Text style={s.snippetText}>{snippet.key}</Text></TouchableOpacity>
+                    <TouchableOpacity onPress={() => { setLogMarkerSnippets(logMarkerSnippets.filter((item) => item.key !== snippet.key)); saveToStorage(); }}><IconTrash size={13} color={colors.danger} /></TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+              <View style={s.snippetEditor}>
+                <TextInput style={s.markerInput} value={snippetKey} onChangeText={setSnippetKey} placeholder="Snippet label" placeholderTextColor={colors.textMuted} blurOnSubmit={false} />
+                <TextInput style={s.markerInput} value={snippetValue} onChangeText={setSnippetValue} placeholder="Snippet text" placeholderTextColor={colors.textMuted} blurOnSubmit={false} />
+                <TouchableOpacity
+                  style={s.iconBtn}
+                  onPress={addLogMarkerSnippet}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
+                  <IconPlus size={18} color={colors.primary} />
+                </TouchableOpacity>
+              </View>
+              <View style={s.modalActions}>
+                <TouchableOpacity style={s.modalButton} onPress={() => setLogMarkerOpen(false)}><Text style={s.subText}>Cancel</Text></TouchableOpacity>
+                <TouchableOpacity style={[s.modalButton, !logMarkerDraft.trim() && s.quickBtnDisabled]} disabled={!logMarkerDraft.trim()} onPress={sendLogMarker}><Text style={s.syncBtnText}>Send</Text></TouchableOpacity>
+              </View>
             </View>
-            <View style={s.snippetEditor}>
-              <TextInput style={s.markerInput} value={snippetKey} onChangeText={setSnippetKey} placeholder="Snippet label" placeholderTextColor={colors.textMuted} />
-              <TextInput style={s.markerInput} value={snippetValue} onChangeText={setSnippetValue} placeholder="Snippet text" placeholderTextColor={colors.textMuted} />
-              <TouchableOpacity style={s.iconBtn} onPress={addLogMarkerSnippet}><IconPlus size={18} color={colors.primary} /></TouchableOpacity>
-            </View>
-            <View style={s.modalActions}>
-              <TouchableOpacity style={s.modalButton} onPress={() => setLogMarkerOpen(false)}><Text style={s.subText}>Cancel</Text></TouchableOpacity>
-              <TouchableOpacity style={[s.modalButton, !logMarkerDraft.trim() && s.quickBtnDisabled]} disabled={!logMarkerDraft.trim()} onPress={sendLogMarker}><Text style={s.syncBtnText}>Send</Text></TouchableOpacity>
-            </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </ScrollView>

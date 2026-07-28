@@ -1300,7 +1300,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         serializeJson(pdoc["wled"], wledStr);
         if (!deserializeJson(wled, wledStr)) {
           haveWled = true;
-          currentPresetId = presetId;
+          setCurrentPreset(presetId);
         }
       }
     }

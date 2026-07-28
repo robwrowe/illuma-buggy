@@ -1,5 +1,6 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ZonesScreen from '../screens/ZonesScreen';
 import BleDataScreen from '../screens/more/BleDataScreen';
 import BrightnessScreen from '../screens/more/BrightnessScreen';
@@ -15,11 +16,15 @@ const Stack = createNativeStackNavigator();
 
 export default function MoreNavigator() {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   return (
     <Stack.Navigator screenOptions={{
       headerStyle: { backgroundColor: colors.header },
       headerTintColor: colors.textPrimary,
       contentStyle: { backgroundColor: colors.background },
+      // Nested stack under a tab with headerShown:false — apply inset so titles
+      // sit below the status bar / notch instead of under it.
+      safeAreaInsets: { top: insets.top },
     }}>
       <Stack.Screen name="MoreHome" component={MoreHomeScreen} options={{ title: 'More' }} />
       <Stack.Screen name="General" component={GeneralScreen} options={{ title: 'General' }} />
@@ -29,7 +34,7 @@ export default function MoreNavigator() {
       <Stack.Screen name="BleData" component={BleDataScreen} options={{ title: 'BLE Data' }} />
       <Stack.Screen name="LogicBoard" component={LogicBoardScreen} options={{ title: 'Logic Board' }} />
       <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
-      <Stack.Screen name="Zones" component={ZonesScreen} />
+      <Stack.Screen name="Zones" component={ZonesScreen} options={{ title: 'Locations' }} />
     </Stack.Navigator>
   );
 }

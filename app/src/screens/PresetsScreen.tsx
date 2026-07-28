@@ -135,20 +135,18 @@ export default function PresetsScreen() {
           </Text>
         </View>
       )}
-      <View style={s.header}>
-        <TouchableOpacity style={s.headerBtn} onPress={refreshFromBoard} disabled={!isConnected || syncing}>
-          {syncing
-            ? <ActivityIndicator size="small" color={colors.primary} />
-            : <IconRefresh size={16} color={colors.primary} />}
-          <Text style={s.headerBtnText}>{syncing ? 'Syncing…' : 'Sync'}</Text>
-        </TouchableOpacity>
-      </View>
 
       {presets.length === 0 ? (
         <View style={s.centered}>
           <IconSparkles size={40} color={colors.textMuted} />
           <Text style={s.emptyText}>No presets yet</Text>
           <Text style={s.hint}>Presets are authored in the web tool and synced to the board.</Text>
+          <TouchableOpacity style={s.headerBtn} onPress={refreshFromBoard} disabled={!isConnected || syncing}>
+            {syncing
+              ? <ActivityIndicator size="small" color={colors.primary} />
+              : <IconRefresh size={16} color={colors.primary} />}
+            <Text style={s.headerBtnText}>{syncing ? 'Syncing…' : 'Sync from board'}</Text>
+          </TouchableOpacity>
         </View>
       ) : (
         <>
@@ -159,6 +157,18 @@ export default function PresetsScreen() {
             activeTag={activeTag}
             onActiveTagChange={setActiveTag}
             colors={colors}
+            trailing={
+              <TouchableOpacity
+                style={s.syncIconBtn}
+                onPress={refreshFromBoard}
+                disabled={!isConnected || syncing}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                {syncing
+                  ? <ActivityIndicator size="small" color={colors.primary} />
+                  : <IconRefresh size={20} color={isConnected ? colors.primary : colors.textMuted} />}
+              </TouchableOpacity>
+            }
           />
           {filteredPresets.length === 0 ? (
             <View style={s.centered}>
@@ -171,6 +181,7 @@ export default function PresetsScreen() {
               keyExtractor={item => item.id}
               renderItem={renderPreset}
               contentContainerStyle={s.list}
+              keyboardShouldPersistTaps="handled"
             />
           )}
         </>
@@ -183,7 +194,6 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   container:    { flex: 1, backgroundColor: c.background },
   syncBar:      { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: c.primary + '14', borderBottomWidth: 1, borderBottomColor: c.border },
   syncBarText:  { color: c.textPrimary, fontSize: 13, flex: 1 },
-  header:       { flexDirection: 'row', justifyContent: 'flex-end', padding: 16, gap: 8 },
   list:         { padding: 16, gap: 10 },
   centered:     { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   presetCard:   { flexDirection: 'row', alignItems: 'center', backgroundColor: c.surface, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: c.border, gap: 8 },
@@ -196,6 +206,7 @@ const styles = (c: ReturnType<typeof import('../utils/theme').useTheme>['colors'
   applyBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   headerBtn:    { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: c.surfaceAlt, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
   headerBtnText: { color: c.primary, fontWeight: '500' },
+  syncIconBtn:  { padding: 8, borderRadius: 8, backgroundColor: c.surfaceAlt },
   hint:         { color: c.textMuted, fontSize: 12, textAlign: 'center' },
   emptyText:    { color: c.textPrimary, fontSize: 16, fontWeight: '500' },
 });

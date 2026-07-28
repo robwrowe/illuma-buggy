@@ -208,7 +208,7 @@ void handleBLECommand(const String& msg) {
         return;
       }
       setOverride(MANUAL);
-      currentPresetId = presetId;
+      setCurrentPreset(presetId);
     }
     ensureWledPowerOn();
     // preparePresetApplyPayload folds inactive seg ids into one POST — no separate disable pass.

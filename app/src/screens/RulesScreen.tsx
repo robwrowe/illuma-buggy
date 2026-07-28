@@ -11,30 +11,52 @@ import { moreStyles } from './more/moreStyles';
 type BoardRule = { id: string; name: string; prio: number; enabled: boolean };
 type SortMode = 'priority' | 'az' | 'za';
 
+function rulesFromPhoneConfig(raw: unknown): BoardRule[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Record<string, unknown>[])
+    .map(rule => ({
+      id: String(rule.id ?? ''),
+      name: String(rule.name ?? rule.id ?? ''),
+      prio: Number(rule.priority ?? rule.prio ?? 0),
+      enabled: rule.enabled !== false,
+    }))
+    .filter(rule => rule.id);
+}
+
 export default function RulesScreen() {
   const { colors } = useTheme();
   const s = moreStyles(colors);
   const { isConnected } = useBLE();
-  const { rulesPaused, setRulesPaused } = useAppStore();
-  const [rules, setRules] = useState<BoardRule[]>([]);
+  const { rulesPaused, setRulesPaused, mbMapping } = useAppStore();
+  const [rules, setRules] = useState<BoardRule[]>(() => rulesFromPhoneConfig(mbMapping.rules));
   const [loading, setLoading] = useState(false);
   const [sort, setSort] = useState<SortMode>('priority');
   const [showDisabled, setShowDisabled] = useState(true);
+  const [source, setSource] = useState<'config' | 'board'>('config');
+
+  const seedFromConfig = useCallback(() => {
+    setRules(rulesFromPhoneConfig(useAppStore.getState().mbMapping.rules));
+    setSource('config');
+  }, []);
 
   const refresh = useCallback(() => {
-    if (!bleService.isConnected()) return;
+    if (!bleService.isConnected()) {
+      seedFromConfig();
+      return;
+    }
     setLoading(true);
     void bleService.sendListRules();
-  }, []);
+  }, [seedFromConfig]);
 
   useEffect(() => bleService.onMessage(msg => {
     if (msg.type === 'rules_summary' && Array.isArray(msg.rules)) {
       setRules((msg.rules as Record<string, unknown>[]).map(rule => ({
         id: String(rule.id ?? ''),
         name: String(rule.name ?? rule.id ?? ''),
-        prio: Number(rule.prio ?? 0),
+        prio: Number(rule.prio ?? rule.priority ?? 0),
         enabled: rule.enabled !== false,
       })).filter(rule => rule.id));
+      setSource('board');
       setLoading(false);
     }
     if (msg.type === 'ack' && msg.action === 'set_rule_enabled' && msg.ok) {
@@ -44,9 +66,10 @@ export default function RulesScreen() {
   }), []);
 
   useFocusEffect(useCallback(() => {
+    // Always show phone config immediately; refresh board enabled flags when linked.
+    seedFromConfig();
     if (isConnected) refresh();
-    else setRules([]);
-  }, [isConnected, refresh]));
+  }, [isConnected, refresh, seedFromConfig]));
 
   const visibleRules = useMemo(() => rules
     .filter(rule => showDisabled || rule.enabled)
@@ -60,8 +83,9 @@ export default function RulesScreen() {
       contentContainerStyle={s.content}
       data={visibleRules}
       keyExtractor={rule => rule.id}
+      ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
       ListHeaderComponent={
-        <>
+        <View style={{ gap: 16 }}>
           <View style={s.section}>
             <Text style={s.sectionTitle}>Rules</Text>
             <View style={s.row}>
@@ -76,8 +100,15 @@ export default function RulesScreen() {
             <View style={s.row}>
               <Text style={[s.sectionTitle, { flex: 1 }]}>Board Rules</Text>
               {loading && <ActivityIndicator size="small" color={colors.primary} />}
-              <TouchableOpacity onPress={refresh} disabled={!isConnected || loading}><IconRefresh size={18} color={colors.primary} /></TouchableOpacity>
+              <TouchableOpacity onPress={refresh} disabled={loading}>
+                <IconRefresh size={18} color={colors.primary} />
+              </TouchableOpacity>
             </View>
+            <Text style={s.rowHint}>
+              {source === 'board'
+                ? 'Showing board rule state (enabled flags from IllumaBuggy).'
+                : 'Showing rules from phone config. Connect + refresh to sync board toggles.'}
+            </Text>
             <View style={s.recallBtns}>
               {(['priority', 'az', 'za'] as SortMode[]).map(option => (
                 <TouchableOpacity key={option} style={[s.recallBtn, sort === option && { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => setSort(option)}>
@@ -94,22 +125,31 @@ export default function RulesScreen() {
                 thumbColor="#fff"
               />
             </View>
-            {!isConnected && <Text style={s.rowHint}>Connect to the board to manage rules.</Text>}
           </View>
-        </>
+        </View>
       }
-      ListEmptyComponent={!loading && isConnected ? <Text style={[s.rowHint, { textAlign: 'center' }]}>No matching rules on board.</Text> : null}
+      ListEmptyComponent={!loading ? (
+        <Text style={[s.rowHint, { textAlign: 'center', marginTop: 16 }]}>
+          {rules.length === 0 ? 'No rules in phone config yet — import/sync from the web tool.' : 'No matching rules.'}
+        </Text>
+      ) : null}
       renderItem={({ item }) => (
-        <View style={[s.section, { marginTop: 0 }]}>
+        <View style={s.section}>
           <View style={s.row}>
             <View style={{ flex: 1 }}>
               <Text style={s.rowLabel}>{item.name || item.id}</Text>
               <Text style={s.rowHint}>prio {item.prio} · {item.id}</Text>
             </View>
-            <Switch value={item.enabled} onValueChange={enabled => {
-              setRules(prev => prev.map(rule => rule.id === item.id ? { ...rule, enabled } : rule));
-              void bleService.sendSetRuleEnabled(item.id, enabled);
-            }} trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
+            <Switch
+              value={item.enabled}
+              disabled={!isConnected}
+              onValueChange={enabled => {
+                setRules(prev => prev.map(rule => rule.id === item.id ? { ...rule, enabled } : rule));
+                void bleService.sendSetRuleEnabled(item.id, enabled);
+              }}
+              trackColor={{ false: colors.borderFocus, true: colors.primary }}
+              thumbColor="#fff"
+            />
           </View>
         </View>
       )}

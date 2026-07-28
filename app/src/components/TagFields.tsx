@@ -76,6 +76,7 @@ export function TagEditor({
 
 export function TagFilterBar<T extends { name: string; tags?: string[] }>({
   items, search, onSearchChange, activeTag, onActiveTagChange, colors, placeholder = 'Search name or tags…',
+  trailing,
 }: {
   items: T[];
   search: string;
@@ -84,21 +85,25 @@ export function TagFilterBar<T extends { name: string; tags?: string[] }>({
   onActiveTagChange: (tag: string | null) => void;
   colors: Colors;
   placeholder?: string;
+  trailing?: React.ReactNode;
 }) {
   const s = styles(colors);
   const allTags = collectAllTags(items);
 
   return (
     <View style={s.filterWrap}>
-      <TextInput
-        style={s.searchInput}
-        value={search}
-        onChangeText={onSearchChange}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textMuted}
-        autoCapitalize="none"
-        clearButtonMode="while-editing"
-      />
+      <View style={s.searchRow}>
+        <TextInput
+          style={[s.searchInput, trailing ? { flex: 1 } : null]}
+          value={search}
+          onChangeText={onSearchChange}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="none"
+          clearButtonMode="while-editing"
+        />
+        {trailing}
+      </View>
       {allTags.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View style={s.chipRow}>
@@ -165,6 +170,7 @@ const styles = (colors: Colors) => StyleSheet.create({
   },
   suggestText: { fontSize: 10, color: colors.textSecondary },
   filterWrap: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   searchInput: {
     backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border,
     color: colors.textPrimary, padding: 10, fontSize: 14,

@@ -53,6 +53,7 @@ String mbFadeToBlackPresetId = "";  // "" = fall back to {"on":false}
 
 int    currentBrightness = 128;
 String currentPresetId   = "";
+String currentPresetName = "";
 
 bool          starlightEnabled    = true;
 unsigned long starlightTimeoutMs  = 15000;
