@@ -16,5 +16,6 @@
 ## Firmware docs
 
 - [pcb-final-build-spec.md](./pcb-final-build-spec.md) — **authoritative** combined PCB + UART/OLED/SD + Parts 1–13 software build order
+- [rules-psram-runbook.md](./rules-psram-runbook.md) — push or embed MB rules into the board (SPIFFS + PSRAM cache)
 - [firmware/StrollerController/PROTOCOL.md](../firmware/StrollerController/PROTOCOL.md) — app ↔ board JSON over BLE
 - [firmware/WandSimulator/README.md](../firmware/WandSimulator/README.md) — bench broadcaster serial commands

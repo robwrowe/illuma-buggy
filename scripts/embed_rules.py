@@ -1,12 +1,36 @@
 #!/usr/bin/env python3
 """Converts embedded_rules.json into a C++ header with the raw bytes,
-   for compile-time inclusion in the firmware image."""
+   for compile-time inclusion in the firmware image.
+
+Accepts either:
+  - an MB mapping document (top-level non-empty `rules` array), or
+  - a full web profile export (rules under `mbMapping.rules`).
+"""
 import json
 import pathlib
 import sys
 
 SRC = pathlib.Path(__file__).parent.parent / "firmware/StrollerController/embedded_rules.json"
 DST = pathlib.Path(__file__).parent.parent / "firmware/StrollerController/EmbeddedRules.h"
+
+
+def resolve_mapping(parsed: dict) -> dict:
+    """Return the mapping object that should be baked into flash."""
+    rules = parsed.get("rules")
+    if isinstance(rules, list) and len(rules) > 0:
+        return parsed
+
+    mb = parsed.get("mbMapping")
+    if isinstance(mb, dict):
+        mb_rules = mb.get("rules")
+        if isinstance(mb_rules, list) and len(mb_rules) > 0:
+            out = dict(mb)
+            # Allow forceOverride on the profile root (not only inside mbMapping).
+            if "forceOverride" in parsed and "forceOverride" not in out:
+                out["forceOverride"] = parsed["forceOverride"]
+            return out
+
+    return parsed
 
 
 def main():
@@ -20,19 +44,37 @@ def main():
         print("[embed_rules] no embedded_rules.json found — emitting empty placeholder")
         return
 
-    raw = SRC.read_bytes()
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(SRC.read_text(encoding="utf-8"))
     except Exception as e:
         print(f"[embed_rules] ERROR: embedded_rules.json is not valid JSON: {e}", file=sys.stderr)
         sys.exit(1)
-    if not isinstance(parsed.get("rules"), list) or len(parsed["rules"]) == 0:
-        print("[embed_rules] ERROR: embedded_rules.json has no non-empty 'rules' array", file=sys.stderr)
+
+    if not isinstance(parsed, dict):
+        print("[embed_rules] ERROR: embedded_rules.json must be a JSON object", file=sys.stderr)
         sys.exit(1)
 
+    mapping = resolve_mapping(parsed)
+    rules = mapping.get("rules")
+    if not isinstance(rules, list) or len(rules) == 0:
+        print(
+            "[embed_rules] ERROR: no non-empty 'rules' array at root or under mbMapping\n"
+            "  Tip: use data.mbMapping from a web export, or paste the full profile — "
+            "this script will unwrap mbMapping.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Compact JSON for flash size; keep Unicode as-is.
+    raw = json.dumps(mapping, separators=(",", ":"), ensure_ascii=False)
+    if mapping is not parsed:
+        print(
+            f"[embed_rules] unwrapped mbMapping from profile export "
+            f"({len(SRC.read_bytes())} → {len(raw.encode('utf-8'))} bytes)"
+        )
+
     escaped = (
-        raw.decode("utf-8")
-        .replace("\\", "\\\\")
+        raw.replace("\\", "\\\\")
         .replace('"', '\\"')
         .replace("\n", "\\n")
         .replace("\r", "")
@@ -44,8 +86,8 @@ def main():
         f'static const char kEmbeddedRulesJson[] = "{escaped}";\n'
     )
     print(
-        f"[embed_rules] embedded {len(raw)} bytes from embedded_rules.json "
-        f"({len(parsed['rules'])} rules)"
+        f"[embed_rules] embedded {len(raw.encode('utf-8'))} bytes "
+        f"({len(rules)} rules)"
     )
 
 
