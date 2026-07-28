@@ -14,9 +14,6 @@ extern String wledIp;
 extern int    wledPort;
 extern const char* BLE_NAME;
 
-extern uint8_t mbChaseSpeed;
-extern uint8_t mbChaseThickness;
-
 extern const char* MB_SEG_KEYS[];
 extern const uint8_t MB_DEFAULT_COLORS[32][3];
 
@@ -53,10 +50,11 @@ extern bool          starlightEnabled;
 extern unsigned long starlightTimeoutMs;
 extern bool          magicBandEnabled;
 extern bool          mbDeferToApp;
-extern bool          magicBandFivePoint;
 extern unsigned long magicBandTimeoutMs;
 extern unsigned long bleEffectTransitionMs;
 extern bool          bleScanLogEnabled;
+/** When true, Disney BLE Data packets skip rule match/apply (zones/manual still work). */
+extern bool          rulesPaused;
 
 extern unsigned long swEventTimestamp;
 extern unsigned long mbEventTimestamp;

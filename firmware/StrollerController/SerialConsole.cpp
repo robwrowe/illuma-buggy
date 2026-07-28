@@ -26,8 +26,6 @@ void processSerialCommands() {
     Serial.println("  tx on            — broadcast WAND-IDLE beacon (pairing test)");
     Serial.println("  tx off           — stop wand TX beacon");
     Serial.println("  tx cast <0-31>   — broadcast WAND-CAST for 3s");
-    Serial.println("  chase speed <0-255>   — MB chase sx (0 = static)");
-    Serial.println("  chase thick <1-50>    — MB chase grp (pixels per block)");
     Serial.println("  mb five <tl bl br tr c>  — E909 five corners (palette 0-31)");
     Serial.println("  mb <palette> [mask]      — E905 single color (mask 0 = all)");
     Serial.println("  mb defer on|off          — forward E9 to app vs firmware apply");
@@ -157,25 +155,6 @@ void processSerialCommands() {
     int sp = line.indexOf(' ', 7);
     if (sp > 0) pal = line.substring(sp + 1).toInt();
     startWandTxCast((uint8_t)pal, 3000);
-  } else if (line.startsWith("chase speed")) {
-    int sp = line.indexOf(' ', 11);
-    if (sp > 0) {
-      mbChaseSpeed = (uint8_t)line.substring(sp + 1).toInt();
-      prefs.begin("config", false);
-      prefs.putUChar("mbSpd", mbChaseSpeed);
-      prefs.end();
-      Serial.printf("[Serial] Chase speed (sx) = %u\n", mbChaseSpeed);
-    }
-  } else if (line.startsWith("chase thick")) {
-    int sp = line.indexOf(' ', 11);
-    if (sp > 0) {
-      mbChaseThickness = (uint8_t)line.substring(sp + 1).toInt();
-      if (mbChaseThickness < 1) mbChaseThickness = 1;
-      prefs.begin("config", false);
-      prefs.putUChar("mbGrp", mbChaseThickness);
-      prefs.end();
-      Serial.printf("[Serial] Chase thickness (grp) = %u\n", mbChaseThickness);
-    }
   } else if (line == "sniff off") {
     bleSniffUntilMs = 0;
     Serial.println("[Serial] Sniff off");

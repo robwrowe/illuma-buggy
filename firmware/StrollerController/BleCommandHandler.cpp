@@ -383,22 +383,32 @@ void handleBLECommand(const String& msg) {
     bleNotify(ack);
   }
 
-  // ── MagicBand chase tuning ──
-  else if (type == "mb_chase_config") {
-    if (doc.containsKey("speed"))     mbChaseSpeed     = (uint8_t)doc["speed"].as<int>();
-    if (doc.containsKey("thickness")) mbChaseThickness = (uint8_t)doc["thickness"].as<int>();
-    if (mbChaseThickness < 1) mbChaseThickness = 1;
+  // ── MagicBand config ──
+  else if (type == "mb_config") {
+    if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
+    if (doc.containsKey("timeout_ms")) magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
+    if (doc.containsKey("defer_to_app")) mbDeferToApp = doc["defer_to_app"].as<bool>();
     prefs.begin("config", false);
-    prefs.putUChar("mbSpd", mbChaseSpeed);
-    prefs.putUChar("mbGrp", mbChaseThickness);
+    prefs.putBool("mbEn", magicBandEnabled);
+    prefs.putULong("mbTimeout", magicBandTimeoutMs);
+    prefs.putBool("mbDefer", mbDeferToApp);
     prefs.end();
-    String ack = "{\"type\":\"ack\",\"action\":\"mb_chase_config\","
-                 "\"speed\":" + String(mbChaseSpeed) + ","
-                 "\"thickness\":" + String(mbChaseThickness) + "}";
+    String ack = "{\"type\":\"ack\",\"action\":\"mb_config\","
+                 "\"enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
+                 "\"timeout_ms\":" + String(magicBandTimeoutMs) + ","
+                 "\"defer_to_app\":" + String(mbDeferToApp ? "true" : "false") + "}";
     bleNotify(ack);
   }
 
-  // ── MB rule engine config (rules + colors + segments + paradeDetection) ──
+  else if (type == "rules_pause_config") {
+    if (doc.containsKey("paused")) rulesPaused = doc["paused"].as<bool>();
+    prefs.begin("config", false);
+    prefs.putBool("rulesPaused", rulesPaused);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"rules_pause_config\",\"paused\":" +
+              String(rulesPaused ? "true" : "false") + "}");
+    Serial.printf("[Rules] %s\n", rulesPaused ? "paused" : "resumed");
+  }
   else if (type == "set_mb_rules" || type == "mb_rules_config" || type == "mb_mapping_config") {
     JsonObject mapping = doc.containsKey("mapping") ? doc["mapping"].as<JsonObject>()
                        : doc.as<JsonObject>();
@@ -511,26 +521,6 @@ void handleBLECommand(const String& msg) {
     } else {
       bleNotify("{\"type\":\"ack\",\"action\":\"mb_layout_switch\",\"ok\":false}");
     }
-  }
-
-  // ── MagicBand config ──
-  else if (type == "mb_config") {
-    if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
-    if (doc.containsKey("five_point")) magicBandFivePoint = doc["five_point"].as<bool>();
-    if (doc.containsKey("timeout_ms")) magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
-    if (doc.containsKey("defer_to_app")) mbDeferToApp = doc["defer_to_app"].as<bool>();
-    prefs.begin("config", false);
-    prefs.putBool("mbEn", magicBandEnabled);
-    prefs.putBool("mb5pt", magicBandFivePoint);
-    prefs.putULong("mbTimeout", magicBandTimeoutMs);
-    prefs.putBool("mbDefer", mbDeferToApp);
-    prefs.end();
-    String ack = "{\"type\":\"ack\",\"action\":\"mb_config\","
-                 "\"enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
-                 "\"five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
-                 "\"timeout_ms\":" + String(magicBandTimeoutMs) + ","
-                 "\"defer_to_app\":" + String(mbDeferToApp ? "true" : "false") + "}";
-    bleNotify(ack);
   }
 
   // ── Dual-board role / scanner pairing ──
@@ -694,6 +684,9 @@ void handleBLECommand(const String& msg) {
 
   // ── Status ──
   else if (type == "status") {
+    if (WiFi.status() == WL_CONNECTED) {
+      refreshCurrentBrightnessFromWled(600);
+    }
     unsigned long scannerAgeMs = 0;
     bool scannerSeen = (lastScannerPacketMs > 0);
     if (scannerSeen) scannerAgeMs = millis() - lastScannerPacketMs;
@@ -712,11 +705,9 @@ void handleBLECommand(const String& msg) {
       "\"sw_enabled\":" + String(starlightEnabled ? "true" : "false") + ","
       "\"sw_timeout_ms\":" + String(starlightTimeoutMs) + ","
       "\"mb_enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
-      "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
       "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) + ","
       "\"ble_transition_ms\":" + String(bleEffectTransitionMs) + ","
-      "\"mb_chase_speed\":" + String(mbChaseSpeed) + ","
-      "\"mb_chase_thickness\":" + String(mbChaseThickness) + ","
+      "\"rules_paused\":" + String(rulesPaused ? "true" : "false") + ","
       "\"mb_mapping_loaded\":" + String(mbMappingLoadedFromNvs ? "true" : "false") + ","
       "\"mb_layout_active\":" + String((int)mbActiveLayoutIdx) + ","
       "\"mb_layout_name\":\"" + String(mbLayoutCount > 0 ? mbLayouts[mbActiveLayoutIdx].name : "Default") + "\","

@@ -9,17 +9,15 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { enableScreens } from "react-native-screens";
-import { View, Text, StyleSheet, Alert } from "react-native";
+import { Alert } from "react-native";
 
 enableScreens();
 
 import IconHome from "@tabler/icons-react-native/dist/esm/icons/IconHome";
 import IconSparkles from "@tabler/icons-react-native/dist/esm/icons/IconSparkles";
-import IconMap from "@tabler/icons-react-native/dist/esm/icons/IconMap";
 import IconSettings from "@tabler/icons-react-native/dist/esm/icons/IconSettings";
-import IconBook from "@tabler/icons-react-native/dist/esm/icons/IconBook";
-import IconDroplet from "@tabler/icons-react-native/dist/esm/icons/IconDroplet";
 import IconBolt from "@tabler/icons-react-native/dist/esm/icons/IconBolt";
+import IconListDetails from "@tabler/icons-react-native/dist/esm/icons/IconListDetails";
 
 import { bleService } from "./src/services/BLEService";
 import { useAppStore } from "./src/stores/store";
@@ -35,34 +33,16 @@ import { fireActiveZonePreset, fadeToBlackQuick } from "./src/services/parkQuick
 import HomeScreen from "./src/screens/HomeScreen";
 import BleCaptureScreen from "./src/screens/BleCaptureScreen";
 import PresetsScreen from "./src/screens/PresetsScreen";
-import SettingsScreen from "./src/screens/SettingsScreen";
-import LibraryScreen from "./src/screens/LibraryScreen";
-import PalettesScreen from "./src/screens/PalettesScreen";
-
-const ZonesScreen = React.lazy(() => import("./src/screens/ZonesScreen"));
+import RulesScreen from "./src/screens/RulesScreen";
+import MoreNavigator from "./src/navigation/MoreNavigator";
 
 const Tab = createBottomTabNavigator();
-
-function ZonesWrapper() {
-  return (
-    <React.Suspense
-      fallback={
-        <View style={styles.centered}>
-          <Text style={styles.loadingText}>Loading map…</Text>
-        </View>
-      }
-    >
-      <ZonesScreen />
-    </React.Suspense>
-  );
-}
 
 function AppNavigator() {
   useZoneManager();
   useCaptureAutomation();
   useSheetsQueueDrain();
   const { colors, isDark } = useTheme();
-  const parkMode = useAppStore(s => s.parkMode);
 
   const navTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
@@ -88,31 +68,27 @@ function AppNavigator() {
           tabBarInactiveTintColor: colors.textMuted,
           headerStyle: { backgroundColor: colors.header },
           headerTintColor: colors.textPrimary,
+          headerShown: route.name !== "More",
           tabBarIcon: ({ color, size }) => {
             if (route.name === "Home")
               return <IconHome size={size} color={color} />;
+            if (route.name === "Rules")
+              return <IconListDetails size={size} color={color} />;
             if (route.name === "Presets")
               return <IconSparkles size={size} color={color} />;
-            if (route.name === "Library")
-              return <IconBook size={size} color={color} />;
-            if (route.name === "Zones")
-              return <IconMap size={size} color={color} />;
-            if (route.name === "Settings")
+            if (route.name === "More")
               return <IconSettings size={size} color={color} />;
-            if (route.name === "Palettes")
-              return <IconDroplet size={size} color={color} />;
             if (route.name === "Capture")
               return <IconBolt size={size} color={color} />;
+            return null;
           },
         })}
       >
         <Tab.Screen name="Home" component={HomeScreen} />
-        {!parkMode && <Tab.Screen name="Capture" component={BleCaptureScreen} />}
+        <Tab.Screen name="Rules" component={RulesScreen} />
+        <Tab.Screen name="Capture" component={BleCaptureScreen} />
         <Tab.Screen name="Presets" component={PresetsScreen} />
-        {!parkMode && <Tab.Screen name="Library" component={LibraryScreen} />}
-        <Tab.Screen name="Zones" component={ZonesWrapper} />
-        <Tab.Screen name="Settings" component={SettingsScreen} />
-        {!parkMode && <Tab.Screen name="Palettes" component={PalettesScreen} />}
+        <Tab.Screen name="More" component={MoreNavigator} options={{ title: "More" }} />
       </Tab.Navigator>
     </NavigationContainer>
   );
@@ -135,10 +111,10 @@ function formatBleEffectLabel(msg: Record<string, unknown>): string | null {
     return labels[ev] ?? ev.replace(/_/g, " ");
   }
   if (msg.type === "sw_color") {
-    return `Wand palette ${msg.palette} → RGB(${msg.r}, ${msg.g}, ${msg.b})`;
+    return `BLE Data palette ${msg.palette} → RGB(${msg.r}, ${msg.g}, ${msg.b})`;
   }
   if (msg.type === "sw_event") {
-    return `Wand: ${String(msg.event)}`;
+    return `BLE Data ${String(msg.event ?? "event")}`;
   }
   return null;
 }
@@ -218,7 +194,7 @@ export default function App() {
           if (action === "preset_apply") {
             Alert.alert(
               "Preset not applied",
-              "Preset missing on board or blocked by an active override (wand/MB/show).",
+              "Preset missing on board or blocked by an active override (BLE Data / show).",
             );
           } else if (action === "wled_raw") {
             Alert.alert(
@@ -236,6 +212,21 @@ export default function App() {
           hex: String(msg.hex ?? ""),
           len: msg.len as number,
         });
+      }
+      if (msg.type === "mb_unmatched") {
+        const captureActive = useAppStore.getState().bleCaptureActive;
+        if (captureActive) {
+          appendBleCapturePacket({
+            boardTs: msg.ts as number,
+            tag: "UNMATCHED",
+            rssi: 0,
+            hex: String(msg.hex ?? ""),
+            len: msg.len as number,
+            quality: "",
+            func: "",
+            label: "reportAsUnmatched",
+          });
+        }
       }
       if (msg.type === "unknown_anim") {
         appendBleCapturePacket({
@@ -268,8 +259,8 @@ export default function App() {
           starlightEnabled: msg.sw_enabled as boolean,
           starlightTimeoutMs: msg.sw_timeout_ms as number,
           magicBandEnabled: msg.mb_enabled as boolean,
-          mbFivePoint: msg.mb_five_point as boolean,
           mbTimeoutMs: msg.mb_timeout_ms as number,
+          rulesPaused: msg.rules_paused as boolean | undefined,
           showType: msg.show_type as string | undefined,
           showPhase: msg.show_phase as string | undefined,
           boardPresetCount: msg.preset_count as number | undefined,
@@ -283,6 +274,12 @@ export default function App() {
           scannerSeen: msg.scanner_seen as boolean | undefined,
           scannerAgeMs: msg.scanner_age_ms as number | undefined,
         });
+        if (typeof msg.rules_paused === "boolean") {
+          const cur = useAppStore.getState().rulesPaused;
+          if (cur !== msg.rules_paused) {
+            useAppStore.setState({ rulesPaused: msg.rules_paused });
+          }
+        }
         if (override === 0) setOverrideDetail(null);
         const role = msg.board_role as string | undefined;
         if (role === "standalone" || role === "logic_board") {
@@ -336,13 +333,3 @@ export default function App() {
     </GestureHandlerRootView>
   );
 }
-
-const styles = StyleSheet.create({
-  centered: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#0a0a0f",
-  },
-  loadingText: { color: "#9090b0", fontSize: 14 },
-});

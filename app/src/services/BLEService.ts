@@ -383,11 +383,14 @@ class BLEService {
   sendBleEffectConfig(transitionMs: number) {
     return this.send({ type: 'ble_effect_config', transition_ms: transitionMs });
   }
-  sendMbConfig(enabled: boolean, fivePoint: boolean, timeoutMs?: number, deferToApp?: boolean) {
-    const msg: BLEMessage = { type: 'mb_config', enabled, five_point: fivePoint };
+  sendMbConfig(enabled: boolean, timeoutMs?: number, deferToApp?: boolean) {
+    const msg: BLEMessage = { type: 'mb_config', enabled };
     if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;
     if (deferToApp !== undefined) msg.defer_to_app = deferToApp;
     return this.send(msg);
+  }
+  sendRulesPaused(paused: boolean) {
+    return this.send({ type: 'rules_pause_config', paused });
   }
   sendSwConfig(enabled: boolean, timeoutMs?: number) {
     const msg: BLEMessage = { type: 'sw_config', enabled };

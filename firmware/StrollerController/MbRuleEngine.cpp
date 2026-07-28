@@ -1720,12 +1720,19 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   bleNotify(wand
     ? "{\"type\":\"sw_event\",\"event\":\"rule\"}"
     : "{\"type\":\"ble_event\",\"event\":\"rule\"}");
+
+  bool reportUnmatched = rule["reportAsUnmatched"] | rule["report_as_unmatched"] | false;
+  if (reportUnmatched && payload && plen > 0) {
+    sdRuleLoggerWrite("unmatched_rule",
+                      (String("\"id\":\"") + (rule["id"] | "") + "\",\"name\":\"" + (rule["name"] | "") + "\"").c_str());
+    notifyMbUnmatched(payload, plen, true);
+  }
 }
 
 // ── Unmatched notify ────────────────────────────────────────────────────
 
-void notifyMbUnmatched(const uint8_t* payload, size_t plen) {
-  if (!mbUnmatchedLogEnabled || !bleConnected) return;
+void notifyMbUnmatched(const uint8_t* payload, size_t plen, bool force) {
+  if ((!force && !mbUnmatchedLogEnabled) || !bleConnected) return;
   bleNotify("{\"type\":\"mb_unmatched\",\"hex\":\"" + mfrToHexFull(payload, plen, 64) +
             "\",\"len\":" + String(plen) +
             ",\"ts\":" + String(millis()) + "}");

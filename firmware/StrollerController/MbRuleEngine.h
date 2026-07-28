@@ -61,7 +61,7 @@ void forceRuleLifecycleRestore();
 // Called when the same timed rule matches again while a lifecycle is active.
 void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen);
 
-void notifyMbUnmatched(const uint8_t* payload, size_t plen);
+void notifyMbUnmatched(const uint8_t* payload, size_t plen, bool force = false);
 JsonArray mbRulesJsonArray();
 JsonArray mbSegmentMapsArray();
 /** Serialize the live gRulesDoc cache into `out`. */

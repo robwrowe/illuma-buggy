@@ -181,6 +181,22 @@ void ensureWledPowerOn() {
   sendToWLED("{\"on\":true}");
 }
 
+bool refreshCurrentBrightnessFromWled(int timeoutMs) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  String state = getFromWLED("/json/si", timeoutMs);
+  if (state.length() == 0) {
+    state = getFromWLED("/json/state", timeoutMs);
+  }
+  if (state.length() == 0) return false;
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, state)) return false;
+  JsonVariant bri = doc["state"]["bri"];
+  if (bri.isNull()) bri = doc["bri"];
+  if (bri.isNull()) return false;
+  currentBrightness = bri.as<int>();
+  return true;
+}
+
 // ─────────────────────────────────────────────
 // WLED EFFECTS — full-strip MagicBand chase / wand solid
 // Only PATCH segment 0 — never send stop:0 on other segments (destroys WLED layout)

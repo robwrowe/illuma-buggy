@@ -71,7 +71,7 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
       <Stack p="md" gap="md" maw={960}>
         <Title order={3}>Settings</Title>
         <Text size="xs" c="dimmed" lh={1.6}>
-          MagicBand+ and wand packets are mapped with the <strong>Rules</strong> engine. Push rules
+          BLE Data packets are mapped with the <strong>Rules</strong> engine. Push rules
           + presets with <strong>📡 Board</strong>.
         </Text>
 
@@ -204,7 +204,7 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
         {bleTab === 'colors' && (
           <>
             <Text size="xs" c="dimmed">
-              RGB used when no preset is mapped (solid MB colors).
+              RGB used when no preset is mapped (solid BLE Data colors).
             </Text>
             <RandomPoolEditor
               randomPool={mb.randomPool}
@@ -321,7 +321,7 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
             </SimpleGrid>
             <Field label="Override kill on zone">
               <Checkbox
-                label="Clear manual/MB override when entering a zone"
+                label="Clear manual/BLE Data override when entering a zone"
                 checked={!!data.overrideKillOnZone}
                 onChange={(e) => update({ overrideKillOnZone: e.target.checked })}
               />

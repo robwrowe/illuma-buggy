@@ -730,6 +730,8 @@ export function createEmptyRule(overrides = {}) {
     ignoreLowerPriority: false,
     /** While this rule's lifecycle is active, block every other rule (exact re-match still allowed). */
     ignoreAllOtherRules: false,
+    /** When applied, also emit mb_unmatched for capture / Sheets. */
+    reportAsUnmatched: false,
     match: createEmptyMatchGroup('all'),
     colorSources: [],
     extract: [],
@@ -1289,6 +1291,7 @@ export function normalizeMbRule(raw, index = 0) {
     priority: Number.isFinite(raw.priority) ? Number(raw.priority) : index * 10,
     ignoreLowerPriority: !!(raw.ignoreLowerPriority ?? raw.ignore_lower_priority),
     ignoreAllOtherRules: !!(raw.ignoreAllOtherRules ?? raw.ignore_all_other_rules),
+    reportAsUnmatched: !!(raw.reportAsUnmatched ?? raw.report_as_unmatched),
     match: normalizeConditionNode(raw.match || createEmptyMatchGroup('all')),
     colorSources: normalizeColorSources(raw.colorSources),
     extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],

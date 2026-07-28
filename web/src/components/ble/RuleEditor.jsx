@@ -1771,6 +1771,12 @@ function RuleCard({
             checked={!!rule.ignoreAllOtherRules}
             onChange={(e) => onChange({ ...rule, ignoreAllOtherRules: e.target.checked })}
           />
+          <Checkbox
+            label="Report as unmatched when applied"
+            description="Still runs the rule (e.g. fade to black), but also emits an unmatched packet event for capture / Sheets."
+            checked={!!rule.reportAsUnmatched}
+            onChange={(e) => onChange({ ...rule, reportAsUnmatched: e.target.checked })}
+          />
           <Field label="Preset">
             <SearchableSelect
               value={rule.presetId || ''}

@@ -2,6 +2,7 @@
 #include "Globals.h"
 #include "PayloadTransport.h"
 #include "MbRuleEngine.h"
+#include "PresetStore.h"
 #include "Config.h"
 #include "Types.h"
 #include <Wire.h>
@@ -12,6 +13,10 @@ static Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 static bool displayReady = false;
 static String lastFiredRuleName = "";
 static unsigned long lastDisplayMs = 0;
+
+// Default GFX font is 6×8 → 21 cols × 8 rows on 128×64.
+static const int OLED_COLS = OLED_WIDTH / 6;
+static const int OLED_ROWS = OLED_HEIGHT / 8;
 
 void statusDisplaySetWledOk(bool ok) { wledHttpOk = ok; }
 
@@ -75,9 +80,62 @@ bool statusDisplayInit() {
   return false;
 }
 
-static String truncate(const String& s, size_t maxLen) {
-  if (s.length() <= maxLen) return s;
-  return s.substring(0, maxLen - 1) + ".";
+static int linesNeeded(const String& s) {
+  if (s.length() == 0) return 1;
+  return (int)((s.length() + OLED_COLS - 1) / OLED_COLS);
+}
+
+/** Print up to maxLines of text, wrapping at OLED_COLS. Returns lines used. */
+static int printWrapped(const String& text, int maxLines) {
+  if (maxLines <= 0) return 0;
+  int len = (int)text.length();
+  int pos = 0;
+  int used = 0;
+  while (pos < len && used < maxLines) {
+    int take = len - pos;
+    if (take > OLED_COLS) take = OLED_COLS;
+    display.println(text.substring(pos, pos + take));
+    pos += take;
+    used++;
+  }
+  if (used == 0) {
+    display.println();
+    used = 1;
+  }
+  return used;
+}
+
+static String cachedPresetId;
+static String cachedPresetName;
+
+/** Resolve preset display name from NVS JSON; fall back to id. Cached per id. */
+static String presetDisplayName(const String& id) {
+  if (id.length() == 0) return "(none)";
+  if (id == cachedPresetId && cachedPresetName.length() > 0) return cachedPresetName;
+
+  String raw = getPreset(id);
+  String name = id;
+  if (raw.length() > 0) {
+    int key = raw.indexOf("\"name\":\"");
+    int nameStart = -1;
+    if (key >= 0) {
+      nameStart = key + 8;
+    } else {
+      key = raw.indexOf("\"name\": \"");
+      if (key >= 0) nameStart = key + 9;
+    }
+    if (nameStart >= 0) {
+      int end = raw.indexOf('"', nameStart);
+      if (end > nameStart) {
+        String extracted = raw.substring(nameStart, end);
+        if (extracted.length() > 0) name = extracted;
+      }
+    }
+  }
+
+  cachedPresetId = id;
+  cachedPresetName = name;
+  return name;
 }
 
 void statusDisplayUpdate() {
@@ -88,36 +146,48 @@ void statusDisplayUpdate() {
 
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
   display.setCursor(0, 0);
 
+  int rowsUsed = 0;
+
+  // 1. WLED status / uptime
   display.print("WLED:");
   display.print(wledHttpOk ? "OK" : "FAIL");
-  display.print(" Role:");
-  display.println(boardRole == BoardRole::LOGIC_BOARD ? "LOGIC" : "STD");
-
-  display.print("Uptime:");
+  display.print(" Up:");
   display.print(now / 1000UL);
   display.println("s");
+  rowsUsed++;
 
-  unsigned ruleCount = 0;
-  {
-    JsonArray rules = mbRulesJsonArray();
-    if (!rules.isNull()) ruleCount = (unsigned)rules.size();
-  }
-  bool linkOk = (lastScannerPacketMs != 0) &&
-                ((now - lastScannerPacketMs) < SCANNER_ALIVE_MS);
-  float ageSec = lastScannerPacketMs ? ((now - lastScannerPacketMs) / 1000.0f) : 0.0f;
-  display.print("Rules:");
-  display.print(ruleCount);
-  display.print(" Link:");
-  display.print(linkOk ? "OK" : "LOST");
-  if (linkOk) {
-    display.print(" (");
-    display.print(ageSec, 1);
-    display.print("s)");
-  }
-  display.println();
+  // 2. Board role (+ Link on its own line when dual-board logic)
+  display.print("Role:");
+  display.println(boardRole == BoardRole::LOGIC_BOARD ? "LOGIC" : "STD");
+  rowsUsed++;
 
+  if (boardRole == BoardRole::LOGIC_BOARD) {
+    bool linkOk = (lastScannerPacketMs != 0) &&
+                  ((now - lastScannerPacketMs) < SCANNER_ALIVE_MS);
+    float ageSec = lastScannerPacketMs ? ((now - lastScannerPacketMs) / 1000.0f) : 0.0f;
+    display.print("Link:");
+    display.print(linkOk ? "OK" : "LOST");
+    if (lastScannerPacketMs) {
+      display.print(" (");
+      display.print(ageSec, 1);
+      display.print("s)");
+    }
+    display.println();
+    rowsUsed++;
+  }
+
+  // 3. HEAP / PSRAM
+  display.print("Heap:");
+  display.print((unsigned)(ESP.getFreeHeap() / 1024));
+  display.print("k PSRAM:");
+  display.print((unsigned)(ESP.getFreePsram() / 1024 / 1024));
+  display.println("M");
+  rowsUsed++;
+
+  // 4. Show / Override
   static const char* showTypeStr[] = {"NONE", "PARADE", "FWORKS"};
   static const char* showPhaseStr[] = {"-", "PRE", "BLACK", "LIVE", "POST"};
   static const char* overrideStr[] = {"NONE", "ZONE", "MANUAL", "SHOW", "MB", "SW"};
@@ -133,16 +203,42 @@ void statusDisplayUpdate() {
   display.print(showPhaseStr[sp]);
   display.print(" Ov:");
   display.println(overrideStr[ov]);
+  rowsUsed++;
 
-  display.print("Preset:");
-  display.println(truncate(currentPresetId.length() ? currentPresetId : "(none)", 20));
-  display.print("Rule:");
-  display.println(truncate(lastFiredRuleName.length() ? lastFiredRuleName : "(none)", 20));
-  display.print("Heap:");
-  display.print((unsigned)(ESP.getFreeHeap() / 1024));
-  display.print("k PSRAM:");
-  display.print((unsigned)(ESP.getFreePsram() / 1024 / 1024));
-  display.println("M");
+  // 5–6. Preset + Rules (may wrap into remaining rows; rules preferred)
+  unsigned ruleCount = 0;
+  {
+    JsonArray rules = mbRulesJsonArray();
+    if (!rules.isNull()) ruleCount = (unsigned)rules.size();
+  }
+
+  String presetText = String("Preset:") + presetDisplayName(currentPresetId);
+  String rulesText = String("Rules:") + String(ruleCount) + " | " +
+                     (lastFiredRuleName.length() ? lastFiredRuleName : "(none)");
+
+  int left = OLED_ROWS - rowsUsed;
+  int pNeed = linesNeeded(presetText);
+  int rNeed = linesNeeded(rulesText);
+  int pAlloc = 0;
+  int rAlloc = 0;
+
+  if (left <= 0) {
+    // nothing
+  } else if (left == 1) {
+    // Rules matter more — drop preset if only one row left
+    rAlloc = 1;
+  } else {
+    pAlloc = 1;
+    rAlloc = left - 1;
+    if (rNeed < rAlloc) {
+      int spare = rAlloc - rNeed;
+      rAlloc = rNeed;
+      pAlloc = pNeed < (1 + spare) ? pNeed : (1 + spare);
+    }
+  }
+
+  if (pAlloc > 0) printWrapped(presetText, pAlloc);
+  if (rAlloc > 0) printWrapped(rulesText, rAlloc);
 
   display.display();
 }

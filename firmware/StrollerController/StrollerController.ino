@@ -53,15 +53,12 @@ void setup() {
   starlightTimeoutMs  = prefs.getULong("swTimeout", 15000);
   magicBandEnabled    = prefs.getBool("mbEn", true);
   mbDeferToApp        = prefs.getBool("mbDefer", false);
-  magicBandFivePoint  = prefs.getBool("mb5pt", true);
   overrideKillOnZone  = prefs.getBool("killOnZone", false);
   magicBandTimeoutMs  = prefs.getULong("mbTimeout", 15000);
   bleEffectTransitionMs = prefs.getULong("bleTransMs", 700);
-  mbChaseSpeed        = prefs.getUChar("mbSpd", 128);
-  mbChaseThickness    = prefs.getUChar("mbGrp", 4);
-  if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
   mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
+  rulesPaused         = prefs.getBool("rulesPaused", false);
   // Prefer SPIFFS for large rules JSON; migrate leftover NVS blobs once.
   // Discard corrupt/empty blobs so a truncated legacy file doesn't look like a
   // successful load (rules=0) and block a clean "waiting for push" state.
@@ -156,9 +153,9 @@ void setup() {
     if (calJson.length() > 0) mbCalibrationApply(calJson);
   }
   loadWledBaselineFromNvs();
-  Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums role=%u\n",
-                starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
-                bleScanLogEnabled, mbChaseSpeed, mbChaseThickness, bleEffectTransitionMs,
+  Serial.printf("[NVS] swEn=%d mbEn=%d killOnZone=%d scanLog=%d rulesPaused=%d bleFade=%lums role=%u\n",
+                starlightEnabled, magicBandEnabled, overrideKillOnZone,
+                bleScanLogEnabled, rulesPaused ? 1 : 0, bleEffectTransitionMs,
                 (unsigned)boardRole);
   Serial.printf("[NVS] mbRules=%u bytes mbMapping=%u bytes\n",
                 (unsigned)mbRulesJson.length(), (unsigned)mbMappingJson.length());

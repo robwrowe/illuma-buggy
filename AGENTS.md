@@ -30,12 +30,15 @@ illuma-buggy/
 │       ├── stores/
 │       │   └── store.ts             ← Zustand store + AsyncStorage persistence
 │       ├── screens/
-│       │   ├── HomeScreen.tsx       ← connection, mode, zones, palette sets
-│       │   ├── PresetsScreen.tsx    ← preset list, apply, edit (effect+palette+memory)
-│       │   ├── LibraryScreen.tsx    ← WLED effects/palettes browser, save as preset
-│       │   ├── PalettesScreen.tsx   ← custom palettes + park palette sets
-│       │   ├── ZonesScreen.tsx      ← map zone drawing, active zone detection
-│       │   └── SettingsScreen.tsx   ← recall state, MB config, export/import
+│       │   ├── HomeScreen.tsx       ← connection, brightness, zones, shows, BLE Data events
+│       │   ├── RulesScreen.tsx      ← pause-all + per-rule enable/sort
+│       │   ├── BleCaptureScreen.tsx ← Disney BLE capture sessions
+│       │   ├── PresetsScreen.tsx    ← preset list + apply (A–Z)
+│       │   ├── ZonesScreen.tsx      ← map zone drawing (via More stack)
+│       │   ├── ShowsScreen.tsx      ← park shows
+│       │   └── more/                ← General, Presets config, Brightness, BLE Data, Logic Board, Diagnostics
+│       ├── navigation/
+│       │   └── MoreNavigator.tsx
 │       └── utils/
 │           ├── theme.ts             ← dark/light/system theme, color tokens
 │           ├── connectBootstrap.ts  ← staged BLE connect + quick reconnect
@@ -121,16 +124,16 @@ each chunk is itself a valid JSON object with `type`, `seq`, `last`, and `data` 
 | `zone_trigger` | `preset_id` | Apply preset (zone-sourced, respects override) |
 | `override_clear` | — | Clear manual/BLE override, restore zone |
 | `override_mode` | `kill_on_zone` (bool) | Configure override behavior |
-| `sw_config` | `enabled` (bool), `timeout_ms` (int) | Starlight Wand config |
-| `mb_config` | `enabled` (bool), `five_point` (bool), `timeout_ms` (int) | MagicBand+ config (five_point retained in NVS; strip uses full-width chase) |
-| `mb_chase_config` | `speed` (0–255), `thickness` (1–50) | MB+ chase `sx` / `grp` on WLED |
+| `sw_config` | `enabled` (bool), `timeout_ms` (int) | Starlight Wand listen config |
+| `mb_config` | `enabled` (bool), `timeout_ms` (int) | MagicBand+ listen config |
+| `rules_pause_config` | `paused` (bool) | Pause/resume BLE Data rule matching (NVS; does not clear active override) |
 | `scan_log_config` | `enabled` (bool) | Serial Disney scan hex logging |
 
 ### Firmware → App messages
 
 | `type` | Fields | Description |
 |--------|--------|-------------|
-| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_five_point`, `mb_timeout_ms`, `mb_chase_speed`, `mb_chase_thickness`, `mb_layout_active`, `mb_layout_count`, `preset_count`, `scan_log` | Device state |
+| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_timeout_ms`, `rules_paused`, `mb_layout_active`, `mb_layout_count`, `preset_count`, `scan_log` | Device state |
 | `ack` | `action`, `id?`, `ok?` | Command acknowledgement |
 | `error` | `msg` | Firmware error |
 | `preset_list_raw` | assembled from `preset_chunk` chunks | JSON array of all presets |
@@ -164,9 +167,9 @@ const CHUNKED_TYPES = {
 
 **Persisted keys** (AsyncStorage):
 `presets`, `zones`, `indoorZones`, `brightnessConfig`, `overrideKillOnZone`,
-`starlightEnabled`, `starlightTimeoutSec`, `magicBandEnabled`, `magicBandFivePoint`,
-`magicBandTimeoutSec`, `recallState`, `customPalettes`, `paletteSets`, `activePaletteSetId`,
-`wledEffects`, `wledPalettes`, `wledFxData` (cached WLED library — refresh via Library ↻)
+`starlightEnabled`, `starlightTimeoutSec`, `magicBandEnabled`,
+`magicBandTimeoutSec`, `rulesPaused`, `logMarkerSnippets`, `recallState`, `customPalettes`, `paletteSets`, `activePaletteSetId`,
+`wledEffects`, `wledPalettes`, `wledFxData` (cached WLED library)
 
 **Key types:**
 
@@ -305,11 +308,9 @@ bool starlightEnabled;
 unsigned long starlightTimeoutMs; // ms before auto-clear (0 = never)
 unsigned long swEventTimestamp;
 
-// MagicBand
+// MagicBand / BLE Data
 bool magicBandEnabled;
-bool magicBandFivePoint;          // NVS legacy; WLED uses full-strip chase not corners
-uint8_t mbChaseSpeed;             // WLED Chase sx (0 = static)
-uint8_t mbChaseThickness;         // WLED Chase grp (pixels per block)
+bool rulesPaused;                 // pause rule match/apply (NVS); does not clear override
 unsigned long magicBandTimeoutMs;
 unsigned long mbEventTimestamp;
 
@@ -354,14 +355,11 @@ Manufacturer data uses Disney CID **`8301`**. Payload parsing follows Adafruit `
 
 ### WLED BLE override mapping (100-LED strip)
 
-| BLE source | WLED effect |
-|------------|-------------|
-| MB+ palette / E905 / E906 | Full-strip Chase (`fx:28`), custom 5-color `pd`, `sx`/`grp` from `mb_chase_config` |
-| MB+ E908 / E909 | Chase with packet colors / patterns |
-| MB+ E90C / E90E / E912 / … | Full-strip animation (`fx` from opcode) |
-| Starlight wand cast | Full-strip solid (`fx:0`) — custom wand usermod TBD |
+Live Disney packets are applied via the **MB rule engine** (presets / rule `sx`/`grp` / fades). Global chase config was removed — do not reintroduce `mb_chase_config` or `five_point`.
 
 `clearOverride()` restores saved WLED state + single segment `start:0 stop:100`.
+
+Rule flag `reportAsUnmatched`: on successful apply, also SD-log + notify `mb_unmatched` for Capture/Sheets.
 
 ### Serial debug (USB @ 115200)
 
@@ -371,7 +369,6 @@ Manufacturer data uses Disney CID **`8301`**. Payload parsing follows Adafruit `
 | `sniff [sec]` | Log all manufacturer data |
 | `tx on` / `tx off` | Wand idle beacon TX (pairing tests) |
 | `tx cast <N>` | WAND-CAST palette N for 3s |
-| `chase speed <N>` / `chase thick <N>` | MB chase tuning |
 
 Bench broadcaster: `firmware/WandSimulator/` — see `docs/starlight-wand-codes.md`.
 
@@ -432,8 +429,8 @@ cd web && ./serve.sh   # starts python3 -m http.server 3000 + opens browser
   "starlightEnabled": true,
   "starlightTimeoutSec": 30,
   "magicBandEnabled": true,
-  "magicBandFivePoint": true,
   "magicBandTimeoutSec": 30,
+  "rulesPaused": false,
   "customPalettes": [{ "id": "...", "name": "...", "colors": ["#hex", ...] }],
   "paletteSets": [{ "id": "...", "name": "...", "paletteIds": ["pid1", ...] }]
 }

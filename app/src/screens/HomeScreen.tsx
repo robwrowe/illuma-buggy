@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Switch,
   Alert,
   TextInput,
+  Modal,
 } from "react-native";
 import Slider from "@react-native-community/slider";
 import IconBluetooth from "@tabler/icons-react-native/dist/esm/icons/IconBluetooth";
@@ -16,49 +17,30 @@ import IconBluetoothOff from "@tabler/icons-react-native/dist/esm/icons/IconBlue
 import IconBulb from "@tabler/icons-react-native/dist/esm/icons/IconBulb";
 import IconSparkles from "@tabler/icons-react-native/dist/esm/icons/IconSparkles";
 import IconBolt from "@tabler/icons-react-native/dist/esm/icons/IconBolt";
-import IconX from "@tabler/icons-react-native/dist/esm/icons/IconX";
 import IconWifi from "@tabler/icons-react-native/dist/esm/icons/IconWifi";
 import IconWifiOff from "@tabler/icons-react-native/dist/esm/icons/IconWifiOff";
 import IconMap from "@tabler/icons-react-native/dist/esm/icons/IconMap";
-
 import IconSettings from "@tabler/icons-react-native/dist/esm/icons/IconSettings";
 import IconMoon from "@tabler/icons-react-native/dist/esm/icons/IconMoon";
 import IconRefresh from "@tabler/icons-react-native/dist/esm/icons/IconRefresh";
+import IconPlus from "@tabler/icons-react-native/dist/esm/icons/IconPlus";
+import IconTrash from "@tabler/icons-react-native/dist/esm/icons/IconTrash";
 
 import { useBLE } from "../hooks/useBLE";
 import { useBoardSync } from "../hooks/useBoardSync";
 import { useAppStore } from "../stores/store";
 import { bleService } from "../services/BLEService";
-import {
-  applyPresetToBoard,
-  fetchLiveWledSummary,
-  type LiveWledSummary,
-} from "../utils/bleBoardSync";
 import { fireActiveZonePreset, fadeToBlackQuick } from "../services/parkQuickActions";
 import { formatSyncStatusLabel } from "../utils/boardSyncState";
 import { requestFullBoardSync } from "../utils/connectBootstrap";
 import { useTheme } from "../utils/theme";
-import { useNavigation } from "@react-navigation/native";
 import { PresetPickerModal } from "./MbMappingSections";
 import { useParkShows, formatShowStatus } from "../hooks/useParkShows";
 import { runShowPhase, stopShowMode } from "../services/showControl";
 
-const OVERRIDE_LABELS = [
-  "—",
-  "Zone",
-  "Manual",
-  "Show Mode",
-  "MagicBand+",
-  "Starlight Wand",
-];
-const OVERRIDE_COLORS = (
-  c: ReturnType<typeof import("../utils/theme").useTheme>["colors"],
-) => [c.textMuted, c.success, c.warning, "#f472b6", c.primary, "#c084fc"];
-
 export default function HomeScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
-  const navigation = useNavigation();
   const { connectionState, isConnected, isSessionReady } = useBLE();
   const boardSync = useBoardSync();
 
@@ -69,16 +51,10 @@ export default function HomeScreen() {
     activeZoneIds,
     zonesEnabled,
     setZonesEnabled,
-    setDeviceStatus,
     saveToStorage,
-    overrideDetail,
     setOverrideDetail,
     bleCaptureActive,
     bleCaptureLiveCount,
-    mbUnmatchedLogEnabled,
-    mbUnmatchedLog,
-    appendMbUnmatched,
-    clearMbUnmatchedLog,
     ftbPresetId,
     setFtbPresetId,
     bleEffectTransitionMs,
@@ -86,25 +62,26 @@ export default function HomeScreen() {
     recallState,
     customSegmentLayouts,
     setShowInstanceOverride,
-    wledEffects,
-    wledPalettes,
     syncMode,
     parkMode,
+    logMarkerSnippets,
+    setLogMarkerSnippets,
   } = useAppStore();
 
-  const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 128);
+  const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 0);
   const [brightnessText, setBrightnessText] = useState(
-    String(deviceStatus?.brightness ?? 128),
+    String(deviceStatus?.brightness ?? 0),
   );
   const [editingBrightness, setEditingBrightness] = useState(false);
-  const pendingWledBriRef = useRef<number | null>(null);
   const [events, setEvents] = useState<string[]>([]);
   const [ftbPickerOpen, setFtbPickerOpen] = useState(false);
   const [firingZone, setFiringZone] = useState(false);
   const [runningShowPhase, setRunningShowPhase] = useState<string | null>(null);
-  const [liveWled, setLiveWled] = useState<LiveWledSummary | null>(null);
-  const [liveWledLoading, setLiveWledLoading] = useState(false);
-  const [liveWledError, setLiveWledError] = useState<string | null>(null);
+  const [logMarkerOpen, setLogMarkerOpen] = useState(false);
+  const [logMarkerTimestamp, setLogMarkerTimestamp] = useState("");
+  const [logMarkerDraft, setLogMarkerDraft] = useState("");
+  const [snippetKey, setSnippetKey] = useState("");
+  const [snippetValue, setSnippetValue] = useState("");
 
   const { shows: parkShows, fetchError: parkShowsError } = useParkShows(
     activePark,
@@ -127,7 +104,7 @@ export default function HomeScreen() {
       Alert.alert(
         "Outside show area",
         show.binding.scopeZoneId
-          ? "Move into the assigned zone for this show, or change Location under Settings → Park Shows."
+          ? "Move into the assigned zone for this show, or change Location under More → Park Shows."
           : "You must be in this park for show automation.",
       );
       return;
@@ -167,92 +144,49 @@ export default function HomeScreen() {
     setBrightnessText(String(bri));
   };
 
-  // Pull live WLED bri on connect — firmware status often still reports the 128 default.
-  useEffect(() => {
-    if (!isSessionReady) {
-      pendingWledBriRef.current = null;
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const summary = await fetchLiveWledSummary();
-        if (cancelled || editingBrightness || summary.bri == null) return;
-        pendingWledBriRef.current = summary.bri;
-        applyBrightnessToUi(summary.bri);
-        const ds = useAppStore.getState().deviceStatus;
-        if (ds) setDeviceStatus({ ...ds, brightness: summary.bri });
-      } catch {
-        // Status poll / deviceStatus effect remains the fallback.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [isSessionReady, editingBrightness, setDeviceStatus]);
-
-  // Sync slider when board reports brightness changes (zone auto-bri, manual commands).
+  // Sync slider when board reports brightness changes, unless the user is editing.
   useEffect(() => {
     if (deviceStatus?.brightness === undefined || editingBrightness) return;
-    const statusBri = deviceStatus.brightness;
-    const pendingWledBri = pendingWledBriRef.current;
-    if (pendingWledBri != null) {
-      if (statusBri === pendingWledBri) {
-        pendingWledBriRef.current = null;
-      } else if (statusBri === 128 && pendingWledBri !== 128) {
-        return;
-      } else {
-        pendingWledBriRef.current = null;
-      }
-    }
-    applyBrightnessToUi(statusBri);
+    applyBrightnessToUi(deviceStatus.brightness);
   }, [deviceStatus?.brightness, editingBrightness]);
 
   const commitBrightness = (raw: number) => {
     const next = Math.min(255, Math.max(0, Math.round(raw)));
-    pendingWledBriRef.current = null;
     applyBrightnessToUi(next);
     bleService.sendBrightness(next);
   };
 
-  // BLE effect event feed (Starlight Wand + MagicBand+)
+  // BLE Data event feed.
   useEffect(() => {
     return bleService.onMessage((msg) => {
       if (msg.type === "sw_color") {
-        const label = `Wand palette ${msg.palette} → R${msg.r} G${msg.g} B${msg.b}`;
+        const label = `BLE Data palette ${msg.palette} → R${msg.r} G${msg.g} B${msg.b}`;
         setEvents((prev) => [label, ...prev].slice(0, 12));
       } else if (msg.type === "sw_debug") {
-        const label = `Wand [${msg.reason}] ${msg.hex} (${msg.len}b)`;
+        const label = `BLE Data [${msg.reason}] ${msg.hex} (${msg.len}b)`;
         setEvents((prev) => [label, ...prev].slice(0, 12));
       } else if (msg.type === "sw_event") {
         const name = msg.name ? ` (${msg.name})` : "";
         setEvents((prev) =>
-          [`Wand: ${String(msg.event)}${name}`, ...prev].slice(0, 12),
+          [`BLE Data: ${String(msg.event)}${name}`, ...prev].slice(0, 12),
         );
       } else if (msg.type === "ble_event" || msg.type === "ble_color") {
         const label =
           msg.type === "ble_color"
-            ? `MB+ color → R${msg.r} G${msg.g} B${msg.b}`
-            : `MB+: ${String(msg.event)}`;
+            ? `BLE Data color → R${msg.r} G${msg.g} B${msg.b}`
+            : `BLE Data: ${String(msg.event)}`;
         setEvents((prev) => [label, ...prev].slice(0, 12));
       } else if (msg.type === "mb_unmatched") {
-        appendMbUnmatched({
-          boardTs: Number(msg.ts) || 0,
-          hex: String(msg.hex ?? ""),
-          len: Number(msg.len) || 0,
-        });
+        setEvents((prev) => [
+          `BLE Data unmatched: ${String(msg.hex ?? "")}`,
+          ...prev,
+        ].slice(0, 12));
       }
     });
-  }, [appendMbUnmatched]);
+  }, []);
 
   const overrideIndex = deviceStatus?.override ?? 0;
-  const overrideColor =
-    OVERRIDE_COLORS(colors)[overrideIndex] ?? colors.textMuted;
-  const currentPreset = presets.find(
-    (p) => p.id === deviceStatus?.currentPreset,
-  );
   const activeZones = zones.filter((z) => activeZoneIds.includes(z.id));
-  const overrideActive = overrideIndex > 0;
   const fireZone = activeZones.find((z) => z.presetId) ?? null;
   const firePreset = fireZone
     ? presets.find((p) => p.id === fireZone.presetId)
@@ -261,75 +195,36 @@ export default function HomeScreen() {
     ? presets.find((p) => p.id === ftbPresetId)
     : null;
 
-  const effectDescription = (() => {
-    if (!deviceStatus) return null;
-    if (overrideDetail) return overrideDetail;
-    if (currentPreset) return currentPreset.name;
-    if (activeZones.length > 0) {
-      const z = activeZones[0];
-      const p = presets.find((pr) => pr.id === z.presetId);
-      if (p) return `${z.name} → ${p.name}`;
-      if (z.presetId) return `${z.name} (preset missing)`;
-      return z.name;
-    }
-    if (overrideIndex === 0) return "Idle — no active override";
-    if (overrideIndex === 1) return "Zone preset";
-    if (overrideIndex === 2) return "Manual preset";
-    if (overrideIndex === 3)
-      return deviceStatus.showType
-        ? `Show: ${deviceStatus.showType}${deviceStatus.showPhase ? ` (${deviceStatus.showPhase})` : ""}`
-        : "Show mode";
-    if (overrideIndex === 4) return "MagicBand+ effect";
-    if (overrideIndex === 5) return "Starlight Wand effect";
-    return "Active override";
-  })();
-
   const clearEffect = () => {
     bleService.sendOverrideClear();
     setOverrideDetail(null);
-    setLiveWled(null);
   };
 
-  const refreshLiveWled = async () => {
-    if (!isConnected || !isSessionReady) {
-      Alert.alert(
-        "Not ready",
-        "Connect and wait for board sync before fetching live state.",
-      );
-      return;
-    }
-    setLiveWledLoading(true);
-    setLiveWledError(null);
-    try {
-      const summary = await fetchLiveWledSummary();
-      setLiveWled(summary);
-      if (summary.bri != null && !editingBrightness) {
-        pendingWledBriRef.current = summary.bri;
-        applyBrightnessToUi(summary.bri);
-        const ds = useAppStore.getState().deviceStatus;
-        if (ds) setDeviceStatus({ ...ds, brightness: summary.bri });
-      }
-    } catch (e) {
-      setLiveWledError(e instanceof Error ? e.message : "Fetch failed");
-    } finally {
-      setLiveWledLoading(false);
-    }
+  const openLogMarker = () => {
+    setLogMarkerTimestamp(new Date().toISOString());
+    setLogMarkerOpen(true);
   };
 
-  const liveWledLabel = (() => {
-    if (!liveWled) return null;
-    const fxName =
-      liveWled.fx != null
-        ? (wledEffects.find((e) => e.id === liveWled.fx)?.name ??
-          `fx ${liveWled.fx}`)
-        : "—";
-    const palName =
-      liveWled.pal != null
-        ? (wledPalettes.find((p) => p.id === liveWled.pal)?.name ??
-          `pal ${liveWled.pal}`)
-        : "—";
-    return `${liveWled.on ? "On" : "Off"} · ${fxName} · ${palName} · ${liveWled.activeSegCount} seg(s)`;
-  })();
+  const sendLogMarker = () => {
+    const text = logMarkerDraft.trim();
+    if (!text) return;
+    void bleService.sendLogMarker(`[${logMarkerTimestamp}] ${text}`);
+    setLogMarkerDraft("");
+    setLogMarkerOpen(false);
+  };
+
+  const addLogMarkerSnippet = () => {
+    const key = snippetKey.trim();
+    const value = snippetValue.trim();
+    if (!key || !value) return;
+    setLogMarkerSnippets([
+      ...logMarkerSnippets.filter((snippet) => snippet.key !== key),
+      { key, value },
+    ]);
+    saveToStorage();
+    setSnippetKey("");
+    setSnippetValue("");
+  };
 
   const handleFireZone = async () => {
     if (!isConnected || firingZone) return;
@@ -368,48 +263,78 @@ export default function HomeScreen() {
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content}>
-      {commandsBlocked && (
-        <View style={s.syncBanner}>
-          <ActivityIndicator size="small" color={colors.primary} />
-          <View style={{ flex: 1 }}>
-            <Text style={s.syncBannerTitle}>{syncStatusLabel}</Text>
-            {boardSync.presetProgress && (
-              <Text style={s.syncBannerSub}>
-                Presets {boardSync.presetProgress.current}/
-                {boardSync.presetProgress.total}
-              </Text>
-            )}
-          </View>
-        </View>
-      )}
-
-      {isConnected && isSessionReady && boardSync.backgroundBusy && (
-        <View style={[s.syncBanner, s.syncBannerMuted]}>
-          <ActivityIndicator size="small" color={colors.textMuted} />
-          <Text style={s.syncBannerTitle}>{syncStatusLabel}</Text>
-        </View>
-      )}
-
-      {bleCaptureActive && (
-        <TouchableOpacity
-          style={s.captureBanner}
-          onPress={() => navigation.navigate("Capture" as never)}
-        >
-          <IconBolt size={16} color={colors.danger} />
-          <Text style={s.captureBannerText}>
-            Recording BLE · {bleCaptureLiveCount} packets — tap to view
+      {/* Connection */}
+      <View style={s.card}>
+        <View style={s.row}>
+          {isConnected ? (
+            <IconBluetooth size={18} color={colors.success} />
+          ) : (
+            <IconBluetoothOff size={18} color={colors.danger} />
+          )}
+          <Text style={s.statusText}>
+            {connectionState === "connected"
+              ? isSessionReady ? "Connected — commands enabled" : "Connected — syncing board…"
+              : connectionState === "scanning" ? "Scanning…"
+              : connectionState === "connecting" ? "Connecting…"
+              : connectionState === "disconnected" ? "Disconnected" : "Connection error"}
           </Text>
-        </TouchableOpacity>
-      )}
+          {!isConnected ? (
+            <TouchableOpacity style={s.iconBtn} onPress={() => void bleService.connect()}>
+              <IconRefresh size={18} color={colors.primary} />
+            </TouchableOpacity>
+          ) : (connectionState === "scanning" || connectionState === "connecting" || commandsBlocked) ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : null}
+          {isConnected && (
+            <TouchableOpacity
+              style={s.iconBtn}
+              onPress={() => Alert.alert(
+                "Sync board config",
+                "Push the app configuration to the board now?",
+                [{ text: "Cancel", style: "cancel" }, { text: "Sync", onPress: () => requestFullBoardSync() }],
+              )}
+            >
+              <IconRefresh size={18} color={colors.primary} />
+            </TouchableOpacity>
+          )}
+        </View>
+        {isConnected && <Text style={s.subText}>{syncStatusLabel}</Text>}
+        {(commandsBlocked || (isConnected && isSessionReady && boardSync.backgroundBusy)) && (
+          <View style={[s.syncBanner, !commandsBlocked && s.syncBannerMuted]}>
+            <ActivityIndicator size="small" color={commandsBlocked ? colors.primary : colors.textMuted} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.syncBannerTitle}>{syncStatusLabel}</Text>
+              {boardSync.presetProgress && (
+                <Text style={s.syncBannerSub}>Presets {boardSync.presetProgress.current}/{boardSync.presetProgress.total}</Text>
+              )}
+            </View>
+          </View>
+        )}
+        {isConnected && boardSync.mode !== "none" && (
+          <Text style={s.subText}>
+            Sync mode: {boardSync.mode === "quick" ? "quick reconnect" : "full"}
+            {deviceStatus?.boardPresetCount != null ? ` · ${deviceStatus.boardPresetCount} preset(s) on board` : ""}
+            {presets.length > 0 ? ` · ${presets.length} in app` : ""}
+          </Text>
+        )}
+        {isConnected && syncMode === "manual" && <Text style={[s.subText, { color: colors.warning }]}>Manual sync — board is running its own saved config</Text>}
+        {isConnected && parkMode && <Text style={[s.subText, { color: colors.warning }]}>Park Mode — minimal BLE (no auto config push)</Text>}
+        {deviceStatus && (
+          <View style={s.row}>
+            {deviceStatus.wifiConnected ? <IconWifi size={13} color={colors.success} /> : <IconWifiOff size={13} color={colors.danger} />}
+            <Text style={s.subText}>WLED: {deviceStatus.wifiConnected ? "connected" : "not connected"}</Text>
+          </View>
+        )}
+      </View>
 
       {/* Quick actions */}
-      {isConnected && isSessionReady && (
-        <View style={s.card}>
+      <View style={s.card}>
           <Text style={s.label}>Quick Actions</Text>
           <View style={s.quickRow}>
             <View style={s.quickBtnWrap}>
               <TouchableOpacity
-                style={s.quickBtn}
+                style={[s.quickBtn, !isSessionReady && s.quickBtnDisabled]}
+                disabled={!isSessionReady}
                 onPress={() => {
                   void fadeToBlackQuick().then((r) => {
                     if (!r.ok) Alert.alert("Fade to Black", r.message ?? "Failed");
@@ -433,7 +358,7 @@ export default function HomeScreen() {
             </View>
             <TouchableOpacity
               style={[s.quickBtn, overrideIndex === 0 && s.quickBtnDisabled]}
-              disabled={overrideIndex === 0}
+              disabled={!isSessionReady || overrideIndex === 0}
               onPress={clearEffect}
             >
               <IconRefresh
@@ -490,8 +415,7 @@ export default function HomeScreen() {
               )}
             </TouchableOpacity>
           </View>
-        </View>
-      )}
+      </View>
 
       <PresetPickerModal
         visible={ftbPickerOpen}
@@ -508,20 +432,94 @@ export default function HomeScreen() {
         colors={colors}
       />
 
+      {/* Brightness */}
+      <View style={s.card}>
+        <View style={s.row}>
+          <IconBulb size={15} color={colors.textSecondary} />
+          <Text style={s.label}>Brightness</Text>
+          <TextInput
+            style={s.brightnessInput}
+            keyboardType="number-pad"
+            value={brightnessText}
+            editable={isSessionReady}
+            selectTextOnFocus
+            onFocus={() => setEditingBrightness(true)}
+            onChangeText={(v) => {
+              setBrightnessText(v);
+              const n = parseInt(v, 10);
+              if (!isNaN(n)) setBrightness(Math.min(255, Math.max(0, n)));
+            }}
+            onBlur={() => {
+              setEditingBrightness(false);
+              const n = parseInt(brightnessText, 10);
+              if (!isNaN(n)) commitBrightness(n);
+              else setBrightnessText(String(brightness));
+            }}
+            onSubmitEditing={() => {
+              setEditingBrightness(false);
+              const n = parseInt(brightnessText, 10);
+              if (!isNaN(n)) commitBrightness(n);
+            }}
+          />
+        </View>
+        <Slider
+          minimumValue={0}
+          maximumValue={255}
+          step={1}
+          value={brightness}
+          minimumTrackTintColor={colors.primary}
+          maximumTrackTintColor={colors.borderFocus}
+          thumbTintColor={colors.primary}
+          onValueChange={(v) => {
+            const n = Math.round(v);
+            setBrightness(n);
+            setBrightnessText(String(n));
+          }}
+          onSlidingComplete={commitBrightness}
+          disabled={!isSessionReady}
+        />
+      </View>
+
+      {/* Active zones */}
+      <View style={s.card}>
+        <View style={s.row}>
+          <IconMap size={15} color={colors.textSecondary} />
+          <Text style={s.label}>Active Zones</Text>
+          <Switch
+            value={zonesEnabled}
+            onValueChange={(v) => { setZonesEnabled(v); saveToStorage(); }}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+            disabled={!isConnected}
+            style={{ marginLeft: "auto" }}
+          />
+        </View>
+        {activeZones.length === 0 ? (
+          <Text style={s.subText}>{zonesEnabled ? "Not in any zone" : "Zone triggers paused"}</Text>
+        ) : activeZones.map((z) => {
+          const preset = presets.find((p) => p.id === z.presetId);
+          return (
+            <View key={z.id} style={s.zoneRow}>
+              <View style={s.zoneDot} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.zoneName}>{z.name}</Text>
+                {preset && <Text style={s.subText}>{preset.name}</Text>}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+
       {/* Park shows */}
-      {activePark?.themeParksApiEntityId && (
-        <View style={s.card}>
+      <View style={s.card}>
           <View style={s.row}>
             <IconMap size={15} color={colors.textSecondary} />
-            <Text style={s.label}>{activePark.name} — Shows</Text>
+            <Text style={s.label}>Shows</Text>
           </View>
-          {parkShowsError ? (
+          {!activePark?.themeParksApiEntityId || parkShowsError ? (
             <Text style={s.subText}>{parkShowsError}</Text>
           ) : parkShows.length === 0 ? (
-            <Text style={s.subText}>
-              No assigned shows in window — configure under Settings → Park
-              Shows
-            </Text>
+            <Text style={s.subText}>No shows to display</Text>
           ) : (
             parkShows.map((show) => {
               const prePostOn = !show.autoPrePostDisabled;
@@ -534,6 +532,7 @@ export default function HomeScreen() {
                     <Text style={s.autoLabel}>Auto pre/post</Text>
                     <Switch
                       value={prePostOn}
+                      disabled={!isConnected}
                       onValueChange={(v) => {
                         setShowInstanceOverride(show.id, {
                           autoPrePostDisabled: !v,
@@ -552,6 +551,7 @@ export default function HomeScreen() {
                       <Text style={s.autoLabel}>Auto live</Text>
                       <Switch
                         value={liveOn}
+                      disabled={!isConnected}
                         onValueChange={(v) => {
                           setShowInstanceOverride(show.id, {
                             autoLiveDisabled: !v,
@@ -572,15 +572,14 @@ export default function HomeScreen() {
                       Auto pre/post still runs if enabled above.
                     </Text>
                   )}
-                  {isConnected && (
-                    <View style={s.showControls}>
+                  <View style={[s.showControls, !isConnected && s.quickBtnDisabled]}>
                       <View style={s.showBtnRow}>
                         {(["pre", "live", "post"] as const).map((phase) => (
                           <TouchableOpacity
                             key={phase}
                             style={s.showMiniBtn}
                             disabled={
-                              runningShowPhase === `${show.id}:${phase}`
+                              !isSessionReady || runningShowPhase === `${show.id}:${phase}`
                             }
                             onPress={() => runPhase(show, phase)}
                           >
@@ -604,6 +603,7 @@ export default function HomeScreen() {
                       <View style={s.showBtnRow}>
                         <TouchableOpacity
                           style={[s.showMiniBtn, s.showStopBtn]}
+                          disabled={!isSessionReady}
                           onPress={() => void stopShowMode()}
                         >
                           <Text
@@ -616,323 +616,59 @@ export default function HomeScreen() {
                           </Text>
                         </TouchableOpacity>
                       </View>
-                    </View>
-                  )}
+                  </View>
                 </View>
               );
             })
           )}
-        </View>
-      )}
+      </View>
 
-      {/* Connection & sync */}
+      {/* Capture state and BLE Data */}
       <View style={s.card}>
         <View style={s.row}>
-          {isConnected ? (
-            <IconBluetooth size={18} color={colors.success} />
-          ) : (
-            <IconBluetoothOff size={18} color={colors.danger} />
-          )}
-          <Text style={s.statusText}>
-            {connectionState === "connected"
-              ? isSessionReady
-                ? "Connected — commands enabled"
-                : "Connected — syncing board…"
-              : connectionState === "scanning"
-                ? "Scanning…"
-                : connectionState === "connecting"
-                  ? "Connecting…"
-                  : connectionState === "disconnected"
-                    ? "Disconnected — will retry"
-                    : "Connection error — retrying"}
-          </Text>
-          {(connectionState === "scanning" ||
-            connectionState === "connecting" ||
-            commandsBlocked) && (
-            <ActivityIndicator
-              size="small"
-              color={colors.primary}
-              style={{ marginLeft: "auto" }}
-            />
-          )}
+          <IconSparkles size={15} color={colors.textSecondary} />
+          <Text style={[s.label, { flex: 1 }]}>Capture & BLE Data</Text>
+          <TouchableOpacity style={s.iconBtn} onPress={openLogMarker} disabled={!isConnected}>
+            <IconPlus size={18} color={isConnected ? colors.primary : colors.textMuted} />
+          </TouchableOpacity>
         </View>
-        {isConnected && <Text style={s.subText}>{syncStatusLabel}</Text>}
-        {isConnected && boardSync.mode !== "none" && (
-          <Text style={s.subText}>
-            Sync mode: {boardSync.mode === "quick" ? "quick reconnect" : "full"}
-            {deviceStatus?.boardPresetCount != null
-              ? ` · ${deviceStatus.boardPresetCount} preset(s) on board`
-              : ""}
-            {presets.length > 0 ? ` · ${presets.length} in app` : ""}
-          </Text>
-        )}
-        {isConnected && syncMode === 'manual' && (
-          <Text style={[s.subText, { color: colors.warning }]}>
-            Manual sync — board is running its own saved config
-          </Text>
-        )}
-        {isConnected && parkMode && (
-          <Text style={[s.subText, { color: colors.warning }]}>
-            Park Mode — minimal BLE (no auto config push)
-          </Text>
-        )}
-        {isConnected && (
-          <TouchableOpacity
-            style={s.syncBtn}
-            onPress={() => requestFullBoardSync()}
-          >
-            <IconRefresh size={14} color={colors.primary} />
-            <Text style={s.syncBtnText}>Sync board config</Text>
-          </TouchableOpacity>
-        )}
-        {isConnected && parkMode && (
-          <TouchableOpacity
-            style={[s.syncBtn, { borderColor: colors.danger }]}
-            onPress={() => { void bleService.disconnect(); }}
-          >
-            <IconBluetoothOff size={14} color={colors.danger} />
-            <Text style={[s.syncBtnText, { color: colors.danger }]}>Disconnect</Text>
-          </TouchableOpacity>
-        )}
-        {deviceStatus && (
-          <View style={s.row}>
-            {deviceStatus.wifiConnected ? (
-              <IconWifi size={13} color={colors.success} />
-            ) : (
-              <IconWifiOff size={13} color={colors.danger} />
-            )}
-            <Text style={s.subText}>
-              WLED: {deviceStatus.wifiConnected ? "connected" : "not connected"}
-              {!deviceStatus.wifiConnected && isSessionReady
-                ? " — preset apply will fail until WiFi is up"
-                : ""}
-            </Text>
+        <Text style={s.subText}>{bleCaptureActive ? `Recording BLE Data · ${bleCaptureLiveCount} packets` : "BLE capture is not recording"}</Text>
+        {events.length === 0 ? <Text style={s.subText}>No BLE Data events yet</Text> : events.map((e, i) => (
+          <View key={i} style={s.row}>
+            <IconBolt size={11} color={colors.primary} />
+            <Text style={[s.subText, { marginLeft: 4, flex: 1 }]} numberOfLines={2}>{e}</Text>
           </View>
-        )}
+        ))}
       </View>
 
-      {/* Current Mode */}
-      <View style={s.card}>
-        <View style={s.row}>
-          <Text style={s.label}>Current Effect</Text>
-          <TouchableOpacity
-            style={s.liveFetchBtn}
-            onPress={() => void refreshLiveWled()}
-            disabled={!isConnected || liveWledLoading}
-          >
-            {liveWledLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <IconRefresh size={14} color={colors.primary} />
-            )}
-            <Text style={s.liveFetchBtnText}>Live</Text>
-          </TouchableOpacity>
-        </View>
-        {deviceStatus ? (
-          <>
-            <View style={s.row}>
-              <View
-                style={[
-                  s.badge,
-                  {
-                    backgroundColor: overrideColor + "22",
-                    borderColor: overrideColor,
-                  },
-                ]}
-              >
-                <Text style={[s.badgeText, { color: overrideColor }]}>
-                  {OVERRIDE_LABELS[overrideIndex]}
-                </Text>
-              </View>
-              {overrideActive && (
-                <TouchableOpacity style={s.clearBtn} onPress={clearEffect}>
-                  <IconX size={14} color={colors.danger} />
-                  <Text style={[s.clearBtnText, { color: colors.danger }]}>
-                    Clear Effect
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            <Text style={s.effectText}>
-              {effectDescription ??
-                (isConnected ? "Waiting for status…" : "Not connected")}
-            </Text>
-            {liveWledLabel && (
-              <Text style={s.subText}>WLED: {liveWledLabel}</Text>
-            )}
-            {liveWledError && (
-              <Text style={[s.subText, { color: colors.danger }]}>
-                {liveWledError}
-              </Text>
-            )}
-            {currentPreset && overrideIndex <= 2 && (
-              <Text style={s.subText}>Preset: {currentPreset.name}</Text>
-            )}
-          </>
-        ) : (
-          <Text style={s.subText}>
-            {isConnected ? "Waiting for status…" : "Not connected"}
-          </Text>
-        )}
-      </View>
-
-      {/* Active Zones */}
-      <View style={s.card}>
-        <View style={s.row}>
-          <IconMap size={15} color={colors.textSecondary} />
-          <Text style={s.label}>Active Zones</Text>
-          <Switch
-            value={zonesEnabled}
-            onValueChange={(v) => {
-              setZonesEnabled(v);
-              saveToStorage();
-            }}
-            trackColor={{ false: colors.borderFocus, true: colors.primary }}
-            thumbColor="#fff"
-            style={{ marginLeft: "auto" }}
-          />
-        </View>
-        {activeZones.length === 0 ? (
-          <Text style={s.subText}>
-            {zonesEnabled ? "Not in any zone" : "Zone triggers paused"}
-          </Text>
-        ) : (
-          activeZones.map((z) => {
-            const preset = presets.find((p) => p.id === z.presetId);
-            return (
-              <View key={z.id} style={s.zoneRow}>
-                <View style={s.zoneDot} />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.zoneName}>{z.name}</Text>
-                  {preset && <Text style={s.subText}>{preset.name}</Text>}
+      <Modal visible={logMarkerOpen} transparent animationType="slide" onRequestClose={() => setLogMarkerOpen(false)}>
+        <View style={s.modalBackdrop}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>Log marker</Text>
+            <Text style={s.subText}>{logMarkerTimestamp}</Text>
+            <TextInput style={s.markerInput} value={logMarkerDraft} onChangeText={setLogMarkerDraft} placeholder="Describe this moment" placeholderTextColor={colors.textMuted} autoFocus />
+            <View style={s.snippetRow}>
+              {logMarkerSnippets.map((snippet) => (
+                <View key={snippet.key} style={s.snippetChip}>
+                  <TouchableOpacity onPress={() => setLogMarkerDraft((draft) => `${draft}${draft ? " " : ""}${snippet.value}`)}><Text style={s.snippetText}>{snippet.key}</Text></TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setLogMarkerSnippets(logMarkerSnippets.filter((item) => item.key !== snippet.key)); saveToStorage(); }}><IconTrash size={13} color={colors.danger} /></TouchableOpacity>
                 </View>
-              </View>
-            );
-          })
-        )}
-      </View>
-
-      {/* Brightness */}
-      <View style={s.card}>
-        <View style={s.row}>
-          <IconBulb size={15} color={colors.textSecondary} />
-          <Text style={s.label}>Brightness</Text>
-          <TextInput
-            style={s.brightnessInput}
-            keyboardType="number-pad"
-            value={brightnessText}
-            editable={isSessionReady}
-            selectTextOnFocus
-            onFocus={() => setEditingBrightness(true)}
-            onChangeText={(v) => {
-              setBrightnessText(v);
-              const n = parseInt(v, 10);
-              if (!isNaN(n)) {
-                setBrightness(Math.min(255, Math.max(0, n)));
-              }
-            }}
-            onBlur={() => {
-              setEditingBrightness(false);
-              const n = parseInt(brightnessText, 10);
-              if (!isNaN(n)) commitBrightness(n);
-              else setBrightnessText(String(brightness));
-            }}
-            onSubmitEditing={() => {
-              setEditingBrightness(false);
-              const n = parseInt(brightnessText, 10);
-              if (!isNaN(n)) commitBrightness(n);
-              else setBrightnessText(String(brightness));
-            }}
-          />
-        </View>
-        <Slider
-          minimumValue={0}
-          maximumValue={255}
-          step={1}
-          value={brightness}
-          minimumTrackTintColor={colors.primary}
-          maximumTrackTintColor={colors.borderFocus}
-          thumbTintColor={colors.primary}
-          onValueChange={(v) => {
-            const n = Math.round(v);
-            setBrightness(n);
-            setBrightnessText(String(n));
-          }}
-          onSlidingComplete={(v) => commitBrightness(v)}
-          disabled={!isSessionReady}
-        />
-      </View>
-
-      {/* BLE effect events — always visible when connected */}
-      {isConnected && (
-        <View style={s.card}>
-          <View style={s.row}>
-            <IconSparkles size={15} color={colors.textSecondary} />
-            <Text style={s.label}>BLE Effect Events</Text>
+              ))}
+            </View>
+            <View style={s.snippetEditor}>
+              <TextInput style={s.markerInput} value={snippetKey} onChangeText={setSnippetKey} placeholder="Snippet label" placeholderTextColor={colors.textMuted} />
+              <TextInput style={s.markerInput} value={snippetValue} onChangeText={setSnippetValue} placeholder="Snippet text" placeholderTextColor={colors.textMuted} />
+              <TouchableOpacity style={s.iconBtn} onPress={addLogMarkerSnippet}><IconPlus size={18} color={colors.primary} /></TouchableOpacity>
+            </View>
+            <View style={s.modalActions}>
+              <TouchableOpacity style={s.modalButton} onPress={() => setLogMarkerOpen(false)}><Text style={s.subText}>Cancel</Text></TouchableOpacity>
+              <TouchableOpacity style={[s.modalButton, !logMarkerDraft.trim() && s.quickBtnDisabled]} disabled={!logMarkerDraft.trim()} onPress={sendLogMarker}><Text style={s.syncBtnText}>Send</Text></TouchableOpacity>
+            </View>
           </View>
-          {events.length === 0 ? (
-            <Text style={s.subText}>
-              Wave the wand — raw packets appear here as [packet] hex dumps
-            </Text>
-          ) : (
-            events.map((e, i) => (
-              <View key={i} style={s.row}>
-                <IconBolt size={11} color={colors.primary} />
-                <Text
-                  style={[s.subText, { marginLeft: 4, flex: 1 }]}
-                  numberOfLines={2}
-                >
-                  {e}
-                </Text>
-              </View>
-            ))
-          )}
         </View>
-      )}
-
-      {isConnected && mbUnmatchedLogEnabled && (
-        <View style={s.card}>
-          <View style={s.row}>
-            <IconBolt size={15} color={colors.textSecondary} />
-            <Text style={[s.label, { flex: 1 }]}>Unmatched MB/Wand</Text>
-            {mbUnmatchedLog.length > 0 && (
-              <TouchableOpacity style={s.clearBtn} onPress={clearMbUnmatchedLog}>
-                <IconX size={12} color={colors.danger} />
-                <Text style={[s.clearBtnText, { color: colors.danger }]}>Clear</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          {mbUnmatchedLog.length === 0 ? (
-            <Text style={s.subText}>
-              Packets that did not match a rule appear here
-            </Text>
-          ) : (
-            mbUnmatchedLog.slice(0, 20).map((e, i) => (
-              <View key={`${e.boardTs}-${e.receivedAt}-${i}`} style={s.row}>
-                <Text
-                  style={[s.subText, { flex: 1, fontFamily: "monospace" }]}
-                  numberOfLines={2}
-                >
-                  {e.hex}
-                </Text>
-                <Text style={[s.subText, { marginLeft: 8 }]}>
-                  {formatRelTime(e.receivedAt)}
-                </Text>
-              </View>
-            ))
-          )}
-        </View>
-      )}
+      </Modal>
     </ScrollView>
   );
-}
-
-function formatRelTime(receivedAt: number): string {
-  const sec = Math.max(0, Math.floor((Date.now() - receivedAt) / 1000));
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  return `${Math.floor(min / 60)}h ago`;
 }
 
 const styles = (
@@ -1009,6 +745,49 @@ const styles = (
       borderColor: c.border,
       gap: 8,
     },
+    iconBtn: {
+      padding: 6,
+      borderRadius: 8,
+      backgroundColor: c.primary + "14",
+    },
+    modalBackdrop: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: "#00000088",
+    },
+    modalCard: {
+      backgroundColor: c.surface,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      padding: 20,
+      gap: 12,
+    },
+    modalTitle: { color: c.textPrimary, fontSize: 18, fontWeight: "700" },
+    markerInput: {
+      flex: 1,
+      minHeight: 40,
+      backgroundColor: c.background,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: c.borderFocus,
+      color: c.textPrimary,
+      paddingHorizontal: 10,
+      fontSize: 14,
+    },
+    snippetRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    snippetChip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 9,
+      paddingVertical: 6,
+      borderRadius: 16,
+      backgroundColor: c.primary + "14",
+    },
+    snippetText: { color: c.primary, fontSize: 12, fontWeight: "600" },
+    snippetEditor: { flexDirection: "row", alignItems: "center", gap: 8 },
+    modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 8 },
+    modalButton: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: c.surfaceAlt },
     row: { flexDirection: "row", alignItems: "center", gap: 8 },
     label: {
       color: c.textSecondary,

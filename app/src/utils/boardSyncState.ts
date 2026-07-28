@@ -197,7 +197,7 @@ export function formatSyncStatusLabel(
   }
   if (!s.commandsReady) {
     if (s.detail) return s.detail;
-    if (s.phase === 'essential') return 'Applying wand & MagicBand settings…';
+    if (s.phase === 'essential') return 'Applying BLE Data settings…';
     if (s.phase === 'verifying') return 'Checking presets on board…';
     if (s.phase === 'presets') {
       const p = s.presetProgress;
@@ -212,7 +212,7 @@ export function formatSyncStatusLabel(
     return s.detail || 'Ready — background sync in progress';
   }
   if (s.mappingComplete === false) {
-    return 'Ready — MB+/Wand mapping incomplete, reconnect to retry';
+    return 'Ready — BLE Data mapping incomplete, reconnect to retry';
   }
   if (s.mode === 'quick') return 'Ready — reconnected (board config up to date)';
   return 'Ready — board synced';

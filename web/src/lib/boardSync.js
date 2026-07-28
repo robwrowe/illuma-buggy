@@ -46,7 +46,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
   }
 
   if (opts.mbMapping) {
-    onProgress?.('Sending MB rules…');
+    onProgress?.('Sending BLE Data rules…');
     try {
       await webBleBoard.send({
         type: 'set_mb_rules',
@@ -54,9 +54,9 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
       });
     } catch (e) {
       const detail = e?.message || String(e);
-      throw new Error(`MB rules push failed: ${detail}`);
+      throw new Error(`BLE Data rules push failed: ${detail}`);
     }
-    sent.push(`MB rules (${(mb.rules || []).length})`);
+    sent.push(`BLE Data rules (${(mb.rules || []).length})`);
     await delay(BLE_SEND_DELAY_MS);
   }
 
@@ -84,12 +84,12 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
   }
 
   if (opts.mbRuleConfig) {
-    onProgress?.('Sending MB rule fade-to-black preset…');
+    onProgress?.('Sending BLE Data rule fade-to-black preset…');
     await webBleBoard.send({
       type: 'mb_rule_config',
       ftbPresetId: data.ftbPresetId || '',
     });
-    sent.push('MB rule FTB');
+    sent.push('BLE Data rule FTB');
     await delay(BLE_SEND_DELAY_MS);
   }
 
@@ -127,7 +127,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 
 export const BOARD_SYNC_ITEMS = [
   { key: 'presets', label: 'Presets', hint: (data) => `${(data.presets || []).length} preset${(data.presets || []).length === 1 ? '' : 's'} (ESP32 NVS, not WLED slots)` },
-  { key: 'mbMapping', label: 'MB rules + mapping', hint: (data) => `${(data.mbMapping?.rules || []).length} rules, colors, segments` },
+  { key: 'mbMapping', label: 'BLE Data rules + mapping', hint: (data) => `${(data.mbMapping?.rules || []).length} rules, colors, segments` },
   {
     key: 'colorCalibration',
     label: 'Color calibration',
@@ -138,6 +138,6 @@ export const BOARD_SYNC_ITEMS = [
   },
   { key: 'effectTransition', label: 'Effect transitions', hint: (data) => `${data.bleEffectTransitionMs ?? 700} ms fade` },
   { key: 'overrideMode', label: 'Override mode', hint: (data) => data.overrideKillOnZone ? 'Kill override on zone entry' : 'Keep override in zones' },
-  { key: 'mbRuleConfig', label: 'MB rule FTB preset', hint: (data) => data.ftbPresetId ? `Preset ${data.ftbPresetId}` : 'Pure black (on:false fallback)' },
+  { key: 'mbRuleConfig', label: 'BLE Data rule FTB preset', hint: (data) => data.ftbPresetId ? `Preset ${data.ftbPresetId}` : 'Pure black (on:false fallback)' },
   { key: 'showMode', label: 'Show mode', hint: () => 'Parade + fireworks preset looks' },
 ];

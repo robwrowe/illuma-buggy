@@ -169,17 +169,20 @@ enclosure, more in-park MB+ opcodes — see root `AGENTS.md` roadmap.
   - `ignoreAllOtherRules` — same window, suppress **every other** rule.
   - Exact re-match of the **active rule id** still behaves normally (slack / re-apply).
   - Strip may be black during COOLDOWN; exclusivity still holds until IDLE.
+- **`reportAsUnmatched`** — rule still applies; also SD-logs + notifies `mb_unmatched`
+  (Capture appends when recording). Web Rule Editor checkbox.
+- **`rules_pause_config` / `status.rules_paused`** — park “Stop all rules” pause of match/apply
+  (NVS). Zones / manual presets / FTB still work; does not auto-clear an active override.
+- **Removed globals:** `mb_chase_config`, `five_point` / `mb_five_point` / serial `chase` —
+  effect `sx`/`grp` come from rules/presets only.
 - **Wand Lab byte editor**: mode **6bit** packs E908-style channels via `(ch & 0x3F) << 1`.
-- **RN Settings**:
-  - **Board log marker** → BLE `log_marker` → Serial `[Marker] …` + SD `marker` event.
-  - **Board MB Rules** → `list_rules` / `set_rule_enabled` toggles (firmware already had
-    these; app UI was missing).
+- **RN park IA**: tabs Home / Rules / Capture / Presets / More. Capture always shown.
+  User-facing MagicBand/Wand copy → **BLE Data**. Rule log pull: web Board modal only.
 - **Capture tab** show chips use the same Home visibility window (pre / live / post /
   upcoming), not live-only.
 - **Rule log pull**: BLE `get_rule_log` returns RAM ring (≤96 lines; SD is durable mirror).
-  Web: **📡 Board** modal → Pull log / Download JSONL. App: add `CHUNKED_TYPES.rule_log →
-  rule_log_done` when wiring Settings. See `docs/rule-exclusivity-checklist.md` for the
-  exclusivity bench matrix.
+  Web: **📡 Board** modal → Pull log / Download JSONL. See `docs/rule-exclusivity-checklist.md`
+  for the exclusivity bench matrix.
 
 ---
 

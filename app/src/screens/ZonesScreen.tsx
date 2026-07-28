@@ -44,6 +44,7 @@ export default function ZonesScreen() {
     indoorZones,
     presets,
     parks,
+    activePark,
     activeZoneIds,
     addZone,
     updateZone,
@@ -79,6 +80,7 @@ export default function ZonesScreen() {
   const [showZoneForm, setShowZoneForm] = useState(false);
   const [newZoneName, setNewZoneName] = useState("");
   const [newZonePreset, setNewZonePreset] = useState("");
+  const [newZoneParkId, setNewZoneParkId] = useState<string | undefined>(undefined);
 
   // Zone editing
   const [editingZone, setEditingZone] = useState<Zone | null>(null);
@@ -202,6 +204,7 @@ export default function ZonesScreen() {
       Alert.alert("Too few points", "Draw at least 3 points.");
       return;
     }
+    setNewZoneParkId(activePark?.id);
     setShowZoneForm(true);
   };
 
@@ -212,6 +215,7 @@ export default function ZonesScreen() {
     setSelectedPinIdx(null);
     setNewZoneName("");
     setNewZonePreset("");
+    setNewZoneParkId(undefined);
   };
 
   const commitPresetZone = () => {
@@ -229,6 +233,7 @@ export default function ZonesScreen() {
         polygon: drawPoints,
         presetId: newZonePreset,
         enabled: true,
+        parkId: newZoneParkId,
       });
       saveToStorage();
       cancelDrawing();
@@ -251,6 +256,7 @@ export default function ZonesScreen() {
       name: newZoneName.trim(),
       polygon: drawPoints,
       enabled: true,
+      parkId: newZoneParkId,
     });
     saveToStorage();
     cancelDrawing();
@@ -546,6 +552,45 @@ export default function ZonesScreen() {
                         style={[
                           s.optionText,
                           newZonePreset === p.id && { color: colors.primary },
+                        ]}
+                      >
+                        {p.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
+            {parks.length > 0 && (
+              <>
+                <Text style={s.fieldLabel}>Park</Text>
+                <ScrollView style={{ maxHeight: 120 }}>
+                  <TouchableOpacity
+                    style={[s.option, !newZoneParkId && s.optionActive]}
+                    onPress={() => setNewZoneParkId(undefined)}
+                  >
+                    <Text
+                      style={[
+                        s.optionText,
+                        !newZoneParkId && { color: colors.primary },
+                      ]}
+                    >
+                      Ungrouped
+                    </Text>
+                  </TouchableOpacity>
+                  {parks.map((p) => (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={[
+                        s.option,
+                        newZoneParkId === p.id && s.optionActive,
+                      ]}
+                      onPress={() => setNewZoneParkId(p.id)}
+                    >
+                      <Text
+                        style={[
+                          s.optionText,
+                          newZoneParkId === p.id && { color: colors.primary },
                         ]}
                       >
                         {p.name}

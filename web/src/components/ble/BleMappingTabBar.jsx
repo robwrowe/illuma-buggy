@@ -6,7 +6,7 @@ export function BleMappingTabBar({ active, onChange }) {
     { id: 'segmentMaps', label: 'Segment Maps' },
     { id: 'timingModels', label: 'Timing Models' },
     { id: 'show', label: 'Show Mode' },
-    { id: 'colors', label: 'MB Colors' },
+    { id: 'colors', label: 'BLE Colors' },
     { id: 'general', label: 'General' },
   ];
   return (

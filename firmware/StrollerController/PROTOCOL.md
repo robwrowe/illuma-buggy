@@ -39,12 +39,12 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 {"type":"override_mode","kill_on_zone":true}
 ```
 
-### Starlight Wand & MagicBand+
+### BLE Data (Starlight Wand & MagicBand+)
 
 ```json
 {"type":"sw_config","enabled":true,"timeout_ms":30000}
-{"type":"mb_config","enabled":true,"five_point":true,"timeout_ms":30000}
-{"type":"mb_chase_config","speed":128,"thickness":4}
+{"type":"mb_config","enabled":true,"timeout_ms":30000}
+{"type":"rules_pause_config","paused":true}
 {"type":"scan_log_config","enabled":true}
 {"type":"log_marker","msg":"Happily Ever After — castle flash"}
 {"type":"list_rules"}
@@ -55,11 +55,12 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 | Field | Notes |
 |-------|-------|
 | `timeout_ms` | `0` = never auto-clear BLE override |
-| `mb_chase_config.speed` | WLED Chase `sx` (0 = stationary) |
-| `mb_chase_config.thickness` | WLED Chase `grp` (pixels per color block) |
+| `rules_pause_config.paused` | Pause/resume rule matching (NVS). Zones/manual presets still work; does not clear an active override |
 | `log_marker` | Prints `[Marker] …` on Serial and writes an SD/RAM rule-log `marker` event |
-| `list_rules` / `set_rule_enabled` | Park-side enable/disable of individual MB rules without re-pushing the full mapping |
+| `list_rules` / `set_rule_enabled` | Park-side enable/disable of individual rules without re-pushing the full mapping |
 | `get_rule_log` | Pull newest ring entries (`limit` 1–96). Optional `events` string or array allow-list. Always served from RAM ring (SD is a durable mirror). |
+
+Chase `sx`/`grp` and solid colors come from **rules/presets**, not global chase config (`mb_chase_config` / `five_point` removed).
 
 ### Status
 
@@ -83,6 +84,8 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 ```json
 {"type":"rules_summary","rules":[{"id":"castle","name":"Castle","prio":0,"enabled":true}]}
 ```
+
+Rule JSON may include `"reportAsUnmatched": true`. On successful apply the board still runs the rule and also writes SD + notifies `mb_unmatched` (same hex path as true unmatched) so Capture/Sheets can record it.
 
 ### Rule log pull
 
@@ -111,10 +114,8 @@ App `CHUNKED_TYPES` entry: `'rule_log': 'rule_log_done'`.
   "sw_enabled":true,
   "sw_timeout_ms":30000,
   "mb_enabled":true,
-  "mb_five_point":true,
   "mb_timeout_ms":30000,
-  "mb_chase_speed":128,
-  "mb_chase_thickness":4,
+  "rules_paused":false,
   "scan_log":true,
   "sd_rule_log":true,
   "sd_rule_log_path":"/rules_12345.jsonl",
@@ -125,6 +126,8 @@ App `CHUNKED_TYPES` entry: `'rule_log': 'rule_log_done'`.
 **`override` values:** `0`=NONE · `1`=ZONE · `2`=MANUAL · `3`=BLE_MAGIC · `4`=BLE_STARLIGHT
 
 Priority: Starlight Wand > MagicBand+ > Manual > Zone.
+
+When WiFi/WLED is up, `brightness` is refreshed from WLED `/json/si` before status is emitted (avoids cold default `128`).
 
 ### MagicBand+ events
 
@@ -170,8 +173,6 @@ App maps: `preset_chunk`→`preset_list_raw`, `wled_effects`→`wled_effects_don
 | `tx on` | Broadcast WAND-IDLE (wand pairing test) |
 | `tx off` | Normal advertising |
 | `tx cast <0-31>` | WAND-CAST 3 seconds |
-| `chase speed <0-255>` | MB chase speed (persisted NVS) |
-| `chase thick <1-50>` | MB chase thickness (persisted NVS) |
 
 ---
 

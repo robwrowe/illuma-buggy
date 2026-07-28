@@ -23,16 +23,14 @@ static void onBoardRoleApply() {
 
 // NVS keys match existing StrollerController.ino / BleCommandHandler keys.
 const RuntimeField kRuntimeFields[] = {
-  { "mbChaseSpeed",          FieldType::U8,     &mbChaseSpeed,     nullptr,             nullptr,                nullptr,                 0,    255,    0,  true,  "mbSpd",      false, nullptr },
-  { "mbChaseThickness",      FieldType::U8,     &mbChaseThickness, nullptr,             nullptr,                nullptr,                 1,    50,     0,  true,  "mbGrp",      false, nullptr },
   { "overrideKillOnZone",    FieldType::BOOL,   nullptr,           &overrideKillOnZone, nullptr,                nullptr,                 0,    0,      0,  true,  "killOnZone", false, nullptr },
   { "starlightEnabled",      FieldType::BOOL,   nullptr,           &starlightEnabled,   nullptr,                nullptr,                 0,    0,      0,  true,  "swEn",       false, nullptr },
   { "starlightTimeoutMs",    FieldType::ULONG,  nullptr,           nullptr,             &starlightTimeoutMs,    nullptr,                 1000, 120000, 0,  true,  "swTimeout",  false, nullptr },
   { "magicBandEnabled",      FieldType::BOOL,   nullptr,           &magicBandEnabled,   nullptr,                nullptr,                 0,    0,      0,  true,  "mbEn",       false, nullptr },
-  { "magicBandFivePoint",    FieldType::BOOL,   nullptr,           &magicBandFivePoint, nullptr,                nullptr,                 0,    0,      0,  true,  "mb5pt",      false, nullptr },
   { "magicBandTimeoutMs",    FieldType::ULONG,  nullptr,           nullptr,             &magicBandTimeoutMs,    nullptr,                 1000, 120000, 0,  true,  "mbTimeout",  false, nullptr },
   { "bleEffectTransitionMs", FieldType::ULONG,  nullptr,           nullptr,             &bleEffectTransitionMs, nullptr,                 0,    5000,   0,  true,  "bleTransMs", false, nullptr },
   { "bleScanLogEnabled",     FieldType::BOOL,   nullptr,           &bleScanLogEnabled,  nullptr,                nullptr,                 0,    0,      0,  true,  "scanLog",    false, nullptr },
+  { "rulesPaused",           FieldType::BOOL,   nullptr,           &rulesPaused,        nullptr,                nullptr,                 0,    0,      0,  true,  "rulesPaused", false, nullptr },
   { "boardRole",             FieldType::STRING_SHORT, nullptr,     nullptr,             nullptr,                &gBoardRoleFieldStaging, 0,    0,      16, false, nullptr,     false, onBoardRoleApply },
 };
 const size_t kRuntimeFieldCount = sizeof(kRuntimeFields) / sizeof(kRuntimeFields[0]);

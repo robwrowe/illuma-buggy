@@ -197,7 +197,7 @@ Each BLE source has `enabled` + `timeout_ms` (0 = never auto-clear). App: Settin
 | MB+ animations (E90C, E912, …) | Full-strip effect ID from opcode (e.g. `fx:42` fireworks) |
 | Starlight wand cast | Full-strip **solid** (`fx:0`) — custom wand WLED effect TBD |
 
-Config: `mb_chase_config` BLE `{ "speed": 0–255, "thickness": 1–50 }` · Serial: `chase speed 128`, `chase thick 4`
+Live Disney packets are applied via the **MB rule engine** (presets / rule `sx`/`grp` / fades). Global chase config was removed — do not reintroduce `mb_chase_config` or `five_point`.
 
 ### Scanner log tags
 

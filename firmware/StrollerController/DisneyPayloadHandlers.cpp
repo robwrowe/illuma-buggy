@@ -80,6 +80,7 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   // (must not rebuild WLED every advert). During FADE/COOLDOWN, onTimedRuleRepeatMatch
   // re-applies the rule so FTB/black-hold can restart the same effect.
   if (mbEffectIsRepeatAdvert(payload, plen)) {
+    if (rulesPaused) return;
     if (mbRulePhase != MB_RULE_IDLE && magicBandEnabled) {
       JsonArray rules = mbRulesJsonArray();
       int matchIdx = findMatchingRule(payload, plen, rules);
@@ -109,6 +110,15 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     notifyMbE9ToApp(payload, plen);
     touchOverrideIdleTimer(BLE_MAGIC);
     Serial.println("[MB+] defer to app");
+    return;
+  }
+
+  if (rulesPaused) {
+    static unsigned long lastPausedLogMs = 0;
+    if ((long)(millis() - lastPausedLogMs) > 5000) {
+      lastPausedLogMs = millis();
+      Serial.println("[Rules] paused — ignoring BLE Data packet");
+    }
     return;
   }
 
