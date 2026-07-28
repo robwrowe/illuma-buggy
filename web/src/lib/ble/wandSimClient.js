@@ -179,22 +179,17 @@ export function buildShowBodyFromCaptureRows(rows, fallbackHoldMs = DEFAULT_LAST
     }))
     .filter((r) => r.hex.length >= 4);
 
-  const deduped = [];
-  for (const row of parsed) {
-    if (deduped.length && deduped[deduped.length - 1].hex === row.hex) continue;
-    deduped.push(row);
-  }
-  if (!deduped.length) return '';
+  if (!parsed.length) return '';
 
   const lines = [];
-  for (let i = 0; i < deduped.length; i++) {
+  for (let i = 0; i < parsed.length; i++) {
     let hold = fallbackHoldMs;
-    if (i < deduped.length - 1) {
-      const a = deduped[i].ts;
-      const b = deduped[i + 1].ts;
+    if (i < parsed.length - 1) {
+      const a = parsed[i].ts;
+      const b = parsed[i + 1].ts;
       if (a != null && b != null && b > a) hold = Math.max(50, b - a);
     }
-    const hex = deduped[i].hex.startsWith(COMPANY_ID) ? deduped[i].hex : COMPANY_ID + deduped[i].hex;
+    const hex = parsed[i].hex.startsWith(COMPANY_ID) ? parsed[i].hex : COMPANY_ID + parsed[i].hex;
     lines.push(`${hold} ${hex}`);
   }
   return lines.join('\n');

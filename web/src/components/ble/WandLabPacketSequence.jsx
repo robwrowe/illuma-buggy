@@ -11,7 +11,7 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { parsePasteToPackets } from '../../lib/ble/captureImport';
+import { omitConsecutiveDuplicatePackets, parsePasteToPackets, SHEETS_CAPTURE_HEADER } from '../../lib/ble/captureImport';
 import {
   buildShowBodyFromPackets,
   bytesToHex,
@@ -36,6 +36,7 @@ export function WandLabPacketSequence({
 }) {
   const [pasteText, setPasteText] = useState('');
   const [strip8301, setStrip8301] = useState(true);
+  const [omitConsecutiveDupes, setOmitConsecutiveDupes] = useState(true);
   const [defaultWaitMs, setDefaultWaitMs] = useState(1000);
   const [lastSentId, setLastSentId] = useState(null);
   const [manualNextIdx, setManualNextIdx] = useState(0);
@@ -85,7 +86,11 @@ export function WandLabPacketSequence({
       onStatus?.(result.message);
       return;
     }
-    setPackets(result.packets.map((p) => ({
+    const rawCount = result.packets.length;
+    const packetsOut = omitConsecutiveDupes
+      ? omitConsecutiveDuplicatePackets(result.packets)
+      : result.packets;
+    setPackets(packetsOut.map((p) => ({
       id: generateId(),
       bytes: [...p.bytes],
       waitMs: p.waitMs ?? defaultWaitMs,
@@ -93,7 +98,10 @@ export function WandLabPacketSequence({
     })));
     setLastSentId(null);
     setManualNextIdx(0);
-    onStatus?.(result.message);
+    const msg = omitConsecutiveDupes && packetsOut.length !== rawCount
+      ? `${result.message} — omitted ${rawCount - packetsOut.length} consecutive duplicate${rawCount - packetsOut.length === 1 ? '' : 's'} (${packetsOut.length} kept)`
+      : result.message;
+    onStatus?.(msg);
     setPasteText('');
   };
 
@@ -204,14 +212,16 @@ export function WandLabPacketSequence({
   return (
     <Stack gap="md">
       <Text size="xs" c="dimmed">
-        Paste Illuma capture export rows, timed /show lines (<Text span ff="monospace">1000 8301…</Text>),
-        or one hex string per line. Wait times come from capture timestamps or defaults.
+        Paste Sheets observation export rows (header with <Text span ff="monospace">observation_id…hex…board_ts</Text>),
+        timed /show lines (<Text span ff="monospace">1000 8301…</Text>),
+        or one hex string per line. Wait times come from <Text span ff="monospace">board_ts</Text> / timestamps or defaults.
         Use <strong>Step next</strong> to send one packet at a time via /send, or queue the full timed /show.
+        With consecutive-dedupe on, back-to-back identical payloads are collapsed and their waits are summed (A…A B → A B); the same packet can still appear later after a different one.
       </Text>
 
       <Textarea
         label="Paste capture or hex"
-        placeholder={'# ts_ms\trssi\tdevice_id\tlat\tlng\taccuracy_m\ttag\thint\tquality\tfunc\thex\tnote\n1783304853204\t-86\tAA:BB:CC:DD:EE:FF\t28.4170\t-81.5810\t12\tPING\t…\t\t\t8301cc03000100\t'}
+        placeholder={`${SHEETS_CAPTURE_HEADER}\nobs1\tsess1\tParade\t8301cc03000100\tcc03\tPING\t1783304853204\t2026-07-26T21:00:00Z\t-86\t7\t\t\t\t\tAA:BB:CC:DD:EE:FF\t28.4170\t-81.5810\t12\t`}
         minRows={4}
         value={pasteText}
         onChange={(e) => setPasteText(e.target.value)}
@@ -223,6 +233,12 @@ export function WandLabPacketSequence({
           label="Strip 8301 for payload bytes"
           checked={strip8301}
           onChange={(e) => setStrip8301(e.currentTarget.checked)}
+        />
+        <Checkbox
+          label="Omit consecutive identical packets"
+          description="Off = keep back-to-back repeats; on = collapse runs and merge waits"
+          checked={omitConsecutiveDupes}
+          onChange={(e) => setOmitConsecutiveDupes(e.currentTarget.checked)}
         />
         <NumberInput
           label="Default wait (ms)"

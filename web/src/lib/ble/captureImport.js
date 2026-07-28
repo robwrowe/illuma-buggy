@@ -1,5 +1,6 @@
 import {
   buildShowBodyFromCaptureRows,
+  bytesToHex,
   hasCompanyIdPrefix,
   parseHexToBytes,
   stripCompanyId,
@@ -295,6 +296,7 @@ function hexToPayloadBytes(hex, strip8301) {
 
 function captureRowsToPackets(rows, { defaultWaitMs, lastHoldMs, strip8301 }) {
   // Keep every row — consecutive identical hex often has meaningful inter-arrival timing.
+  // Callers that want consecutive-dedupe can use omitConsecutiveDuplicatePackets().
   return rows.map((row, i) => {
     let waitMs = defaultWaitMs;
     if (i < rows.length - 1) {
@@ -310,6 +312,30 @@ function captureRowsToPackets(rows, { defaultWaitMs, lastHoldMs, strip8301 }) {
       label: row.tag || '',
     };
   }).filter((p) => p.bytes.length);
+}
+
+/**
+ * Collapse runs of identical payloads into one row, summing waitMs so total hold
+ * until the next distinct packet stays roughly the same.
+ * Non-consecutive repeats are kept (A B A stays three rows).
+ */
+export function omitConsecutiveDuplicatePackets(packets) {
+  const out = [];
+  for (const p of packets || []) {
+    if (!p?.bytes?.length) continue;
+    const hex = bytesToHex(p.bytes).toLowerCase();
+    const prev = out[out.length - 1];
+    if (prev && bytesToHex(prev.bytes).toLowerCase() === hex) {
+      prev.waitMs = (Number(prev.waitMs) || 0) + (Number(p.waitMs) || 0);
+      continue;
+    }
+    out.push({
+      bytes: [...p.bytes],
+      waitMs: Number(p.waitMs) || 0,
+      label: p.label || '',
+    });
+  }
+  return out;
 }
 
 /**
