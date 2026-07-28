@@ -51,6 +51,13 @@ void transportOnUartPacket(const ParsedDisneyPacket& pkt) {
 
 static void onUartHeartbeat() {
   lastScannerPacketMs = millis();
+  // Reply so the scanner OLED can show a true two-way Link:OK.
+  // Rate-limit: scanner already HBs ~2s; ignore floods / echo loops.
+  static unsigned long lastReplyMs = 0;
+  unsigned long now = millis();
+  if (now - lastReplyMs < 500) return;
+  lastReplyMs = now;
+  uartLinkSendHeartbeat(Serial1);
 }
 
 static UartLinkRx gUartRx;

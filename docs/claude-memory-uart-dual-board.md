@@ -90,11 +90,19 @@ Driven via ESP32 `rgbLedWrite` (not Adafruit NeoPixel). Also pulses 48 as
 fallback for v1.0 boards. Arduino core’s `PIN_RGB_LED` defaults to 48 — **wrong
 for v1.3**; code must target 38.
 
-### OLED (logic only)
+### OLED (logic)
 
 - SDA **21**, SCL **47**, addr **0x3C** (try 0x3D), VCC **3V3**, GND
 - Soft-fail if absent
 - **Link: LOST** = no UART packet/heartbeat within `SCANNER_ALIVE_MS` (10s)
+
+### OLED (scanner — classic ESP32)
+
+- SDA **21**, SCL **22**, addr **0x3C** (try 0x3D), VCC **3V3**, GND
+- Soft-fail if absent (`ScannerStatusDisplay`)
+- Shows `Link` + `SD`, `Heap` + `pps`, rolling post-`8301` hex + RSSI
+- **Link: OK** = logic heartbeat reply received within `SCANNER_ALIVE_MS`
+  (scanner TX HB → logic replies on UART; scanner polls RX)
 
 ### Scanner StatusLed
 
@@ -137,8 +145,9 @@ UART needs no wireless pairing. Copy should say UART, not ESP-NOW.
 |---------|--------|
 | Logic UART init/poll + packet queue | `StrollerController/PayloadTransport.*`, `UartLink.h` |
 | Scanner UART send + heartbeat | `BleScannerNode/ScannerPayloadTransport.*` |
+| OLED UI (logic) | `StatusDisplay.*` |
+| OLED UI (scanner) | `BleScannerNode/ScannerStatusDisplay.*` |
 | Shared pins / SD / OLED | `StrollerController/Config.h` (symlinked) |
-| OLED UI | `StatusDisplay.*` |
 | Logic status RGB | `StatusLed.cpp` (`rgbLedWrite` GPIO 38) |
 | Rules in PSRAM | `MbRuleEngine.*`, `docs/rules-psram-runbook.md` |
 
@@ -152,7 +161,7 @@ UART needs no wireless pairing. Copy should say UART, not ESP-NOW.
 | 2 UART inter-board | Done |
 | 3 Remove ESP-NOW | Done |
 | 4 SD logging | Done (pins per board; wire cards still) |
-| 5 OLED | Done |
+| 5 OLED | Done (logic + scanner classic) |
 | 6–13 fields, rules, Park Mode, BLE harden, etc. | Done |
 
 Open product/roadmap (not this PCB slice): OTA, WLED usermod, find-my-stroller,
@@ -210,5 +219,6 @@ enclosure, more in-park MB+ opcodes — see root `AGENTS.md` roadmap.
 
 1. Logic boot: `FORCED TX=17 RX=18`, OLED up, RGB cyan/blue then status colors on **38**.
 2. Scanner boot: `target=ESP32`, UART forward/heartbeat lines, no WiFi/ESP-NOW init.
-3. OLED **Link: OK** within a few seconds of heartbeats.
-4. Optional: mount SD — logic `[SD] mounting SPI CS=10…`; scanner `CS=5 SCK=18…`.
+3. OLED **Link: OK** within a few seconds of heartbeats (logic panel).
+4. Scanner OLED **Link:OK** when UART RX is wired (logic HB reply); **SD:OK** with card.
+5. Optional: mount SD — logic `[SD] mounting SPI CS=10…`; scanner `CS=5 SCK=18…`.

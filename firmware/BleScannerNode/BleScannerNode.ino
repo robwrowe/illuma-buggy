@@ -7,17 +7,20 @@
  *   - ESP32-DevKitC-32 (ESP-32D / WROOM-32D, 38-pin, CP2102 USB-C — WandSim class)
  *     — no onboard RGB; StatusLed is a no-op.
  *     UART: TX=GPIO17 RX=GPIO16. Wire to S3 logic: 17→RX**18**, 16←TX17, GND–GND.
+ *     OLED (optional): SDA=GPIO21 SCL=GPIO22, 128×64 SSD1306 I2C @ 0x3C.
  *
  * Arduino IDE: Board = "ESP32 Dev Module" (not ESP32S3).
  *
  * No wireless pairing — cross-wire UART and shared GND. Heartbeats keep the
- * logic board's link-alive timer fresh when Disney air is quiet.
+ * logic board's link-alive timer fresh when Disney air is quiet. Logic replies
+ * to heartbeats so the scanner OLED can show Link:OK.
  */
 
 #include "Globals.h"
 #include "DisneyBleScan.h"
 #include "ScannerPayloadTransport.h"
 #include "ScannerSerial.h"
+#include "ScannerStatusDisplay.h"
 #include "SdRawLogger.h"
 #include "StatusLed.h"
 #include <NimBLEDevice.h>
@@ -47,9 +50,9 @@ void setup() {
   scannerTransportInit();
   delay(300);
 
-  // SD before BLE scan — on classic ESP32 this is a no-op (flash pin conflict).
   sdRawLoggerInit();
   statusLedInit();
+  scannerStatusDisplayInit();
 
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_BT);
@@ -64,6 +67,8 @@ void setup() {
 void loop() {
   statusLedTick();
   processScannerSerial();
+  scannerUartPoll();
   scannerUartHeartbeatTick();
+  scannerStatusDisplayUpdate();
   delay(10);
 }

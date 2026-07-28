@@ -1,6 +1,8 @@
 #include "ScannerSerial.h"
 #include "Globals.h"
 #include "ScannerPayloadTransport.h"
+#include "SdRawLogger.h"
+#include "Config.h"
 #include <esp_mac.h>
 
 static void fillScannerMac(uint8_t out[6]) {
@@ -22,9 +24,20 @@ void processScannerSerial() {
   } else if (line == "status") {
     uint8_t myMac[6];
     fillScannerMac(myMac);
-    Serial.printf("[Status] uart=1 fwd_seq=%u scanlog=%s scanner MAC=%s\n",
+    unsigned long now = millis();
+    const char* link = "never";
+    char ageBuf[24] = "never";
+    if (lastLogicHbMs) {
+      unsigned long age = now - lastLogicHbMs;
+      link = (age < SCANNER_ALIVE_MS) ? "OK" : "LOST";
+      snprintf(ageBuf, sizeof(ageBuf), "%lums ago", age);
+    }
+    Serial.printf("[Status] link=%s logic_hb=%s fwd_seq=%u scanlog=%s sd=%s MAC=%s\n",
+                  link,
+                  ageBuf,
                   uartFwdSeq,
                   bleScanLogEnabled ? "on" : "off",
+                  sdRawLoggerReady() ? "ok" : "--",
                   scannerMacToString(myMac).c_str());
   } else if (line == "scanlog on") {
     bleScanLogEnabled = true;

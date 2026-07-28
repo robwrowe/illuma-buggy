@@ -3,6 +3,7 @@
 #include "DisneyBleFilter.h"
 #include "MbPacketDecode.h"
 #include "ScannerPayloadTransport.h"
+#include "ScannerStatusDisplay.h"
 #include "DebugLog.h"
 #include "SdRawLogger.h"
 #include "Config.h"
@@ -26,6 +27,7 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     if (!isDisneyMfr(data, len)) return;
     lastDisneySeenMs = millis();
     sdRawLoggerWrite(data, len, rssi, (uint64_t)millis());
+    scannerStatusDisplayNotePacket(data, len, rssi);
 
     const char* tag = classifyScanPacket(data, len);
     bool isNew = scanDedupIsNew(data, len);

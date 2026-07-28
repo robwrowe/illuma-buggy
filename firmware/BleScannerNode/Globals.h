@@ -19,6 +19,8 @@ extern unsigned long scanRepeatSummaryMs;
 
 extern uint32_t uartFwdSeq;  // packets forwarded over UART
 
-/** Status LED activity stamps (millis). */
+/** Status LED / OLED activity stamps (millis). */
 extern unsigned long lastDisneySeenMs;
 extern unsigned long lastForwardMs;
+/** Last UART heartbeat received from logic (0 = never). */
+extern unsigned long lastLogicHbMs;

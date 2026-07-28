@@ -20,3 +20,4 @@ uint32_t uartFwdSeq = 0;
 
 unsigned long lastDisneySeenMs = 0;
 unsigned long lastForwardMs = 0;
+unsigned long lastLogicHbMs = 0;

@@ -3,6 +3,12 @@
 #include "UartLink.h"
 #include <string.h>
 
+static UartLinkRx gScannerUartRx;
+
+static void onLogicHeartbeat() {
+  lastLogicHbMs = millis();
+}
+
 String scannerMacToString(const uint8_t mac[6]) {
   char buf[18];
   snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -26,7 +32,10 @@ bool scannerParseMacString(const char* str, uint8_t out[6]) {
 void scannerTransportInit() {
   Serial.printf("[Transport] ParsedDisneyPacket sizeof=%u\n", (unsigned)sizeof(ParsedDisneyPacket));
   uartLinkBegin(Serial1);
-  Serial.println("[UART] scanner→logic forwarding active");
+  gScannerUartRx.onPacket = nullptr;
+  gScannerUartRx.onTime = nullptr;
+  gScannerUartRx.onHeartbeat = onLogicHeartbeat;
+  Serial.println("[UART] scanner→logic forwarding active (RX poll for logic HB)");
 }
 
 void scannerTransportSend(const ParsedDisneyPacket& pkt) {
@@ -39,6 +48,10 @@ void scannerTransportSend(const ParsedDisneyPacket& pkt) {
                   (unsigned)sizeof(pkt),
                   (unsigned)pkt.kind, (unsigned)pkt.opcode);
   }
+}
+
+void scannerUartPoll() {
+  uartLinkPoll(Serial1, gScannerUartRx);
 }
 
 void scannerUartHeartbeatTick() {

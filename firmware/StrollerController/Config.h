@@ -125,12 +125,21 @@
 #define SD_MISO_PIN 19
 #endif
 
-// OLED I2C (logic board only).
-// ESP32-S3-DevKitC-1 does NOT break out GPIO 22 (classic-ESP32 I2C default).
-// GPIO 21 (SDA) and 47 (SCL) are adjacent on the DevKitC-1 header.
+// OLED I2C
+// Logic S3: SDA 21 / SCL 47 (DevKitC-1 header; GPIO 22 not broken out).
+// Scanner classic ESP32: SDA 21 / SCL 22 (Arduino Wire defaults; free of UART/SD).
+#if defined(ILLUMA_LOGIC_BOARD) || CONFIG_IDF_TARGET_ESP32S3
 #define OLED_SDA_PIN 21
 #define OLED_SCL_PIN 47
 #define OLED_I2C_ADDR 0x3C
+#else
+#define SCANNER_OLED_SDA_PIN 21
+#define SCANNER_OLED_SCL_PIN 22
+#define SCANNER_OLED_I2C_ADDR 0x3C
+#define OLED_SDA_PIN SCANNER_OLED_SDA_PIN
+#define OLED_SCL_PIN SCANNER_OLED_SCL_PIN
+#define OLED_I2C_ADDR SCANNER_OLED_I2C_ADDR
+#endif
 #define OLED_WIDTH  128
 #define OLED_HEIGHT 64
 #define STATUS_DISPLAY_INTERVAL_MS 750
