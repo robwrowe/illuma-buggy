@@ -17,7 +17,7 @@ import {
   timingByteFromEditFields,
   timingByteToEditFields,
 } from '../../lib/ble/e9Decode';
-import { decodeMbColorMaskByte, encodeMbColorMaskByte, decodeMb6BitChannel, encodeMb6BitChannel } from '../../lib/ble/mbPayloads';
+import { decodeMbColorMaskByte, encodeMbColorMaskByte, decodeMb6BitChannelFields, encodeMb6BitChannel } from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
 
 const EDIT_MODES = [
@@ -209,17 +209,24 @@ function MaskColorByteEditor({ byteIndex, byteValue, onChange }) {
 }
 
 function Color6BitByteEditor({ byteIndex, byteValue, onChange }) {
-  const [ch, setCh] = useState(() => decodeMb6BitChannel(byteValue));
+  const [fields, setFields] = useState(() => decodeMb6BitChannelFields(byteValue));
 
   useEffect(() => {
-    setCh(decodeMb6BitChannel(byteValue));
+    setFields(decodeMb6BitChannelFields(byteValue));
   }, [byteIndex, byteValue]);
 
   const apply = (next) => {
-    const clamped = Math.max(0, Math.min(63, Number(next) || 0));
-    setCh(clamped);
-    onChange(byteIndex, encodeMb6BitChannel(clamped));
+    const clamped = {
+      ...next,
+      ch: Math.max(0, Math.min(63, Number(next.ch) || 0)),
+      bit0: !!next.bit0,
+      bit7: !!next.bit7,
+    };
+    setFields(clamped);
+    onChange(byteIndex, encodeMb6BitChannel(clamped.ch, { bit0: clamped.bit0, bit7: clamped.bit7 }));
   };
+
+  const packed = encodeMb6BitChannel(fields.ch, { bit0: fields.bit0, bit7: fields.bit7 });
 
   return (
     <Stack gap={4}>
@@ -229,12 +236,26 @@ function Color6BitByteEditor({ byteIndex, byteValue, onChange }) {
           size="xs"
           min={0}
           max={63}
-          value={ch}
-          onChange={(v) => apply(v)}
+          value={fields.ch}
+          onChange={(v) => apply({ ...fields, ch: v })}
         />
       </Field>
+      <Group gap="xs">
+        <Checkbox
+          size="xs"
+          label="bit0"
+          checked={fields.bit0}
+          onChange={(e) => apply({ ...fields, bit0: e.currentTarget.checked })}
+        />
+        <Checkbox
+          size="xs"
+          label="bit7"
+          checked={fields.bit7}
+          onChange={(e) => apply({ ...fields, bit7: e.currentTarget.checked })}
+        />
+      </Group>
       <Text size="xs" c="dimmed" ff="monospace">
-        packed = (ch << 1) → 0x{(encodeMb6BitChannel(ch)).toString(16).padStart(2, '0').toUpperCase()}
+        {`bits[6:1]=ch · spare bit0/bit7 → 0x${packed.toString(16).padStart(2, '0').toUpperCase()}`}
       </Text>
     </Stack>
   );
