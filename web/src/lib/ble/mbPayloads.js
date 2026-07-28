@@ -21,6 +21,16 @@ export function encodeMbColorMaskByte(paletteIdx, mask = 0) {
   return mbColorByte(paletteIdx & 0x1f, mask & 0x07);
 }
 
+/** Decode E908-style 6-bit color channel byte → 0–63. */
+export function decodeMb6BitChannel(byte) {
+  return (Number(byte) >> 1) & 0x3f;
+}
+
+/** Encode 0–63 into E908 packed 6-bit channel byte (`(ch & 0x3F) << 1`). */
+export function encodeMb6BitChannel(ch0to63) {
+  return ((Number(ch0to63) & 0x3f) << 1) & 0xff;
+}
+
 export function buildMbSingle(paletteIdx, mask = 0, timing = 0x09, vibration = 0) {
   const out = new Array(9);
   out[0] = 0xE1; out[1] = 0x00; out[2] = 0xE9; out[3] = 0x05; out[4] = 0x00; out[5] = timing;

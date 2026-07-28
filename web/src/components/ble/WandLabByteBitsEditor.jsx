@@ -17,13 +17,14 @@ import {
   timingByteFromEditFields,
   timingByteToEditFields,
 } from '../../lib/ble/e9Decode';
-import { decodeMbColorMaskByte, encodeMbColorMaskByte } from '../../lib/ble/mbPayloads';
+import { decodeMbColorMaskByte, encodeMbColorMaskByte, decodeMb6BitChannel, encodeMb6BitChannel } from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
 
 const EDIT_MODES = [
   { value: 'binary', label: 'Bin' },
   { value: 'timing', label: 'Time' },
   { value: 'maskColor', label: 'C+M' },
+  { value: 'color6', label: '6bit' },
 ];
 
 const CARD_STYLE = {
@@ -207,6 +208,38 @@ function MaskColorByteEditor({ byteIndex, byteValue, onChange }) {
   );
 }
 
+function Color6BitByteEditor({ byteIndex, byteValue, onChange }) {
+  const [ch, setCh] = useState(() => decodeMb6BitChannel(byteValue));
+
+  useEffect(() => {
+    setCh(decodeMb6BitChannel(byteValue));
+  }, [byteIndex, byteValue]);
+
+  const apply = (next) => {
+    const clamped = Math.max(0, Math.min(63, Number(next) || 0));
+    setCh(clamped);
+    onChange(byteIndex, encodeMb6BitChannel(clamped));
+  };
+
+  return (
+    <Stack gap={4}>
+      <ByteValueReadout byteValue={byteValue} />
+      <Field label="6-bit (0–63)" style={{ marginBottom: 0 }}>
+        <NumberInput
+          size="xs"
+          min={0}
+          max={63}
+          value={ch}
+          onChange={(v) => apply(v)}
+        />
+      </Field>
+      <Text size="xs" c="dimmed" ff="monospace">
+        packed = (ch << 1) → 0x{(encodeMb6BitChannel(ch)).toString(16).padStart(2, '0').toUpperCase()}
+      </Text>
+    </Stack>
+  );
+}
+
 function ByteEditorCard({ byteIndex, byteValue, origValue, editMode, onEditModeChange, onChange, onReset }) {
   const modified = origValue != null && (byteValue & 0xff) !== (origValue & 0xff);
   return (
@@ -249,6 +282,9 @@ function ByteEditorCard({ byteIndex, byteValue, origValue, editMode, onEditModeC
       )}
       {editMode === 'maskColor' && (
         <MaskColorByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
+      )}
+      {editMode === 'color6' && (
+        <Color6BitByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
       )}
     </Stack>
   );
