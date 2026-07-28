@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -67,6 +67,7 @@ function buildLogSnapshot(labTab, bytes, origBytes, presetKey, sequencePackets) 
 export function WandLabTab({ data, update }) {
   const { section } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const isNarrow = useMediaQuery('(max-width: 62em)');
   const labTab = WAND_LAB_SECTIONS.some((t) => t.path === section) ? section : 'quick';
   const setLabTab = (v) => { if (v) navigate(`/wandlab/${v}`); };
@@ -104,6 +105,23 @@ export function WandLabTab({ data, update }) {
     setBytes([...b]);
     setOrigBytes([...b]);
   };
+
+  // Load packet from Rules coverage preview (or other navigators) via location.state.
+  useEffect(() => {
+    const loadHex = location.state?.loadHex;
+    if (!loadHex || typeof loadHex !== 'string') return;
+    const arr = parseHexToBytes(loadHex);
+    if (!arr.length) {
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+    setPresetKey(location.state?.presetKey || 'rule-preview');
+    setBytes([...arr]);
+    setOrigBytes([...arr]);
+    setSweepIndices([]);
+    setStatus(`Loaded ${arr.length} bytes from rule preview`);
+    navigate('/wandlab/bytes', { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
 
   const loadPreset = (key) => {
     const b = SW_FX_PRESET_BYTES[key] || [];

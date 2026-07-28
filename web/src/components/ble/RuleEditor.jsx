@@ -65,7 +65,8 @@ import {
   previewPacketAgainstRules,
 } from '../../lib/ble/e9Decode';
 import { parseCapturePaste } from '../../lib/ble/captureImport';
-import { stripCompanyId } from '../../lib/ble/wandSimClient';
+import { sendHex, stripCompanyId } from '../../lib/ble/wandSimClient';
+import { useNavigate } from 'react-router-dom';
 
 const CMP_OP_OPTS = [
   { value: 'eq', label: 'eq' },
@@ -2255,13 +2256,15 @@ function RuleCard({
   );
 }
 
-function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels }) {
+function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels, simIp = '' }) {
+  const navigate = useNavigate();
   const [paste, setPaste] = useState('');
   const [status, setStatus] = useState('');
   const [packets, setPackets] = useState([]);
   const [matchMode, setMatchMode] = useState('first'); // first | all | selected
   const [unmatchedOnly, setUnmatchedOnly] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
+  const [sendingRow, setSendingRow] = useState(null);
 
   const selectedRule = useMemo(
     () => (rules || []).find((r) => r.id === selectedRuleId) || null,
@@ -2405,12 +2408,47 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
     }
   };
 
+  const sendPacketToWandLab = async (p) => {
+    const ip = (simIp || '').trim();
+    if (!ip) {
+      setCopyStatus('Set Wand Lab simulator IP first (Wand Lab tab)');
+      return;
+    }
+    const payload = hexToBytes(p.hex);
+    if (!payload.length) {
+      setCopyStatus('Empty payload');
+      return;
+    }
+    setSendingRow(p.rowIdx);
+    setCopyStatus('');
+    try {
+      await sendHex(ip, payload);
+      setCopyStatus(`Sent row ${p.rowIdx + 1} (${payload.length} bytes) → ${ip}`);
+    } catch (e) {
+      setCopyStatus(e.message || 'Send failed — is WandSim on WiFi?');
+    } finally {
+      setSendingRow(null);
+    }
+  };
+
+  const openPacketInWandLab = (p) => {
+    navigate('/wandlab/bytes', {
+      state: {
+        loadHex: p.hex,
+        presetKey: 'rule-preview',
+      },
+    });
+  };
+
   return (
     <AppCard>
       <SectionHead>Rule coverage preview</SectionHead>
       <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
         Paste a list of hex / capture rows (8301 stripped automatically). Preview which rule each packet
         would hit under the current rule set, and copy any that have no match.
+        {!simIp?.trim() && (
+          <> Simulator IP is empty — set it on the Wand Lab tab to enable Send.</>
+        )}
       </Text>
       <Textarea
         minRows={4}
@@ -2460,7 +2498,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
       {copyStatus && <Text size="xs" c="teal" mb="xs">{copyStatus}</Text>}
 
       {packets.length > 0 && (
-        <Table.ScrollContainer minWidth={640}>
+        <Table.ScrollContainer minWidth={760}>
           <Table striped highlightOnHover withTableBorder withColumnBorders fz="xs">
             <Table.Thead>
               <Table.Tr>
@@ -2470,6 +2508,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
                 <Table.Th>Rule</Table.Th>
                 <Table.Th>Hex (payload)</Table.Th>
                 <Table.Th w={160}>Timing</Table.Th>
+                <Table.Th w={150}>Wand Lab</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -2521,11 +2560,33 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
                       <Text size="xs" c="dimmed">—</Text>
                     )}
                   </Table.Td>
+                  <Table.Td>
+                    <Group gap={4} wrap="nowrap">
+                      <AppButton
+                        size="compact-xs"
+                        variant="primary"
+                        disabled={!simIp?.trim() || sendingRow != null}
+                        loading={sendingRow === p.rowIdx}
+                        onClick={() => sendPacketToWandLab(p)}
+                        title={simIp?.trim() ? `Send to ${simIp.trim()}` : 'Set simulator IP on Wand Lab first'}
+                      >
+                        Send
+                      </AppButton>
+                      <AppButton
+                        size="compact-xs"
+                        variant="default"
+                        onClick={() => openPacketInWandLab(p)}
+                        title="Open Wand Lab Bytes tab with this packet"
+                      >
+                        Edit
+                      </AppButton>
+                    </Group>
+                  </Table.Td>
                 </Table.Tr>
               ))}
               {visiblePackets.length === 0 && (
                 <Table.Tr>
-                  <Table.Td colSpan={6}>
+                  <Table.Td colSpan={7}>
                     <Text size="xs" c="dimmed">No unmatched packets in this paste.</Text>
                   </Table.Td>
                 </Table.Tr>
@@ -2540,6 +2601,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels 
 
 export function RuleEditor({
   mb, presets = [], effectOptions = [], paletteOptions = [], onChange, onEditMaps, onEditTimingModels,
+  simIp = '',
 }) {
   const mapping = normalizeMbMapping(mb);
   const rules = mapping.rules || [];
@@ -2650,6 +2712,7 @@ export function RuleEditor({
         selectedRuleId={expandedId}
         segmentMaps={segmentMaps}
         timingModels={timingModels}
+        simIp={simIp}
       />
     </Stack>
   );
