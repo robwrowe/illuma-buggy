@@ -160,6 +160,25 @@ enclosure, more in-park MB+ opcodes — see root `AGENTS.md` roadmap.
 
 ---
 
+## App / rules engine notes (Jul 2026 late)
+
+- **Rule exclusivity flags** (web Rule Editor + firmware `MbRuleEngine`):
+  - `ignoreLowerPriority` — while this rule’s lifecycle is active (ON → DIP → FADE →
+    COOLDOWN/black hold, until restore/IDLE), suppress matches with **worse** priority
+    (higher `priority` number). Higher-priority rules can still preempt.
+  - `ignoreAllOtherRules` — same window, suppress **every other** rule.
+  - Exact re-match of the **active rule id** still behaves normally (slack / re-apply).
+  - Strip may be black during COOLDOWN; exclusivity still holds until IDLE.
+- **Wand Lab byte editor**: mode **6bit** packs E908-style channels via `(ch & 0x3F) << 1`.
+- **RN Settings**:
+  - **Board log marker** → BLE `log_marker` → Serial `[Marker] …` + SD `marker` event.
+  - **Board MB Rules** → `list_rules` / `set_rule_enabled` toggles (firmware already had
+    these; app UI was missing).
+- **Capture tab** show chips use the same Home visibility window (pre / live / post /
+  upcoming), not live-only.
+
+---
+
 ## Agent do / don’t
 
 **Do**

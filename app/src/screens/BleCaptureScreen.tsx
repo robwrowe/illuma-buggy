@@ -140,7 +140,7 @@ export default function BleCaptureScreen() {
       showInstanceOverrides,
       Date.now(),
       activeZoneIds,
-    ).filter((show) => show.status === 'pre' || show.status === 'live');
+    );
   }, [
     liveShowTick, activePark, showBindings, showSettings, showInstanceOverrides, activeZoneIds,
   ]);
@@ -331,7 +331,8 @@ export default function BleCaptureScreen() {
               disabled={bleCaptureActive}
             >
               <Text style={s.chipText}>
-                {show.status === 'live' ? '🔴 ' : ''}{show.name}
+                {show.status === 'live' ? '🔴 ' : show.status === 'pre' ? '⏳ ' : show.status === 'ended' ? '✓ ' : ''}
+                {show.name}
               </Text>
             </TouchableOpacity>
           ))}
