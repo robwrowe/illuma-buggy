@@ -2,7 +2,7 @@
  * StrollerController Firmware v2.1
  * ESP32-S3-DevKitC-1-N16R8
  *
- * Modular split + optional dual-board scanner (UART primary; ESP-NOW until Part 3).
+ * Modular split + optional dual-board scanner over UART.
  */
 
 #if !CONFIG_IDF_TARGET_ESP32S3
@@ -238,14 +238,11 @@ void processPendingCommands() {
 void loop() {
   statusLedTick();
   uartScannerLinkPoll();
-  // BLE first — app preset fire / status must not wait behind ESP-NOW rule applies.
+  // BLE first — app preset fire / status must not wait behind UART rule applies.
   processBleCmdQueue();
   processPendingCommands();
   processParsedPacketQueue();
-#if !USE_UART_SCANNER_LINK
-  transportPairResendTick();
-#endif
-  serviceScannerFallback();
+  serviceScannerLinkHealth();
   processSerialCommands();
   serviceWandTx();
   statusDisplayUpdate();

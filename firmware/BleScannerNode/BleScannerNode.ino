@@ -1,6 +1,6 @@
 /**
  * BleScannerNode — optional second ESP32 for Disney BLE scanning.
- * Filters + decodes packets, forwards to logic via UART (or ESP-NOW).
+ * Filters + decodes packets, forwards to logic via UART.
  *
  * Boards:
  *   - ESP32-S3-DevKitC-1 (onboard RGB: GPIO 38 on v1.1+, GPIO 48 on v1.0)
@@ -10,16 +10,13 @@
  *
  * Arduino IDE: Board = "ESP32 Dev Module" (not ESP32S3).
  *
- * Pairing (ESP-NOW mode only):
- *   - Unpaired: advertises as IllumaScan (manufacturer data includes MAC)
- *   - App sets scanner MAC on logic board → reflected ESP-NOW pair closes the loop
- *   - Manual fallback: serial `pair AA:BB:CC:DD:EE:FF`
+ * No wireless pairing — cross-wire UART and shared GND. Heartbeats keep the
+ * logic board's link-alive timer fresh when Disney air is quiet.
  */
 
 #include "Globals.h"
 #include "DisneyBleScan.h"
 #include "ScannerPayloadTransport.h"
-#include "ScannerAdvertise.h"
 #include "ScannerSerial.h"
 #include "SdRawLogger.h"
 #include "StatusLed.h"
@@ -38,14 +35,6 @@ void setup() {
 
   prefs.begin("config", true);
   bleScanLogEnabled = prefs.getBool("scanLog", true);
-  {
-    size_t macLen = prefs.getBytesLength("pairedLogicMac");
-    if (macLen == 6) {
-      prefs.getBytes("pairedLogicMac", pairedLogicMac, 6);
-      logicPeerConfigured = true;
-    }
-    pairedChannel = prefs.getUChar("pairedChan", 0);
-  }
   prefs.end();
 
   // Lower BLE TX power before the radio comes up — reduces the current spike that
@@ -54,16 +43,9 @@ void setup() {
   NimBLEDevice::setPower(-3);
   delay(300);
 
-  // UART mode skips WiFi/ESP-NOW (big current spike). ESP-NOW path still staggers.
+  // UART only — no WiFi/ESP-NOW (avoids brownout on weak USB with NimBLE).
   scannerTransportInit();
   delay(300);
-
-#if !USE_UART_SCANNER_LINK
-  if (!logicPeerConfigured) {
-    scannerAdvertiseInit();
-    delay(150);
-  }
-#endif
 
   // SD before BLE scan — on classic ESP32 this is a no-op (flash pin conflict).
   sdRawLoggerInit();
@@ -71,10 +53,8 @@ void setup() {
 
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_BT);
-  Serial.printf("[Boot] Ready — scanner MAC %s paired=%s uart=%d\n",
-                scannerMacToString(mac).c_str(),
-                logicPeerConfigured ? "yes" : "no",
-                USE_UART_SCANNER_LINK);
+  Serial.printf("[Boot] Ready — scanner MAC %s uart=1\n",
+                scannerMacToString(mac).c_str());
   Serial.println("[Serial] Type 'help' for commands");
 
   // Start scan last so a callback flood can't WDT us before Ready prints.
@@ -85,11 +65,5 @@ void loop() {
   statusLedTick();
   processScannerSerial();
   scannerUartHeartbeatTick();
-#if !USE_UART_SCANNER_LINK
-  if (!logicPeerConfigured) {
-    scannerAdvertiseRefresh();
-    scannerChannelSweepTick();
-  }
-#endif
   delay(10);
 }

@@ -6,40 +6,32 @@ extern BoardRole boardRole;
 extern uint8_t scannerPeerMac[6];
 extern bool scannerPeerConfigured;
 extern unsigned long lastScannerPacketMs;
-extern bool localScanFallbackActive;  // logic board local BLE scan while scanner silent
-extern uint32_t espNowRxCount;         // valid ParsedDisneyPackets received over ESP-NOW
-extern uint32_t espNowRxRejected;      // ESP-NOW frames dropped (wrong length)
-extern uint32_t parsedPacketDropCount; // ring buffer overflows (oldest dropped)
+extern uint32_t parsedPacketDropCount; // ring buffer overflows (oldest discarded)
+extern uint32_t uartRxPacketCount;
 
 void payloadTransportInit();
-// (Re)initialize ESP-NOW on the logic board. Must be called after every successful WiFi
-// connect, because WiFi.disconnect(true) in connectToWLED() tears the ESP-NOW stack down.
-void transportEnsureEspNow();
 void transportSendParsedPacket(const ParsedDisneyPacket& pkt);
-void transportOnEspNowReceive(const uint8_t* mac, const uint8_t* data, int len);
 void processParsedPacketQueue();
 
 // Legacy raw-byte mailbox (kept for any residual callers; prefer transportSendParsedPacket).
 void queueDisneyPayload(const uint8_t* payload, size_t plen);
 void processDisneyPayloadQueue();
 
-// Add/update ESP-NOW peer + optional reflected pair message to scanner.
+/** Persist scanner MAC from app/serial (informational; UART needs no pairing). */
 void transportSetScannerMac(const uint8_t mac[6]);
-// Called from loop(): while the scanner is configured but silent, periodically beacons
-// the reflected pair message (with our current Wi-Fi channel) so a channel-sweeping
-// scanner pairs on boot / reboot / re-pair. No-op once the scanner is delivering packets.
-void transportPairResendTick();
 
-/** UART inter-board link (Part 2). Init once in setup; poll each loop(). */
+/** UART inter-board link. Init once in setup; poll each loop(). */
 void uartScannerLinkInit();
 void uartScannerLinkPoll();
-/** Enqueue a packet received over UART (same path as ESP-NOW scan frames). */
+/** Enqueue a packet received over UART. */
 void transportOnUartPacket(const ParsedDisneyPacket& pkt);
 
-// Called from loop(): if the scanner stays silent, fall back to local BLE scanning on the
-// logic board; stop the local scan once the scanner is delivering packets again.
-void serviceScannerFallback();
-/** Apply boardRole immediately (start/stop local scan, ESP-NOW) — no reboot required. */
+/**
+ * LOGIC_BOARD: UART silent = link lost only — never start local Disney NimBLE scan
+ * (protects phone BLE in parks). STANDALONE owns startBLEScan.
+ */
+void serviceScannerLinkHealth();
+/** Apply boardRole immediately (start/stop local scan) — no reboot required. */
 void applyBoardRoleRuntime();
 bool transportParseMacString(const char* str, uint8_t out[6]);
 String transportMacToString(const uint8_t mac[6]);

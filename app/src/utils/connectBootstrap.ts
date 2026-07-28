@@ -385,7 +385,7 @@ export async function runConnectBootstrap(): Promise<void> {
   // Reconcile board role / scanner MAC on every connect (incl. quick reconnect, which
   // skips runEssentialConfig). The board can boot Standalone from its own NVS if the
   // role was never persisted; push the app's desired role so the board writes NVS and
-  // comes up correctly after a reboot — this is what enables ESP-NOW to survive reboots.
+  // comes up correctly after a reboot (Dual-Board expects UART scanner, not local scan).
   await reconcileBoardRole(token, status);
 
   if (shouldForceMappingPresetSync(status, s.mbMapping)) {

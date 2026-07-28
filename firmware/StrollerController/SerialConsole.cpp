@@ -32,7 +32,7 @@ void processSerialCommands() {
     Serial.println("  mb <palette> [mask]      — E905 single color (mask 0 = all)");
     Serial.println("  mb defer on|off          — forward E9 to app vs firmware apply");
     Serial.println("  role standalone|logic    — board role (reboot to apply scan)");
-    Serial.println("  scanner <mac>            — set ESP-NOW scanner MAC (AA:BB:...)");
+    Serial.println("  scanner <mac>            — save scanner MAC (informational)");
     Serial.println("  nvs wifi                 — dump stored vs in-memory WiFi config");
     Serial.println("  uart                     — UART link pin + RX availability");
   } else if (line == "uart") {
@@ -50,8 +50,8 @@ void processSerialCommands() {
                   boardRole == BoardRole::LOGIC_BOARD ? "logic" : "standalone",
                   scannerPeerConfigured ? transportMacToString(scannerPeerMac).c_str() : "(none)",
                   lastScannerPacketMs ? (millis() - lastScannerPacketMs) : 0UL);
-    Serial.printf("[Status] ESP-NOW rx=%lu rejected=%lu drops=%lu last=%s\n",
-                  (unsigned long)espNowRxCount, (unsigned long)espNowRxRejected,
+    Serial.printf("[Status] UART rx=%lu drops=%lu last=%s\n",
+                  (unsigned long)uartRxPacketCount,
                   (unsigned long)parsedPacketDropCount,
                   lastScannerPacketMs ? String((millis() - lastScannerPacketMs)) + "ms ago" : String("never"));
   } else if (line == "nvs wifi") {

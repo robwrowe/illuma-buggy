@@ -48,7 +48,7 @@
 #define DISNEY_PAYLOAD_MAX 64
 #define PARSED_PACKET_MAX_PALETTES 5
 #define PARSED_PACKET_RAW_MAX 32
-/** ESP-NOW → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
+/** Scanner/UART → rule-engine ring buffer depth (absorbs loop() stalls during WLED HTTP). */
 #define PARSED_PACKET_QUEUE_DEPTH 32
 /**
  * Chunk reassembly + ArduinoJson rules-cache budget (512KB).
@@ -70,18 +70,11 @@
 /** Max commands handled per loop() — empty a full burst in ~2 iterations. */
 #define BLE_CMD_DRAIN_PER_LOOP 12
 
-// ESP-NOW pairing magic ("PAIR" little-endian)
-#define ESPNOW_PAIR_MAGIC 0x52494150u
-// Illuma scanner unpaired advertisement manufacturer prefix (not Disney 0x8301)
-#define SCANNER_MFR_MAGIC_0 0x49
-#define SCANNER_MFR_MAGIC_1 0x53
-
 // Timing
 #define WIFI_RETRY_MS 5000
 #define LIVE_STATE_POLL_MS 12000
 
-// ESP-NOW scanner link health (shared by PayloadTransport + StatusLed)
-#define SCANNER_ABSENT_MS 20000
+// UART scanner link health (shared by PayloadTransport + StatusLed)
 #define SCANNER_ALIVE_MS  10000
 
 // Local board-health NeoPixel (not the show strip / GLEDOPTO).
@@ -97,11 +90,7 @@
 #define HAS_STATUS_NEOPIXEL 0
 #endif
 
-// Inter-board UART link.
-// Set to 0 to fall back to ESP-NOW packet forwarding.
-#ifndef USE_UART_SCANNER_LINK
-#define USE_UART_SCANNER_LINK 1
-#endif
+// Inter-board UART link (scanner ↔ logic). Always on for dual-board.
 #if defined(ILLUMA_LOGIC_BOARD)
 // StrollerController / ESP32-S3-DevKitC-1-N16R8 v1.3
 // RX is GPIO 18 — NOT 8. Arduino's default Wire SDA is GPIO 8; OLED remaps

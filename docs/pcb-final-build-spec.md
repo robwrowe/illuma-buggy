@@ -20,9 +20,8 @@ order. Implementation status is tracked below.
 | Status RGB | **38** | Logic DevKitC-1 v1.3 |
 | Power in | `5V`/`VIN` | Both |
 
-Compile flag: `USE_UART_SCANNER_LINK` (currently `1` in `Config.h` for UART bench).
-Set to `0` to fall back to ESP-NOW. **Part 3 deletes ESP-NOW only after UART is
-field-proven.** SD init is non-fatal — UART/OLED can be tested with no card.
+UART is the only scanner↔logic link (ESP-NOW removed in Part 3). SD init is
+non-fatal — UART/OLED can be tested with no card.
 
 ---
 
@@ -33,8 +32,8 @@ field-proven.** SD init is non-fatal — UART/OLED can be tested with no card.
 | Part | Topic | Status |
 |---|---|---|
 | 1 | Shared USB-C power | Hardware — not coded |
-| 2 | UART inter-board link | **Implemented** (`UartLink.h`, both boards; default on) |
-| 3 | Remove ESP-NOW | **Deferred** until Part 2 field-proven |
+| 2 | UART inter-board link | **Implemented** (`UartLink.h`, both boards) |
+| 3 | Remove ESP-NOW | **Done** (UART-only; no local-scan fallback on logic) |
 | 4 | SD logging (both boards) | **Implemented** (`SdRawLogger`, `SdRuleLogger`) |
 | 5 | OLED status (logic) | **Implemented** (`StatusDisplay` + Adafruit SSD1306) |
 | 6 | `set_field` / `list_fields` | **Implemented** (`RuntimeFields`) |
@@ -72,14 +71,19 @@ SD/SPI/Wire are core.
 
 ### Bench notes
 
-1. Wire UART cross-over: Logic TX17↔Scanner RX8, Logic RX8↔Scanner TX17, shared GND.
-2. Flash both boards with `USE_UART_SCANNER_LINK=1` (default).
-3. Confirm `[UART] forwarding` / `[UART] recv` serial lines under WandSimulator traffic.
-4. Keep ESP-NOW code until Part 3 — do not delete yet.
+1. Wire UART cross-over: **scanner TX17 → logic RX18**, **logic TX17 → scanner RX16**, shared GND.
+2. Flash both boards (UART always on for dual-board; no `USE_UART_SCANNER_LINK` flag).
+3. Confirm `[UART] forwarding` / `[UART] recv` / heartbeat serial lines under WandSimulator traffic.
+4. Logic board in Dual-Board mode must **not** start local Disney NimBLE scan when UART is silent — link lost only (protects phone BLE).
+
 | Color | Scanner meaning |
 |---|---|
 | Blue blink | Boot (~3s) |
-| Amber fast | ESP-NOW unpaired (UART mode skips this) |
 | Amber slow | Quiet — no recent Disney / forward |
-| Cyan blink | Disney seen, not forwarding (e.g. unpaired ESP-NOW) |
+| Cyan blink | Disney seen, no recent UART forward |
 | Green solid | Recently forwarded packets |
+
+| Color | Logic (dual-board) meaning |
+|---|---|
+| Amber fast | UART silent / waiting for scanner |
+| Green solid | UART link alive (packets or heartbeats) |

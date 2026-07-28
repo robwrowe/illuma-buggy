@@ -53,7 +53,7 @@ enum class DisneyPacketKind : uint8_t {
   E9_UNCLASSIFIED,
 };
 
-// Wire contract for ESP-NOW and decode→apply boundary. Packed for stable sizeof.
+// Wire contract for UART scanner→logic and decode→apply boundary. Packed for stable sizeof.
 // rssi is filled by the scanner; rule engine / parade detection consume it on the logic board.
 struct __attribute__((packed)) ParsedDisneyPacket {
   DisneyPacketKind kind;
@@ -95,9 +95,3 @@ enum MbCooldownResetMode : uint8_t {
   MB_COOLDOWN_ON_MATCH = 0,
   MB_COOLDOWN_FIXED    = 1,
 };
-
-struct EspNowPairMsg {
-  uint32_t magic;
-  uint8_t  logicMac[6];
-  uint8_t  channel;      // logic board's current Wi-Fi channel; scanner locks onto it
-} __attribute__((packed));

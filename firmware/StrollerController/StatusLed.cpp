@@ -17,7 +17,7 @@
 #endif
 
 enum class LedState {
-  WIFI_DOWN, NO_SCANNER_MAC, PAIRING, LINKED, FALLBACK, STANDALONE_OK, WLED_DOWN
+  WIFI_DOWN, LINK_WAIT, LINKED, STANDALONE_OK, WLED_DOWN
 };
 
 static LedState currentState = LedState::WIFI_DOWN;
@@ -43,16 +43,9 @@ static LedState computeState() {
 
   if (boardRole == BoardRole::STANDALONE) return LedState::STANDALONE_OK;
 
-#if USE_UART_SCANNER_LINK
-  if (localScanFallbackActive) return LedState::FALLBACK;
+  // Dual-board: amber while UART silent (link lost); green when heartbeats/packets flow.
   if (scannerAliveNow()) return LedState::LINKED;
-  return LedState::PAIRING;
-#else
-  if (!scannerPeerConfigured) return LedState::NO_SCANNER_MAC;
-  if (localScanFallbackActive) return LedState::FALLBACK;
-  if (scannerAliveNow()) return LedState::LINKED;
-  return LedState::PAIRING;
-#endif
+  return LedState::LINK_WAIT;
 }
 
 void statusLedInit() {
@@ -71,13 +64,11 @@ void statusLedTick() {
   unsigned long blinkIntervalMs = 0;
 
   switch (currentState) {
-    case LedState::WIFI_DOWN:      r = 0;   g = 0;   b = 255; blinkIntervalMs = 600; break;
-    case LedState::WLED_DOWN:      r = 255; g = 0;   b = 255; blinkIntervalMs = 400; break;
-    case LedState::NO_SCANNER_MAC: r = 255; g = 200; b = 0;   blinkIntervalMs = 500; break;
-    case LedState::PAIRING:        r = 255; g = 200; b = 0;   blinkIntervalMs = 125; break;
-    case LedState::LINKED:         r = 0;   g = 255; b = 0;   blinkIntervalMs = 0;   break;
-    case LedState::FALLBACK:       r = 255; g = 0;   b = 0;   blinkIntervalMs = 500; break;
-    case LedState::STANDALONE_OK:  r = 0;   g = 120; b = 0;   blinkIntervalMs = 0;   break;
+    case LedState::WIFI_DOWN:     r = 0;   g = 0;   b = 255; blinkIntervalMs = 600; break;
+    case LedState::WLED_DOWN:     r = 255; g = 0;   b = 255; blinkIntervalMs = 400; break;
+    case LedState::LINK_WAIT:     r = 255; g = 200; b = 0;   blinkIntervalMs = 125; break; // UART silent
+    case LedState::LINKED:        r = 0;   g = 255; b = 0;   blinkIntervalMs = 0;   break;
+    case LedState::STANDALONE_OK: r = 0;   g = 120; b = 0;   blinkIntervalMs = 0;   break;
   }
 
   if (blinkIntervalMs == 0) {

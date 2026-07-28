@@ -566,11 +566,11 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* BLE Scanner Board (dual-board ESP-NOW) */}
+      {/* BLE Scanner Board (dual-board UART) */}
       <View style={s.section}>
         <Text style={s.sectionTitle}>BLE Scanner Board</Text>
         <Text style={s.sectionHint}>
-          Optional second ESP32 scans Disney packets and forwards them over ESP-NOW.
+          Optional second ESP32 scans Disney packets and forwards them over UART.
           Reboot the logic board after switching modes.
         </Text>
         <View style={s.recallRow}>
