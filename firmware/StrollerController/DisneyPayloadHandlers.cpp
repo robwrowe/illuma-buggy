@@ -116,6 +116,19 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   int matchIdx = findMatchingRule(payload, plen, rules);
   if (matchIdx >= 0) {
     JsonObject rule = rules[matchIdx].as<JsonObject>();
+    if (exclusiveActiveBlocksRule(rule)) {
+      Serial.printf("[Rule] suppressed by exclusive active id=%s (matched %s)\n",
+                    mbActiveRuleId, rule["id"] | "(no id)");
+      {
+        char detail[160];
+        snprintf(detail, sizeof(detail),
+                 "\"active\":\"%s\",\"matched\":\"%s\",\"name\":\"%s\"",
+                 mbActiveRuleId, rule["id"] | "", rule["name"] | "");
+        sdRuleLoggerWrite("suppressed", detail);
+      }
+      if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
+      return;
+    }
     Serial.printf("[Rule] match idx=%d id=%s name=%s\n",
                   matchIdx, rule["id"] | "(no id)", rule["name"] | "(no name)");
     {

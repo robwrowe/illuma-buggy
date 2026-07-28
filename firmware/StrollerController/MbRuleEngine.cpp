@@ -562,19 +562,45 @@ JsonObject findSegmentInMap(JsonObject segMap, const char* segmentId) {
   return empty;
 }
 
-JsonObject mbSegMapForActiveRule() {
+JsonObject findRuleById(const char* ruleId) {
   JsonObject empty;
-  if (!mbActiveRuleId[0]) return empty;
+  if (!ruleId || !ruleId[0]) return empty;
   JsonArray rules = gRulesDoc["rules"].as<JsonArray>();
   if (rules.isNull()) return empty;
   for (JsonVariant v : rules) {
     if (!v.is<JsonObject>()) continue;
     JsonObject r = v.as<JsonObject>();
-    if (strcmp(r["id"] | "", mbActiveRuleId) == 0) {
-      return findSegmentMapById(r["segmentMapId"] | "");
-    }
+    if (strcmp(r["id"] | "", ruleId) == 0) return r;
   }
   return empty;
+}
+
+JsonObject mbSegMapForActiveRule() {
+  JsonObject empty;
+  if (!mbActiveRuleId[0]) return empty;
+  JsonObject r = findRuleById(mbActiveRuleId);
+  if (r.isNull()) return empty;
+  return findSegmentMapById(r["segmentMapId"] | "");
+}
+
+bool exclusiveActiveBlocksRule(const JsonObject& candidate) {
+  if (mbRulePhase == MB_RULE_IDLE || !mbActiveRuleId[0] || candidate.isNull()) return false;
+  const char* cid = candidate["id"] | "";
+  if (cid[0] && strcmp(cid, mbActiveRuleId) == 0) return false;
+
+  JsonObject active = findRuleById(mbActiveRuleId);
+  if (active.isNull()) return false;
+
+  bool ignoreAll = active["ignoreAllOtherRules"] | active["ignore_all_other_rules"] | false;
+  if (ignoreAll) return true;
+
+  bool ignoreLower = active["ignoreLowerPriority"] | active["ignore_lower_priority"] | false;
+  if (!ignoreLower) return false;
+
+  int ap = active["priority"] | active["prio"] | 100;
+  int cp = candidate["priority"] | candidate["prio"] | 100;
+  // Higher number = lower priority (same convention as findMatchingRule).
+  return cp > ap;
 }
 
 static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {

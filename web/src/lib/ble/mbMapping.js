@@ -726,6 +726,10 @@ export function createEmptyRule(overrides = {}) {
     name: 'New rule',
     enabled: true,
     priority: 0,
+    /** While this rule's lifecycle is active (through COOLDOWN), block lower-priority matches. */
+    ignoreLowerPriority: false,
+    /** While this rule's lifecycle is active, block every other rule (exact re-match still allowed). */
+    ignoreAllOtherRules: false,
     match: createEmptyMatchGroup('all'),
     colorSources: [],
     extract: [],
@@ -1283,6 +1287,8 @@ export function normalizeMbRule(raw, index = 0) {
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `Rule ${index + 1}`,
     enabled: raw.enabled !== false,
     priority: Number.isFinite(raw.priority) ? Number(raw.priority) : index * 10,
+    ignoreLowerPriority: !!(raw.ignoreLowerPriority ?? raw.ignore_lower_priority),
+    ignoreAllOtherRules: !!(raw.ignoreAllOtherRules ?? raw.ignore_all_other_rules),
     match: normalizeConditionNode(raw.match || createEmptyMatchGroup('all')),
     colorSources: normalizeColorSources(raw.colorSources),
     extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],

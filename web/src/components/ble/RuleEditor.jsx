@@ -1759,6 +1759,18 @@ function RuleCard({
             checked={rule.enabled !== false}
             onChange={(e) => onChange({ ...rule, enabled: e.target.checked })}
           />
+          <Checkbox
+            label="Ignore lower-priority rules while active"
+            description="Until this rule finishes cooldown and restores, other rules with worse priority (higher number) cannot fire. Exact re-match of this rule still works."
+            checked={!!rule.ignoreLowerPriority}
+            onChange={(e) => onChange({ ...rule, ignoreLowerPriority: e.target.checked })}
+          />
+          <Checkbox
+            label="Ignore all other rules while active"
+            description="Until this rule finishes cooldown and restores, no other rule can fire. Exact re-match of this rule still works."
+            checked={!!rule.ignoreAllOtherRules}
+            onChange={(e) => onChange({ ...rule, ignoreAllOtherRules: e.target.checked })}
+          />
           <Field label="Preset">
             <SearchableSelect
               value={rule.presetId || ''}

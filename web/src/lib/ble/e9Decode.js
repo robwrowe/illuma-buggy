@@ -351,6 +351,28 @@ export function findMatchingRule(payloadBytes, rules) {
 }
 
 /**
+ * True when an exclusive active rule should suppress applying `candidate`
+ * (different rule id). Exact re-match of the active rule is never blocked.
+ * @param {object|null} activeRule
+ * @param {object} candidate
+ * @param {string} phase  firmware-style phase name, or any non-'idle'
+ */
+export function exclusiveActiveBlocksRule(activeRule, candidate, phase = 'on') {
+  if (!activeRule || !candidate) return false;
+  if (!phase || phase === 'idle' || phase === 'IDLE') return false;
+  const activeId = activeRule.id || '';
+  const candId = candidate.id || '';
+  if (activeId && candId && activeId === candId) return false;
+  if (activeRule.ignoreAllOtherRules) return true;
+  if (activeRule.ignoreLowerPriority) {
+    const ap = Number.isFinite(activeRule.priority) ? Number(activeRule.priority) : 100;
+    const cp = Number.isFinite(candidate.priority) ? Number(candidate.priority) : 100;
+    if (cp > ap) return true;
+  }
+  return false;
+}
+
+/**
  * Lab-confirmed timing byte decode (docs/ble-packets-details/timing-byte.md).
  * bits[3:0]=t, bit6=scaler, bit7=extended (misnamed "always-on"), bits[5:4]=fadeBits.
  * @param {number} byte

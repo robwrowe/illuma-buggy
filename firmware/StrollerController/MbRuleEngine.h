@@ -24,6 +24,15 @@ int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules
 
 void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t plen);
 
+/** Look up a rule object by id in the live rules cache. Null if missing. */
+JsonObject findRuleById(const char* ruleId);
+/**
+ * True when the currently active timed rule (through COOLDOWN / black hold) has
+ * ignoreAllOtherRules or ignoreLowerPriority set and should suppress applying
+ * `candidate`. Exact re-match of the active rule id is never blocked.
+ */
+bool exclusiveActiveBlocksRule(const JsonObject& candidate);
+
 /** Look up a segment map by id in the cached MB rules doc. Null object if missing. */
 JsonObject findSegmentMapById(const char* mapId);
 /** Look up a segment by id within a segment map. Null object if missing. */
