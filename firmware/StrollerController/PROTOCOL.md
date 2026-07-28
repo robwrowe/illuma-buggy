@@ -46,6 +46,9 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 {"type":"mb_config","enabled":true,"five_point":true,"timeout_ms":30000}
 {"type":"mb_chase_config","speed":128,"thickness":4}
 {"type":"scan_log_config","enabled":true}
+{"type":"log_marker","msg":"Happily Ever After — castle flash"}
+{"type":"list_rules"}
+{"type":"set_rule_enabled","ruleId":"castle-flash","enabled":false}
 ```
 
 | Field | Notes |
@@ -53,6 +56,8 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 | `timeout_ms` | `0` = never auto-clear BLE override |
 | `mb_chase_config.speed` | WLED Chase `sx` (0 = stationary) |
 | `mb_chase_config.thickness` | WLED Chase `grp` (pixels per color block) |
+| `log_marker` | Prints `[Marker] …` on Serial and writes an SD rule-log `marker` event (when SD is mounted) |
+| `list_rules` / `set_rule_enabled` | Park-side enable/disable of individual MB rules without re-pushing the full mapping |
 
 ### Status
 
@@ -69,6 +74,12 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 ```json
 {"type":"ack","action":"preset_apply","id":"fantasy","ok":true}
 {"type":"error","msg":"Failed to fetch effects"}
+```
+
+### Rules summary
+
+```json
+{"type":"rules_summary","rules":[{"id":"castle","name":"Castle","prio":0,"enabled":true}]}
 ```
 
 ### Status

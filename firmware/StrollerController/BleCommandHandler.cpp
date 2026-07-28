@@ -17,6 +17,7 @@
 #include "MbRulesStore.h"
 #include "MbCalibrationStore.h"
 #include "RuntimeFields.h"
+#include "SdRuleLogger.h"
 #include <WiFi.h>
 #include "JsonPsram.h"
 
@@ -237,6 +238,25 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"scan_log_config\","
               "\"enabled\":" + String(bleScanLogEnabled ? "true" : "false") + "}");
     Serial.printf("[Scan] logging %s\n", bleScanLogEnabled ? "enabled" : "disabled");
+  }
+
+  // ── App log marker (Serial + optional SD rule log) ──
+  else if (type == "log_marker") {
+    String msg = doc["msg"] | doc["message"] | "";
+    if (msg.length() > 120) msg = msg.substring(0, 120);
+    // Keep printable ASCII so Serial / JSONL stay greppable mid-show.
+    for (size_t i = 0; i < msg.length(); i++) {
+      char c = msg[i];
+      if (c < 0x20 || c > 0x7E) msg.setCharAt(i, '?');
+      if (c == '"' || c == '\\') msg.setCharAt(i, '\'');
+    }
+    Serial.printf("[Marker] %s\n", msg.c_str());
+    {
+      char detail[160];
+      snprintf(detail, sizeof(detail), "\"msg\":\"%s\"", msg.c_str());
+      sdRuleLoggerWrite("marker", detail);
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"log_marker\",\"ok\":true}");
   }
 
   // ── App packet capture (parade / show recording) ──

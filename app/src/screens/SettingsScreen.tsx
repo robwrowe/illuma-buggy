@@ -46,6 +46,8 @@ const SCANNER_DISCOVERY_SEC = 10;
 const RECALL_OPTIONS: RecallValue[] = ['always', 'never', 'memory'];
 const RECALL_LABELS: Record<RecallValue, string> = { always: 'Always', never: 'Never', memory: 'Memory' };
 
+type BoardRuleSummary = { id: string; name: string; prio: number; enabled: boolean };
+
 export default function SettingsScreen() {
   const { colors, mode, setMode } = useTheme();
   const s = styles(colors);
@@ -79,8 +81,43 @@ export default function SettingsScreen() {
   const [scannerResults, setScannerResults] = useState<DiscoveredScanner[]>([]);
   const [scannerSecLeft, setScannerSecLeft] = useState(SCANNER_DISCOVERY_SEC);
   const scannerStopRef = useRef<(() => void) | null>(null);
+  const [logMarkerDraft, setLogMarkerDraft] = useState('');
+  const [boardRules, setBoardRules] = useState<BoardRuleSummary[]>([]);
+  const [rulesLoading, setRulesLoading] = useState(false);
 
   const isDualBoard = boardRole === 'logic_board';
+
+  const refreshBoardRules = useCallback(() => {
+    if (!bleService.isConnected()) return;
+    setRulesLoading(true);
+    void bleService.sendListRules();
+  }, []);
+
+  useEffect(() => {
+    return bleService.onMessage((msg) => {
+      if (msg.type === 'rules_summary' && Array.isArray(msg.rules)) {
+        setBoardRules(
+          (msg.rules as Record<string, unknown>[]).map((r) => ({
+            id: String(r.id ?? ''),
+            name: String(r.name ?? r.id ?? ''),
+            prio: Number(r.prio ?? 0),
+            enabled: r.enabled !== false,
+          })).filter((r) => r.id),
+        );
+        setRulesLoading(false);
+      }
+      if (msg.type === 'ack' && msg.action === 'set_rule_enabled' && msg.ok) {
+        const ruleId = String(msg.ruleId ?? '');
+        const enabled = msg.enabled !== false;
+        setBoardRules((prev) => prev.map((r) => (r.id === ruleId ? { ...r, enabled } : r)));
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isConnected) refreshBoardRules();
+    else setBoardRules([]);
+  }, [isConnected, refreshBoardRules]);
 
   useFocusEffect(
     useCallback(() => {
@@ -449,6 +486,80 @@ export default function SettingsScreen() {
             thumbColor="#fff"
           />
         </View>
+        <Text style={s.rowLabel}>Board log marker</Text>
+        <Text style={s.rowHint}>
+          Writes `[Marker] …` to board Serial (and SD rule log) so you can grep mid-show captures.
+        </Text>
+        <TextInput
+          style={{
+            backgroundColor: colors.background,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: colors.borderFocus,
+            color: colors.textPrimary,
+            padding: 10,
+            fontSize: 14,
+            marginTop: 6,
+          }}
+          value={logMarkerDraft}
+          onChangeText={setLogMarkerDraft}
+          placeholder="e.g. castle flash"
+          placeholderTextColor={colors.textMuted}
+          editable={isConnected}
+        />
+        <TouchableOpacity
+          style={[s.dataBtn, { marginTop: 8 }]}
+          disabled={!isConnected || !logMarkerDraft.trim()}
+          onPress={() => {
+            const msg = logMarkerDraft.trim();
+            void bleService.sendLogMarker(msg);
+            Alert.alert('Marker sent', msg);
+          }}
+        >
+          <IconPlus size={16} color={colors.primary} />
+          <Text style={s.dataBtnText}>Send log marker</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Board MB rules (enable/disable without full remapping) */}
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Board MB Rules</Text>
+        <Text style={s.sectionHint}>
+          Toggle rules on the connected board. Disabling the currently active rule forces restore.
+        </Text>
+        <TouchableOpacity
+          style={s.dataBtn}
+          disabled={!isConnected || rulesLoading}
+          onPress={refreshBoardRules}
+        >
+          <IconRefresh size={16} color={colors.primary} />
+          <Text style={s.dataBtnText}>{rulesLoading ? 'Loading…' : 'Refresh rules'}</Text>
+        </TouchableOpacity>
+        {!isConnected ? (
+          <Text style={s.rowHint}>Connect to the board to manage rules.</Text>
+        ) : boardRules.length === 0 && !rulesLoading ? (
+          <Text style={s.rowHint}>No rules on board (or still loading).</Text>
+        ) : (
+          boardRules.map((rule) => (
+            <View key={rule.id} style={s.row}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.rowLabel}>{rule.name || rule.id}</Text>
+                <Text style={s.rowHint}>prio {rule.prio} · {rule.id}</Text>
+              </View>
+              <Switch
+                value={rule.enabled}
+                onValueChange={(enabled) => {
+                  void bleService.sendSetRuleEnabled(rule.id, enabled);
+                  setBoardRules((prev) =>
+                    prev.map((r) => (r.id === rule.id ? { ...r, enabled } : r)),
+                  );
+                }}
+                trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                thumbColor="#fff"
+              />
+            </View>
+          ))
+        )}
       </View>
 
       {/* Quick actions config */}

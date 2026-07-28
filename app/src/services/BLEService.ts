@@ -359,6 +359,16 @@ class BLEService {
   sendMbRuleConfig(ftbPresetId: string) {
     return this.send({ type: 'mb_rule_config', ftbPresetId: ftbPresetId || '' });
   }
+  sendListRules() {
+    return this.send({ type: 'list_rules' });
+  }
+  sendSetRuleEnabled(ruleId: string, enabled: boolean) {
+    return this.send({ type: 'set_rule_enabled', ruleId, enabled });
+  }
+  /** Write a greppable marker to board Serial (+ SD rule log when mounted). */
+  sendLogMarker(msg: string) {
+    return this.send({ type: 'log_marker', msg: String(msg || '').slice(0, 120) });
+  }
   sendBrightness(value: number)                           { return this.send({ type: 'brightness', value }); }
   sendWledRaw(wled: object, presetId?: string) {
     const msg: BLEMessage = { type: 'wled_raw', wled };
