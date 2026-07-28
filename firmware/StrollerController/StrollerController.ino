@@ -2,8 +2,12 @@
  * StrollerController Firmware v2.1
  * ESP32-S3-DevKitC-1-N16R8
  *
- * Modular split + optional dual-board ESP-NOW scanner (BoardRole).
+ * Modular split + optional dual-board scanner (UART primary; ESP-NOW until Part 3).
  */
+
+#if !CONFIG_IDF_TARGET_ESP32S3
+#error "StrollerController requires Board = ESP32S3 Dev Module (N16R8). Classic ESP32 builds listen on UART RX=16 instead of RX=8."
+#endif
 
 #include "Globals.h"
 #include "WiFiManager.h"
@@ -172,7 +176,7 @@ void setup() {
   if (boardRole == BoardRole::STANDALONE) {
     startBLEScan();
   } else {
-    Serial.println("[BLE] LOGIC_BOARD — scan disabled; waiting for UART/ESP-NOW scanner");
+    Serial.println("[BLE] LOGIC_BOARD — scan disabled; waiting for UART scanner");
   }
 
   payloadTransportInit();

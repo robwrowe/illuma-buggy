@@ -357,26 +357,34 @@ void applyBoardRoleRuntime() {
     return;
   }
 
-  // LOGIC_BOARD: stop local scan; ESP-NOW + pair beacon take over (no NimBLE fallback
-  // while a scanner MAC is configured — see serviceScannerFallback).
+  // LOGIC_BOARD: stop local scan; UART (or ESP-NOW) scanner feeds packets.
   stopBLEScan();
   localScanFallbackActive = false;
   lastScannerPacketMs = 0;
   payloadTransportInit();
   if (WiFi.status() == WL_CONNECTED) transportEnsureEspNow();
+#if USE_UART_SCANNER_LINK
+  Serial.println("[Role] LOGIC_BOARD — local scan off; UART scanner link");
+#else
   Serial.println("[Role] LOGIC_BOARD — local scan off; ESP-NOW / pair beacon");
+#endif
 }
 
 void payloadTransportInit() {
   static_assert(sizeof(ParsedDisneyPacket) <= 250, "ParsedDisneyPacket exceeds ESP-NOW payload cap");
-  Serial.printf("[Transport] ParsedDisneyPacket sizeof=%u (ESP-NOW cap 250)\n",
+  Serial.printf("[Transport] ParsedDisneyPacket sizeof=%u\n",
                 (unsigned)sizeof(ParsedDisneyPacket));
 
   if (boardRole != BoardRole::LOGIC_BOARD) {
-    Serial.println("[Transport] STANDALONE — local decode mailbox, no ESP-NOW recv");
+    Serial.println("[Transport] STANDALONE — local decode mailbox");
     return;
   }
 
+#if USE_UART_SCANNER_LINK
+  Serial.println("[Transport] LOGIC_BOARD — UART scanner link (ESP-NOW not started)");
+  Serial.printf("[Fallback] SCANNER_ABSENT_MS=%lu SCANNER_ALIVE_MS=%lu\n",
+                (unsigned long)SCANNER_ABSENT_MS, (unsigned long)SCANNER_ALIVE_MS);
+#else
   // Defer ESP-NOW bring-up until WiFi is connected. connectToWLED() calls
   // WiFi.disconnect(true), which powers off the WiFi driver and tears down ESP-NOW, so
   // any init done here would be dead by the time we need it. transportEnsureEspNow() is
@@ -385,10 +393,15 @@ void payloadTransportInit() {
   Serial.printf("[Fallback] SCANNER_ABSENT_MS=%lu SCANNER_ALIVE_MS=%lu "
                 "(local NimBLE fallback only if no scanner MAC configured)\n",
                 (unsigned long)SCANNER_ABSENT_MS, (unsigned long)SCANNER_ALIVE_MS);
+#endif
 }
 
 void transportEnsureEspNow() {
   if (boardRole != BoardRole::LOGIC_BOARD) return;
+#if USE_UART_SCANNER_LINK
+  // UART is the scanner path — skip ESP-NOW so logs/radio stay clean during bench.
+  return;
+#else
 
   if (WiFi.getMode() != WIFI_STA && WiFi.getMode() != WIFI_AP_STA) {
     WiFi.mode(WIFI_STA);
@@ -409,6 +422,7 @@ void transportEnsureEspNow() {
   Serial.printf("[ESP-NOW] ready ch=%u peer=%s\n",
                 (unsigned)WiFi.channel(),
                 scannerPeerConfigured ? transportMacToString(scannerPeerMac).c_str() : "(none)");
+#endif
 }
 
 void transportSendParsedPacket(const ParsedDisneyPacket& pkt) {

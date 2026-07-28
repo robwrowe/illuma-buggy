@@ -1,5 +1,8 @@
 #include "StatusLed.h"
 #include "Config.h"
+
+#if HAS_STATUS_NEOPIXEL
+
 #include "Globals.h"
 #include "PayloadTransport.h"
 #include <Adafruit_NeoPixel.h>
@@ -76,3 +79,10 @@ void statusLedTick() {
   }
   pixel.show();
 }
+
+#else
+
+void statusLedInit() {}
+void statusLedTick() {}
+
+#endif // HAS_STATUS_NEOPIXEL
