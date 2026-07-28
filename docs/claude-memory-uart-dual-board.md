@@ -176,6 +176,10 @@ enclosure, more in-park MB+ opcodes — see root `AGENTS.md` roadmap.
     these; app UI was missing).
 - **Capture tab** show chips use the same Home visibility window (pre / live / post /
   upcoming), not live-only.
+- **Rule log pull**: BLE `get_rule_log` returns RAM ring (≤96 lines; SD is durable mirror).
+  Web: **📡 Board** modal → Pull log / Download JSONL. App: add `CHUNKED_TYPES.rule_log →
+  rule_log_done` when wiring Settings. See `docs/rule-exclusivity-checklist.md` for the
+  exclusivity bench matrix.
 
 ---
 

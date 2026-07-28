@@ -203,3 +203,10 @@ sw fx rainbow        → SW wins over MB mapping
 ```
 
 Mark date, firmware version, and any failures in your trip notes.
+
+---
+
+## Related checklists
+
+- [Rule exclusivity flags](./rule-exclusivity-checklist.md) — ignore-lower / ignore-all through COOLDOWN
+- Board rule log pull: **📡 Board → Pull log** (or BLE `get_rule_log`)

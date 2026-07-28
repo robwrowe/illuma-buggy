@@ -259,6 +259,38 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"log_marker\",\"ok\":true}");
   }
 
+  // ── Pull recent rule-engine log (RAM ring; also mirrored to SD when mounted) ──
+  else if (type == "get_rule_log") {
+    int limit = doc["limit"] | 50;
+    if (limit < 1) limit = 1;
+    if (limit > 96) limit = 96;
+    String filter;
+    if (doc["events"].is<JsonArray>()) {
+      bool first = true;
+      for (JsonVariant v : doc["events"].as<JsonArray>()) {
+        if (!first) filter += ",";
+        first = false;
+        filter += v.as<const char*>();
+      }
+    } else {
+      filter = doc["events"] | "";
+    }
+    String body;
+    size_t n = sdRuleLoggerBuildTailJson(body, (size_t)limit, filter.c_str());
+    String path = sdRuleLoggerPath();
+    // Escape path for JSON (paths are ASCII `/rules_N.jsonl`).
+    bleNotify(
+      "{\"type\":\"rule_log_meta\",\"ok\":true"
+      ",\"sd\":" + String(sdRuleLoggerReady() ? "true" : "false") +
+      ",\"path\":\"" + path + "\""
+      ",\"ring\":" + String((unsigned)sdRuleLoggerRingCount()) +
+      ",\"count\":" + String((unsigned)n) +
+      ",\"limit\":" + String(limit) +
+      "}"
+    );
+    bleNotifyChunked("rule_log", body);
+  }
+
   // ── App packet capture (parade / show recording) ──
   else if (type == "ble_capture_config") {
     if (doc.containsKey("active")) bleCaptureToApp = doc["active"].as<bool>();
@@ -692,6 +724,9 @@ void handleBLECommand(const String& msg) {
       "\"show_type\":\"" + String(showTypeStatusStr()) + "\","
       "\"show_phase\":\"" + String(showPhaseStatusStr()) + "\","
       "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") + ","
+      "\"sd_rule_log\":" + String(sdRuleLoggerReady() ? "true" : "false") + ","
+      "\"sd_rule_log_path\":\"" + String(sdRuleLoggerPath()) + "\","
+      "\"sd_rule_log_ring\":" + String((unsigned)sdRuleLoggerRingCount()) + ","
       "\"capture_active\":" + String(bleCaptureToApp ? "true" : "false") + ","
       "\"preset_count\":" + String(countBoardPresets()) + ","
       "\"board_role\":\"" + String(boardRole == BoardRole::LOGIC_BOARD ? "logic_board" : "standalone") + "\","

@@ -4,6 +4,7 @@ import { Modal } from '../shared/Modal';
 import { AppButton } from '../shared/styles';
 import { webBleBoard } from '../../lib/ble/chunking';
 import { BOARD_SYNC_ITEMS, loadBoardSyncOptions, saveBoardSyncOptions, syncProfileToBoard } from '../../lib/boardSync';
+import { RuleLogPanel } from './RuleLogPanel';
 
 export function BoardSyncModal({ data, onClose }) {
   const [connected, setConnected] = useState(webBleBoard.connected);
@@ -60,7 +61,7 @@ export function BoardSyncModal({ data, onClose }) {
   };
 
   return (
-    <Modal title="📡 Send to Board" onClose={onClose} width={500}>
+    <Modal title="📡 Send to Board" onClose={onClose} width={560}>
       <Stack gap="md">
         <Text size="xs" c="dimmed" lh={1.6}>
           Push selected settings to the ESP32 over Bluetooth — same protocol as the Android app.
@@ -112,6 +113,8 @@ export function BoardSyncModal({ data, onClose }) {
         )}
         {status && <Text size="xs" c="dimmed">{status}</Text>}
         {error && <Text size="xs" c="red">{error}</Text>}
+
+        <RuleLogPanel connected={supported} />
       </Stack>
     </Modal>
   );

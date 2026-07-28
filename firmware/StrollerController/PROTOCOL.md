@@ -49,6 +49,7 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 {"type":"log_marker","msg":"Happily Ever After — castle flash"}
 {"type":"list_rules"}
 {"type":"set_rule_enabled","ruleId":"castle-flash","enabled":false}
+{"type":"get_rule_log","limit":50,"events":["marker","match","suppressed"]}
 ```
 
 | Field | Notes |
@@ -56,8 +57,9 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 | `timeout_ms` | `0` = never auto-clear BLE override |
 | `mb_chase_config.speed` | WLED Chase `sx` (0 = stationary) |
 | `mb_chase_config.thickness` | WLED Chase `grp` (pixels per color block) |
-| `log_marker` | Prints `[Marker] …` on Serial and writes an SD rule-log `marker` event (when SD is mounted) |
+| `log_marker` | Prints `[Marker] …` on Serial and writes an SD/RAM rule-log `marker` event |
 | `list_rules` / `set_rule_enabled` | Park-side enable/disable of individual MB rules without re-pushing the full mapping |
+| `get_rule_log` | Pull newest ring entries (`limit` 1–96). Optional `events` string or array allow-list. Always served from RAM ring (SD is a durable mirror). |
 
 ### Status
 
@@ -82,6 +84,20 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
 {"type":"rules_summary","rules":[{"id":"castle","name":"Castle","prio":0,"enabled":true}]}
 ```
 
+### Rule log pull
+
+```json
+{"type":"rule_log_meta","ok":true,"sd":true,"path":"/rules_12345.jsonl","ring":40,"count":12,"limit":50}
+```
+
+Then chunked envelopes (`rule_log`) assembling to:
+
+```json
+{"type":"rule_log_done","data":"[{...},{...}]"}
+```
+
+App `CHUNKED_TYPES` entry: `'rule_log': 'rule_log_done'`.
+
 ### Status
 
 ```json
@@ -99,7 +115,10 @@ Disney BLE packet reference: [docs/disney-ble-protocol.md](../../docs/disney-ble
   "mb_timeout_ms":30000,
   "mb_chase_speed":128,
   "mb_chase_thickness":4,
-  "scan_log":true
+  "scan_log":true,
+  "sd_rule_log":true,
+  "sd_rule_log_path":"/rules_12345.jsonl",
+  "sd_rule_log_ring":40
 }
 ```
 
