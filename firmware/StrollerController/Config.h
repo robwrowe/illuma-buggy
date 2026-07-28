@@ -109,7 +109,7 @@
 #define UART_LINK_BAUD   115200
 
 // SD card SPI (independent card per board).
-// Classic ESP32: GPIO 6–11 are flash — S3 MOSI=11 must not be used there.
+// S3 logic: SPI pins 10–13. Classic ESP32 scanner: GPIO 6–11 are flash — use VSPI.
 #if defined(ILLUMA_LOGIC_BOARD) || CONFIG_IDF_TARGET_ESP32S3
 #define HAS_SD_LOGGER 1
 #define SD_CS_PIN   10
@@ -117,7 +117,12 @@
 #define SD_MOSI_PIN 11
 #define SD_MISO_PIN 13
 #else
-#define HAS_SD_LOGGER 0
+// Classic ESP32-DevKitC-32 (scanner): CS=5 SCK=18 MOSI=23 MISO=19
+#define HAS_SD_LOGGER 1
+#define SD_CS_PIN   5
+#define SD_SCK_PIN  18
+#define SD_MOSI_PIN 23
+#define SD_MISO_PIN 19
 #endif
 
 // OLED I2C (logic board only).

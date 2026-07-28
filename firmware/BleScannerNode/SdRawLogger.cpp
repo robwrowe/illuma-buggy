@@ -14,11 +14,12 @@ static char currentLogPath[32];
 
 bool sdRawLoggerInit() {
 #if !HAS_SD_LOGGER
-  Serial.println("[SD] skipped (not supported on this MCU / flash pin conflict)");
+  Serial.println("[SD] skipped (disabled on this build)");
   sdReady = false;
   return false;
 #else
-  Serial.println("[SD] mounting…");
+  Serial.printf("[SD] mounting SPI CS=%d SCK=%d MOSI=%d MISO=%d …\n",
+                SD_CS_PIN, SD_SCK_PIN, SD_MOSI_PIN, SD_MISO_PIN);
   SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
   if (!SD.begin(SD_CS_PIN)) {
     Serial.println("[SD] mount failed");

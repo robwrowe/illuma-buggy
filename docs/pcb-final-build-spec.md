@@ -15,7 +15,7 @@ order. Implementation status is tracked below.
 |---|---|---|
 | UART1 TX | 17 | Both |
 | UART1 RX | **18** (logic) / **16** (classic scanner) | Crossed + common GND |
-| SD CS / SCK / MOSI / MISO | 10 / 12 / 11 / 13 | Both (S3; skipped on classic) |
+| SD CS / SCK / MOSI / MISO | Logic S3: **10/12/11/13** · Scanner classic: **5/18/23/19** | Soft-fail if no card |
 | I2C SDA / SCL (OLED) | 21 / **47** | Logic only |
 | Status RGB | **38** | Logic DevKitC-1 v1.3 |
 | Power in | `5V`/`VIN` | Both |
