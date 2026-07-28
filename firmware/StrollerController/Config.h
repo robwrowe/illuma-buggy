@@ -90,9 +90,9 @@
 #define STATUS_LED_COUNT 1
 
 // Inter-board UART link (provisional — confirm vs ESP32-S3-DevKitC-1-N16R8 datasheet).
-// Default OFF so existing ESP-NOW field units keep working. Set to 1 for UART bench/PCB.
+// Set to 0 to fall back to ESP-NOW packet forwarding.
 #ifndef USE_UART_SCANNER_LINK
-#define USE_UART_SCANNER_LINK 0
+#define USE_UART_SCANNER_LINK 1
 #endif
 #define UART_LINK_TX_PIN 17
 #define UART_LINK_RX_PIN 8
@@ -104,9 +104,11 @@
 #define SD_MOSI_PIN 11
 #define SD_MISO_PIN 13
 
-// OLED I2C (logic board only)
+// OLED I2C (logic board only).
+// ESP32-S3-DevKitC-1 does NOT break out GPIO 22 (classic-ESP32 I2C default).
+// GPIO 21 (SDA) and 47 (SCL) are adjacent on the DevKitC-1 header.
 #define OLED_SDA_PIN 21
-#define OLED_SCL_PIN 22
+#define OLED_SCL_PIN 47
 #define OLED_I2C_ADDR 0x3C
 #define OLED_WIDTH  128
 #define OLED_HEIGHT 64

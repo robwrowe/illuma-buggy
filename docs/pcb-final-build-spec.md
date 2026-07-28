@@ -16,12 +16,12 @@ order. Implementation status is tracked below.
 | UART1 TX | 17 | Both |
 | UART1 RX | 8 | Both |
 | SD CS / SCK / MOSI / MISO | 10 / 12 / 11 / 13 | Both |
-| I2C SDA / SCL (OLED) | 21 / 22 | Logic only |
+| I2C SDA / SCL (OLED) | 21 / **47** | Logic only | GPIO 22 is not on DevKitC-1 headers; 47 sits next to 21 |
 | Power in | `5V`/`VIN` | Both |
 
-Compile flag: `USE_UART_SCANNER_LINK` (default `0` in `Config.h` — ESP-NOW still
-forwards packets). Set to `1` when UART is wired for bench/PCB. **Part 3 deletes
-ESP-NOW only after UART is field-proven.**
+Compile flag: `USE_UART_SCANNER_LINK` (currently `1` in `Config.h` for UART bench).
+Set to `0` to fall back to ESP-NOW. **Part 3 deletes ESP-NOW only after UART is
+field-proven.** SD init is non-fatal — UART/OLED can be tested with no card.
 
 ---
 
