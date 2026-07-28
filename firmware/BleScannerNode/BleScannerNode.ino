@@ -3,10 +3,10 @@
  * Filters + decodes packets, forwards to logic via UART (or ESP-NOW).
  *
  * Boards:
- *   - ESP32-S3-DevKitC-1 (onboard RGB status LED on GPIO 48)
+ *   - ESP32-S3-DevKitC-1 (onboard RGB: GPIO 38 on v1.1+, GPIO 48 on v1.0)
  *   - ESP32-DevKitC-32 (ESP-32D / WROOM-32D, 38-pin, CP2102 USB-C — WandSim class)
  *     — no onboard RGB; StatusLed is a no-op.
- *     UART: TX=GPIO17 RX=GPIO16. Wire to S3 logic: 17→RX8, 16←TX17, GND–GND.
+ *     UART: TX=GPIO17 RX=GPIO16. Wire to S3 logic: 17→RX**18**, 16←TX17, GND–GND.
  *
  * Arduino IDE: Board = "ESP32 Dev Module" (not ESP32S3).
  *

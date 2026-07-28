@@ -19,20 +19,60 @@ void statusDisplaySetLastRule(const char* name) {
   lastFiredRuleName = name ? String(name) : "";
 }
 
-bool statusDisplayInit() {
-  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
-    Serial.println("[Display] SSD1306 init failed");
-    displayReady = false;
-    return false;
+static void i2cBusScan() {
+  Serial.printf("[Display] I2C scan SDA=%d SCL=%d …\n", OLED_SDA_PIN, OLED_SCL_PIN);
+  uint8_t found = 0;
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("[Display]   device at 0x%02X\n", addr);
+      found++;
+    }
   }
+  if (!found) Serial.println("[Display]   (no devices — check wiring / 3V3 / GND)");
+}
+
+static bool tryOledBegin(uint8_t addr) {
+  if (!display.begin(SSD1306_SWITCHCAPVCC, addr)) return false;
+  display.ssd1306_command(SSD1306_DISPLAYON);
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(0xFF);
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
-  displayReady = true;
-  Serial.println("[Display] SSD1306 ready");
-  statusDisplayUpdate();
+  display.setCursor(0, 0);
+  display.println("Illuma Buggy");
+  display.println("OLED OK");
+  display.print("SDA ");
+  display.print(OLED_SDA_PIN);
+  display.print(" SCL ");
+  display.println(OLED_SCL_PIN);
+  display.print("addr 0x");
+  display.println(addr, HEX);
+  display.display();
+  Serial.printf("[Display] SSD1306 ready (SDA=%d SCL=%d addr=0x%02X)\n",
+                OLED_SDA_PIN, OLED_SCL_PIN, addr);
   return true;
+}
+
+bool statusDisplayInit() {
+  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+  Wire.setClock(100000);
+  delay(100);
+  i2cBusScan();
+
+  // Most modules are 0x3C; some are 0x3D.
+  if (tryOledBegin(OLED_I2C_ADDR) || tryOledBegin(0x3D) ||
+      (OLED_I2C_ADDR != 0x3C && tryOledBegin(0x3C))) {
+    displayReady = true;
+    lastDisplayMs = 0;
+    return true;
+  }
+
+  Serial.printf("[Display] SSD1306 init failed (SDA=%d SCL=%d)\n",
+                OLED_SDA_PIN, OLED_SCL_PIN);
+  displayReady = false;
+  return false;
 }
 
 static String truncate(const String& s, size_t maxLen) {
@@ -47,23 +87,36 @@ void statusDisplayUpdate() {
   lastDisplayMs = now;
 
   display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
 
-  display.printf("WLED:%s Role:%s\n",
-                 wledHttpOk ? "OK" : "FAIL",
-                 boardRole == BoardRole::LOGIC_BOARD ? "LOGIC" : "STD");
+  display.print("WLED:");
+  display.print(wledHttpOk ? "OK" : "FAIL");
+  display.print(" Role:");
+  display.println(boardRole == BoardRole::LOGIC_BOARD ? "LOGIC" : "STD");
 
-  display.printf("Uptime:%lus\n", now / 1000UL);
+  display.print("Uptime:");
+  display.print(now / 1000UL);
+  display.println("s");
 
-  JsonArray rules = mbRulesJsonArray();
+  unsigned ruleCount = 0;
+  {
+    JsonArray rules = mbRulesJsonArray();
+    if (!rules.isNull()) ruleCount = (unsigned)rules.size();
+  }
   bool linkOk = (lastScannerPacketMs != 0) &&
                 ((now - lastScannerPacketMs) < SCANNER_ALIVE_MS);
   float ageSec = lastScannerPacketMs ? ((now - lastScannerPacketMs) / 1000.0f) : 0.0f;
-  display.printf("Rules:%u Link:%s",
-                 rules.isNull() ? 0u : (unsigned)rules.size(),
-                 linkOk ? "OK" : "LOST");
-  if (linkOk) display.printf(" (%.1fs)", ageSec);
-  display.print("\n");
+  display.print("Rules:");
+  display.print(ruleCount);
+  display.print(" Link:");
+  display.print(linkOk ? "OK" : "LOST");
+  if (linkOk) {
+    display.print(" (");
+    display.print(ageSec, 1);
+    display.print("s)");
+  }
+  display.println();
 
   static const char* showTypeStr[] = {"NONE", "PARADE", "FWORKS"};
   static const char* showPhaseStr[] = {"-", "PRE", "BLACK", "LIVE", "POST"};
@@ -74,15 +127,22 @@ void statusDisplayUpdate() {
   if (st < 0 || st > 2) st = 0;
   if (sp < 0 || sp > 4) sp = 0;
   if (ov < 0 || ov > 5) ov = 0;
-  display.printf("Show:%s/%s Ov:%s\n", showTypeStr[st], showPhaseStr[sp], overrideStr[ov]);
+  display.print("Show:");
+  display.print(showTypeStr[st]);
+  display.print("/");
+  display.print(showPhaseStr[sp]);
+  display.print(" Ov:");
+  display.println(overrideStr[ov]);
 
-  display.printf("Preset:%s\n",
-                 truncate(currentPresetId.length() ? currentPresetId : "(none)", 20).c_str());
-  display.printf("Rule:%s\n",
-                 truncate(lastFiredRuleName.length() ? lastFiredRuleName : "(none)", 20).c_str());
-  display.printf("Heap:%uk PSRAM:%uM\n",
-                 (unsigned)(ESP.getFreeHeap() / 1024),
-                 (unsigned)(ESP.getFreePsram() / 1024 / 1024));
+  display.print("Preset:");
+  display.println(truncate(currentPresetId.length() ? currentPresetId : "(none)", 20));
+  display.print("Rule:");
+  display.println(truncate(lastFiredRuleName.length() ? lastFiredRuleName : "(none)", 20));
+  display.print("Heap:");
+  display.print((unsigned)(ESP.getFreeHeap() / 1024));
+  display.print("k PSRAM:");
+  display.print((unsigned)(ESP.getFreePsram() / 1024 / 1024));
+  display.println("M");
 
   display.display();
 }

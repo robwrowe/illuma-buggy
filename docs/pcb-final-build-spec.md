@@ -14,9 +14,10 @@ order. Implementation status is tracked below.
 | Function | GPIO | Board(s) |
 |---|---|---|
 | UART1 TX | 17 | Both |
-| UART1 RX | 8 | Both |
-| SD CS / SCK / MOSI / MISO | 10 / 12 / 11 / 13 | Both |
-| I2C SDA / SCL (OLED) | 21 / **47** | Logic only | GPIO 22 is not on DevKitC-1 headers; 47 sits next to 21 |
+| UART1 RX | **18** (logic) / **16** (classic scanner) | Crossed + common GND |
+| SD CS / SCK / MOSI / MISO | 10 / 12 / 11 / 13 | Both (S3; skipped on classic) |
+| I2C SDA / SCL (OLED) | 21 / **47** | Logic only |
+| Status RGB | **38** | Logic DevKitC-1 v1.3 |
 | Power in | `5V`/`VIN` | Both |
 
 Compile flag: `USE_UART_SCANNER_LINK` (currently `1` in `Config.h` for UART bench).
@@ -61,6 +62,7 @@ field-proven.** SD init is non-fatal — UART/OLED can be tested with no card.
 - `firmware/BleScannerNode/SdRawLogger.{h,cpp}`
 - `firmware/StrollerController/EmbeddedRules.h` (generated)
 - `scripts/embed_rules.py` — run before flash if `embedded_rules.json` changed
+- [rules-psram-runbook.md](./rules-psram-runbook.md) — how to BLE-push or embed/flash rules
 - `docs/README.md` — links here
 
 ### Libraries to install (Arduino Library Manager)

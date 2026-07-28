@@ -36,6 +36,9 @@ void setup() {
   delay(500);
   randomSeed(esp_random());
   Serial.println("\n[Boot] StrollerController v2.1");
+  Serial.printf("[Boot] board=DevKitC-1-N16R8 pins uart TX=%d RX=%d led=%d oled SDA=%d SCL=%d\n",
+                UART_LINK_TX_PIN, UART_LINK_RX_PIN, STATUS_LED_PIN,
+                OLED_SDA_PIN, OLED_SCL_PIN);
   Serial.printf("[Boot] freeHeap=%u maxAllocHeap=%u psramSize=%u psramFree=%u\n",
                 (unsigned)ESP.getFreeHeap(),
                 (unsigned)ESP.getMaxAllocHeap(),
@@ -164,13 +167,16 @@ void setup() {
   prefs.end();
   Serial.println("[NVS] Ready");
 
+  // OLED before NeoPixel/UART/BLE — GPIO47 I2C was reliable when brought up first;
+  // bit-banged status LED on GPIO48 shares the same header edge.
+  statusDisplayInit();  // non-fatal
+
   NimBLEDevice::init(BLE_NAME);
   delay(200);
   statusLedInit();
   startBLEPeripheral();
   uartScannerLinkInit();
   sdRuleLoggerInit();   // non-fatal
-  statusDisplayInit();  // non-fatal
 
   // Dual-board: logic board does NOT own the scan radio (no silent fallback).
   if (boardRole == BoardRole::STANDALONE) {

@@ -34,6 +34,12 @@ void processSerialCommands() {
     Serial.println("  role standalone|logic    — board role (reboot to apply scan)");
     Serial.println("  scanner <mac>            — set ESP-NOW scanner MAC (AA:BB:...)");
     Serial.println("  nvs wifi                 — dump stored vs in-memory WiFi config");
+    Serial.println("  uart                     — UART link pin + RX availability");
+  } else if (line == "uart") {
+    Serial.printf("[UART] config TX=%d RX=%d baud=%d lastPacket=%s\n",
+                  UART_LINK_TX_PIN, UART_LINK_RX_PIN, UART_LINK_BAUD,
+                  lastScannerPacketMs ? (String(millis() - lastScannerPacketMs) + "ms ago").c_str() : "never");
+    Serial.printf("[UART] Serial1.available=%d\n", Serial1.available());
   } else if (line == "status") {
     Serial.printf("[Status] WiFi=%s override=%d preset=%s bri=%d queue=%u role=%s scanner=%s age=%lums\n",
                   WiFi.status() == WL_CONNECTED ? "up" : "down",

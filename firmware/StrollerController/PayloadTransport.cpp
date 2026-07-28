@@ -64,7 +64,15 @@ static void onUartPacketCb(const ParsedDisneyPacket& pkt) {
 }
 
 void uartScannerLinkInit() {
-  uartLinkBegin(Serial1);
+  // Literal pins — do not trust a stale macro from a bad board target.
+  const int rxPin = 18;
+  const int txPin = 17;
+  pinMode(rxPin, INPUT_PULLUP);
+  Serial1.setRxBufferSize(1024);
+  Serial1.begin(115200, SERIAL_8N1, rxPin, txPin);
+  Serial.printf("[UART] Serial1 FORCED TX=%d RX=%d baud=115200 (move scanner TX jumper to logic GPIO %d)\n",
+                txPin, rxPin, rxPin);
+
   gUartRx.onPacket = onUartPacketCb;
   gUartRx.onTime = nullptr;
   gUartRx.onHeartbeat = onUartHeartbeat;
