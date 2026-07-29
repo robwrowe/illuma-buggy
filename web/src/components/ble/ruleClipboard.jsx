@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 import { Group, Text } from '@mantine/core';
 import { AppButton } from '../shared/styles';
 
-/** Typed clipboard kinds for rule-editor Copy/Paste. */
+/** Typed clipboard kinds for rule-editor / segment-map Copy/Paste. */
 export const RULE_CLIP = {
   condition: 'condition',
   segmentSources: 'segmentSources',
@@ -15,6 +15,7 @@ export const RULE_CLIP = {
   colorSource: 'colorSource',
   packetExtracts: 'packetExtracts',
   packetExtract: 'packetExtract',
+  segment: 'segment',
 };
 
 const RuleClipContext = createContext({

@@ -15,6 +15,7 @@ import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
+import { CopyPasteButtons, RULE_CLIP, RuleClipProvider, useRuleClip } from './ruleClipboard';
 import { MB_SEGMENT_META, BLEND_MODE_SELECT_OPTS } from '../../lib/ble/mbConstants';
 import {
   createEmptySegment,
@@ -101,8 +102,19 @@ function PresetVarRows({ vars, onChange }) {
   );
 }
 
-function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions = [], onChange, onDelete }) {
+function SegmentRowEditor({
+  segment,
+  presets,
+  effectOptions = [],
+  paletteOptions = [],
+  onChange,
+  onDelete,
+  onDuplicate,
+  onPasteAfter,
+}) {
   const seg = normalizeSegment(segment);
+  const { hasKind, takeKind } = useRuleClip();
+  const canPaste = hasKind(RULE_CLIP.segment);
   const set = (patch) => onChange({ ...seg, ...patch });
   const presetOpts = (presets || []).map((p) => ({
     value: p.id,
@@ -120,13 +132,71 @@ function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions
     searchText: `${p.id} ${p.name}`,
   }));
 
+  const pasteFresh = () => {
+    const data = takeKind(RULE_CLIP.segment);
+    if (!data) return null;
+    // Fresh id so paste-after / duplicate don't collide with the source segment.
+    return normalizeSegment({ ...data, id: undefined });
+  };
+
+  const [open, setOpen] = useState(false);
+  const maskLabel = MASK_OPTS.find((o) => o.value === (seg.maskAssignment || 'all'))?.label
+    || seg.maskAssignment
+    || 'all';
+  const summary = [
+    `wled ${seg.wledSegId}`,
+    `${seg.start}–${seg.stop}`,
+    maskLabel,
+    seg.fx >= 0 ? `fx ${seg.fx}` : null,
+  ].filter(Boolean).join(' · ');
+
   return (
     <Paper p="sm" withBorder bg="var(--surface2)">
-      <Group justify="space-between" mb="xs" wrap="wrap">
-        <Text size="xs" fw={700} ff="monospace">{seg.id}</Text>
-        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+      <Group justify="space-between" mb={open ? 'xs' : 0} wrap="wrap">
+        <Group gap="xs" wrap="wrap" style={{ flex: 1, minWidth: 0 }}>
+          <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
+            {open ? '▾' : '▸'}
+          </AppButton>
+          <Text size="xs" fw={700} ff="monospace">{seg.id}</Text>
+          {!open && (
+            <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {summary}
+            </Text>
+          )}
+        </Group>
+        <Group gap="xs" wrap="wrap">
+          <CopyPasteButtons
+            kind={RULE_CLIP.segment}
+            getData={() => normalizeSegment(seg)}
+            onPaste={(data) => {
+              // Keep this row's id so rule segmentOverrides stay pointed here.
+              onChange(normalizeSegment({ ...data, id: seg.id }));
+            }}
+          />
+          {onPasteAfter && (
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              disabled={!canPaste}
+              onClick={() => {
+                const next = pasteFresh();
+                if (next) onPasteAfter(next);
+              }}
+            >
+              Paste after
+            </AppButton>
+          )}
+          {onDuplicate && (
+            <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>
+              Duplicate
+            </AppButton>
+          )}
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+        </Group>
       </Group>
 
+      {open && (
+        <>
       <Group gap={6} align="center" wrap="wrap" mb="xs">
         <Text size="xs" c="dimmed">wled id</Text>
         <NumberInput
@@ -296,6 +366,8 @@ function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions
         vars={seg.presetVariables}
         onChange={(presetVariables) => set({ presetVariables })}
       />
+        </>
+      )}
     </Paper>
   );
 }
@@ -425,6 +497,7 @@ export function SegmentMapEditor({
   const canImport = !!(wledIp || '').trim() && !!selected && !importing;
 
   return (
+    <RuleClipProvider>
     <Stack gap="md">
       <Text size="xs" c="dimmed" lh={1.5}>
         Shareable segment maps referenced by rules and presets via{' '}
@@ -495,33 +568,18 @@ export function SegmentMapEditor({
           </Group>
 
           <SectionHead>Segments</SectionHead>
-          <Group gap="xs" mb="sm" wrap="wrap">
-            <AppButton
-              size="compact-sm"
-              variant="primary"
-              disabled={!canImport}
-              onClick={importFromWled}
-            >
-              {importing ? 'Importing…' : '↻ Import from WLED'}
-            </AppButton>
-            <AppButton
-              size="compact-sm"
-              variant="default"
-              disabled={!canImport}
-              onClick={replaceFromWled}
-            >
-              Replace from WLED
-            </AppButton>
-            <AppButton
-              size="compact-sm"
-              variant="default"
-              onClick={() => updateMap(selected.id, {
-                segments: [...(selected.segments || []), createEmptySegment()],
-              })}
-            >
-              Add segment
-            </AppButton>
-          </Group>
+          <SegmentListActions
+            canImport={canImport}
+            importing={importing}
+            onImport={importFromWled}
+            onReplace={replaceFromWled}
+            onAdd={() => updateMap(selected.id, {
+              segments: [...(selected.segments || []), createEmptySegment()],
+            })}
+            onPasteAppend={(seg) => updateMap(selected.id, {
+              segments: [...(selected.segments || []), seg],
+            })}
+          />
           {importErr && <Text size="xs" c="red" mb="xs">{importErr}</Text>}
           {importMsg && !importErr && <Text size="xs" c="dimmed" mb="xs">{importMsg}</Text>}
 
@@ -542,11 +600,68 @@ export function SegmentMapEditor({
                   const segments = (selected.segments || []).filter((_, j) => j !== i);
                   updateMap(selected.id, { segments: segments.length ? segments : [createEmptySegment()] });
                 }}
+                onDuplicate={() => {
+                  const segments = [...(selected.segments || [])];
+                  const copy = normalizeSegment({ ...seg, id: undefined });
+                  segments.splice(i + 1, 0, copy);
+                  updateMap(selected.id, { segments });
+                }}
+                onPasteAfter={(pasted) => {
+                  const segments = [...(selected.segments || [])];
+                  segments.splice(i + 1, 0, pasted);
+                  updateMap(selected.id, { segments });
+                }}
               />
             ))}
           </Stack>
         </AppCard>
       )}
     </Stack>
+    </RuleClipProvider>
+  );
+}
+
+/** Import / add / paste toolbar — needs clip context for Paste enablement. */
+function SegmentListActions({ canImport, importing, onImport, onReplace, onAdd, onPasteAppend }) {
+  const { hasKind, takeKind } = useRuleClip();
+  const canPaste = hasKind(RULE_CLIP.segment);
+  return (
+    <Group gap="xs" mb="sm" wrap="wrap">
+      <AppButton
+        size="compact-sm"
+        variant="primary"
+        disabled={!canImport}
+        onClick={onImport}
+      >
+        {importing ? 'Importing…' : '↻ Import from WLED'}
+      </AppButton>
+      <AppButton
+        size="compact-sm"
+        variant="default"
+        disabled={!canImport}
+        onClick={onReplace}
+      >
+        Replace from WLED
+      </AppButton>
+      <AppButton
+        size="compact-sm"
+        variant="default"
+        onClick={onAdd}
+      >
+        Add segment
+      </AppButton>
+      <AppButton
+        size="compact-sm"
+        variant="default"
+        disabled={!canPaste}
+        onClick={() => {
+          const data = takeKind(RULE_CLIP.segment);
+          if (!data) return;
+          onPasteAppend(normalizeSegment({ ...data, id: undefined }));
+        }}
+      >
+        Paste segment
+      </AppButton>
+    </Group>
   );
 }
