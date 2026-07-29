@@ -8,11 +8,12 @@ shared across all of them.
 
 ## Match Condition Types
 
-Three condition types are in active use across the shipped rules. All match evaluation
-happens against the payload with the `8301 <E1|E2> 00` prefix intact (i.e. offsets in `byte`/
-`bits` conditions use the same full-frame indexing as the per-opcode docs), except where a
-rule explicitly matches on the shorter opcode-only prefix (see `e9-09_five-color_solid`'s
-bare `"E909"` hexPrefix option, which matches captures with the prefix already stripped).
+Match evaluation happens against the payload with the `8301 <E1|E2> 00` prefix intact
+(i.e. offsets in `byte`/`bits`/`byteCompare` conditions use the same full-frame indexing as
+the per-opcode docs), except where a rule explicitly matches on the shorter opcode-only
+prefix (see `e9-09_five-color_solid`'s bare `"E909"` hexPrefix option, which matches captures
+with the prefix already stripped). The leaf types below (`hexPrefix`, `byte`, `bits`,
+`byteCompare`, plus `length`) compose into the standard `all`/`some` groups.
 
 ### `hexPrefix`
 
@@ -33,9 +34,9 @@ one.
 { "type": "byte", "offset": 6, "op": "eq", "value": 15, "mask": 255 }
 ```
 
-Matches a single full-frame byte at `offset` against `value` using operator `op` (`eq`
-confirmed in use; other operators not observed in the current ruleset but the schema has an
-`op` field, implying more may exist), after applying `mask` (bitwise AND before comparison —
+Matches a single full-frame byte at `offset` against `value` using operator `op` (`eq`/`neq`
+confirmed in use; `gt`/`gte`/`lt`/`lte` supported by the shared `compareOp` but not yet
+exercised by a shipped rule), after applying `mask` (bitwise AND before comparison —
 `255`/`0xFF` in every observed use, i.e. no masking is actually applied in practice yet).
 
 This is how the shipped rules distinguish sub-modes within one opcode — e.g. `e9-08_solid_rgb`
@@ -62,6 +63,34 @@ scaler (bit 6) or extended-timeout (bit 7) flags independently of the rest of th
 value — e.g. `e9-0e_five-color_strobe_slow` matches "scaler bit set OR extended bit set" via
 two `bits` conditions wrapped in a `"some"` group, rather than trying to enumerate every full
 byte value that has either bit set.
+
+### `byteCompare`
+
+```json
+{
+  "type": "byteCompare",
+  "left":  { "offset": 13, "bitStart": 3, "bitCount": 5 },
+  "op": "eq",
+  "right": { "offset": 12, "bitStart": 3, "bitCount": 5 }
+}
+```
+
+Compares two independently-addressed bit ranges within the same packet against each other,
+rather than a fixed range against a literal `value`. `left`/`right` use the same
+`offset`/`bitStart`/`bitCount` addressing as `bits` (bitStart/bitCount default to whole-byte —
+0/8 — when omitted). `op` is the same `eq`/`neq`/`gt`/`gte`/`lt`/`lte` set as `byte`/`bits`,
+including `neq`.
+
+This is the mechanism for opcodes with multi-zone or paired-byte layouts where the *relationship*
+between two locations matters more than either location's absolute value — e.g. E9 09's 5-zone
+layout (`E909.md`), where each zone byte is `[7:3]=color, [2:0]=mask`: comparing `bitStart: 3,
+bitCount: 5` on two zone offsets with `op: "eq"` checks "same color, any mask," independent of
+which of the 32 palette colors either zone happens to hold; `op: "neq"` checks "different color."
+Without `byteCompare` this would require one `byte`/`eq` (or `byte`/`neq`) rule per possible
+color pairing — not tractable.
+
+Identical whole-byte compare (including mask bits) is the same leaf with `bitStart: 0,
+bitCount: 8` on both sides — no separate mode required.
 
 ### Combining conditions — `mode: "all"` / `"some"`
 

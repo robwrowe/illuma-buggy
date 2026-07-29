@@ -1,8 +1,8 @@
 import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId, blendModeIdToBm } from './mbConstants';
 import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
 
-const BYTE_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
-const CMP_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte']);
+const BYTE_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
+const CMP_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte']);
 const MB_SEG_KEY_SET = new Set(MB_SEG_KEYS);
 const COOLDOWN_RESET_MODES = new Set(['onMatch', 'fixed']);
 
@@ -57,6 +57,14 @@ export function createEmptyCondition(type = 'hexPrefix') {
   if (type === 'length') return { type: 'length', op: 'eq', value: 0 };
   if (type === 'byte') return { type: 'byte', offset: 0, op: 'eq', value: 0, mask: 0xff };
   if (type === 'bits') return { type: 'bits', offset: 0, bitStart: 0, bitCount: 1, op: 'eq', value: 0 };
+  if (type === 'byteCompare') {
+    return {
+      type: 'byteCompare',
+      left: { offset: 0, bitStart: 0, bitCount: 8 },
+      op: 'eq',
+      right: { offset: 0, bitStart: 0, bitCount: 8 },
+    };
+  }
   return { type: 'hexPrefix', value: '' };
 }
 
@@ -1153,6 +1161,20 @@ export function normalizeConditionNode(raw) {
         value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
       };
     }
+    if (type === 'byteCompare') {
+      const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
+      const normSide = (side) => ({
+        offset: Number.isFinite(side?.offset) ? Math.max(0, Number(side.offset)) : 0,
+        bitStart: Number.isFinite(side?.bitStart) ? Math.min(7, Math.max(0, Number(side.bitStart))) : 0,
+        bitCount: Number.isFinite(side?.bitCount) ? Math.min(32, Math.max(1, Number(side.bitCount))) : 8,
+      });
+      return {
+        type: 'byteCompare',
+        left: normSide(raw.left),
+        op,
+        right: normSide(raw.right),
+      };
+    }
     return createEmptyCondition('hexPrefix');
   }
 
@@ -1160,7 +1182,8 @@ export function normalizeConditionNode(raw) {
   const children = Array.isArray(raw.children)
     ? raw.children.map(normalizeConditionNode)
     : [];
-  return { mode, children };
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  return name ? { mode, children, name } : { mode, children };
 }
 
 export function normalizePresetVariables(raw) {

@@ -22,6 +22,7 @@ import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
 import { SegmentOverrideTable } from './SegmentOverrideTable';
+import { CopyPasteButtons, RULE_CLIP, RuleClipProvider, useRuleClip } from './ruleClipboard';
 import { MB_SEGMENT_META } from '../../lib/ble/mbConstants';
 import {
   createEmptyColorBlend,
@@ -48,7 +49,17 @@ import {
   isColorSourceBlendSource,
   isFixedColorSource,
   isTimingDerivedSource,
+  normalizeColorSource,
+  normalizeColorSources,
+  normalizeConditionNode,
+  normalizeExtract,
+  normalizeFallbackDuration,
   normalizeMbMapping,
+  normalizeRuleTiming,
+  normalizeSegmentOverrides,
+  normalizeSegmentSourceMode,
+  normalizeStartTransition,
+  normalizeStopTransition,
   reindexRulePriorities,
   SEGMENT_FIELD_PRESETS,
   shortRuleId,
@@ -70,6 +81,7 @@ import { useNavigate } from 'react-router-dom';
 
 const CMP_OP_OPTS = [
   { value: 'eq', label: 'eq' },
+  { value: 'neq', label: 'neq' },
   { value: 'gt', label: 'gt' },
   { value: 'gte', label: 'gte' },
   { value: 'lt', label: 'lt' },
@@ -83,6 +95,7 @@ const LEAF_TYPE_OPTS = [
   { value: 'length', label: 'length' },
   { value: 'byte', label: 'byte' },
   { value: 'bits', label: 'bits' },
+  { value: 'byteCompare', label: 'byteCompare' },
 ];
 
 const TARGET_KIND_OPTS = [
@@ -205,8 +218,44 @@ function HexByteInput({ value, onChange, placeholder = '0x00' }) {
   );
 }
 
-function ConditionLeafEditor({ node, onChange, onDelete }) {
+function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAfter }) {
+  const { copyKind, hasKind, takeKind } = useRuleClip();
+  const [clipMsg, setClipMsg] = useState('');
+  const flash = (msg) => {
+    setClipMsg(msg);
+    window.setTimeout(() => setClipMsg(''), 2000);
+  };
   const set = (patch) => onChange({ ...node, ...patch });
+  const canPaste = hasKind(RULE_CLIP.condition);
+
+  const handleCopy = async () => {
+    try {
+      await copyKind(RULE_CLIP.condition, normalizeConditionNode(node));
+      flash('Copied');
+    } catch {
+      flash('Copy failed');
+    }
+  };
+  const handlePasteReplace = () => {
+    const pasted = takeKind(RULE_CLIP.condition);
+    if (!pasted) {
+      flash('Nothing to paste');
+      return;
+    }
+    onChange(normalizeConditionNode(pasted));
+    flash('Replaced');
+  };
+  const handlePasteAfter = () => {
+    if (!onPasteAfter) return;
+    const pasted = takeKind(RULE_CLIP.condition);
+    if (!pasted) {
+      flash('Nothing to paste');
+      return;
+    }
+    onPasteAfter(normalizeConditionNode(pasted));
+    flash('Pasted after');
+  };
+
   return (
     <Paper p="xs" withBorder bg="var(--surface2)">
       <Group gap="xs" align="flex-end" wrap="wrap" mb="xs">
@@ -218,7 +267,18 @@ function ConditionLeafEditor({ node, onChange, onDelete }) {
             allowEmpty={false}
           />
         </Field>
-        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+        <AppButton size="compact-xs" variant="default" onClick={handleCopy}>Copy</AppButton>
+        <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteReplace}>Paste</AppButton>
+        {onPasteAfter && (
+          <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteAfter}>Paste after</AppButton>
+        )}
+        {onDuplicate && (
+          <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>Duplicate</AppButton>
+        )}
+        {onDelete && (
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+        )}
+        {clipMsg ? <Text size="xs" c="dimmed">{clipMsg}</Text> : null}
       </Group>
       {node.type === 'hexPrefix' && (
         <Field label="Hex prefix">
@@ -290,15 +350,85 @@ function ConditionLeafEditor({ node, onChange, onDelete }) {
           </Field>
         </SimpleGrid>
       )}
+      {node.type === 'byteCompare' && (
+        <Stack gap="xs">
+          <Group gap="xs" grow align="flex-end">
+            <Text size="xs" fw={600} c="dimmed">Left</Text>
+            <Field label="Offset">
+              <NumberInput
+                value={node.left?.offset ?? 0}
+                onChange={(v) => set({ left: { ...node.left, offset: Math.max(0, parseInt(v, 10) || 0) } })}
+                min={0}
+              />
+            </Field>
+            <Field label="bitStart">
+              <NumberInput
+                value={node.left?.bitStart ?? 0}
+                onChange={(v) => set({ left: { ...node.left, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) } })}
+                min={0} max={7}
+              />
+            </Field>
+            <Field label="bitCount">
+              <NumberInput
+                value={node.left?.bitCount ?? 8}
+                onChange={(v) => set({ left: { ...node.left, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 8)) } })}
+                min={1} max={32}
+              />
+            </Field>
+          </Group>
+          <Field label="Op">
+            <SearchableSelect value={node.op || 'eq'} onChange={(op) => set({ op })} options={CMP_OP_OPTS} allowEmpty={false} />
+          </Field>
+          <Group gap="xs" grow align="flex-end">
+            <Text size="xs" fw={600} c="dimmed">Right</Text>
+            <Field label="Offset">
+              <NumberInput
+                value={node.right?.offset ?? 0}
+                onChange={(v) => set({ right: { ...node.right, offset: Math.max(0, parseInt(v, 10) || 0) } })}
+                min={0}
+              />
+            </Field>
+            <Field label="bitStart">
+              <NumberInput
+                value={node.right?.bitStart ?? 0}
+                onChange={(v) => set({ right: { ...node.right, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) } })}
+                min={0} max={7}
+              />
+            </Field>
+            <Field label="bitCount">
+              <NumberInput
+                value={node.right?.bitCount ?? 8}
+                onChange={(v) => set({ right: { ...node.right, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 8)) } })}
+                min={1} max={32}
+              />
+            </Field>
+          </Group>
+        </Stack>
+      )}
     </Paper>
   );
 }
 
-function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
+function ConditionGroupEditor({ node, onChange, onDelete, onDuplicate, onPasteAfter, depth = 0 }) {
   const [open, setOpen] = useState(false); // collapsed by default
+  const { copyKind, hasKind, takeKind } = useRuleClip();
+  const [clipMsg, setClipMsg] = useState('');
+  const flash = (msg) => {
+    setClipMsg(msg);
+    window.setTimeout(() => setClipMsg(''), 2000);
+  };
+  const canPaste = hasKind(RULE_CLIP.condition);
 
   if (node?.type) {
-    return <ConditionLeafEditor node={node} onChange={onChange} onDelete={onDelete} />;
+    return (
+      <ConditionLeafEditor
+        node={node}
+        onChange={onChange}
+        onDelete={onDelete}
+        onDuplicate={onDuplicate}
+        onPasteAfter={onPasteAfter}
+      />
+    );
   }
 
   const children = Array.isArray(node?.children) ? node.children : [];
@@ -310,6 +440,51 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
   const removeChild = (i) => {
     onChange({ ...node, children: children.filter((_, j) => j !== i) });
   };
+  const insertAfter = (i, next) => {
+    const copy = [...children];
+    copy.splice(i + 1, 0, next);
+    onChange({ ...node, children: copy });
+  };
+  const duplicateChild = (i) => {
+    insertAfter(i, structuredClone(children[i]));
+  };
+
+  const handleCopy = async () => {
+    try {
+      await copyKind(RULE_CLIP.condition, normalizeConditionNode(node));
+      flash('Copied');
+    } catch {
+      flash('Copy failed');
+    }
+  };
+  const handlePasteReplace = () => {
+    const pasted = takeKind(RULE_CLIP.condition);
+    if (!pasted) {
+      flash('Nothing to paste');
+      return;
+    }
+    onChange(normalizeConditionNode(pasted));
+    flash('Replaced');
+  };
+  const handlePasteSibling = () => {
+    if (!onPasteAfter) return;
+    const pasted = takeKind(RULE_CLIP.condition);
+    if (!pasted) {
+      flash('Nothing to paste');
+      return;
+    }
+    onPasteAfter(normalizeConditionNode(pasted));
+    flash('Pasted after');
+  };
+  const handlePasteChild = () => {
+    const pasted = takeKind(RULE_CLIP.condition);
+    if (!pasted) {
+      flash('Nothing to paste');
+      return;
+    }
+    onChange({ ...node, children: [...children, normalizeConditionNode(pasted)] });
+    flash('Pasted into group');
+  };
 
   const leafCount = children.filter((c) => c?.type).length;
   const groupCount = children.filter((c) => c && !c.type).length;
@@ -317,6 +492,7 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
   if (leafCount) summaryParts.push(`${leafCount} condition${leafCount === 1 ? '' : 's'}`);
   if (groupCount) summaryParts.push(`${groupCount} group${groupCount === 1 ? '' : 's'}`);
   const summary = summaryParts.length ? summaryParts.join(', ') : 'empty';
+  const displayName = typeof node.name === 'string' ? node.name.trim() : '';
 
   return (
     <Paper
@@ -335,6 +511,9 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
           <Badge size="sm" variant="light" color={node.mode === 'some' ? 'orange' : 'violet'}>
             {node.mode === 'some' ? 'OR (some)' : 'AND (all)'}
           </Badge>
+          {!open && displayName && (
+            <Text size="xs" fw={600}>{displayName}</Text>
+          )}
           {!open && (
             <Text size="xs" c="dimmed">{summary}</Text>
           )}
@@ -348,12 +527,37 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
             </AppButton>
           )}
         </Group>
-        {onDelete && (
-          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete group</AppButton>
-        )}
+        <Group gap="xs">
+          <AppButton size="compact-xs" variant="default" onClick={handleCopy}>Copy</AppButton>
+          <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteReplace}>Paste</AppButton>
+          {onPasteAfter && (
+            <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteSibling}>Paste after</AppButton>
+          )}
+          {onDuplicate && (
+            <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>Duplicate</AppButton>
+          )}
+          {onDelete && (
+            <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete group</AppButton>
+          )}
+          {clipMsg ? <Text size="xs" c="dimmed">{clipMsg}</Text> : null}
+        </Group>
       </Group>
       {open && (
         <>
+          <Field label="Name (optional)">
+            <TextInput
+              value={node.name || ''}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (next.trim()) onChange({ ...node, name: next });
+                else {
+                  const { name: _drop, ...rest } = node;
+                  onChange(rest);
+                }
+              }}
+              placeholder="e.g. TL/BL same color"
+            />
+          </Field>
           <Stack gap="xs">
             {children.map((child, i) => (
               <ConditionGroupEditor
@@ -362,6 +566,8 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
                 depth={depth + 1}
                 onChange={(n) => setChild(i, n)}
                 onDelete={() => removeChild(i)}
+                onDuplicate={() => duplicateChild(i)}
+                onPasteAfter={(pasted) => insertAfter(i, pasted)}
               />
             ))}
           </Stack>
@@ -379,6 +585,9 @@ function ConditionGroupEditor({ node, onChange, onDelete, depth = 0 }) {
               onClick={() => onChange({ ...node, children: [...children, createEmptyMatchGroup('all')] })}
             >
               Add nested group
+            </AppButton>
+            <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteChild}>
+              Paste into group
             </AppButton>
           </Group>
         </>
@@ -558,7 +767,14 @@ function TimingParamBindingEditor({
     <Paper p="xs" withBorder bg="var(--bg)">
       <Group justify="space-between" mb="xs" wrap="wrap">
         <Text size="xs" fw={700}>Timing → param</Text>
-        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Remove</AppButton>
+        <Group gap="xs">
+          <CopyPasteButtons
+            kind={RULE_CLIP.timingParamBinding}
+            getData={() => normalizeExtract(extract)}
+            onPaste={(data) => onChange(normalizeExtract(data))}
+          />
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Remove</AppButton>
+        </Group>
       </Group>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
         <Field label="Timing model">
@@ -806,7 +1022,14 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
     <Paper p="xs" withBorder bg="var(--surface2)">
       <Group justify="space-between" mb="xs">
         <Text size="xs" fw={600}>Color source</Text>
-        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+        <Group gap="xs">
+          <CopyPasteButtons
+            kind={RULE_CLIP.colorSource}
+            getData={() => normalizeColorSource(src)}
+            onPaste={(data) => onChange(normalizeColorSource(data))}
+          />
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+        </Group>
       </Group>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
         <Field label="Name">
@@ -894,6 +1117,13 @@ function ColorSourcesEditor({ sources, onChange }) {
     <CollapsibleBlock
       title="Color sources"
       summary={list.length ? `${list.length} named` : 'none'}
+      headerRight={(
+        <CopyPasteButtons
+          kind={RULE_CLIP.colorSources}
+          getData={() => normalizeColorSources(list)}
+          onPaste={(data) => onChange(normalizeColorSources(data))}
+        />
+      )}
     >
       <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
         Define fixed, palette, or packet-RGB colors once on this rule, then reference them by name in
@@ -1243,7 +1473,16 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       titleFw={600}
       summary={summary}
       paperProps={{ p: 'xs', bg: 'var(--surface2)' }}
-      headerRight={<AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>}
+      headerRight={(
+        <Group gap="xs">
+          <CopyPasteButtons
+            kind={RULE_CLIP.packetExtract}
+            getData={() => normalizeExtract(extract)}
+            onPaste={(data) => onChange(normalizeExtract(data))}
+          />
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+        </Group>
+      )}
     >
       <Text size="xs" c="dimmed" mb="xs">
         Hard-code a color, or read bits from the packet. For flash rate / on-time → segment fields, use{' '}
@@ -1873,6 +2112,20 @@ function RuleCard({
               effectOptions={effectOptions}
               paletteOptions={paletteOptions}
               onChange={(patch) => onChange({ ...rule, ...patch })}
+              headerActions={(
+                <CopyPasteButtons
+                  kind={RULE_CLIP.segmentSources}
+                  getData={() => ({
+                    segmentOverrides: normalizeSegmentOverrides(rule.segmentOverrides || {}),
+                    segmentSourceMode: normalizeSegmentSourceMode(rule.segmentSourceMode),
+                  })}
+                  onPaste={(data) => onChange({
+                    ...rule,
+                    segmentOverrides: normalizeSegmentOverrides(data?.segmentOverrides),
+                    segmentSourceMode: normalizeSegmentSourceMode(data?.segmentSourceMode),
+                  })}
+                />
+              )}
             />
           )}
 
@@ -1881,6 +2134,36 @@ function RuleCard({
             summary={timing.enabled
               ? `on · hold ${timing.cooldownSec ?? 2}s${timing.timingModelId ? ` · ${timingModelOpts.find((m) => m.value === timing.timingModelId)?.label || timing.timingModelId}` : ''}`
               : 'off'}
+            headerRight={(
+              <CopyPasteButtons
+                kind={RULE_CLIP.timing}
+                getData={() => ({
+                  timing: normalizeRuleTiming(timing),
+                  bindings: (rule.extract || [])
+                    .filter((ex) => isTimingDerivedSource(ex.source))
+                    .map((ex) => normalizeExtract(ex)),
+                })}
+                onPaste={(data) => {
+                  const wrapped = data && typeof data === 'object'
+                    && ('timing' in data || 'bindings' in data);
+                  const nextTiming = normalizeRuleTiming(wrapped ? data.timing : data);
+                  if (!wrapped) {
+                    onChange({ ...rule, timing: nextTiming });
+                    return;
+                  }
+                  const bindings = (Array.isArray(data.bindings) ? data.bindings : [])
+                    .map((ex) => normalizeExtract(ex))
+                    .filter((ex) => isTimingDerivedSource(ex.source));
+                  const packetOnes = (rule.extract || [])
+                    .filter((ex) => !isTimingDerivedSource(ex.source));
+                  onChange({
+                    ...rule,
+                    timing: nextTiming,
+                    extract: [...packetOnes, ...bindings],
+                  });
+                }}
+              />
+            )}
           >
             <Text size="xs" c="dimmed" mb="xs">
               On-time comes from the packet timing byte (including final-cycle stretch from fadeBits).
@@ -2033,6 +2316,16 @@ function RuleCard({
             summary={fallbackDuration.enabled
               ? `on · ${fallbackDuration.onSec ?? 10}s${fallbackDuration.fadeSec ? ` · fade ${fallbackDuration.fadeSec}s` : ''}`
               : 'off'}
+            headerRight={(
+              <CopyPasteButtons
+                kind={RULE_CLIP.fallbackDuration}
+                getData={() => normalizeFallbackDuration(fallbackDuration)}
+                onPaste={(data) => onChange({
+                  ...rule,
+                  fallbackDuration: normalizeFallbackDuration(data),
+                })}
+              />
+            )}
           >
             <Text size="xs" c="dimmed" mb="xs">
               Used when Timing is disabled — lets an unhandled/undecoded opcode still return to
@@ -2107,6 +2400,16 @@ function RuleCard({
           <CollapsibleBlock
             title="Start transition"
             summary={`${startTransition.type || 'fade'}${startTransition.type === 'instant' ? '' : ` · ${startTransition.timeMs ?? 400}ms`}`}
+            headerRight={(
+              <CopyPasteButtons
+                kind={RULE_CLIP.startTransition}
+                getData={() => normalizeStartTransition(startTransition)}
+                onPaste={(data) => onChange({
+                  ...rule,
+                  startTransition: normalizeStartTransition(data),
+                })}
+              />
+            )}
           >
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               <Field label="Type">
@@ -2143,6 +2446,16 @@ function RuleCard({
             summary={stopTransition.enabled
               ? `${stopTransition.type || 'fade'} · ${stopTransition.durationMode === 'custom' ? `${stopTransition.timeMs ?? 0}ms` : 'timing stretch'}`
               : 'off (plain FTB)'}
+            headerRight={(
+              <CopyPasteButtons
+                kind={RULE_CLIP.stopTransition}
+                getData={() => normalizeStopTransition(stopTransition)}
+                onPaste={(data) => onChange({
+                  ...rule,
+                  stopTransition: normalizeStopTransition(data),
+                })}
+              />
+            )}
           >
             <Text size="xs" c="dimmed" mb="xs">
               How the effect transitions out to fade-to-black. Duration defaults to the timing
@@ -2229,6 +2542,21 @@ function RuleCard({
           <CollapsibleBlock
             title="Packet extracts"
             summary={`${(rule.extract || []).filter((ex) => !isTimingDerivedSource(ex.source)).length} extract(s)`}
+            headerRight={(
+              <CopyPasteButtons
+                kind={RULE_CLIP.packetExtracts}
+                getData={() => (rule.extract || [])
+                  .filter((ex) => !isTimingDerivedSource(ex.source))
+                  .map((ex) => normalizeExtract(ex))}
+                onPaste={(data) => {
+                  const pasted = (Array.isArray(data) ? data : [])
+                    .map((ex) => normalizeExtract(ex))
+                    .filter((ex) => !isTimingDerivedSource(ex.source));
+                  const timingOnes = (rule.extract || []).filter((ex) => isTimingDerivedSource(ex.source));
+                  onChange({ ...rule, extract: [...timingOnes, ...pasted] });
+                }}
+              />
+            )}
           >
             <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
               Pull values from packet bytes (palette colors, bit fields). Timing→param bindings
@@ -2683,6 +3011,7 @@ export function RuleEditor({
   };
 
   return (
+    <RuleClipProvider>
     <Stack gap="md">
       <Text size="xs" c="dimmed" lh={1.5}>
         Ordered rules evaluated on the board (lower priority first). Push with <strong>📡 Board</strong> (<code style={{ fontFamily: 'monospace' }}>set_mb_rules</code>).
@@ -2733,5 +3062,6 @@ export function RuleEditor({
         simIp={simIp}
       />
     </Stack>
+    </RuleClipProvider>
   );
 }

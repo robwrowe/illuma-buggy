@@ -244,6 +244,7 @@ export function applyCurve(rawValue, curve = {}) {
 function compareOp(lhs, op, rhs) {
   switch (op) {
     case 'eq': return lhs === rhs;
+    case 'neq': return lhs !== rhs;
     case 'gt': return lhs > rhs;
     case 'gte': return lhs >= rhs;
     case 'lt': return lhs < rhs;
@@ -297,6 +298,13 @@ export function evaluateLeaf(payloadBytes, leaf) {
     const bitCount = Number(leaf.bitCount ?? 1);
     const v = extractBits(payloadBytes, offset, bitStart, bitCount);
     return compareOp(v, leaf.op || 'eq', Number(leaf.value ?? 0));
+  }
+  if (type === 'byteCompare') {
+    const left = leaf.left || {};
+    const right = leaf.right || {};
+    const lv = extractBits(payloadBytes, Number(left.offset ?? 0), Number(left.bitStart ?? 0), Number(left.bitCount ?? 8));
+    const rv = extractBits(payloadBytes, Number(right.offset ?? 0), Number(right.bitStart ?? 0), Number(right.bitCount ?? 8));
+    return compareOp(lv, leaf.op || 'eq', rv);
   }
   return false;
 }

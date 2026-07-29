@@ -278,6 +278,7 @@ export function SegmentOverrideTable({
   effectOptions = [],
   paletteOptions = [],
   onChange,
+  headerActions = null,
 }) {
   const [open, setOpen] = useState(true);
   const overrides = normalizeSegmentOverrides(segmentOverrides);
@@ -341,12 +342,15 @@ export function SegmentOverrideTable({
             </Text>
           )}
         </Group>
-        <SegmentedControl
-          size="xs"
-          value={sourceMode}
-          onChange={setSourceMode}
-          data={SOURCE_SCOPE_OPTS}
-        />
+        <Group gap="xs" wrap="wrap">
+          {headerActions}
+          <SegmentedControl
+            size="xs"
+            value={sourceMode}
+            onChange={setSourceMode}
+            data={SOURCE_SCOPE_OPTS}
+          />
+        </Group>
       </Group>
       {open && (
         <>

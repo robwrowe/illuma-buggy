@@ -118,6 +118,7 @@ static bool matchHexPrefix(const uint8_t* payload, size_t plen, const char* hex)
 static bool compareOp(uint32_t lhs, const char* op, uint32_t rhs) {
   if (!op) return false;
   if (strcmp(op, "eq") == 0)  return lhs == rhs;
+  if (strcmp(op, "neq") == 0) return lhs != rhs;
   if (strcmp(op, "gt") == 0)  return lhs > rhs;
   if (strcmp(op, "gte") == 0) return lhs >= rhs;
   if (strcmp(op, "lt") == 0)  return lhs < rhs;
@@ -159,6 +160,20 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     uint8_t bitCount = (uint8_t)(leaf["bitCount"] | 1);
     uint32_t v = extractBits(payload, plen, offset, bitStart, bitCount);
     return compareOp(v, leaf["op"] | "eq", (uint32_t)(leaf["value"] | 0));
+  }
+  if (strcmp(type, "byteCompare") == 0) {
+    JsonObject left = leaf["left"].as<JsonObject>();
+    JsonObject right = leaf["right"].as<JsonObject>();
+    if (left.isNull() || right.isNull()) return false;
+    uint8_t lOffset = (uint8_t)(left["offset"] | 0);
+    uint8_t lBitStart = (uint8_t)(left["bitStart"] | 0);
+    uint8_t lBitCount = (uint8_t)(left["bitCount"] | 8);
+    uint8_t rOffset = (uint8_t)(right["offset"] | 0);
+    uint8_t rBitStart = (uint8_t)(right["bitStart"] | 0);
+    uint8_t rBitCount = (uint8_t)(right["bitCount"] | 8);
+    uint32_t lv = extractBits(payload, plen, lOffset, lBitStart, lBitCount);
+    uint32_t rv = extractBits(payload, plen, rOffset, rBitStart, rBitCount);
+    return compareOp(lv, leaf["op"] | "eq", rv);
   }
   return false;
 }
