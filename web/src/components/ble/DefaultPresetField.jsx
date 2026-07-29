@@ -1,14 +1,18 @@
-import { Paper, Stack, Text } from '@mantine/core';
+import { Stack, Text } from '@mantine/core';
 import { SearchableSelect } from '../shared/SearchableSelect';
+import { AppCard } from '../shared/styles';
 
 export function DefaultPresetField({ mb, presets, onChange }) {
   const presetOpts = presets.map((p) => ({ value: p.id, label: p.name, searchText: p.name }));
   return (
-    <Paper p="sm" mb="md" withBorder style={{ borderColor: 'var(--primary)', background: 'var(--primary-dim)' }}>
+    <AppCard p="sm">
       <Stack gap="xs">
-        <Text fw={700} size="sm" c="violet">Default zone preset</Text>
+        <Text fw={700} size="sm">
+          Default zone preset
+        </Text>
         <Text size="xs" c="dimmed" lh={1.45}>
-          Same presets as GPS zones. Used for any BLE Data effect without its own preset. Must exist on the board — sync with <strong>📡 Board</strong>.
+          Same presets as GPS zones. Used for any BLE Data effect without its own preset. Must exist
+          on the board — sync with <strong>📡 Board</strong>.
         </Text>
         <SearchableSelect
           value={mb.defaultPresetId || ''}
@@ -17,6 +21,6 @@ export function DefaultPresetField({ mb, presets, onChange }) {
           options={presetOpts}
         />
       </Stack>
-    </Paper>
+    </AppCard>
   );
 }

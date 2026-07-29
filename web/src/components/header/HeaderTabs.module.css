@@ -35,7 +35,7 @@
 
   &[data-active] {
     background-color: light-dark(var(--mantine-color-white), var(--mantine-color-violet-7));
-    border-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-violet-7));
+    border-color: var(--app-shell-border-color);
     border-bottom-color: transparent;
   }
 }

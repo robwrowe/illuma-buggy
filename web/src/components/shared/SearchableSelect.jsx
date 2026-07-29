@@ -33,6 +33,7 @@ export function SearchableSelect({
   emptyLabel = 'No matches',
   allowEmpty = true,
   maxListHeight = 240,
+  ...rest
 }) {
   const data = useMemo(() => toSelectData(options), [options]);
 
@@ -47,6 +48,7 @@ export function SearchableSelect({
       nothingFoundMessage={emptyLabel}
       comboboxProps={{ withinPortal: true }}
       maxDropdownHeight={maxListHeight}
+      {...rest}
     />
   );
 }

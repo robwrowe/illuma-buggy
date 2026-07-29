@@ -16,7 +16,16 @@ export function AppButton({ variant = 'default', children, ...props }) {
 
 export function AppCard({ children, ...props }) {
   return (
-    <Paper p="md" mb="sm" withBorder {...props}>
+    <Paper
+      p="md"
+      withBorder
+      style={{
+        borderRadius: 'var(--mantine-radius-sm)',
+        border: '1px solid var(--border)',
+        background: 'var(--surface2)',
+      }}
+      {...props}
+    >
       {children}
     </Paper>
   );

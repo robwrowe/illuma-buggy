@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
+  Center,
   Checkbox,
   ColorInput,
+  Divider,
   Group,
   MultiSelect,
   NumberInput,
@@ -121,9 +123,7 @@ function hexPacketsFromPaste(raw) {
   const parsed = parseCapturePaste(raw);
   if (parsed.mode === 'empty') return [];
   if (parsed.mode === 'capture') {
-    return parsed.rows
-      .map((r) => stripCompanyId(r.hex))
-      .filter((h) => h.length >= 4);
+    return parsed.rows.map((r) => stripCompanyId(r.hex)).filter((h) => h.length >= 4);
   }
   // Multi-line plain hex list — never collapse to the first line only.
   const lines = String(raw || '')
@@ -159,7 +159,11 @@ function CollapsibleBlock({
           <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
             {open ? '▾' : '▸'}
           </AppButton>
-          <Text size={titleSize} fw={titleFw} style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <Text
+            size={titleSize}
+            fw={titleFw}
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+          >
             {title}
           </Text>
           {!open && summary ? (
@@ -188,7 +192,9 @@ function HexByteInput({ value, onChange, placeholder = '0x00' }) {
   }, [value]);
 
   const commit = (raw) => {
-    const cleaned = String(raw ?? '').trim().replace(/^0x/i, '');
+    const cleaned = String(raw ?? '')
+      .trim()
+      .replace(/^0x/i, '');
     if (cleaned === '') {
       onChange(0);
       setText(formatHexByte(0));
@@ -267,18 +273,42 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
             allowEmpty={false}
           />
         </Field>
-        <AppButton size="compact-xs" variant="default" onClick={handleCopy}>Copy</AppButton>
-        <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteReplace}>Paste</AppButton>
+        <AppButton size="compact-xs" variant="default" onClick={handleCopy}>
+          Copy
+        </AppButton>
+        <AppButton
+          size="compact-xs"
+          variant="default"
+          disabled={!canPaste}
+          onClick={handlePasteReplace}
+        >
+          Paste
+        </AppButton>
         {onPasteAfter && (
-          <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteAfter}>Paste after</AppButton>
+          <AppButton
+            size="compact-xs"
+            variant="default"
+            disabled={!canPaste}
+            onClick={handlePasteAfter}
+          >
+            Paste after
+          </AppButton>
         )}
         {onDuplicate && (
-          <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>Duplicate</AppButton>
+          <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>
+            Duplicate
+          </AppButton>
         )}
         {onDelete && (
-          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+            Delete
+          </AppButton>
         )}
-        {clipMsg ? <Text size="xs" c="dimmed">{clipMsg}</Text> : null}
+        {clipMsg ? (
+          <Text size="xs" c="dimmed">
+            {clipMsg}
+          </Text>
+        ) : null}
       </Group>
       {node.type === 'hexPrefix' && (
         <Field label="Hex prefix">
@@ -290,7 +320,8 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
           />
           {/^8301/i.test(node.value || '') && (
             <Text size="xs" c="orange" mt={4}>
-              Payloads are already stripped of the 83 01 CID prefix before rules evaluate them — omit it here (e.g. use E100E905, not 8301E100E905).
+              Payloads are already stripped of the 83 01 CID prefix before rules evaluate them —
+              omit it here (e.g. use E100E905, not 8301E100E905).
             </Text>
           )}
         </Field>
@@ -298,20 +329,38 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
       {node.type === 'length' && (
         <Group gap="xs" grow>
           <Field label="Op">
-            <SearchableSelect value={node.op || 'eq'} onChange={(op) => set({ op })} options={CMP_OP_OPTS} allowEmpty={false} />
+            <SearchableSelect
+              value={node.op || 'eq'}
+              onChange={(op) => set({ op })}
+              options={CMP_OP_OPTS}
+              allowEmpty={false}
+            />
           </Field>
           <Field label="Value">
-            <NumberInput value={node.value ?? 0} onChange={(v) => set({ value: parseInt(v, 10) || 0 })} min={0} />
+            <NumberInput
+              value={node.value ?? 0}
+              onChange={(v) => set({ value: parseInt(v, 10) || 0 })}
+              min={0}
+            />
           </Field>
         </Group>
       )}
       {node.type === 'byte' && (
         <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
           <Field label="Offset">
-            <NumberInput value={node.offset ?? 0} onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })} min={0} />
+            <NumberInput
+              value={node.offset ?? 0}
+              onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })}
+              min={0}
+            />
           </Field>
           <Field label="Op">
-            <SearchableSelect value={node.op || 'eq'} onChange={(op) => set({ op })} options={BYTE_OP_OPTS} allowEmpty={false} />
+            <SearchableSelect
+              value={node.op || 'eq'}
+              onChange={(op) => set({ op })}
+              options={BYTE_OP_OPTS}
+              allowEmpty={false}
+            />
           </Field>
           <Field label="Value">
             <HexByteInput
@@ -334,72 +383,140 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
       {node.type === 'bits' && (
         <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
           <Field label="Offset">
-            <NumberInput value={node.offset ?? 0} onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })} min={0} />
+            <NumberInput
+              value={node.offset ?? 0}
+              onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })}
+              min={0}
+            />
           </Field>
           <Field label="bitStart">
-            <NumberInput value={node.bitStart ?? 0} onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })} min={0} max={7} />
+            <NumberInput
+              value={node.bitStart ?? 0}
+              onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+              min={0}
+              max={7}
+            />
           </Field>
           <Field label="bitCount">
-            <NumberInput value={node.bitCount ?? 1} onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })} min={1} max={32} />
+            <NumberInput
+              value={node.bitCount ?? 1}
+              onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+              min={1}
+              max={32}
+            />
           </Field>
           <Field label="Op">
-            <SearchableSelect value={node.op || 'eq'} onChange={(op) => set({ op })} options={CMP_OP_OPTS} allowEmpty={false} />
+            <SearchableSelect
+              value={node.op || 'eq'}
+              onChange={(op) => set({ op })}
+              options={CMP_OP_OPTS}
+              allowEmpty={false}
+            />
           </Field>
           <Field label="Value">
-            <NumberInput value={node.value ?? 0} onChange={(v) => set({ value: parseInt(v, 10) || 0 })} min={0} />
+            <NumberInput
+              value={node.value ?? 0}
+              onChange={(v) => set({ value: parseInt(v, 10) || 0 })}
+              min={0}
+            />
           </Field>
         </SimpleGrid>
       )}
       {node.type === 'byteCompare' && (
         <Stack gap="xs">
           <Group gap="xs" grow align="flex-end">
-            <Text size="xs" fw={600} c="dimmed">Left</Text>
+            <Text size="xs" fw={600} c="dimmed">
+              Left
+            </Text>
             <Field label="Offset">
               <NumberInput
                 value={node.left?.offset ?? 0}
-                onChange={(v) => set({ left: { ...node.left, offset: Math.max(0, parseInt(v, 10) || 0) } })}
+                onChange={(v) =>
+                  set({ left: { ...node.left, offset: Math.max(0, parseInt(v, 10) || 0) } })
+                }
                 min={0}
               />
             </Field>
             <Field label="bitStart">
               <NumberInput
                 value={node.left?.bitStart ?? 0}
-                onChange={(v) => set({ left: { ...node.left, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) } })}
-                min={0} max={7}
+                onChange={(v) =>
+                  set({
+                    left: {
+                      ...node.left,
+                      bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                    },
+                  })
+                }
+                min={0}
+                max={7}
               />
             </Field>
             <Field label="bitCount">
               <NumberInput
                 value={node.left?.bitCount ?? 8}
-                onChange={(v) => set({ left: { ...node.left, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 8)) } })}
-                min={1} max={32}
+                onChange={(v) =>
+                  set({
+                    left: {
+                      ...node.left,
+                      bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 8)),
+                    },
+                  })
+                }
+                min={1}
+                max={32}
               />
             </Field>
           </Group>
           <Field label="Op">
-            <SearchableSelect value={node.op || 'eq'} onChange={(op) => set({ op })} options={CMP_OP_OPTS} allowEmpty={false} />
+            <SearchableSelect
+              value={node.op || 'eq'}
+              onChange={(op) => set({ op })}
+              options={CMP_OP_OPTS}
+              allowEmpty={false}
+            />
           </Field>
           <Group gap="xs" grow align="flex-end">
-            <Text size="xs" fw={600} c="dimmed">Right</Text>
+            <Text size="xs" fw={600} c="dimmed">
+              Right
+            </Text>
             <Field label="Offset">
               <NumberInput
                 value={node.right?.offset ?? 0}
-                onChange={(v) => set({ right: { ...node.right, offset: Math.max(0, parseInt(v, 10) || 0) } })}
+                onChange={(v) =>
+                  set({ right: { ...node.right, offset: Math.max(0, parseInt(v, 10) || 0) } })
+                }
                 min={0}
               />
             </Field>
             <Field label="bitStart">
               <NumberInput
                 value={node.right?.bitStart ?? 0}
-                onChange={(v) => set({ right: { ...node.right, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) } })}
-                min={0} max={7}
+                onChange={(v) =>
+                  set({
+                    right: {
+                      ...node.right,
+                      bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                    },
+                  })
+                }
+                min={0}
+                max={7}
               />
             </Field>
             <Field label="bitCount">
               <NumberInput
                 value={node.right?.bitCount ?? 8}
-                onChange={(v) => set({ right: { ...node.right, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 8)) } })}
-                min={1} max={32}
+                onChange={(v) =>
+                  set({
+                    right: {
+                      ...node.right,
+                      bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 8)),
+                    },
+                  })
+                }
+                min={1}
+                max={32}
               />
             </Field>
           </Group>
@@ -500,7 +617,6 @@ function ConditionGroupEditor({ node, onChange, onDelete, onDuplicate, onPasteAf
       withBorder
       style={{
         marginLeft: depth ? 8 : 0,
-        borderColor: node.mode === 'some' ? 'var(--mantine-color-orange-5)' : 'var(--border)',
       }}
     >
       <Group justify="space-between" mb={open ? 'xs' : 0} wrap="wrap">
@@ -508,14 +624,18 @@ function ConditionGroupEditor({ node, onChange, onDelete, onDuplicate, onPasteAf
           <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
             {open ? '▾' : '▸'}
           </AppButton>
-          <Badge size="sm" variant="light" color={node.mode === 'some' ? 'orange' : 'violet'}>
+          <Badge size="sm" variant={node.mode === 'some' ? 'filled' : 'light'}>
             {node.mode === 'some' ? 'OR (some)' : 'AND (all)'}
           </Badge>
           {!open && displayName && (
-            <Text size="xs" fw={600}>{displayName}</Text>
+            <Text size="xs" fw={600}>
+              {displayName}
+            </Text>
           )}
           {!open && (
-            <Text size="xs" c="dimmed">{summary}</Text>
+            <Text size="xs" c="dimmed">
+              {summary}
+            </Text>
           )}
           {open && (
             <AppButton
@@ -528,18 +648,42 @@ function ConditionGroupEditor({ node, onChange, onDelete, onDuplicate, onPasteAf
           )}
         </Group>
         <Group gap="xs">
-          <AppButton size="compact-xs" variant="default" onClick={handleCopy}>Copy</AppButton>
-          <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteReplace}>Paste</AppButton>
+          <AppButton size="compact-xs" variant="default" onClick={handleCopy}>
+            Copy
+          </AppButton>
+          <AppButton
+            size="compact-xs"
+            variant="default"
+            disabled={!canPaste}
+            onClick={handlePasteReplace}
+          >
+            Paste
+          </AppButton>
           {onPasteAfter && (
-            <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteSibling}>Paste after</AppButton>
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              disabled={!canPaste}
+              onClick={handlePasteSibling}
+            >
+              Paste after
+            </AppButton>
           )}
           {onDuplicate && (
-            <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>Duplicate</AppButton>
+            <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>
+              Duplicate
+            </AppButton>
           )}
           {onDelete && (
-            <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete group</AppButton>
+            <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+              Delete group
+            </AppButton>
           )}
-          {clipMsg ? <Text size="xs" c="dimmed">{clipMsg}</Text> : null}
+          {clipMsg ? (
+            <Text size="xs" c="dimmed">
+              {clipMsg}
+            </Text>
+          ) : null}
         </Group>
       </Group>
       {open && (
@@ -575,18 +719,27 @@ function ConditionGroupEditor({ node, onChange, onDelete, onDuplicate, onPasteAf
             <AppButton
               size="compact-xs"
               variant="default"
-              onClick={() => onChange({ ...node, children: [...children, createEmptyCondition('hexPrefix')] })}
+              onClick={() =>
+                onChange({ ...node, children: [...children, createEmptyCondition('hexPrefix')] })
+              }
             >
               Add condition
             </AppButton>
             <AppButton
               size="compact-xs"
               variant="default"
-              onClick={() => onChange({ ...node, children: [...children, createEmptyMatchGroup('all')] })}
+              onClick={() =>
+                onChange({ ...node, children: [...children, createEmptyMatchGroup('all')] })
+              }
             >
               Add nested group
             </AppButton>
-            <AppButton size="compact-xs" variant="default" disabled={!canPaste} onClick={handlePasteChild}>
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              disabled={!canPaste}
+              onClick={handlePasteChild}
+            >
               Paste into group
             </AppButton>
           </Group>
@@ -602,8 +755,12 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
   return (
     <Paper p="xs" withBorder bg="var(--bg)">
       <Group justify="space-between" mb="xs">
-        <Text size="xs" fw={600}>Target</Text>
-        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Remove</AppButton>
+        <Text size="xs" fw={600}>
+          Target
+        </Text>
+        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+          Remove
+        </AppButton>
       </Group>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
         <Field label="Kind">
@@ -624,13 +781,18 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
                 onChange={(mode) => {
                   if (mode === 'multi') {
                     const seed = target.segmentId ? [target.segmentId] : [];
-                    const next = { kind: 'segmentColor', segmentIds: seed, colorSlot: target.colorSlot ?? 0 };
+                    const next = {
+                      kind: 'segmentColor',
+                      segmentIds: seed,
+                      colorSlot: target.colorSlot ?? 0,
+                    };
                     onChange(next);
                     return;
                   }
                   onChange({
                     kind: 'segmentColor',
-                    segmentId: (target.segmentIds && target.segmentIds[0]) || target.segmentId || '',
+                    segmentId:
+                      (target.segmentIds && target.segmentIds[0]) || target.segmentId || '',
                     colorSlot: target.colorSlot ?? 0,
                   });
                 }}
@@ -647,11 +809,13 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
                   searchable
                   data={(segmentOpts || []).map((o) => ({ value: o.value, label: o.label }))}
                   value={target.segmentIds || []}
-                  onChange={(segmentIds) => onChange({
-                    kind: 'segmentColor',
-                    segmentIds,
-                    colorSlot: target.colorSlot ?? 0,
-                  })}
+                  onChange={(segmentIds) =>
+                    onChange({
+                      kind: 'segmentColor',
+                      segmentIds,
+                      colorSlot: target.colorSlot ?? 0,
+                    })
+                  }
                   placeholder="Pick pair / group…"
                   comboboxProps={{ withinPortal: true }}
                 />
@@ -660,7 +824,9 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
               <Field label="Segment">
                 <SearchableSelect
                   value={target.segmentId || ''}
-                  onChange={(segmentId) => onChange({ kind: 'segmentColor', segmentId, colorSlot: target.colorSlot ?? 0 })}
+                  onChange={(segmentId) =>
+                    onChange({ kind: 'segmentColor', segmentId, colorSlot: target.colorSlot ?? 0 })
+                  }
                   options={segmentOpts}
                   placeholder="(pick segment)"
                   allowEmpty
@@ -670,11 +836,13 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
             <Field label="Color slot">
               <SearchableSelect
                 value={String(target.colorSlot ?? 0)}
-                onChange={(v) => onChange({
-                  ...target,
-                  kind: 'segmentColor',
-                  colorSlot: parseInt(v, 10) || 0,
-                })}
+                onChange={(v) =>
+                  onChange({
+                    ...target,
+                    kind: 'segmentColor',
+                    colorSlot: parseInt(v, 10) || 0,
+                  })
+                }
                 options={COLOR_SLOT_OPTS}
                 allowEmpty={false}
               />
@@ -717,7 +885,9 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
               </Group>
               <TextInput
                 value={target.field || ''}
-                onChange={(e) => onChange({ ...target, kind: 'segmentField', field: e.target.value.trim() })}
+                onChange={(e) =>
+                  onChange({ ...target, kind: 'segmentField', field: e.target.value.trim() })
+                }
                 placeholder="sx, ix, c1… or any usermod field"
                 styles={{ input: { fontFamily: 'monospace' } }}
               />
@@ -730,15 +900,23 @@ function TargetRowEditor({ target, segmentOpts, onChange, onDelete }) {
 }
 
 function TimingParamBindingEditor({
-  extract, segmentOpts, ruleTiming, timingModelOpts = [], onTimingChange, onEditTimingModels, onChange, onDelete,
+  extract,
+  segmentOpts,
+  ruleTiming,
+  timingModelOpts = [],
+  onTimingChange,
+  onEditTimingModels,
+  onChange,
+  onDelete,
 }) {
   const set = (patch) => onChange({ ...extract, ...patch });
   const source = isTimingDerivedSource(extract.source) ? extract.source : 'timingFlashRate';
   const meta = TIMING_DERIVED_SOURCES.find((s) => s.value === source) || TIMING_DERIVED_SOURCES[0];
   const curve = extract.curve || createEmptyTimingParamBinding(source).curve;
-  const target = (Array.isArray(extract.targets) && extract.targets[0])
-    ? extract.targets[0]
-    : { kind: 'segmentField', segmentId: '', field: meta.defaultField };
+  const target =
+    Array.isArray(extract.targets) && extract.targets[0]
+      ? extract.targets[0]
+      : { kind: 'segmentField', segmentId: '', field: meta.defaultField };
   const timingConfigured = !!(ruleTiming?.enabled && ruleTiming?.timingModelId);
   const isReciprocal = curve.type === 'reciprocal';
 
@@ -747,11 +925,13 @@ function TimingParamBindingEditor({
     onChange({
       ...nextBinding,
       name: extract.name || nextBinding.name,
-      targets: [{
-        kind: 'segmentField',
-        segmentId: target.segmentId || '',
-        field: nextBinding.targets[0].field,
-      }],
+      targets: [
+        {
+          kind: 'segmentField',
+          segmentId: target.segmentId || '',
+          field: nextBinding.targets[0].field,
+        },
+      ],
     });
   };
 
@@ -766,14 +946,18 @@ function TimingParamBindingEditor({
   return (
     <Paper p="xs" withBorder bg="var(--bg)">
       <Group justify="space-between" mb="xs" wrap="wrap">
-        <Text size="xs" fw={700}>Timing → param</Text>
+        <Text size="xs" fw={700}>
+          Timing → param
+        </Text>
         <Group gap="xs">
           <CopyPasteButtons
             kind={RULE_CLIP.timingParamBinding}
             getData={() => normalizeExtract(extract)}
             onPaste={(data) => onChange(normalizeExtract(data))}
           />
-          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Remove</AppButton>
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+            Remove
+          </AppButton>
         </Group>
       </Group>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
@@ -806,7 +990,8 @@ function TimingParamBindingEditor({
         </Field>
         {!timingConfigured && (
           <Text size="xs" c="orange" style={{ gridColumn: '1 / -1' }}>
-            Pick a timing model — flash rate / on-time / final-cycle stretch come from that model&apos;s formulas. Without one, values read as 0.
+            Pick a timing model — flash rate / on-time / final-cycle stretch come from that
+            model&apos;s formulas. Without one, values read as 0.
             {onEditTimingModels ? (
               <>
                 {' '}
@@ -824,7 +1009,11 @@ function TimingParamBindingEditor({
           </Text>
         )}
         <Field label="Name (optional)">
-          <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder={meta.label} />
+          <TextInput
+            value={extract.name || ''}
+            onChange={(e) => set({ name: e.target.value })}
+            placeholder={meta.label}
+          />
         </Field>
         <Field label="Segment">
           <SearchableSelect
@@ -857,7 +1046,8 @@ function TimingParamBindingEditor({
         </Field>
       </SimpleGrid>
       <Text size="xs" c="dimmed" mt="xs" mb={4}>
-        Curve maps the decoded {meta.unit} value onto the field (0–255 typical). Reciprocal is for flash-rate→speed; linear for durations or unknown params.
+        Curve maps the decoded {meta.unit} value onto the field (0–255 typical). Reciprocal is for
+        flash-rate→speed; linear for durations or unknown params.
       </Text>
       <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
         <Field label="Curve">
@@ -887,14 +1077,24 @@ function TimingParamBindingEditor({
           />
         </Field>
         <Field label="outMin">
-          <NumberInput value={curve.outMin ?? 0} onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })} />
+          <NumberInput
+            value={curve.outMin ?? 0}
+            onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })}
+          />
         </Field>
         <Field label="outMax">
-          <NumberInput value={curve.outMax ?? 255} onChange={(v) => set({ curve: { ...curve, outMax: Number(v) || 0 } })} />
+          <NumberInput
+            value={curve.outMax ?? 255}
+            onChange={(v) => set({ curve: { ...curve, outMax: Number(v) || 0 } })}
+          />
         </Field>
         {curve.type === 'exponential' && (
           <Field label="exponent">
-            <NumberInput value={curve.exponent ?? 2} step={0.1} onChange={(v) => set({ curve: { ...curve, exponent: Number(v) || 2 } })} />
+            <NumberInput
+              value={curve.exponent ?? 2}
+              step={0.1}
+              onChange={(v) => set({ curve: { ...curve, exponent: Number(v) || 2 } })}
+            />
           </Field>
         )}
         {isReciprocal && (
@@ -932,7 +1132,9 @@ function ChannelGroupFields({ channelGroup, onChange }) {
         const ch = cg[key] || { offset: 0, bitStart: 0, bitCount: 8 };
         return (
           <Paper key={key} p="xs" bg="var(--bg)" withBorder>
-            <Text size="xs" fw={600} mb={4}>{key.toUpperCase()} channel</Text>
+            <Text size="xs" fw={600} mb={4}>
+              {key.toUpperCase()} channel
+            </Text>
             <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
               <Field label="Offset">
                 <NumberInput
@@ -944,7 +1146,9 @@ function ChannelGroupFields({ channelGroup, onChange }) {
               <Field label="bitStart">
                 <NumberInput
                   value={ch.bitStart ?? 0}
-                  onChange={(v) => setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+                  onChange={(v) =>
+                    setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })
+                  }
                   min={0}
                   max={7}
                 />
@@ -952,7 +1156,9 @@ function ChannelGroupFields({ channelGroup, onChange }) {
               <Field label="bitCount">
                 <NumberInput
                   value={ch.bitCount ?? 8}
-                  onChange={(v) => setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+                  onChange={(v) =>
+                    setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })
+                  }
                   min={1}
                   max={32}
                 />
@@ -983,7 +1189,9 @@ function normalizeHexInput(v) {
   if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
   if (/^[0-9a-fA-F]{6}$/.test(raw)) return `#${raw.toLowerCase()}`;
   if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
-    const r = raw[1]; const g = raw[2]; const b = raw[3];
+    const r = raw[1];
+    const g = raw[2];
+    const b = raw[3];
     return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
   }
   return null;
@@ -1002,9 +1210,24 @@ function FixedHexField({ value, onChange, label = 'Color' }) {
           onChange(hex ?? (typeof v === 'string' ? v : '#ffffff'));
         }}
         swatches={[
-          '#ff0000', '#ff4400', '#ff8800', '#ffcc00', '#ffff00', '#aaff00',
-          '#00ff00', '#00ff88', '#00ffff', '#0088ff', '#0044ff', '#6600ff',
-          '#aa00ff', '#ff00ff', '#ff0088', '#ffffff', '#888888', '#000000',
+          '#ff0000',
+          '#ff4400',
+          '#ff8800',
+          '#ffcc00',
+          '#ffff00',
+          '#aaff00',
+          '#00ff00',
+          '#00ff88',
+          '#00ffff',
+          '#0088ff',
+          '#0044ff',
+          '#6600ff',
+          '#aa00ff',
+          '#ff00ff',
+          '#ff0088',
+          '#ffffff',
+          '#888888',
+          '#000000',
         ]}
         swatchesPerRow={9}
         styles={{ input: { fontFamily: 'monospace' } }}
@@ -1017,18 +1240,22 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
   const src = source || createEmptyColorSource();
   const nameTrim = (src.name || '').trim();
   const isDup = nameTrim && usedNames.filter((n) => n === nameTrim).length > 1;
-  const kind = src.kind === 'rgb' ? 'rgb' : (src.kind === 'fixed' ? 'fixed' : 'palette');
+  const kind = src.kind === 'rgb' ? 'rgb' : src.kind === 'fixed' ? 'fixed' : 'palette';
   return (
     <Paper p="xs" withBorder bg="var(--surface2)">
       <Group justify="space-between" mb="xs">
-        <Text size="xs" fw={600}>Color source</Text>
+        <Text size="xs" fw={600}>
+          Color source
+        </Text>
         <Group gap="xs">
           <CopyPasteButtons
             kind={RULE_CLIP.colorSource}
             getData={() => normalizeColorSource(src)}
             onPaste={(data) => onChange(normalizeColorSource(data))}
           />
-          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+            Delete
+          </AppButton>
         </Group>
       </Group>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
@@ -1052,10 +1279,12 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
                 return;
               }
               if (next === 'fixed') {
-                onChange(createEmptyColorSourceFixed({
-                  name: src.name || '',
-                  value: src.value || '#ffffff',
-                }));
+                onChange(
+                  createEmptyColorSourceFixed({
+                    name: src.name || '',
+                    value: src.value || '#ffffff',
+                  }),
+                );
                 return;
               }
               onChange(createEmptyColorSource({ name: src.name || '', kind: 'palette' }));
@@ -1090,7 +1319,9 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
           <Field label="bitStart">
             <NumberInput
               value={src.bitStart ?? 0}
-              onChange={(v) => onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+              onChange={(v) =>
+                onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })
+              }
               min={0}
               max={7}
             />
@@ -1098,7 +1329,9 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
           <Field label="bitCount">
             <NumberInput
               value={src.bitCount ?? 8}
-              onChange={(v) => onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+              onChange={(v) =>
+                onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })
+              }
               min={1}
               max={32}
             />
@@ -1117,17 +1350,17 @@ function ColorSourcesEditor({ sources, onChange }) {
     <CollapsibleBlock
       title="Color sources"
       summary={list.length ? `${list.length} named` : 'none'}
-      headerRight={(
+      headerRight={
         <CopyPasteButtons
           kind={RULE_CLIP.colorSources}
           getData={() => normalizeColorSources(list)}
           onPaste={(data) => onChange(normalizeColorSources(data))}
         />
-      )}
+      }
     >
       <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
-        Define fixed, palette, or packet-RGB colors once on this rule, then reference them by name in
-        &quot;Named blend&quot; extracts (N-way weighted mixes per segment).
+        Define fixed, palette, or packet-RGB colors once on this rule, then reference them by name
+        in &quot;Named blend&quot; extracts (N-way weighted mixes per segment).
       </Text>
       {dups.length > 0 && (
         <Text size="xs" c="red" mb="xs" fw={600}>
@@ -1172,10 +1405,13 @@ function ColorSourcesEditor({ sources, onChange }) {
 
 function ColorBlendSourceEditor({ label, source, onChange }) {
   const src = source || createEmptyColorBlendSource();
-  const kind = src.kind === 'fixed' ? 'fixed' : (src.kind === 'rgb' || src.channelGroup ? 'rgb' : 'palette');
+  const kind =
+    src.kind === 'fixed' ? 'fixed' : src.kind === 'rgb' || src.channelGroup ? 'rgb' : 'palette';
   return (
     <Paper p="xs" withBorder bg="var(--bg)">
-      <Text size="xs" fw={600} mb={4}>{label}</Text>
+      <Text size="xs" fw={600} mb={4}>
+        {label}
+      </Text>
       <Field label="Source" mb="xs">
         <SegmentedControl
           fullWidth
@@ -1229,14 +1465,22 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
           <Field label="Offset">
             <NumberInput
               value={src.offset ?? 0}
-              onChange={(v) => onChange({ ...src, kind: 'palette', offset: Math.max(0, parseInt(v, 10) || 0) })}
+              onChange={(v) =>
+                onChange({ ...src, kind: 'palette', offset: Math.max(0, parseInt(v, 10) || 0) })
+              }
               min={0}
             />
           </Field>
           <Field label="bitStart">
             <NumberInput
               value={src.bitStart ?? 0}
-              onChange={(v) => onChange({ ...src, kind: 'palette', bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+              onChange={(v) =>
+                onChange({
+                  ...src,
+                  kind: 'palette',
+                  bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                })
+              }
               min={0}
               max={7}
             />
@@ -1244,7 +1488,13 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
           <Field label="bitCount">
             <NumberInput
               value={src.bitCount ?? 8}
-              onChange={(v) => onChange({ ...src, kind: 'palette', bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+              onChange={(v) =>
+                onChange({
+                  ...src,
+                  kind: 'palette',
+                  bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)),
+                })
+              }
               min={1}
               max={32}
             />
@@ -1254,7 +1504,9 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
               fullWidth
               size="xs"
               value={src.paletteMap === false ? 'raw' : 'palette'}
-              onChange={(mode) => onChange({ ...src, kind: 'palette', paletteMap: mode === 'palette' })}
+              onChange={(mode) =>
+                onChange({ ...src, kind: 'palette', paletteMap: mode === 'palette' })
+              }
               data={[
                 { label: 'Palette idx', value: 'palette' },
                 { label: 'Raw gray', value: 'raw' },
@@ -1274,14 +1526,19 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
   const set = (patch) => onChange({ ...extract, ...patch });
   const targets = Array.isArray(extract.targets) ? extract.targets : [];
   const curve = extract.curve || {
-    type: 'linear', inMin: 0, inMax: 15, outMin: 0, outMax: 255, exponent: 2, outScale: 50,
+    type: 'linear',
+    inMin: 0,
+    inMax: 15,
+    outMin: 0,
+    outMax: 255,
+    exponent: 2,
+    outScale: 50,
   };
   const scale = extract.channelGroup?.scale || 'bitReplicate6to8';
-  const defaultChannel = (offset) => (
+  const defaultChannel = (offset) =>
     scale === 'direct8'
       ? { offset, bitStart: 0, bitCount: 8 }
-      : { offset, bitStart: 1, bitCount: 6 }
-  );
+      : { offset, bitStart: 1, bitCount: 6 };
   const channelGroup = extract.channelGroup || {
     r: defaultChannel(8),
     g: defaultChannel(9),
@@ -1291,44 +1548,51 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
   const colorBlend = extract.colorBlend || createEmptyColorBlend();
   const blend = Array.isArray(extract.blend) ? extract.blend : [createEmptyColorSourceBlendEntry()];
   const isReciprocal = curve.type === 'reciprocal';
-  const isSingleSourcePassthrough = isColorSourceBlendSource(extract.source)
-    && Array.isArray(extract.blend)
-    && extract.blend.length === 1;
+  const isSingleSourcePassthrough =
+    isColorSourceBlendSource(extract.source) &&
+    Array.isArray(extract.blend) &&
+    extract.blend.length === 1;
   const extractMode = isSingleSourcePassthrough
     ? 'namedSource'
     : isColorSourceBlendSource(extract.source)
       ? 'colorSourceBlend'
-      : (isFixedColorSource(extract.source)
+      : isFixedColorSource(extract.source)
         ? 'fixedColor'
-        : (extract.channelGroup
+        : extract.channelGroup
           ? 'channelGroup'
-          : (extract.colorBlend
+          : extract.colorBlend
             ? 'colorBlend'
-            : (extract.paletteMap ? 'palette' : 'curve'))));
+            : extract.paletteMap
+              ? 'palette'
+              : 'curve';
   const blendWeightSum = colorSourceBlendWeightSum(blend);
   const blendWeightOk = Math.abs(blendWeightSum - 100) < 0.5;
   const title = extract.name?.trim() ? extract.name.trim() : 'Packet extract';
   const summary = [
     extractMode === 'fixedColor'
-      ? (extract.value || '#ffffff')
-      : (extractMode === 'namedSource'
+      ? extract.value || '#ffffff'
+      : extractMode === 'namedSource'
         ? `→ ${extract.blend?.[0]?.source || '(none)'}`
-        : (extractMode === 'channelGroup'
+        : extractMode === 'channelGroup'
           ? 'rgb channel group'
-          : (extractMode === 'colorSourceBlend'
+          : extractMode === 'colorSourceBlend'
             ? 'named blend'
-            : (extractMode === 'colorBlend' ? 'color blend' : `off ${extract.offset ?? 0}`)))),
+            : extractMode === 'colorBlend'
+              ? 'color blend'
+              : `off ${extract.offset ?? 0}`,
     extractMode === 'fixedColor'
       ? 'hard-coded'
-      : (extractMode === 'namedSource'
+      : extractMode === 'namedSource'
         ? 'named source'
-        : (extractMode === 'channelGroup'
-          ? (channelGroup.scale || 'bitReplicate6to8')
-          : (extractMode === 'colorSourceBlend'
+        : extractMode === 'channelGroup'
+          ? channelGroup.scale || 'bitReplicate6to8'
+          : extractMode === 'colorSourceBlend'
             ? `${blend.length} src · ${blendWeightSum.toFixed(0)}%`
-            : (extractMode === 'colorBlend'
+            : extractMode === 'colorBlend'
               ? `ratio ${colorBlend.ratio?.mode || 'fixed'}`
-              : (extractMode === 'palette' ? 'palette' : (curve.type || 'curve')))))),
+              : extractMode === 'palette'
+                ? 'palette'
+                : curve.type || 'curve',
     `${targets.length} target${targets.length === 1 ? '' : 's'}`,
   ].join(' · ');
 
@@ -1355,9 +1619,8 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
         ...rest,
         name: extract.name || '',
         value: extract.value || rest.value,
-        targets: Array.isArray(extract.targets) && extract.targets.length
-          ? extract.targets
-          : rest.targets,
+        targets:
+          Array.isArray(extract.targets) && extract.targets.length ? extract.targets : rest.targets,
       });
       return;
     }
@@ -1403,13 +1666,14 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
         ...rest,
         name: extract.name || '',
         source: 'colorSourceBlend',
-        targets: Array.isArray(extract.targets) && extract.targets.length
-          ? extract.targets
-          : rest.targets,
-        blend: [{
-          source: (Array.isArray(extract.blend) && extract.blend[0]?.source) || '',
-          weightPct: 100,
-        }],
+        targets:
+          Array.isArray(extract.targets) && extract.targets.length ? extract.targets : rest.targets,
+        blend: [
+          {
+            source: (Array.isArray(extract.blend) && extract.blend[0]?.source) || '',
+            weightPct: 100,
+          },
+        ],
       });
       return;
     }
@@ -1417,18 +1681,16 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       const rest = createEmptyColorSourceBlendExtract(extract.name || '');
       // Single-entry blends render as "Named source"; promote to two slots so the
       // multi-source Named blend UI can stay selected.
-      let nextBlend = Array.isArray(extract.blend) && extract.blend.length
-        ? extract.blend
-        : rest.blend;
+      let nextBlend =
+        Array.isArray(extract.blend) && extract.blend.length ? extract.blend : rest.blend;
       if (nextBlend.length === 1) {
         nextBlend = [...nextBlend, createEmptyColorSourceBlendEntry({ weightPct: 0 })];
       }
       onChange({
         ...rest,
         name: extract.name || '',
-        targets: Array.isArray(extract.targets) && extract.targets.length
-          ? extract.targets
-          : rest.targets,
+        targets:
+          Array.isArray(extract.targets) && extract.targets.length ? extract.targets : rest.targets,
         blend: nextBlend,
       });
       return;
@@ -1442,9 +1704,12 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
   };
 
   const setScale = (nextScale) => {
-    const bitDefaults = nextScale === 'direct8'
-      ? { bitStart: 0, bitCount: 8 }
-      : (nextScale === 'bitReplicate6to8' ? { bitStart: 1, bitCount: 6 } : null);
+    const bitDefaults =
+      nextScale === 'direct8'
+        ? { bitStart: 0, bitCount: 8 }
+        : nextScale === 'bitReplicate6to8'
+          ? { bitStart: 1, bitCount: 6 }
+          : null;
     const patchCh = (ch, fallbackOff) => ({
       ...(ch || defaultChannel(fallbackOff)),
       ...(bitDefaults || {}),
@@ -1473,20 +1738,22 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       titleFw={600}
       summary={summary}
       paperProps={{ p: 'xs', bg: 'var(--surface2)' }}
-      headerRight={(
+      headerRight={
         <Group gap="xs">
           <CopyPasteButtons
             kind={RULE_CLIP.packetExtract}
             getData={() => normalizeExtract(extract)}
             onPaste={(data) => onChange(normalizeExtract(data))}
           />
-          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+            Delete
+          </AppButton>
         </Group>
-      )}
+      }
     >
       <Text size="xs" c="dimmed" mb="xs">
-        Hard-code a color, or read bits from the packet. For flash rate / on-time → segment fields, use{' '}
-        <strong>Timing → Add timing → param binding</strong> above (not this section).
+        Hard-code a color, or read bits from the packet. For flash rate / on-time → segment fields,
+        use <strong>Timing → Add timing → param binding</strong> above (not this section).
       </Text>
       <Field label="Value mode">
         <SegmentedControl
@@ -1507,7 +1774,11 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       {extractMode === 'fixedColor' && (
         <Stack gap="xs" mt="xs">
           <Field label="Name">
-            <TextInput value={extract.name || ''} onChange={(e) => onChange({ ...extract, source: 'fixedColor', name: e.target.value })} placeholder="solidPurple" />
+            <TextInput
+              value={extract.name || ''}
+              onChange={(e) => onChange({ ...extract, source: 'fixedColor', name: e.target.value })}
+              placeholder="solidPurple"
+            />
           </Field>
           <FixedHexField
             value={extract.value || '#ffffff'}
@@ -1520,12 +1791,14 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           <Field label="Name">
             <TextInput
               value={extract.name || ''}
-              onChange={(e) => onChange({
-                ...extract,
-                source: 'colorSourceBlend',
-                name: e.target.value,
-                blend: [{ source: (extract.blend?.[0]?.source) || '', weightPct: 100 }],
-              })}
+              onChange={(e) =>
+                onChange({
+                  ...extract,
+                  source: 'colorSourceBlend',
+                  name: e.target.value,
+                  blend: [{ source: extract.blend?.[0]?.source || '', weightPct: 100 }],
+                })
+              }
               placeholder="topLeftColor"
             />
           </Field>
@@ -1537,11 +1810,13 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           <Field label="Source">
             <SearchableSelect
               value={extract.blend?.[0]?.source || ''}
-              onChange={(value) => onChange({
-                ...extract,
-                source: 'colorSourceBlend',
-                blend: [{ source: value || '', weightPct: 100 }],
-              })}
+              onChange={(value) =>
+                onChange({
+                  ...extract,
+                  source: 'colorSourceBlend',
+                  blend: [{ source: value || '', weightPct: 100 }],
+                })
+              }
               options={colorSourceOpts}
               placeholder="Choose a named color source"
               allowEmpty
@@ -1549,44 +1824,78 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           </Field>
         </Stack>
       )}
-      {extractMode !== 'channelGroup' && extractMode !== 'colorBlend' && extractMode !== 'colorSourceBlend' && extractMode !== 'fixedColor' && extractMode !== 'namedSource' && (
-        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
-          <Field label="Name">
-            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="topLeft" />
-          </Field>
-          <Field label="Offset">
-            <NumberInput value={extract.offset ?? 0} onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })} min={0} />
-          </Field>
-          <Field label="bitStart">
-            <NumberInput value={extract.bitStart ?? 0} onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })} min={0} max={7} />
-          </Field>
-          <Field label="bitCount">
-            <NumberInput value={extract.bitCount ?? 5} onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })} min={1} max={32} />
-          </Field>
-        </SimpleGrid>
-      )}
+      {extractMode !== 'channelGroup' &&
+        extractMode !== 'colorBlend' &&
+        extractMode !== 'colorSourceBlend' &&
+        extractMode !== 'fixedColor' &&
+        extractMode !== 'namedSource' && (
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
+            <Field label="Name">
+              <TextInput
+                value={extract.name || ''}
+                onChange={(e) => set({ name: e.target.value })}
+                placeholder="topLeft"
+              />
+            </Field>
+            <Field label="Offset">
+              <NumberInput
+                value={extract.offset ?? 0}
+                onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })}
+                min={0}
+              />
+            </Field>
+            <Field label="bitStart">
+              <NumberInput
+                value={extract.bitStart ?? 0}
+                onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+                min={0}
+                max={7}
+              />
+            </Field>
+            <Field label="bitCount">
+              <NumberInput
+                value={extract.bitCount ?? 5}
+                onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+                min={1}
+                max={32}
+              />
+            </Field>
+          </SimpleGrid>
+        )}
       {extractMode === 'channelGroup' && (
         <Stack gap="xs" mt="xs">
           <Field label="Name">
-            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="e908Color" />
+            <TextInput
+              value={extract.name || ''}
+              onChange={(e) => set({ name: e.target.value })}
+              placeholder="e908Color"
+            />
           </Field>
           {['r', 'g', 'b'].map((key) => {
             const ch = channelGroup[key] || defaultChannel(key === 'r' ? 8 : key === 'g' ? 9 : 10);
             return (
               <Paper key={key} p="xs" bg="var(--bg)" withBorder>
-                <Text size="xs" fw={600} mb={4}>{key.toUpperCase()} channel</Text>
+                <Text size="xs" fw={600} mb={4}>
+                  {key.toUpperCase()} channel
+                </Text>
                 <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
                   <Field label="Offset">
                     <NumberInput
                       value={ch.offset ?? 0}
-                      onChange={(v) => setChannel(key, { offset: Math.max(0, parseInt(v, 10) || 0) })}
+                      onChange={(v) =>
+                        setChannel(key, { offset: Math.max(0, parseInt(v, 10) || 0) })
+                      }
                       min={0}
                     />
                   </Field>
                   <Field label="bitStart">
                     <NumberInput
                       value={ch.bitStart ?? (scale === 'direct8' ? 0 : 1)}
-                      onChange={(v) => setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+                      onChange={(v) =>
+                        setChannel(key, {
+                          bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                        })
+                      }
                       min={0}
                       max={7}
                     />
@@ -1594,7 +1903,11 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                   <Field label="bitCount">
                     <NumberInput
                       value={ch.bitCount ?? (scale === 'direct8' ? 8 : 6)}
-                      onChange={(v) => setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+                      onChange={(v) =>
+                        setChannel(key, {
+                          bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)),
+                        })
+                      }
                       min={1}
                       max={32}
                     />
@@ -1620,20 +1933,22 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       {extractMode === 'colorSourceBlend' && (
         <Stack gap="xs" mt="xs">
           <Field label="Name">
-            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="centerBlend" />
+            <TextInput
+              value={extract.name || ''}
+              onChange={(e) => set({ name: e.target.value })}
+              placeholder="centerBlend"
+            />
           </Field>
           <Text size="xs" c="dimmed" lh={1.45}>
-            Weighted mix of named rule color sources. Add sources in the Color sources section above.
-            Single entry at 100% is a pass-through.
+            Weighted mix of named rule color sources. Add sources in the Color sources section
+            above. Single entry at 100% is a pass-through.
           </Text>
           {!colorSourceOpts.length && (
-            <Text size="xs" c="orange">No named color sources on this rule yet.</Text>
+            <Text size="xs" c="orange">
+              No named color sources on this rule yet.
+            </Text>
           )}
-          <Text
-            size="xs"
-            fw={600}
-            c={blendWeightOk ? 'dimmed' : 'orange'}
-          >
+          <Text size="xs" fw={600} c={blendWeightOk ? 'dimmed' : 'orange'}>
             Total: {blendWeightSum.toFixed(0)}% — should be 100%
             {blendWeightOk ? '' : ' (firmware will normalize)'}
           </Text>
@@ -1685,11 +2000,13 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           <AppButton
             size="compact-xs"
             variant="default"
-            onClick={() => set({
-              source: 'colorSourceBlend',
-              blend: [...blend, createEmptyColorSourceBlendEntry({ weightPct: 0 })],
-              paletteMap: false,
-            })}
+            onClick={() =>
+              set({
+                source: 'colorSourceBlend',
+                blend: [...blend, createEmptyColorSourceBlendEntry({ weightPct: 0 })],
+                paletteMap: false,
+              })
+            }
           >
             Add source
           </AppButton>
@@ -1698,7 +2015,11 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       {extractMode === 'colorBlend' && (
         <Stack gap="xs" mt="xs">
           <Field label="Name">
-            <TextInput value={extract.name || ''} onChange={(e) => set({ name: e.target.value })} placeholder="blendedColor" />
+            <TextInput
+              value={extract.name || ''}
+              onChange={(e) => set({ name: e.target.value })}
+              placeholder="blendedColor"
+            />
           </Field>
           <Text size="xs" c="dimmed">
             Static apply-time blend of two colors (not a live WLED cross-fade). Use for fixed
@@ -1715,7 +2036,9 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
             onChange={(b) => set({ colorBlend: { ...colorBlend, b } })}
           />
           <Paper p="xs" withBorder bg="var(--bg)">
-            <Text size="xs" fw={600} mb={4}>Blend ratio</Text>
+            <Text size="xs" fw={600} mb={4}>
+              Blend ratio
+            </Text>
             <SegmentedControl
               fullWidth
               size="xs"
@@ -1753,27 +2076,31 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                 <Field label="Offset">
                   <NumberInput
                     value={colorBlend.ratio.offset ?? 0}
-                    onChange={(v) => set({
-                      colorBlend: {
-                        ...colorBlend,
-                        ratio: { ...colorBlend.ratio, offset: Math.max(0, parseInt(v, 10) || 0) },
-                      },
-                    })}
+                    onChange={(v) =>
+                      set({
+                        colorBlend: {
+                          ...colorBlend,
+                          ratio: { ...colorBlend.ratio, offset: Math.max(0, parseInt(v, 10) || 0) },
+                        },
+                      })
+                    }
                     min={0}
                   />
                 </Field>
                 <Field label="bitStart">
                   <NumberInput
                     value={colorBlend.ratio.bitStart ?? 0}
-                    onChange={(v) => set({
-                      colorBlend: {
-                        ...colorBlend,
-                        ratio: {
-                          ...colorBlend.ratio,
-                          bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                    onChange={(v) =>
+                      set({
+                        colorBlend: {
+                          ...colorBlend,
+                          ratio: {
+                            ...colorBlend.ratio,
+                            bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                          },
                         },
-                      },
-                    })}
+                      })
+                    }
                     min={0}
                     max={7}
                   />
@@ -1781,15 +2108,17 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                 <Field label="bitCount">
                   <NumberInput
                     value={colorBlend.ratio.bitCount ?? 8}
-                    onChange={(v) => set({
-                      colorBlend: {
-                        ...colorBlend,
-                        ratio: {
-                          ...colorBlend.ratio,
-                          bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)),
+                    onChange={(v) =>
+                      set({
+                        colorBlend: {
+                          ...colorBlend,
+                          ratio: {
+                            ...colorBlend.ratio,
+                            bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)),
+                          },
                         },
-                      },
-                    })}
+                      })
+                    }
                     min={1}
                     max={32}
                   />
@@ -1802,9 +2131,11 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                   max={1}
                   step={0.01}
                   value={colorBlend.ratio?.value ?? 0.5}
-                  onChange={(value) => set({
-                    colorBlend: { ...colorBlend, ratio: { mode: 'fixed', value } },
-                  })}
+                  onChange={(value) =>
+                    set({
+                      colorBlend: { ...colorBlend, ratio: { mode: 'fixed', value } },
+                    })
+                  }
                   size="xs"
                 />
               </Field>
@@ -1842,14 +2173,24 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
               />
             </Field>
             <Field label="outMin">
-              <NumberInput value={curve.outMin ?? 0} onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })} />
+              <NumberInput
+                value={curve.outMin ?? 0}
+                onChange={(v) => set({ curve: { ...curve, outMin: Number(v) || 0 } })}
+              />
             </Field>
             <Field label="outMax">
-              <NumberInput value={curve.outMax ?? 255} onChange={(v) => set({ curve: { ...curve, outMax: Number(v) || 0 } })} />
+              <NumberInput
+                value={curve.outMax ?? 255}
+                onChange={(v) => set({ curve: { ...curve, outMax: Number(v) || 0 } })}
+              />
             </Field>
             {curve.type === 'exponential' && (
               <Field label="exponent">
-                <NumberInput value={curve.exponent ?? 2} step={0.1} onChange={(v) => set({ curve: { ...curve, exponent: Number(v) || 2 } })} />
+                <NumberInput
+                  value={curve.exponent ?? 2}
+                  step={0.1}
+                  onChange={(v) => set({ curve: { ...curve, exponent: Number(v) || 2 } })}
+                />
               </Field>
             )}
             {isReciprocal && (
@@ -1866,7 +2207,8 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
           </SimpleGrid>
           {isReciprocal && (
             <Text size="xs" c="dimmed" lh={1.45}>
-              Reciprocal treats extracted bits as a rate (Hz). For timing-model flash rate, use the Timing bindings section instead.
+              Reciprocal treats extracted bits as a rate (Hz). For timing-model flash rate, use the
+              Timing bindings section instead.
             </Text>
           )}
         </Stack>
@@ -1968,31 +2310,66 @@ function RuleCard({
           <Text fw={700} size="sm" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {rule.name || `Rule ${index + 1}`}
           </Text>
-          <Badge size="xs" variant="outline">P{rule.priority ?? index * 10}</Badge>
-          {rule.enabled === false && <Badge size="xs" color="gray">off</Badge>}
+          <Badge size="xs" variant="outline">
+            P{rule.priority ?? index * 10}
+          </Badge>
+          {rule.enabled === false && (
+            <Badge size="xs" color="gray">
+              off
+            </Badge>
+          )}
         </Group>
         <Group gap={4}>
-          <AppButton size="compact-xs" variant="default" disabled={index === 0} onClick={() => onMove(-1)}>↑</AppButton>
-          <AppButton size="compact-xs" variant="default" disabled={index >= total - 1} onClick={() => onMove(1)}>↓</AppButton>
-          <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>Duplicate</AppButton>
-          <AppButton size="compact-xs" variant="danger" onClick={onDelete}>Delete</AppButton>
+          <AppButton
+            size="compact-xs"
+            variant="default"
+            disabled={index === 0}
+            onClick={() => onMove(-1)}
+          >
+            ↑
+          </AppButton>
+          <AppButton
+            size="compact-xs"
+            variant="default"
+            disabled={index >= total - 1}
+            onClick={() => onMove(1)}
+          >
+            ↓
+          </AppButton>
+          <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>
+            Duplicate
+          </AppButton>
+          <AppButton size="compact-xs" variant="danger" onClick={onDelete}>
+            Delete
+          </AppButton>
         </Group>
       </Group>
 
       {expanded && (
         <Stack gap="sm" mt="sm">
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-            <Field label="Name">
-              <TextInput value={rule.name || ''} onChange={(e) => onChange({ ...rule, name: e.target.value })} />
-            </Field>
-            <Field label="Priority">
-              <NumberInput
-                value={rule.priority ?? index * 10}
-                onChange={(v) => onChange({ ...rule, priority: parseInt(v, 10) || 0 })}
-                description="Lower runs first; reorder buttons rewrite 0,10,20…"
-              />
-            </Field>
-          </SimpleGrid>
+          <Group gap="xs" justify="space-between" align="flex-end">
+            <TextInput
+              label="Name"
+              flex={1}
+              value={rule.name || ''}
+              onChange={(e) => onChange({ ...rule, name: e.target.value })}
+            />
+            <NumberInput
+              label="Priority"
+              flex={1}
+              value={rule.priority ?? index * 10}
+              onChange={(v) => onChange({ ...rule, priority: parseInt(v, 10) || 0 })}
+              description="Lower runs first; reorder buttons rewrite 0,10,20…"
+            />
+          </Group>
+
+          <Divider label="Match Conditions" />
+          <ConditionGroupEditor
+            node={rule.match || createEmptyMatchGroup('all')}
+            onChange={(match) => onChange({ ...rule, match })}
+          />
+          <Divider label="Properties" />
+
           <Checkbox
             label="Enabled"
             checked={rule.enabled !== false}
@@ -2026,24 +2403,31 @@ function RuleCard({
             />
           </Field>
           {!rule.presetId && (
-            <Stack gap="xs" mt="xs">
+            <Stack gap="xs">
               <Checkbox
                 label="Set a global effect (no preset)"
                 checked={!!effect.enabled}
-                onChange={(e) => onChange({
-                  ...rule,
-                  effect: { ...(rule.effect || createEmptyRuleEffect()), enabled: e.target.checked },
-                })}
+                onChange={(e) =>
+                  onChange({
+                    ...rule,
+                    effect: {
+                      ...(rule.effect || createEmptyRuleEffect()),
+                      enabled: e.target.checked,
+                    },
+                  })
+                }
               />
               {effect.enabled && (
                 <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
                   <Field label="Effect">
                     <SearchableSelect
                       value={effect.fx >= 0 ? String(effect.fx) : ''}
-                      onChange={(v) => onChange({
-                        ...rule,
-                        effect: { ...effect, fx: v === '' ? -1 : parseInt(v, 10) },
-                      })}
+                      onChange={(v) =>
+                        onChange({
+                          ...rule,
+                          effect: { ...effect, fx: v === '' ? -1 : parseInt(v, 10) },
+                        })
+                      }
                       options={fxOpts}
                       placeholder="(Solid)"
                       allowEmpty
@@ -2052,10 +2436,12 @@ function RuleCard({
                   <Field label="Palette">
                     <SearchableSelect
                       value={effect.pal >= 0 ? String(effect.pal) : ''}
-                      onChange={(v) => onChange({
-                        ...rule,
-                        effect: { ...effect, pal: v === '' ? -1 : parseInt(v, 10) },
-                      })}
+                      onChange={(v) =>
+                        onChange({
+                          ...rule,
+                          effect: { ...effect, pal: v === '' ? -1 : parseInt(v, 10) },
+                        })
+                      }
                       options={palOpts}
                       placeholder="(none)"
                       allowEmpty
@@ -2112,29 +2498,33 @@ function RuleCard({
               effectOptions={effectOptions}
               paletteOptions={paletteOptions}
               onChange={(patch) => onChange({ ...rule, ...patch })}
-              headerActions={(
+              headerActions={
                 <CopyPasteButtons
                   kind={RULE_CLIP.segmentSources}
                   getData={() => ({
                     segmentOverrides: normalizeSegmentOverrides(rule.segmentOverrides || {}),
                     segmentSourceMode: normalizeSegmentSourceMode(rule.segmentSourceMode),
                   })}
-                  onPaste={(data) => onChange({
-                    ...rule,
-                    segmentOverrides: normalizeSegmentOverrides(data?.segmentOverrides),
-                    segmentSourceMode: normalizeSegmentSourceMode(data?.segmentSourceMode),
-                  })}
+                  onPaste={(data) =>
+                    onChange({
+                      ...rule,
+                      segmentOverrides: normalizeSegmentOverrides(data?.segmentOverrides),
+                      segmentSourceMode: normalizeSegmentSourceMode(data?.segmentSourceMode),
+                    })
+                  }
                 />
-              )}
+              }
             />
           )}
 
           <CollapsibleBlock
             title="Timing"
-            summary={timing.enabled
-              ? `on · hold ${timing.cooldownSec ?? 2}s${timing.timingModelId ? ` · ${timingModelOpts.find((m) => m.value === timing.timingModelId)?.label || timing.timingModelId}` : ''}`
-              : 'off'}
-            headerRight={(
+            summary={
+              timing.enabled
+                ? `on · hold ${timing.cooldownSec ?? 2}s${timing.timingModelId ? ` · ${timingModelOpts.find((m) => m.value === timing.timingModelId)?.label || timing.timingModelId}` : ''}`
+                : 'off'
+            }
+            headerRight={
               <CopyPasteButtons
                 kind={RULE_CLIP.timing}
                 getData={() => ({
@@ -2144,8 +2534,8 @@ function RuleCard({
                     .map((ex) => normalizeExtract(ex)),
                 })}
                 onPaste={(data) => {
-                  const wrapped = data && typeof data === 'object'
-                    && ('timing' in data || 'bindings' in data);
+                  const wrapped =
+                    data && typeof data === 'object' && ('timing' in data || 'bindings' in data);
                   const nextTiming = normalizeRuleTiming(wrapped ? data.timing : data);
                   if (!wrapped) {
                     onChange({ ...rule, timing: nextTiming });
@@ -2154,8 +2544,9 @@ function RuleCard({
                   const bindings = (Array.isArray(data.bindings) ? data.bindings : [])
                     .map((ex) => normalizeExtract(ex))
                     .filter((ex) => isTimingDerivedSource(ex.source));
-                  const packetOnes = (rule.extract || [])
-                    .filter((ex) => !isTimingDerivedSource(ex.source));
+                  const packetOnes = (rule.extract || []).filter(
+                    (ex) => !isTimingDerivedSource(ex.source),
+                  );
                   onChange({
                     ...rule,
                     timing: nextTiming,
@@ -2163,30 +2554,35 @@ function RuleCard({
                   });
                 }}
               />
-            )}
+            }
           >
             <Text size="xs" c="dimmed" mb="xs">
-              On-time comes from the packet timing byte (including final-cycle stretch from fadeBits).
-              Cooldown is how long lights stay black after the stretched final cycle. Bind flash rate /
-              on-time / stretch to segment fields (sx, ix, …) in the section at the bottom of this card.
+              On-time comes from the packet timing byte (including final-cycle stretch from
+              fadeBits). Cooldown is how long lights stay black after the stretched final cycle.
+              Bind flash rate / on-time / stretch to segment fields (sx, ix, …) in the section at
+              the bottom of this card.
             </Text>
             <Switch
               label="Use packet timing byte"
               checked={!!timing.enabled}
-              onChange={(e) => onChange({
-                ...rule,
-                timing: { ...timing, enabled: e.target.checked },
-              })}
+              onChange={(e) =>
+                onChange({
+                  ...rule,
+                  timing: { ...timing, enabled: e.target.checked },
+                })
+              }
               mb="xs"
             />
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               <Field label="Byte offset">
                 <NumberInput
                   value={timing.offset ?? 5}
-                  onChange={(v) => onChange({
-                    ...rule,
-                    timing: { ...timing, offset: Math.max(0, parseInt(v, 10) || 0) },
-                  })}
+                  onChange={(v) =>
+                    onChange({
+                      ...rule,
+                      timing: { ...timing, offset: Math.max(0, parseInt(v, 10) || 0) },
+                    })
+                  }
                   min={0}
                   disabled={!timing.enabled}
                 />
@@ -2194,10 +2590,12 @@ function RuleCard({
               <Field label="Black hold / cooldown (sec)">
                 <NumberInput
                   value={timing.cooldownSec ?? 2}
-                  onChange={(v) => onChange({
-                    ...rule,
-                    timing: { ...timing, cooldownSec: Math.max(0, parseInt(v, 10) || 0) },
-                  })}
+                  onChange={(v) =>
+                    onChange({
+                      ...rule,
+                      timing: { ...timing, cooldownSec: Math.max(0, parseInt(v, 10) || 0) },
+                    })
+                  }
                   min={0}
                   disabled={!timing.enabled}
                 />
@@ -2224,23 +2622,27 @@ function RuleCard({
             <Field label="Timing model" mt="xs">
               <SearchableSelect
                 value={timing.timingModelId || ''}
-                onChange={(timingModelId) => onChange({
-                  ...rule,
-                  timing: { ...timing, enabled: true, timingModelId },
-                })}
+                onChange={(timingModelId) =>
+                  onChange({
+                    ...rule,
+                    timing: { ...timing, enabled: true, timingModelId },
+                  })
+                }
                 placeholder="Select timing model (e.g. E9 0E strobe)…"
                 options={timingModelOpts}
                 allowEmpty
                 disabled={!timing.enabled}
               />
             </Field>
-            {timing.enabled && timing.timingModelId && !timingModelOpts.some((m) => m.value === timing.timingModelId) && (
-              <Text size="xs" c="orange" mt={4}>
-                Timing model &quot;{timing.timingModelId}&quot; is missing from Timing Models —
-                on-time still runs with firmware defaults; speed buckets / strobe will not apply.
-                Pick another model or recreate the deleted one.
-              </Text>
-            )}
+            {timing.enabled &&
+              timing.timingModelId &&
+              !timingModelOpts.some((m) => m.value === timing.timingModelId) && (
+                <Text size="xs" c="orange" mt={4}>
+                  Timing model &quot;{timing.timingModelId}&quot; is missing from Timing Models —
+                  on-time still runs with firmware defaults; speed buckets / strobe will not apply.
+                  Pick another model or recreate the deleted one.
+                </Text>
+              )}
             {onEditTimingModels && (
               <AppButton size="compact-xs" variant="default" mt={4} onClick={onEditTimingModels}>
                 Edit timing models →
@@ -2252,10 +2654,12 @@ function RuleCard({
             <SegmentedControl
               fullWidth
               value={timing.cooldownResetMode === 'fixed' ? 'fixed' : 'onMatch'}
-              onChange={(cooldownResetMode) => onChange({
-                ...rule,
-                timing: { ...timing, cooldownResetMode },
-              })}
+              onChange={(cooldownResetMode) =>
+                onChange({
+                  ...rule,
+                  timing: { ...timing, cooldownResetMode },
+                })
+              }
               disabled={!timing.enabled}
               data={[
                 { label: 'onMatch', value: 'onMatch' },
@@ -2263,7 +2667,9 @@ function RuleCard({
               ]}
             />
 
-            <Text size="sm" fw={700} mt="md" mb={4}>Wire timing values → segment fields</Text>
+            <Text size="sm" fw={700} mt="md" mb={4}>
+              Wire timing values → segment fields
+            </Text>
             <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
               Duration (on / stretch / black hold) is controlled above. Use bindings here to push
               decoded flash rate, on-time, or final-cycle stretch through a curve into any segment
@@ -2281,19 +2687,23 @@ function RuleCard({
                     ruleTiming={timing}
                     timingModelOpts={timingModelOpts}
                     onEditTimingModels={onEditTimingModels}
-                    onTimingChange={(nextTiming) => onChange({
-                      ...rule,
-                      timing: { ...timing, ...nextTiming },
-                    })}
+                    onTimingChange={(nextTiming) =>
+                      onChange({
+                        ...rule,
+                        timing: { ...timing, ...nextTiming },
+                      })
+                    }
                     onChange={(next) => {
                       const extract = [...(rule.extract || [])];
                       extract[i] = next;
                       onChange({ ...rule, extract });
                     }}
-                    onDelete={() => onChange({
-                      ...rule,
-                      extract: (rule.extract || []).filter((_, j) => j !== i),
-                    })}
+                    onDelete={() =>
+                      onChange({
+                        ...rule,
+                        extract: (rule.extract || []).filter((_, j) => j !== i),
+                      })
+                    }
                   />
                 ))}
             </Stack>
@@ -2301,11 +2711,16 @@ function RuleCard({
               mt="xs"
               size="compact-sm"
               variant="primary"
-              onClick={() => onChange({
-                ...rule,
-                timing: { ...timing, enabled: true },
-                extract: [...(rule.extract || []), createEmptyTimingParamBinding('timingFlashRate')],
-              })}
+              onClick={() =>
+                onChange({
+                  ...rule,
+                  timing: { ...timing, enabled: true },
+                  extract: [
+                    ...(rule.extract || []),
+                    createEmptyTimingParamBinding('timingFlashRate'),
+                  ],
+                })
+              }
             >
               Add timing → param binding
             </AppButton>
@@ -2313,19 +2728,23 @@ function RuleCard({
 
           <CollapsibleBlock
             title="Fallback duration"
-            summary={fallbackDuration.enabled
-              ? `on · ${fallbackDuration.onSec ?? 10}s${fallbackDuration.fadeSec ? ` · fade ${fallbackDuration.fadeSec}s` : ''}`
-              : 'off'}
-            headerRight={(
+            summary={
+              fallbackDuration.enabled
+                ? `on · ${fallbackDuration.onSec ?? 10}s${fallbackDuration.fadeSec ? ` · fade ${fallbackDuration.fadeSec}s` : ''}`
+                : 'off'
+            }
+            headerRight={
               <CopyPasteButtons
                 kind={RULE_CLIP.fallbackDuration}
                 getData={() => normalizeFallbackDuration(fallbackDuration)}
-                onPaste={(data) => onChange({
-                  ...rule,
-                  fallbackDuration: normalizeFallbackDuration(data),
-                })}
+                onPaste={(data) =>
+                  onChange({
+                    ...rule,
+                    fallbackDuration: normalizeFallbackDuration(data),
+                  })
+                }
               />
-            )}
+            }
           >
             <Text size="xs" c="dimmed" mb="xs">
               Used when Timing is disabled — lets an unhandled/undecoded opcode still return to
@@ -2335,23 +2754,27 @@ function RuleCard({
             <Switch
               label="Use fallback duration"
               checked={!!fallbackDuration.enabled}
-              onChange={(e) => onChange({
-                ...rule,
-                fallbackDuration: { ...fallbackDuration, enabled: e.target.checked },
-              })}
+              onChange={(e) =>
+                onChange({
+                  ...rule,
+                  fallbackDuration: { ...fallbackDuration, enabled: e.target.checked },
+                })
+              }
               mb="xs"
             />
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               <Field label="On duration (sec)">
                 <NumberInput
                   value={fallbackDuration.onSec ?? 10}
-                  onChange={(v) => onChange({
-                    ...rule,
-                    fallbackDuration: {
-                      ...fallbackDuration,
-                      onSec: Math.max(0, Number(v) || 0),
-                    },
-                  })}
+                  onChange={(v) =>
+                    onChange({
+                      ...rule,
+                      fallbackDuration: {
+                        ...fallbackDuration,
+                        onSec: Math.max(0, Number(v) || 0),
+                      },
+                    })
+                  }
                   min={0}
                   step={0.5}
                   decimalScale={2}
@@ -2361,13 +2784,15 @@ function RuleCard({
               <Field label="Fade duration (sec)">
                 <NumberInput
                   value={fallbackDuration.fadeSec ?? 0}
-                  onChange={(v) => onChange({
-                    ...rule,
-                    fallbackDuration: {
-                      ...fallbackDuration,
-                      fadeSec: Math.max(0, Number(v) || 0),
-                    },
-                  })}
+                  onChange={(v) =>
+                    onChange({
+                      ...rule,
+                      fallbackDuration: {
+                        ...fallbackDuration,
+                        fadeSec: Math.max(0, Number(v) || 0),
+                      },
+                    })
+                  }
                   min={0}
                   step={0.1}
                   decimalScale={2}
@@ -2400,25 +2825,29 @@ function RuleCard({
           <CollapsibleBlock
             title="Start transition"
             summary={`${startTransition.type || 'fade'}${startTransition.type === 'instant' ? '' : ` · ${startTransition.timeMs ?? 400}ms`}`}
-            headerRight={(
+            headerRight={
               <CopyPasteButtons
                 kind={RULE_CLIP.startTransition}
                 getData={() => normalizeStartTransition(startTransition)}
-                onPaste={(data) => onChange({
-                  ...rule,
-                  startTransition: normalizeStartTransition(data),
-                })}
+                onPaste={(data) =>
+                  onChange({
+                    ...rule,
+                    startTransition: normalizeStartTransition(data),
+                  })
+                }
               />
-            )}
+            }
           >
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               <Field label="Type">
                 <SearchableSelect
                   value={startTransition.type || 'fade'}
-                  onChange={(type) => onChange({
-                    ...rule,
-                    startTransition: { ...startTransition, type },
-                  })}
+                  onChange={(type) =>
+                    onChange({
+                      ...rule,
+                      startTransition: { ...startTransition, type },
+                    })
+                  }
                   options={WLED_START_TRANSITIONS.map((t) => ({
                     value: t.value,
                     label: t.label,
@@ -2430,10 +2859,15 @@ function RuleCard({
               <Field label="timeMs">
                 <NumberInput
                   value={startTransition.timeMs ?? 400}
-                  onChange={(v) => onChange({
-                    ...rule,
-                    startTransition: { ...startTransition, timeMs: Math.max(0, parseInt(v, 10) || 0) },
-                  })}
+                  onChange={(v) =>
+                    onChange({
+                      ...rule,
+                      startTransition: {
+                        ...startTransition,
+                        timeMs: Math.max(0, parseInt(v, 10) || 0),
+                      },
+                    })
+                  }
                   min={0}
                   disabled={startTransition.type === 'instant'}
                 />
@@ -2443,19 +2877,23 @@ function RuleCard({
 
           <CollapsibleBlock
             title="Stop transition"
-            summary={stopTransition.enabled
-              ? `${stopTransition.type || 'fade'} · ${stopTransition.durationMode === 'custom' ? `${stopTransition.timeMs ?? 0}ms` : 'timing stretch'}`
-              : 'off (plain FTB)'}
-            headerRight={(
+            summary={
+              stopTransition.enabled
+                ? `${stopTransition.type || 'fade'} · ${stopTransition.durationMode === 'custom' ? `${stopTransition.timeMs ?? 0}ms` : 'timing stretch'}`
+                : 'off (plain FTB)'
+            }
+            headerRight={
               <CopyPasteButtons
                 kind={RULE_CLIP.stopTransition}
                 getData={() => normalizeStopTransition(stopTransition)}
-                onPaste={(data) => onChange({
-                  ...rule,
-                  stopTransition: normalizeStopTransition(data),
-                })}
+                onPaste={(data) =>
+                  onChange({
+                    ...rule,
+                    stopTransition: normalizeStopTransition(data),
+                  })
+                }
               />
-            )}
+            }
           >
             <Text size="xs" c="dimmed" mb="xs">
               How the effect transitions out to fade-to-black. Duration defaults to the timing
@@ -2464,20 +2902,24 @@ function RuleCard({
             <Switch
               label="Use stop transition"
               checked={!!stopTransition.enabled}
-              onChange={(e) => onChange({
-                ...rule,
-                stopTransition: { ...stopTransition, enabled: e.target.checked },
-              })}
+              onChange={(e) =>
+                onChange({
+                  ...rule,
+                  stopTransition: { ...stopTransition, enabled: e.target.checked },
+                })
+              }
               mb="xs"
             />
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               <Field label="Type">
                 <SearchableSelect
                   value={stopTransition.type || 'fade'}
-                  onChange={(type) => onChange({
-                    ...rule,
-                    stopTransition: { ...stopTransition, enabled: true, type },
-                  })}
+                  onChange={(type) =>
+                    onChange({
+                      ...rule,
+                      stopTransition: { ...stopTransition, enabled: true, type },
+                    })
+                  }
                   options={WLED_START_TRANSITIONS.map((t) => ({
                     value: t.value,
                     label: t.label,
@@ -2491,17 +2933,20 @@ function RuleCard({
                 <SegmentedControl
                   fullWidth
                   value={stopTransition.durationMode === 'custom' ? 'custom' : 'timingFade'}
-                  onChange={(durationMode) => onChange({
-                    ...rule,
-                    stopTransition: {
-                      ...stopTransition,
-                      enabled: true,
-                      durationMode,
-                      timeMs: durationMode === 'custom'
-                        ? (stopTransition.timeMs ?? 400)
-                        : stopTransition.timeMs,
-                    },
-                  })}
+                  onChange={(durationMode) =>
+                    onChange({
+                      ...rule,
+                      stopTransition: {
+                        ...stopTransition,
+                        enabled: true,
+                        durationMode,
+                        timeMs:
+                          durationMode === 'custom'
+                            ? (stopTransition.timeMs ?? 400)
+                            : stopTransition.timeMs,
+                      },
+                    })
+                  }
                   data={[
                     { value: 'timingFade', label: 'Timing stretch' },
                     { value: 'custom', label: 'Custom' },
@@ -2510,29 +2955,26 @@ function RuleCard({
                 />
               </Field>
             </SimpleGrid>
-            {stopTransition.enabled && stopTransition.durationMode === 'custom'
-              && stopTransition.type !== 'instant' && (
-              <Field label="timeMs" mt="xs">
-                <NumberInput
-                  value={stopTransition.timeMs ?? 400}
-                  onChange={(v) => onChange({
-                    ...rule,
-                    stopTransition: {
-                      ...stopTransition,
-                      timeMs: Math.max(0, parseInt(v, 10) || 0),
-                    },
-                  })}
-                  min={0}
-                />
-              </Field>
-            )}
+            {stopTransition.enabled &&
+              stopTransition.durationMode === 'custom' &&
+              stopTransition.type !== 'instant' && (
+                <Field label="timeMs" mt="xs">
+                  <NumberInput
+                    value={stopTransition.timeMs ?? 400}
+                    onChange={(v) =>
+                      onChange({
+                        ...rule,
+                        stopTransition: {
+                          ...stopTransition,
+                          timeMs: Math.max(0, parseInt(v, 10) || 0),
+                        },
+                      })
+                    }
+                    min={0}
+                  />
+                </Field>
+              )}
           </CollapsibleBlock>
-
-          <SectionHead>Match conditions</SectionHead>
-          <ConditionGroupEditor
-            node={rule.match || createEmptyMatchGroup('all')}
-            onChange={(match) => onChange({ ...rule, match })}
-          />
 
           <ColorSourcesEditor
             sources={rule.colorSources || []}
@@ -2542,25 +2984,29 @@ function RuleCard({
           <CollapsibleBlock
             title="Packet extracts"
             summary={`${(rule.extract || []).filter((ex) => !isTimingDerivedSource(ex.source)).length} extract(s)`}
-            headerRight={(
+            headerRight={
               <CopyPasteButtons
                 kind={RULE_CLIP.packetExtracts}
-                getData={() => (rule.extract || [])
-                  .filter((ex) => !isTimingDerivedSource(ex.source))
-                  .map((ex) => normalizeExtract(ex))}
+                getData={() =>
+                  (rule.extract || [])
+                    .filter((ex) => !isTimingDerivedSource(ex.source))
+                    .map((ex) => normalizeExtract(ex))
+                }
                 onPaste={(data) => {
                   const pasted = (Array.isArray(data) ? data : [])
                     .map((ex) => normalizeExtract(ex))
                     .filter((ex) => !isTimingDerivedSource(ex.source));
-                  const timingOnes = (rule.extract || []).filter((ex) => isTimingDerivedSource(ex.source));
+                  const timingOnes = (rule.extract || []).filter((ex) =>
+                    isTimingDerivedSource(ex.source),
+                  );
                   onChange({ ...rule, extract: [...timingOnes, ...pasted] });
                 }}
               />
-            )}
+            }
           >
             <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
-              Pull values from packet bytes (palette colors, bit fields). Timing→param bindings
-              live under the Timing section above.
+              Pull values from packet bytes (palette colors, bit fields). Timing→param bindings live
+              under the Timing section above.
             </Text>
             <Stack gap="xs">
               {(rule.extract || [])
@@ -2580,7 +3026,9 @@ function RuleCard({
                       extract[i] = next;
                       onChange({ ...rule, extract });
                     }}
-                    onDelete={() => onChange({ ...rule, extract: (rule.extract || []).filter((_, j) => j !== i) })}
+                    onDelete={() =>
+                      onChange({ ...rule, extract: (rule.extract || []).filter((_, j) => j !== i) })
+                    }
                   />
                 ))}
             </Stack>
@@ -2588,10 +3036,15 @@ function RuleCard({
               size="compact-sm"
               variant="default"
               mt="xs"
-              onClick={() => onChange({
-                ...rule,
-                extract: [...(rule.extract || []), createEmptyExtract(`field${(rule.extract || []).length + 1}`)],
-              })}
+              onClick={() =>
+                onChange({
+                  ...rule,
+                  extract: [
+                    ...(rule.extract || []),
+                    createEmptyExtract(`field${(rule.extract || []).length + 1}`),
+                  ],
+                })
+              }
             >
               Add packet extract
             </AppButton>
@@ -2633,22 +3086,28 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
     }
     const results = hexes.map((hex, rowIdx) => {
       const bytes = disneyPayload(hexToBytes(hex));
-      const mapFor = (rule) => (rule?.segmentMapId
-        ? (segmentMaps || []).find((m) => m.id === rule.segmentMapId) || null
-        : null);
+      const mapFor = (rule) =>
+        rule?.segmentMapId
+          ? (segmentMaps || []).find((m) => m.id === rule.segmentMapId) || null
+          : null;
 
       if (matchMode === 'selected' && selectedRule) {
-        const matched = selectedRule.enabled !== false
-          && selectedRule.match
-          && previewPacketAgainstRules(bytes, [selectedRule]).matched;
+        const matched =
+          selectedRule.enabled !== false &&
+          selectedRule.match &&
+          previewPacketAgainstRules(bytes, [selectedRule]).matched;
         const extracts = matched
           ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule), {
-            rule: selectedRule,
-            timingModels,
-          })
+              rule: selectedRule,
+              timingModels,
+            })
           : [];
         let timing = null;
-        if (matched && selectedRule.timing?.enabled && bytes.length > Number(selectedRule.timing.offset ?? 0)) {
+        if (
+          matched &&
+          selectedRule.timing?.enabled &&
+          bytes.length > Number(selectedRule.timing.offset ?? 0)
+        ) {
           timing = computeTimingLifecycle(
             bytes[Number(selectedRule.timing.offset ?? 0)],
             selectedRule.timing.cooldownSec ?? 2,
@@ -2684,9 +3143,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           priority: prev.matchingRules[0]?.rule?.priority ?? null,
           extracts: selectedRule
             ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule), {
-              rule: selectedRule,
-              timingModels,
-            })
+                rule: selectedRule,
+                timingModels,
+              })
             : prev.extracts,
           timing: prev.timing,
         };
@@ -2694,9 +3153,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
       const first = findMatchingRule(bytes, rules);
       const extracts = first
         ? previewExtracts(bytes, first.extract || [], colors, mapFor(first), {
-          rule: first,
-          timingModels,
-        })
+            rule: first,
+            timingModels,
+          })
         : [];
       let timing = null;
       if (first?.timing?.enabled && bytes.length > Number(first.timing.offset ?? 0)) {
@@ -2726,14 +3185,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
     );
   };
 
-  const unmatchedPackets = useMemo(
-    () => packets.filter((p) => !p.matched),
-    [packets],
-  );
+  const unmatchedPackets = useMemo(() => packets.filter((p) => !p.matched), [packets]);
 
-  const visiblePackets = unmatchedOnly
-    ? unmatchedPackets
-    : packets;
+  const visiblePackets = unmatchedOnly ? unmatchedPackets : packets;
 
   const copyUnmatched = async ({ unique = false } = {}) => {
     if (!unmatchedPackets.length) {
@@ -2787,166 +3241,211 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
   };
 
   return (
-    <AppCard>
+    <AppCard p="sm">
       <SectionHead>Rule coverage preview</SectionHead>
       <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
-        Paste a list of hex / capture rows (8301 stripped automatically). Preview which rule each packet
-        would hit under the current rule set, and copy any that have no match.
-        {!simIp?.trim() && (
-          <> Simulator IP is empty — set it on the Wand Lab tab to enable Send.</>
-        )}
+        Paste a list of hex / capture rows (8301 stripped automatically). Preview which rule each
+        packet would hit under the current rule set, and copy any that have no match.
+        {!simIp?.trim() && <> Simulator IP is empty — set it on the Wand Lab tab to enable Send.</>}
       </Text>
-      <Textarea
-        minRows={4}
-        value={paste}
-        onChange={(e) => setPaste(e.target.value)}
-        placeholder={'E100E90500090EE5B0\n8301e100e90e00010fbda0…\nor paste Illuma / Sheets capture rows'}
-        styles={{ input: { fontFamily: 'monospace', fontSize: 11 } }}
-        mb="xs"
-      />
-      <Group gap="xs" mb="xs" wrap="wrap">
-        <AppButton size="compact-sm" variant="primary" onClick={runPreview}>Preview</AppButton>
-        <SearchableSelect
-          value={matchMode}
-          onChange={setMatchMode}
-          allowEmpty={false}
-          options={[
-            { value: 'first', label: 'First match (priority)' },
-            { value: 'all', label: 'All matching rules' },
-            { value: 'selected', label: 'Selected rule only' },
-          ]}
-        />
-        <Checkbox
-          size="xs"
-          label="Unmatched only"
-          checked={unmatchedOnly}
-          disabled={!packets.length}
-          onChange={(e) => setUnmatchedOnly(e.currentTarget.checked)}
-        />
-        <AppButton
-          size="compact-sm"
-          variant="default"
-          disabled={!unmatchedPackets.length}
-          onClick={() => copyUnmatched({ unique: false })}
-        >
-          Copy unmatched ({unmatchedPackets.length})
-        </AppButton>
-        <AppButton
-          size="compact-sm"
-          variant="default"
-          disabled={!unmatchedPackets.length}
-          onClick={() => copyUnmatched({ unique: true })}
-        >
-          Copy unique unmatched
-        </AppButton>
-      </Group>
-      {status && <Text size="xs" c="dimmed" mb={4}>{status}</Text>}
-      {copyStatus && <Text size="xs" c="teal" mb="xs">{copyStatus}</Text>}
 
-      {packets.length > 0 && (
-        <Table.ScrollContainer minWidth={760}>
-          <Table striped highlightOnHover withTableBorder withColumnBorders fz="xs">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th w={40}>#</Table.Th>
-                <Table.Th w={90}>Status</Table.Th>
-                <Table.Th w={70}>Pri</Table.Th>
-                <Table.Th>Rule</Table.Th>
-                <Table.Th>Hex (payload)</Table.Th>
-                <Table.Th w={160}>Timing</Table.Th>
-                <Table.Th w={150}>Wand Lab</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {visiblePackets.map((p) => (
-                <Table.Tr
-                  key={p.rowIdx}
-                  style={!p.matched
-                    ? { background: 'color-mix(in srgb, var(--mantine-color-orange-filled) 10%, transparent)' }
-                    : undefined}
-                >
-                  <Table.Td>
-                    <Text size="xs" c="dimmed">{p.rowIdx + 1}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge size="xs" color={p.matched ? 'green' : 'orange'}>
-                      {p.matched ? 'match' : 'no rule'}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" ff="monospace" c="dimmed">
-                      {p.matched && p.priority != null ? p.priority : '—'}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    {p.matched ? (
-                      <Text size="xs" fw={600}>{p.ruleName || '(unnamed)'}</Text>
-                    ) : (
-                      <Text size="xs" c="dimmed">—</Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>{p.hex}</Text>
-                    {(p.extracts || []).length > 0 && (
-                      <Text size="xs" c="dimmed" mt={2}>
-                        {(p.extracts || []).map((ex) => ex.name || 'ex').join(', ')} extract
-                        {(p.extracts || []).length === 1 ? '' : 's'}
-                      </Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    {p.timing ? (
-                      <Text size="xs" c="dimmed" ff="monospace">
-                        on {p.timing.onSec.toFixed(1)}s
-                        {p.timing.stretchSec > 0 ? ` · fade ${p.timing.stretchSec.toFixed(1)}s` : ''}
-                        {p.timing.scaler ? ' · 3×' : ''}
-                        {p.timing.extended ? ' · ext' : ''}
-                      </Text>
-                    ) : (
-                      <Text size="xs" c="dimmed">—</Text>
-                    )}
-                  </Table.Td>
-                  <Table.Td>
-                    <Group gap={4} wrap="nowrap">
-                      <AppButton
-                        size="compact-xs"
-                        variant="primary"
-                        disabled={!simIp?.trim() || sendingRow != null}
-                        loading={sendingRow === p.rowIdx}
-                        onClick={() => sendPacketToWandLab(p)}
-                        title={simIp?.trim() ? `Send to ${simIp.trim()}` : 'Set simulator IP on Wand Lab first'}
-                      >
-                        Send
-                      </AppButton>
-                      <AppButton
-                        size="compact-xs"
-                        variant="default"
-                        onClick={() => openPacketInWandLab(p)}
-                        title="Open Wand Lab Bytes tab with this packet"
-                      >
-                        Edit
-                      </AppButton>
-                    </Group>
-                  </Table.Td>
-                </Table.Tr>
-              ))}
-              {visiblePackets.length === 0 && (
+      <Stack gap="xs">
+        <Textarea
+          minRows={4}
+          value={paste}
+          onChange={(e) => setPaste(e.target.value)}
+          placeholder={
+            'E100E90500090EE5B0\n8301e100e90e00010fbda0…\nor paste Illuma / Sheets capture rows'
+          }
+          styles={{ input: { fontFamily: 'monospace', fontSize: 11 } }}
+        />
+        <Group gap="xs" wrap="wrap">
+          <AppButton size="xs" variant="primary" onClick={runPreview}>
+            Preview
+          </AppButton>
+          <SearchableSelect
+            value={matchMode}
+            onChange={setMatchMode}
+            allowEmpty={false}
+            size="xs"
+            options={[
+              { value: 'first', label: 'First match (priority)' },
+              { value: 'all', label: 'All matching rules' },
+              { value: 'selected', label: 'Selected rule only' },
+            ]}
+          />
+          <Checkbox
+            size="xs"
+            label="Unmatched only"
+            checked={unmatchedOnly}
+            disabled={!packets.length}
+            onChange={(e) => setUnmatchedOnly(e.currentTarget.checked)}
+          />
+          <AppButton
+            size="xs"
+            variant="default"
+            disabled={!unmatchedPackets.length}
+            onClick={() => copyUnmatched({ unique: false })}
+          >
+            Copy unmatched ({unmatchedPackets.length})
+          </AppButton>
+          <AppButton
+            size="xs"
+            variant="default"
+            disabled={!unmatchedPackets.length}
+            onClick={() => copyUnmatched({ unique: true })}
+          >
+            Copy unique unmatched
+          </AppButton>
+        </Group>
+
+        <Divider size="md" />
+
+        {status && (
+          <Text size="xs" c="dimmed" mt="xs">
+            {status}
+          </Text>
+        )}
+        {copyStatus && (
+          <Text size="xs" c="teal">
+            {copyStatus}
+          </Text>
+        )}
+
+        {packets.length > 0 && (
+          <Table.ScrollContainer minWidth={760}>
+            <Table striped highlightOnHover withTableBorder withColumnBorders fz="xs">
+              <Table.Thead>
                 <Table.Tr>
-                  <Table.Td colSpan={7}>
-                    <Text size="xs" c="dimmed">No unmatched packets in this paste.</Text>
-                  </Table.Td>
+                  <Table.Th w={40}>#</Table.Th>
+                  <Table.Th w={90}>Status</Table.Th>
+                  <Table.Th w={70}>Pri</Table.Th>
+                  <Table.Th>Rule</Table.Th>
+                  <Table.Th>Hex (payload)</Table.Th>
+                  <Table.Th w={160}>Timing</Table.Th>
+                  <Table.Th w={150}>Wand Lab</Table.Th>
                 </Table.Tr>
-              )}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-      )}
+              </Table.Thead>
+              <Table.Tbody>
+                {visiblePackets.map((p) => (
+                  <Table.Tr
+                    key={p.rowIdx}
+                    style={
+                      !p.matched
+                        ? {
+                            background:
+                              'color-mix(in srgb, var(--mantine-color-orange-filled) 10%, transparent)',
+                          }
+                        : undefined
+                    }
+                  >
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">
+                        {p.rowIdx + 1}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge size="xs" color={p.matched ? 'green' : 'orange'}>
+                        {p.matched ? 'match' : 'no rule'}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" ff="monospace" c="dimmed">
+                        {p.matched && p.priority != null ? p.priority : '—'}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      {p.matched ? (
+                        <Text size="xs" fw={600}>
+                          {p.ruleName || '(unnamed)'}
+                        </Text>
+                      ) : (
+                        <Text size="xs" c="dimmed">
+                          —
+                        </Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
+                        {p.hex}
+                      </Text>
+                      {(p.extracts || []).length > 0 && (
+                        <Text size="xs" c="dimmed" mt={2}>
+                          {(p.extracts || []).map((ex) => ex.name || 'ex').join(', ')} extract
+                          {(p.extracts || []).length === 1 ? '' : 's'}
+                        </Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      {p.timing ? (
+                        <Text size="xs" c="dimmed" ff="monospace">
+                          on {p.timing.onSec.toFixed(1)}s
+                          {p.timing.stretchSec > 0
+                            ? ` · fade ${p.timing.stretchSec.toFixed(1)}s`
+                            : ''}
+                          {p.timing.scaler ? ' · 3×' : ''}
+                          {p.timing.extended ? ' · ext' : ''}
+                        </Text>
+                      ) : (
+                        <Text size="xs" c="dimmed">
+                          —
+                        </Text>
+                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap={4} wrap="nowrap">
+                        <AppButton
+                          size="compact-xs"
+                          variant="primary"
+                          disabled={!simIp?.trim() || sendingRow != null}
+                          loading={sendingRow === p.rowIdx}
+                          onClick={() => sendPacketToWandLab(p)}
+                          title={
+                            simIp?.trim()
+                              ? `Send to ${simIp.trim()}`
+                              : 'Set simulator IP on Wand Lab first'
+                          }
+                        >
+                          Send
+                        </AppButton>
+                        <AppButton
+                          size="compact-xs"
+                          variant="default"
+                          onClick={() => openPacketInWandLab(p)}
+                          title="Open Wand Lab Bytes tab with this packet"
+                        >
+                          Edit
+                        </AppButton>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+                {visiblePackets.length === 0 && (
+                  <Table.Tr>
+                    <Table.Td colSpan={7}>
+                      <Text size="xs" c="dimmed">
+                        No unmatched packets in this paste.
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                )}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+      </Stack>
     </AppCard>
   );
 }
 
 export function RuleEditor({
-  mb, presets = [], effectOptions = [], paletteOptions = [], onChange, onEditMaps, onEditTimingModels,
+  mb,
+  presets = [],
+  effectOptions = [],
+  paletteOptions = [],
+  onChange,
+  onEditMaps,
+  onEditTimingModels,
   simIp = '',
 }) {
   const mapping = normalizeMbMapping(mb);
@@ -2998,9 +3497,7 @@ export function RuleEditor({
         children: [
           {
             mode: 'some',
-            children: [
-              createEmptyCondition('hexPrefix'),
-            ],
+            children: [createEmptyCondition('hexPrefix')],
           },
         ],
       },
@@ -3012,56 +3509,68 @@ export function RuleEditor({
 
   return (
     <RuleClipProvider>
-    <Stack gap="md">
-      <Text size="xs" c="dimmed" lh={1.5}>
-        Ordered rules evaluated on the board (lower priority first). Push with <strong>📡 Board</strong> (<code style={{ fontFamily: 'monospace' }}>set_mb_rules</code>).
-      </Text>
-
-      <Group gap="xs">
-        <AppButton size="compact-sm" variant="primary" onClick={addRule}>Add rule</AppButton>
-        <Text size="xs" c="dimmed">{rules.length} rule{rules.length === 1 ? '' : 's'}</Text>
-      </Group>
-
-      {rules.length === 0 && (
-        <Paper p="sm" withBorder>
-          <Text size="sm" c="dimmed">No rules yet. Add one, or unmatched packets use the default preset.</Text>
-        </Paper>
-      )}
-
-      {rules.map((rule, index) => (
-        <RuleCard
-          key={rule.id}
-          rule={rule}
-          index={index}
-          total={rules.length}
-          expanded={expandedId === rule.id}
-          onToggle={() => setExpandedId(expandedId === rule.id ? null : rule.id)}
-          onChange={(next) => updateRule(rule.id, next)}
-          onDelete={() => {
-            setRules(rules.filter((r) => r.id !== rule.id), { reindex: true });
-            if (expandedId === rule.id) setExpandedId(null);
-          }}
-          onDuplicate={() => duplicateRule(rule, index)}
-          onMove={(delta) => moveRule(index, delta)}
-          presets={presets}
+      <Stack gap="md">
+        <LivePreview
+          rules={rules}
+          colors={mapping.colors}
+          selectedRuleId={expandedId}
           segmentMaps={segmentMaps}
           timingModels={timingModels}
-          effectOptions={effectOptions}
-          paletteOptions={paletteOptions}
-          onEditMaps={onEditMaps}
-          onEditTimingModels={onEditTimingModels}
+          simIp={simIp}
         />
-      ))}
 
-      <LivePreview
-        rules={rules}
-        colors={mapping.colors}
-        selectedRuleId={expandedId}
-        segmentMaps={segmentMaps}
-        timingModels={timingModels}
-        simIp={simIp}
-      />
-    </Stack>
+        <Group justify="space-between">
+          <Group gap="xs">
+            <AppButton size="compact-sm" variant="primary" onClick={addRule}>
+              Add rule
+            </AppButton>
+            <Text size="xs" c="dimmed">
+              {rules.length} rule{rules.length === 1 ? '' : 's'}
+            </Text>
+          </Group>
+          <Text size="xs" c="dimmed">
+            Ordered rules evaluated on the board (lower priority first). Push with{' '}
+            <strong>📡 Board</strong> (<code style={{ fontFamily: 'monospace' }}>set_mb_rules</code>
+            ).
+          </Text>
+        </Group>
+
+        {rules.length === 0 && (
+          <Paper p="sm" withBorder>
+            <Text size="sm" c="dimmed">
+              No rules yet. Add one, or unmatched packets use the default preset.
+            </Text>
+          </Paper>
+        )}
+
+        {rules.map((rule, index) => (
+          <RuleCard
+            key={rule.id}
+            rule={rule}
+            index={index}
+            total={rules.length}
+            expanded={expandedId === rule.id}
+            onToggle={() => setExpandedId(expandedId === rule.id ? null : rule.id)}
+            onChange={(next) => updateRule(rule.id, next)}
+            onDelete={() => {
+              setRules(
+                rules.filter((r) => r.id !== rule.id),
+                { reindex: true },
+              );
+              if (expandedId === rule.id) setExpandedId(null);
+            }}
+            onDuplicate={() => duplicateRule(rule, index)}
+            onMove={(delta) => moveRule(index, delta)}
+            presets={presets}
+            segmentMaps={segmentMaps}
+            timingModels={timingModels}
+            effectOptions={effectOptions}
+            paletteOptions={paletteOptions}
+            onEditMaps={onEditMaps}
+            onEditTimingModels={onEditTimingModels}
+          />
+        ))}
+      </Stack>
     </RuleClipProvider>
   );
 }

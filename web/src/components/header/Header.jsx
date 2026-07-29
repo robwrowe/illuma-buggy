@@ -1,7 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
-import cx from 'clsx';
 import {
-  Avatar,
   Burger,
   Button,
   Container,
@@ -9,37 +6,14 @@ import {
   Drawer,
   FileButton,
   Group,
-  Menu,
   ScrollArea,
   Tabs,
-  Text,
   Title,
-  UnstyledButton,
-  useMantineTheme,
 } from '@mantine/core';
-import { useDisclosure, useLocalStorage, useMediaQuery } from '@mantine/hooks';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import classes from './HeaderTabs.module.css';
-import { LS_KEY, LS_PROFILES, migrateConfig } from '../../lib/config';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { APP_TABS, tabFromPathname } from '../../lib/routes';
-import { loadGoogleMaps } from '../../lib/googleMaps';
-
-const user = {
-  name: 'Jane Spoonfighter',
-  email: 'janspoon@fighter.dev',
-  image: 'https://raw.githubusercontent.com/mantinedev/mantine/master/.demo/avatars/avatar-5.png',
-};
-
-const tabs = [
-  'Home',
-  'Orders',
-  'Education',
-  'Community',
-  'Forums',
-  'Support',
-  'Account',
-  'Helpdesk',
-];
 
 export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardSync, profiles }) {
   const [opened, { toggle, close }] = useDisclosure(false);
@@ -48,7 +22,6 @@ export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardS
   const navigate = useNavigate();
   const tab = tabFromPathname(location.pathname);
   const isNarrow = useMediaQuery('(max-width: 48em)');
-
 
   return (
     <div className={classes.header}>
@@ -119,12 +92,15 @@ export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardS
       >
         <ScrollArea h="calc(100vh - 80px" mx="-md">
           <Divider my="sm" />
-          {tabs.map((tab) => (
+          {APP_TABS.map((tab) => (
             <a
               href="#"
               key={tab}
               className={classes.drawerLink}
-              onClick={(event) => event.preventDefault()}
+              onClick={(event) => {
+                event.preventDefault();
+                navigate(tab.path);
+              }}
             >
               {tab}
             </a>
