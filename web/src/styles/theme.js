@@ -5,25 +5,38 @@ import {
   Divider,
   Input,
   Paper,
-  parseThemeColor,
   SegmentedControl,
 } from '@mantine/core';
 import { darkColors } from './tokens';
 
 const variantColorResolver = (input) => {
   const defaultResolvedColors = defaultVariantColorsResolver(input);
-  const lightColor = parseThemeColor({
+  const lightColor = defaultVariantColorsResolver({
+    ...input,
     color: input.color || input.theme.primaryColor,
-    theme: input.theme,
+    variant: 'light',
+  });
+
+  const successColor = defaultVariantColorsResolver({
+    ...input,
+    color: 'green',
+    variant: 'filled',
+  });
+
+  const dangerColor = defaultVariantColorsResolver({
+    ...input,
+    color: 'red',
     variant: 'light',
   });
 
   if (input.variant === 'default') {
     return {
       ...lightColor,
-      color: 'light-dark(var(--mantine-color-black), var(--mantine-color-white))',
     };
   }
+
+  if (input.variant === 'success') return { ...successColor };
+  if (input.variant === 'danger') return { ...dangerColor };
 
   return defaultResolvedColors;
 };
