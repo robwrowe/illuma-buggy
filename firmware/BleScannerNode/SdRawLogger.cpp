@@ -18,14 +18,37 @@ bool sdRawLoggerInit() {
   sdReady = false;
   return false;
 #else
-  Serial.printf("[SD] mounting SPI CS=%d SCK=%d MOSI=%d MISO=%d …\n",
-                SD_CS_PIN, SD_SCK_PIN, SD_MOSI_PIN, SD_MISO_PIN);
+  // Pass SPI + freq explicitly. Plain SD.begin(cs) can re-init SPI oddly;
+  // slow clock helps breadboard / cheap modules.
+  pinMode(SD_CS_PIN, OUTPUT);
+  digitalWrite(SD_CS_PIN, HIGH);
   SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
-  if (!SD.begin(SD_CS_PIN)) {
+
+  const uint32_t freqs[] = {1000000u, 400000u, 4000000u};
+  bool mounted = false;
+  for (uint32_t freq : freqs) {
+    Serial.printf("[SD] begin CS=%d SCK=%d MOSI=%d MISO=%d @ %lu Hz\n",
+                  SD_CS_PIN, SD_SCK_PIN, SD_MOSI_PIN, SD_MISO_PIN,
+                  (unsigned long)freq);
+    if (SD.begin(SD_CS_PIN, SPI, freq)) {
+      mounted = true;
+      break;
+    }
+    SD.end();
+    delay(50);
+  }
+
+  if (!mounted) {
     Serial.println("[SD] mount failed");
+    Serial.println("[SD] check: FAT32 not exFAT (Win11 32GB+ often exFAT), 3.3V module VCC");
     sdReady = false;
     return false;
   }
+
+  uint8_t type = SD.cardType();
+  Serial.printf("[SD] cardType=%u size=%llu MB\n",
+                (unsigned)type, (unsigned long long)(SD.cardSize() / (1024ULL * 1024ULL)));
+
   snprintf(currentLogPath, sizeof(currentLogPath), "/scan_%lu.jsonl", (unsigned long)millis());
   logFile = SD.open(currentLogPath, FILE_WRITE);
   sdReady = (bool)logFile;

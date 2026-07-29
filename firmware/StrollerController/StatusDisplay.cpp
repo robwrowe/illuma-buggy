@@ -22,6 +22,7 @@ void statusDisplaySetWledOk(bool ok) { wledHttpOk = ok; }
 
 void statusDisplaySetLastRule(const char* name) {
   lastFiredRuleName = name ? String(name) : "";
+  lastDisplayMs = 0;  // redraw ASAP
 }
 
 static void i2cBusScan() {
@@ -38,7 +39,8 @@ static void i2cBusScan() {
 }
 
 static bool tryOledBegin(uint8_t addr) {
-  if (!display.begin(SSD1306_SWITCHCAPVCC, addr)) return false;
+  const uint8_t vcc = OLED_USE_EXTERNAL_VCC ? SSD1306_EXTERNALVCC : SSD1306_SWITCHCAPVCC;
+  if (!display.begin(vcc, addr)) return false;
   display.ssd1306_command(SSD1306_DISPLAYON);
   display.ssd1306_command(SSD1306_SETCONTRAST);
   display.ssd1306_command(0xFF);
@@ -55,14 +57,15 @@ static bool tryOledBegin(uint8_t addr) {
   display.print("addr 0x");
   display.println(addr, HEX);
   display.display();
-  Serial.printf("[Display] SSD1306 ready (SDA=%d SCL=%d addr=0x%02X)\n",
-                OLED_SDA_PIN, OLED_SCL_PIN, addr);
+  Serial.printf("[Display] OLED ready (SDA=%d SCL=%d addr=0x%02X vcc=%s)\n",
+                OLED_SDA_PIN, OLED_SCL_PIN, addr,
+                OLED_USE_EXTERNAL_VCC ? "EXT" : "SWITCHCAP");
   return true;
 }
 
 bool statusDisplayInit() {
   Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
-  Wire.setClock(100000);
+  Wire.setClock(OLED_I2C_HZ);
   delay(100);
   i2cBusScan();
 
@@ -78,6 +81,13 @@ bool statusDisplayInit() {
                 OLED_SDA_PIN, OLED_SCL_PIN);
   displayReady = false;
   return false;
+}
+
+bool statusDisplayReady() { return displayReady; }
+
+void statusDisplayReassertWire() {
+  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+  Wire.setClock(OLED_I2C_HZ);
 }
 
 static int linesNeeded(const String& s) {

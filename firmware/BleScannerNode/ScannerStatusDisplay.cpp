@@ -92,6 +92,13 @@ bool scannerStatusDisplayInit() {
   return false;
 }
 
+bool scannerStatusDisplayReady() { return displayReady; }
+
+void scannerStatusDisplayReassertWire() {
+  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
+  Wire.setClock(100000);
+}
+
 void scannerStatusDisplayNotePacket(const uint8_t* mfrData, size_t len, int rssi) {
   // pps window (always, even if OLED absent)
   unsigned long now = millis();

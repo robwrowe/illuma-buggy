@@ -142,7 +142,12 @@
 #endif
 #define OLED_WIDTH  128
 #define OLED_HEIGHT 64
-#define STATUS_DISPLAY_INTERVAL_MS 750
+// Status OLED redraw period. Keep ≥250ms — full 128×64 I2C frame is ~1KB.
+#define STATUS_DISPLAY_INTERVAL_MS 300
+// 0 = SSD1306_SWITCHCAPVCC (internal charge pump). 1 = EXTERNALVCC (many 2.42″ SSD1309).
+#define OLED_USE_EXTERNAL_VCC 0
+// I2C clock for status OLED (Hz). 400k is standard for SSD1306/09; faster = snappier redraws.
+#define OLED_I2C_HZ 400000
 
 #include <stdint.h>
 #include <stddef.h>

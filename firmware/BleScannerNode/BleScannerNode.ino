@@ -50,9 +50,16 @@ void setup() {
   scannerTransportInit();
   delay(300);
 
-  sdRawLoggerInit();
+  // OLED before SD — SPI bring-up / failed mounts must not block the display.
   statusLedInit();
   scannerStatusDisplayInit();
+  sdRawLoggerInit();
+  // SD uses VSPI; re-assert I2C pins in case the bus was disturbed.
+  if (!scannerStatusDisplayReady()) {
+    scannerStatusDisplayInit();
+  } else {
+    scannerStatusDisplayReassertWire();
+  }
 
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_BT);

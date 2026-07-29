@@ -174,6 +174,9 @@ void setup() {
   startBLEPeripheral();
   uartScannerLinkInit();
   sdRuleLoggerInit();   // non-fatal
+  // SPI/SD can leave Wire in a weird state on some cores — re-assert OLED pins.
+  statusDisplayReassertWire();
+  if (!statusDisplayReady()) statusDisplayInit();
 
   // Dual-board: logic board does NOT own the scan radio (no silent fallback).
   if (boardRole == BoardRole::STANDALONE) {
