@@ -24,6 +24,7 @@ import {
   normalizeMbMapping,
   normalizeSegment,
   normalizeSegmentMap,
+  segmentDisplayName,
   wledSegmentToSegmentMapSegment,
 } from '../../lib/ble/mbMapping';
 import { fetchWledSegmentsFromIp } from '../../lib/wled/capture';
@@ -149,6 +150,7 @@ function SegmentRowEditor({
     maskLabel,
     seg.fx >= 0 ? `fx ${seg.fx}` : null,
   ].filter(Boolean).join(' · ');
+  const title = segmentDisplayName(seg);
 
   return (
     <Paper p="sm" withBorder bg="var(--surface2)">
@@ -157,7 +159,7 @@ function SegmentRowEditor({
           <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
             {open ? '▾' : '▸'}
           </AppButton>
-          <Text size="xs" fw={700} ff="monospace">{seg.id}</Text>
+          <Text size="xs" fw={700} ff={seg.name?.trim() ? undefined : 'monospace'}>{title}</Text>
           {!open && (
             <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {summary}
@@ -197,6 +199,13 @@ function SegmentRowEditor({
 
       {open && (
         <>
+      <Field label="Name (optional)" mb="xs">
+        <TextInput
+          value={seg.name || ''}
+          onChange={(e) => set({ name: e.target.value })}
+          placeholder="e.g. Canopy left"
+        />
+      </Field>
       <Group gap={6} align="center" wrap="wrap" mb="xs">
         <Text size="xs" c="dimmed">wled id</Text>
         <NumberInput

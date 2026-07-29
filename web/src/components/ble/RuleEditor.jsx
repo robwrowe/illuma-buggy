@@ -64,6 +64,7 @@ import {
   normalizeStopTransition,
   reindexRulePriorities,
   SEGMENT_FIELD_PRESETS,
+  segmentLabel,
   shortRuleId,
   TIMING_DERIVED_SOURCES,
   WLED_START_TRANSITIONS,
@@ -2286,8 +2287,8 @@ function RuleCard({
   const selectedMap = (segmentMaps || []).find((m) => m.id === rule.segmentMapId) || null;
   const segmentOpts = (selectedMap?.segments || []).map((s) => ({
     value: s.id,
-    label: `${s.id} · ${s.start}-${s.stop}`,
-    searchText: `${s.id} ${s.start} ${s.stop}`,
+    label: segmentLabel(s),
+    searchText: `${s.name || ''} ${s.id} ${s.start} ${s.stop}`,
   }));
   const fxOpts = (effectOptions || []).map((e) => ({
     value: String(e.id),

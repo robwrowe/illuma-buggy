@@ -246,6 +246,7 @@ export function createEmptyTimingParamBinding(source = 'timingFlashRate') {
 export function createEmptySegment(overrides = {}) {
   return {
     id: shortSegmentId(),
+    name: '',
     wledSegId: 0,
     start: 0,
     stop: 100,
@@ -265,6 +266,24 @@ export function createEmptySegment(overrides = {}) {
     maskAssignment: 'all',
     ...overrides,
   };
+}
+
+/** Prefer optional segment name; fall back to stable id. */
+export function segmentDisplayName(seg) {
+  if (!seg || typeof seg !== 'object') return '';
+  const name = typeof seg.name === 'string' ? seg.name.trim() : '';
+  if (name) return name;
+  return typeof seg.id === 'string' && seg.id ? seg.id : '';
+}
+
+/** UI label: display name, optionally with LED range. */
+export function segmentLabel(seg, { withRange = true } = {}) {
+  const base = segmentDisplayName(seg) || '(segment)';
+  if (!withRange) return base;
+  if (Number.isFinite(seg?.start) && Number.isFinite(seg?.stop)) {
+    return `${base} · ${seg.start}-${seg.stop}`;
+  }
+  return base;
 }
 
 /** RGB array from WLED `col[i]` → `#rrggbb`, or '' if missing. */
@@ -310,6 +329,7 @@ export function mergeImportedSegmentsIntoMap(existingSegments, importedSegments)
         ...merged[idx],
         ...seg,
         id: merged[idx].id,
+        name: merged[idx].name,
         maskAssignment: merged[idx].maskAssignment,
         presetId: merged[idx].presetId,
         presetVariables: merged[idx].presetVariables,
@@ -1210,6 +1230,7 @@ export function normalizeSegment(raw) {
   const colorsSrc = Array.isArray(raw.colors) ? raw.colors : [];
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentId(),
+    name: typeof raw.name === 'string' ? raw.name.trim() : '',
     wledSegId: Number.isFinite(raw.wledSegId) ? Math.max(0, Number(raw.wledSegId)) : d.wledSegId,
     start: Number.isFinite(raw.start) ? Math.max(0, Number(raw.start)) : d.start,
     stop: Number.isFinite(raw.stop) ? Math.max(0, Number(raw.stop)) : d.stop,

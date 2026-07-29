@@ -561,9 +561,17 @@ export function computeTimingLifecycle(byte, cooldownSec = 2, model = null) {
 export function formatExtractTargetLabel(target, segmentMap) {
   if (!target || typeof target !== 'object') return '(none)';
   const segs = Array.isArray(segmentMap?.segments) ? segmentMap.segments : [];
+  const displayName = (s) => {
+    const name = typeof s?.name === 'string' ? s.name.trim() : '';
+    return name || s?.id || '';
+  };
   const segName = (id) => {
     const s = segs.find((x) => x.id === id);
-    return s ? `${s.id} (${s.start}-${s.stop})` : id || '(no seg)';
+    if (!s) return id || '(no seg)';
+    const base = displayName(s);
+    return Number.isFinite(s.start) && Number.isFinite(s.stop)
+      ? `${base} (${s.start}-${s.stop})`
+      : base;
   };
   switch (target.kind) {
     case 'segmentColor': {
@@ -576,7 +584,7 @@ export function formatExtractTargetLabel(target, segmentMap) {
       const mask = target.mask || 'all';
       const hits = segs.filter((s) => s.maskAssignment === mask);
       if (!hits.length) return `maskColor ${mask} (no segments)`;
-      return `maskColor ${mask} → ${hits.map((s) => s.id).join(', ')}`;
+      return `maskColor ${mask} → ${hits.map(displayName).join(', ')}`;
     }
     case 'segmentField':
       return `segField ${segName(target.segmentId)}.${target.field || '?'}`;

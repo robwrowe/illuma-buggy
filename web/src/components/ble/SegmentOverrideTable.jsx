@@ -19,6 +19,7 @@ import {
   normalizeSegmentOverrides,
   normalizeSegmentSourceMode,
   patchGlobalSegmentProp,
+  segmentDisplayName,
 } from '../../lib/ble/mbMapping';
 import { BLEND_MODE_SELECT_OPTS } from '../../lib/ble/mbConstants';
 
@@ -227,8 +228,8 @@ function SegmentOverrideRow({
           <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
             {open ? '▾' : '▸'}
           </AppButton>
-          <Text size="xs" fw={700} ff="monospace">
-            {seg.id}
+          <Text size="xs" fw={700} ff={seg.name?.trim() ? undefined : 'monospace'}>
+            {segmentDisplayName(seg)}
             <Text span size="xs" c="dimmed" ff="monospace"> · {seg.start}-{seg.stop}</Text>
           </Text>
           {!open && (
