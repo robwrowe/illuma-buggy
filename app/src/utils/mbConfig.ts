@@ -313,7 +313,10 @@ export function mbMappingToBlePayload(config: MbMappingConfig): object {
 
 /** Wire sentinel for segmentOverrides mode "default". Absent key = stored. */
 const SEG_OVERRIDE_DEFAULT_SENTINEL = 'd';
-const SEG_OVERRIDE_PROPS = ['fx', 'pal', 'sx', 'ix', 'blend'] as const;
+const SEG_OVERRIDE_PROPS = [
+  'fx', 'pal', 'sx', 'ix', 'blend',
+  'c1', 'c2', 'c3', 'o1', 'o2', 'o3',
+] as const;
 
 function compactSegmentOverrides(segmentOverrides: unknown): Record<string, unknown> | undefined {
   if (!segmentOverrides || typeof segmentOverrides !== 'object') return undefined;
@@ -326,6 +329,8 @@ function compactSegmentOverrides(segmentOverrides: unknown): Record<string, unkn
       const ov = segObj[field] as { mode?: string; value?: unknown } | undefined;
       if (!ov || typeof ov !== 'object') continue;
       if (ov.mode === 'custom' && ov.value !== undefined && ov.value !== null && ov.value !== '') {
+        compactSeg[field] = ov.value;
+      } else if (ov.mode === 'custom' && typeof ov.value === 'boolean') {
         compactSeg[field] = ov.value;
       } else if (ov.mode === 'default') {
         compactSeg[field] = SEG_OVERRIDE_DEFAULT_SENTINEL;

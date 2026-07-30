@@ -941,12 +941,71 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
         seg["bm"] = blendModeToBm(bv.as<const char*>() ? bv.as<const char*>() : "top");
       }
     };
+    auto applyIntCustom = [&](const char* key, int defVal, int maxVal) {
+      if (!ov.containsKey(key)) return;
+      JsonVariant v = ov[key];
+      int n = defVal;
+      if (v.is<JsonObject>()) {
+        const char* mode = v["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          // Don't use `|` — 0 is a valid custom value and would fall through to defVal.
+          n = v["value"].isNull() ? defVal : v["value"].as<int>();
+        } else if (strcmp(mode, "default") == 0) {
+          n = defVal;
+        } else {
+          return; // stored
+        }
+      } else if (isDefaultSentinel(v)) {
+        n = defVal;
+      } else if (v.is<int>() || v.is<float>()) {
+        n = v.as<int>();
+      } else {
+        return;
+      }
+      if (n < 0) n = 0;
+      if (n > maxVal) n = maxVal;
+      seg[key] = n;
+    };
+    auto applyBoolCustom = [&](const char* key, bool defVal) {
+      if (!ov.containsKey(key)) return;
+      JsonVariant v = ov[key];
+      bool b = defVal;
+      if (v.is<JsonObject>()) {
+        const char* mode = v["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          // Don't use `|` — false is a valid custom value.
+          if (v["value"].is<bool>()) b = v["value"].as<bool>();
+          else if (v["value"].is<int>()) b = v["value"].as<int>() != 0;
+          else if (v["value"].isNull()) b = defVal;
+          else b = defVal;
+        } else if (strcmp(mode, "default") == 0) {
+          b = defVal;
+        } else {
+          return; // stored
+        }
+      } else if (isDefaultSentinel(v)) {
+        b = defVal;
+      } else if (v.is<bool>()) {
+        b = v.as<bool>();
+      } else if (v.is<int>()) {
+        b = v.as<int>() != 0;
+      } else {
+        return;
+      }
+      seg[key] = b;
+    };
 
     applyFx();
     applyPal();
     applySx();
     applyIx();
     applyBlend();
+    applyIntCustom("c1", 128, 255);
+    applyIntCustom("c2", 128, 255);
+    applyIntCustom("c3", 16, 31);
+    applyBoolCustom("o1", false);
+    applyBoolCustom("o2", false);
+    applyBoolCustom("o3", false);
 
     JsonArray ovColors = ov["colors"].as<JsonArray>();
     if (!ovColors.isNull()) {

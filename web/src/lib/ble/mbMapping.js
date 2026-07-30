@@ -590,7 +590,23 @@ export function createEmptyRuleEffect() {
 
 /** Per-property source modes for rule.segmentOverrides. */
 export const SEG_OVERRIDE_MODES = ['default', 'stored', 'custom', 'extract'];
-export const SEG_OVERRIDE_PROPS = ['fx', 'pal', 'sx', 'ix', 'blend'];
+export const SEG_OVERRIDE_PROPS = [
+  'fx', 'pal', 'sx', 'ix', 'blend',
+  'c1', 'c2', 'c3', 'o1', 'o2', 'o3',
+];
+
+/** WLED custom numeric params: c1/c2 8-bit, c3 5-bit (matches PresetsTab). */
+export const SEG_OVERRIDE_CUSTOM_NUM = {
+  c1: { min: 0, max: 255, def: 128, label: 'Custom 1' },
+  c2: { min: 0, max: 255, def: 128, label: 'Custom 2' },
+  c3: { min: 0, max: 31, def: 16, label: 'Custom 3' },
+};
+
+export const SEG_OVERRIDE_CUSTOM_BOOL = {
+  o1: { def: false, label: 'Option 1' },
+  o2: { def: false, label: 'Option 2' },
+  o3: { def: false, label: 'Option 3' },
+};
 
 export function createEmptyPropOverride(mode = 'stored') {
   return { mode };
@@ -603,6 +619,12 @@ export function createEmptySegmentOverride() {
     sx: createEmptyPropOverride('stored'),
     ix: createEmptyPropOverride('stored'),
     blend: createEmptyPropOverride('stored'),
+    c1: createEmptyPropOverride('stored'),
+    c2: createEmptyPropOverride('stored'),
+    c3: createEmptyPropOverride('stored'),
+    o1: createEmptyPropOverride('stored'),
+    o2: createEmptyPropOverride('stored'),
+    o3: createEmptyPropOverride('stored'),
     colors: [
       createEmptyPropOverride('stored'),
       createEmptyPropOverride('stored'),
@@ -655,6 +677,19 @@ export function normalizeSegmentOverrides(raw) {
         n[prop] = normalizePropOverride(ov[prop]);
         if (prop === 'blend' && n[prop].mode === 'custom') {
           n[prop] = { mode: 'custom', value: normalizeBlendModeId(n[prop].value) };
+        }
+        if (n[prop].mode === 'custom' && SEG_OVERRIDE_CUSTOM_NUM[prop]) {
+          const meta = SEG_OVERRIDE_CUSTOM_NUM[prop];
+          const raw = Number(n[prop].value);
+          n[prop] = {
+            mode: 'custom',
+            value: Number.isFinite(raw)
+              ? Math.min(meta.max, Math.max(meta.min, Math.round(raw)))
+              : meta.def,
+          };
+        }
+        if (n[prop].mode === 'custom' && SEG_OVERRIDE_CUSTOM_BOOL[prop]) {
+          n[prop] = { mode: 'custom', value: !!n[prop].value };
         }
       }
     });
@@ -1436,6 +1471,7 @@ export const SEG_OVERRIDE_DEFAULT_SENTINEL = 'd';
 /**
  * Compact segmentOverrides for BLE: omit stored/extract no-ops; custom → bare value;
  * default → sentinel "d". Colors only emit custom slots.
+ * Boolean customs (o1–o3) keep `false` as a real custom value.
  */
 export function compactSegmentOverrides(segmentOverrides) {
   if (!segmentOverrides || typeof segmentOverrides !== 'object') return undefined;
@@ -1447,6 +1483,8 @@ export function compactSegmentOverrides(segmentOverrides) {
       const ov = seg[field];
       if (!ov || typeof ov !== 'object') continue;
       if (ov.mode === 'custom' && ov.value !== undefined && ov.value !== null && ov.value !== '') {
+        compactSeg[field] = ov.value;
+      } else if (ov.mode === 'custom' && typeof ov.value === 'boolean') {
         compactSeg[field] = ov.value;
       } else if (ov.mode === 'default') {
         compactSeg[field] = SEG_OVERRIDE_DEFAULT_SENTINEL;

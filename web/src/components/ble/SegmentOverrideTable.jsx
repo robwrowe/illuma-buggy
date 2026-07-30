@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Checkbox,
   Group,
   Paper,
   SegmentedControl,
@@ -20,6 +21,8 @@ import {
   normalizeSegmentSourceMode,
   patchGlobalSegmentProp,
   segmentDisplayName,
+  SEG_OVERRIDE_CUSTOM_BOOL,
+  SEG_OVERRIDE_CUSTOM_NUM,
 } from '../../lib/ble/mbMapping';
 import { BLEND_MODE_SELECT_OPTS } from '../../lib/ble/mbConstants';
 
@@ -34,12 +37,18 @@ const SOURCE_SCOPE_OPTS = [
   { label: 'Per-segment', value: 'perSegment' },
 ];
 
-/** Properties shown in the global editor (most common). */
+/** Properties shown in the global editor (most common + WLED custom vars). */
 const GLOBAL_PROP_COLS = [
   { key: 'fx', label: 'Effect' },
   { key: 'pal', label: 'Palette' },
   { key: 'sx', label: 'Speed' },
   { key: 'ix', label: 'Intensity' },
+  { key: 'c1', label: 'Custom 1' },
+  { key: 'c2', label: 'Custom 2' },
+  { key: 'c3', label: 'Custom 3' },
+  { key: 'o1', label: 'Option 1' },
+  { key: 'o2', label: 'Option 2' },
+  { key: 'o3', label: 'Option 3' },
 ];
 
 const PROP_COLS = [
@@ -62,7 +71,9 @@ function setPropEntry(ov, key, entry) {
   const next = { ...createEmptySegmentOverride(), ...ov };
   if (key.startsWith('colors.')) {
     const slot = Number(key.slice(7));
-    const colors = [...(next.colors || [{ mode: 'stored' }, { mode: 'stored' }, { mode: 'stored' }])];
+    const colors = [
+      ...(next.colors || [{ mode: 'stored' }, { mode: 'stored' }, { mode: 'stored' }]),
+    ];
     colors[slot] = entry;
     next.colors = colors;
   } else {
@@ -82,7 +93,7 @@ function PropCell({
   paletteOptions,
   onChange,
 }) {
-  const mode = extracted ? 'extract' : (entry?.mode || 'stored');
+  const mode = extracted ? 'extract' : entry?.mode || 'stored';
   const fxOpts = (effectOptions || []).map((e) => ({
     value: String(e.id),
     label: e.name,
@@ -97,9 +108,15 @@ function PropCell({
   if (extracted) {
     return (
       <Stack gap={2}>
-        <Text size="xs" fw={600} c="dimmed">{label}</Text>
-        <Text size="xs" c="violet">Extracted</Text>
-        <Text size="xs" c="dimmed">set via extract target</Text>
+        <Text size="xs" fw={600} c="dimmed">
+          {label}
+        </Text>
+        <Text size="xs" c="violet">
+          Extracted
+        </Text>
+        <Text size="xs" c="dimmed">
+          set via extract target
+        </Text>
       </Stack>
     );
   }
@@ -112,7 +129,18 @@ function PropCell({
       else if (propKey === 'sx') value = storedSeg?.sx ?? 128;
       else if (propKey === 'ix') value = storedSeg?.ix ?? 128;
       else if (propKey === 'blend') value = storedSeg?.blend || 'top';
-      else if (colorSlot !== undefined) value = storedSeg?.colors?.[colorSlot] || '#ffffff';
+      else if (SEG_OVERRIDE_CUSTOM_NUM[propKey]) {
+        const meta = SEG_OVERRIDE_CUSTOM_NUM[propKey];
+        const raw = storedSeg?.[propKey];
+        value = Number.isFinite(raw)
+          ? Math.min(meta.max, Math.max(meta.min, Math.round(raw)))
+          : meta.def;
+      } else if (SEG_OVERRIDE_CUSTOM_BOOL[propKey]) {
+        value =
+          typeof storedSeg?.[propKey] === 'boolean'
+            ? storedSeg[propKey]
+            : SEG_OVERRIDE_CUSTOM_BOOL[propKey].def;
+      } else if (colorSlot !== undefined) value = storedSeg?.colors?.[colorSlot] || '#ffffff';
       onChange({ mode: 'custom', value });
     } else {
       onChange({ mode: nextMode });
@@ -121,7 +149,9 @@ function PropCell({
 
   return (
     <Stack gap={4}>
-      <Text size="xs" fw={600} c="dimmed">{label}</Text>
+      <Text size="xs" fw={600} c="dimmed">
+        {label}
+      </Text>
       <SegmentedControl
         size="xs"
         fullWidth
@@ -155,6 +185,31 @@ function PropCell({
           size="xs"
           value={Number.isFinite(entry?.value) ? entry.value : 128}
           onChange={(v) => onChange({ mode: 'custom', value: v })}
+        />
+      )}
+      {mode === 'custom' && SEG_OVERRIDE_CUSTOM_NUM[propKey] && (
+        <Stack gap={2}>
+          <Slider
+            min={SEG_OVERRIDE_CUSTOM_NUM[propKey].min}
+            max={SEG_OVERRIDE_CUSTOM_NUM[propKey].max}
+            size="xs"
+            value={
+              Number.isFinite(entry?.value) ? entry.value : SEG_OVERRIDE_CUSTOM_NUM[propKey].def
+            }
+            onChange={(v) => onChange({ mode: 'custom', value: v })}
+          />
+          <Text size="xs" c="dimmed" ff="monospace">
+            {Number.isFinite(entry?.value) ? entry.value : SEG_OVERRIDE_CUSTOM_NUM[propKey].def}
+            {propKey === 'c3' ? ' / 31' : ' / 255'}
+          </Text>
+        </Stack>
+      )}
+      {mode === 'custom' && SEG_OVERRIDE_CUSTOM_BOOL[propKey] && (
+        <Checkbox
+          size="xs"
+          label={entry?.value ? 'on' : 'off'}
+          checked={!!entry?.value}
+          onChange={(e) => onChange({ mode: 'custom', value: e.target.checked })}
         />
       )}
       {mode === 'custom' && propKey === 'blend' && (
@@ -202,24 +257,30 @@ function PropCell({
           {propKey === 'sx' && ` · ${storedSeg?.sx ?? 128}`}
           {propKey === 'ix' && ` · ${storedSeg?.ix ?? 128}`}
           {propKey === 'blend' && ` · ${storedSeg?.blend || 'top'}`}
-          {colorSlot !== undefined && (storedSeg?.colors?.[colorSlot] ? ` · ${storedSeg.colors[colorSlot]}` : ' · —')}
+          {SEG_OVERRIDE_CUSTOM_NUM[propKey] &&
+            (Number.isFinite(storedSeg?.[propKey]) ? ` · ${storedSeg[propKey]}` : ' · —')}
+          {SEG_OVERRIDE_CUSTOM_BOOL[propKey] &&
+            (typeof storedSeg?.[propKey] === 'boolean'
+              ? ` · ${storedSeg[propKey] ? 'on' : 'off'}`
+              : ' · —')}
+          {colorSlot !== undefined &&
+            (storedSeg?.colors?.[colorSlot] ? ` · ${storedSeg.colors[colorSlot]}` : ' · —')}
         </Text>
       )}
       {mode === 'default' && (
-        <Text size="xs" c="dimmed">rule.effect / Solid</Text>
+        <Text size="xs" c="dimmed">
+          {SEG_OVERRIDE_CUSTOM_NUM[propKey]
+            ? `default ${SEG_OVERRIDE_CUSTOM_NUM[propKey].def}`
+            : SEG_OVERRIDE_CUSTOM_BOOL[propKey]
+              ? 'default off'
+              : 'rule.effect / Solid'}
+        </Text>
       )}
     </Stack>
   );
 }
 
-function SegmentOverrideRow({
-  seg,
-  ov,
-  driven,
-  effectOptions,
-  paletteOptions,
-  onChangeOv,
-}) {
+function SegmentOverrideRow({ seg, ov, driven, effectOptions, paletteOptions, onChangeOv }) {
   const [open, setOpen] = useState(false);
   return (
     <Paper p="xs" withBorder bg="var(--bg)">
@@ -230,10 +291,15 @@ function SegmentOverrideRow({
           </AppButton>
           <Text size="xs" fw={700} ff={seg.name?.trim() ? undefined : 'monospace'}>
             {segmentDisplayName(seg)}
-            <Text span size="xs" c="dimmed" ff="monospace"> · {seg.start}-{seg.stop}</Text>
+            <Text span size="xs" c="dimmed" ff="monospace">
+              {' '}
+              · {seg.start}-{seg.stop}
+            </Text>
           </Text>
           {!open && (
-            <Text size="xs" c="dimmed">{PROP_COLS.length} properties</Text>
+            <Text size="xs" c="dimmed">
+              {PROP_COLS.length} properties
+            </Text>
           )}
         </Group>
       </Group>
@@ -320,7 +386,9 @@ export function SegmentOverrideTable({
   const globalDriven = (() => {
     const keys = new Set();
     segments.forEach((seg) => {
-      extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '').forEach((k) => keys.add(k));
+      extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '').forEach((k) =>
+        keys.add(k),
+      );
     });
     return keys;
   })();
@@ -358,9 +426,9 @@ export function SegmentOverrideTable({
           {sourceMode === 'global' ? (
             <>
               <Text size="xs" c="dimmed" mb="sm">
-                Effect, palette, speed, and intensity apply to every segment in this map.
-                Switch to Per-segment for blend/colors or different values per strip.
-                Extract targets still win per field when set below.
+                Effect, palette, speed, intensity, and WLED custom vars (c1/c2 0–255, c3 0–31,
+                o1–o3) apply to every segment in this map. Switch to Per-segment for blend/colors or
+                different values per strip. Extract targets still win per field when set below.
               </Text>
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
                 {GLOBAL_PROP_COLS.map((col) => {
@@ -431,12 +499,17 @@ export function SegmentOverrideTable({
           ) : (
             <>
               <Text size="xs" c="dimmed" mb="sm">
-                Choose where each property comes from for this rule only. Custom values stay on the rule —
-                they do not edit the shared segment map. Extracted fields are set via extract targets below.
+                Choose where each property comes from for this rule only. Custom values stay on the
+                rule — they do not edit the shared segment map. Extracted fields are set via extract
+                targets below.
               </Text>
               <Stack gap="sm">
                 {segments.map((seg) => {
-                  const driven = extractDrivenKeysForSegment(extracts, seg.id, seg.maskAssignment || '');
+                  const driven = extractDrivenKeysForSegment(
+                    extracts,
+                    seg.id,
+                    seg.maskAssignment || '',
+                  );
                   const ov = overrides[seg.id] || createEmptySegmentOverride();
                   return (
                     <SegmentOverrideRow
