@@ -40,20 +40,20 @@ export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardS
           />
 
           <Group visibleFrom="sm" gap="xs">
-            <Button size="xs" variant="" onClick={() => setShowBoardSync(true)}>
+            <Button size="xs" onClick={() => setShowBoardSync(true)}>
               📡 Board
             </Button>
-            <Button size="xs" variant="" onClick={openProfiles}>
+            <Button size="xs" onClick={openProfiles}>
               🗂 {Object.keys(profiles).length > 0 ? `(${Object.keys(profiles).length})` : ''}
             </Button>
             <FileButton onChange={importJSON} accept=".json">
               {(props) => (
-                <Button size="xs" variant="" {...props}>
+                <Button size="xs" {...props}>
                   📥
                 </Button>
               )}
             </FileButton>
-            <Button size="xs" onClick={exportJSON} variant="default">
+            <Button size="xs" onClick={exportJSON} color="lime">
               📤
             </Button>
           </Group>
