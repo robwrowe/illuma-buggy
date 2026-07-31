@@ -8,8 +8,9 @@ Verify `ignoreLowerPriority` and `ignoreAllOtherRules` before relying on them in
 Lifecycle reminder (timed rules): **ON → DIP → FADE → COOLDOWN (black hold) → restore / IDLE**.
 Exclusivity holds for the whole window until IDLE — including while the strip is black.
 
-Exact re-match of the **active rule id** must still behave normally (ON slack, DIP/FADE re-apply,
-COOLDOWN re-apply unless fixed cooldown mode).
+Exact re-match of the **active rule id**: ON slack extends the deadline; DIP/FADE ignore
+trailing same-payload repeats (do not restart mid-FTB); COOLDOWN onMatch may re-apply only
+after ~750ms quiet since the last packet (fixed cooldown mode never re-applies).
 
 ---
 
@@ -43,7 +44,7 @@ Lower priority number = runs first / higher precedence.
 | E1 | Ignore-lower blocks worse prio | Fire `ex-mid`, while ON/COOLDOWN fire `ex-low` | Strip stays on mid; log `suppressed` for low; no apply of low |
 | E2 | Ignore-lower allows better prio | Fire `ex-mid`, while ON fire `ex-high` | High preempts / applies; mid exclusivity does not block higher prio |
 | E3 | Ignore-all blocks any other | Fire `ex-lock`, while ON fire `ex-high` then `ex-low` | Both suppressed; strip stays on lock look |
-| E4 | Exact re-match still works | Fire `ex-lock`, re-send **same** lock payload during ON | Slack extends (no full rebuild spam); during DIP/FADE/COOLDOWN re-apply restores effect |
+| E4 | Exact re-match still works | Fire `ex-lock`, re-send **same** lock payload during ON | Slack extends (no full rebuild spam); trailing repeats during DIP/FADE stay black; after quiet gap in COOLDOWN onMatch, re-apply restores effect |
 | E5 | Black hold still exclusive | Fire `ex-lock`, wait until black COOLDOWN, fire `ex-high` | Still suppressed until restore/IDLE; strip may be black |
 | E6 | After IDLE, others fire | Complete lock lifecycle to IDLE, then fire `ex-high` | High applies normally |
 | E7 | Disable active exclusive rule | Fire `ex-lock`, disable via `set_rule_enabled` / Settings | Forces restore; exclusivity clears; other rules can fire |

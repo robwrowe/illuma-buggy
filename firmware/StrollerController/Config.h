@@ -36,9 +36,16 @@
 #define MB_TIMING_T0_FALLBACK_SEC 3.0f
 /** @deprecated Prefer timing-model fadeBitsStretchSec[]. Kept for reference only. */
 #define MB_TIMING_FADE_STEP_MS  500UL
-/** Grace after last same-rule advert before ON→FADE (not a full on-time re-arm).
- *  Does not apply during FADE/COOLDOWN — those re-apply the effect instead. */
+/** Grace after last same-rule advert before ON→DIP (not a full on-time re-arm). */
 #define MB_RULE_REPEAT_SLACK_MS 400UL
+/**
+ * Same-payload repeats must not restart mid-FTB: ON slack ends when the advert burst
+ * stops, but UART/queue often still drains identical frames into DIP/FADE — that used
+ * to re-apply the BLE look ("comes back on, then black, then restore"), especially on
+ * short on-times. COOLDOWN onMatch re-apply only after this quiet gap since the last
+ * seen packet (intentional re-cast after the burst ends).
+ */
+#define MB_RULE_RETRIGGER_QUIET_MS 750UL
 
 
 // Starlight wand

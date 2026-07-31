@@ -97,6 +97,7 @@ String compactWledStateForSave(const String& full) {
   if (in.containsKey("bri")) out["bri"] = in["bri"];
   if (in.containsKey("nl")) out["nl"] = in["nl"];
   if (in.containsKey("fp")) out["fp"] = in["fp"];
+  if (in.containsKey("ledmap")) out["ledmap"] = in["ledmap"];
 
   JsonArray inSegs = in["seg"].as<JsonArray>();
   if (!inSegs.isNull() && inSegs.size() > 0) {

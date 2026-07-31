@@ -151,14 +151,15 @@ bool applyPreset(const String& id) {
   if (deserializeJson(wledDoc, doc["wled"]) != DeserializationError::Ok) return false;
 
   // Inherit device-global ledmap from the linked segment map (same lookup as rules).
+  // Always set explicitly — omitting leaves WLED on whatever ledmap was previously active.
+  // Segment map wins over any ledmap baked into the preset's stored wled blob.
+  int ledmapId = 0;
   const char* mapId = doc["segmentMapId"] | "";
   if (mapId[0]) {
     JsonObject segMap = findSegmentMapById(mapId);
-    if (!segMap.isNull()) {
-      int ledmapId = segMap["ledmap"] | 0;
-      if (ledmapId > 0) wledDoc["ledmap"] = ledmapId;
-    }
+    if (!segMap.isNull()) ledmapId = (int)(segMap["ledmap"] | 0);
   }
+  wledDoc["ledmap"] = ledmapId;
 
   String wledJson;
   serializeJson(wledDoc, wledJson);

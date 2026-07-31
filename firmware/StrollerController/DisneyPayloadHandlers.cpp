@@ -77,8 +77,8 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   }
 
   // MB effect dedupe — while ON, repeat matches only extend the slack deadline
-  // (must not rebuild WLED every advert). During FADE/COOLDOWN, onTimedRuleRepeatMatch
-  // re-applies the rule so FTB/black-hold can restart the same effect.
+  // (must not rebuild WLED every advert). During DIP/FADE, trailing same-payload
+  // frames are ignored; COOLDOWN onMatch may re-apply after a quiet gap.
   if (mbEffectIsRepeatAdvert(payload, plen)) {
     if (rulesPaused) return;
     if (mbRulePhase != MB_RULE_IDLE && magicBandEnabled) {

@@ -88,6 +88,9 @@ String buildWledRestorePayload(const String& savedJson) {
 
   doc.remove("transition");
 
+  // Always explicit — old snapshots may lack ledmap; omission leaves WLED on a stale map.
+  if (!doc.containsKey("ledmap")) doc["ledmap"] = 0;
+
   JsonArray segs = doc["seg"].as<JsonArray>();
   if (!segs.isNull()) {
     for (size_t i = 0; i < segs.size(); i++) {
@@ -116,6 +119,8 @@ String prepareWledRestorePayload(const String& json) {
   if (segs.isNull() || segs.size() == 0) {
     DynamicJsonDocument wrapped(WLED_RESTORE_JSON_CAP);
     wrapped["on"] = doc["on"] | true;
+    // Preserve root ledmap across wrap; buildWledRestorePayload defaults missing to 0.
+    if (doc.containsKey("ledmap")) wrapped["ledmap"] = doc["ledmap"];
     JsonObject seg0 = wrapped.createNestedArray("seg").createNestedObject();
     seg0["id"] = 0;
     seg0["start"] = 0;
@@ -185,7 +190,10 @@ String preparePresetApplyPayload(const String& json) {
 static String buildDipPayload() {
   if (mbActiveRuleId[0]) {
     JsonObject segMap = mbSegMapForActiveRule();
-    if (!segMap.isNull()) return buildSolidBlackPayloadForSegMap(segMap);
+    if (!segMap.isNull()) {
+      int ledmapId = (int)(segMap["ledmap"] | 0);
+      return buildSolidBlackPayloadForSegMap(segMap, ledmapId);
+    }
   }
   return "{\"on\":false}";
 }
@@ -214,8 +222,20 @@ bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, i
   if (preset.length() == 0) return false;
   DynamicJsonDocument doc(12288);
   if (deserializeJson(doc, preset)) return false;
+  DynamicJsonDocument wledDoc(WLED_RESTORE_JSON_CAP);
+  if (deserializeJson(wledDoc, doc["wled"]) != DeserializationError::Ok) return false;
+
+  // Same precedence as applyPreset(): segment-map ledmap wins; default 0.
+  int ledmapId = 0;
+  const char* mapId = doc["segmentMapId"] | "";
+  if (mapId[0]) {
+    JsonObject segMap = findSegmentMapById(mapId);
+    if (!segMap.isNull()) ledmapId = (int)(segMap["ledmap"] | 0);
+  }
+  wledDoc["ledmap"] = ledmapId;
+
   String wledJson;
-  serializeJson(doc["wled"], wledJson);
+  serializeJson(wledDoc, wledJson);
   if (wledJson.length() == 0) return false;
   setCurrentPreset(id);
   disableAllSplitSegments();

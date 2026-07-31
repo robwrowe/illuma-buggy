@@ -1092,7 +1092,8 @@ static void beginMbRuleDip(unsigned long fadeMs) {
     mbRulePhaseDeadlineMs = millis() + (fadeMs > 0 ? fadeMs : 1);
     return;
   }
-  String body = buildSolidBlackPayloadForSegMap(segMap);
+  int ledmapId = (int)(segMap["ledmap"] | 0);
+  String body = buildSolidBlackPayloadForSegMap(segMap, ledmapId);
   sendToWLED(injectWledTransition(body, fadeMs));
   mbRulePhase = MB_RULE_DIP;
   mbRulePhaseDeadlineMs = millis() + (fadeMs > 0 ? fadeMs : 1);
@@ -1270,15 +1271,33 @@ void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size
   const char* ruleId = rule["id"] | "";
   if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
 
-  // DIP / FADE / COOLDOWN: FTB (or black hold) already turned the effect off. A same-payload
-  // match must re-POST WLED — flipping phase/deadline alone leaves the strip black.
+  // DIP / FADE: ignore byte-identical trailing adverts from the cast that just ended.
+  // Re-applying here restarts ON mid-FTB (effect flashes back, then blacks out again).
   if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
-    Serial.printf("[Rule] repeat during dip/FTB — re-apply id=%s\n", ruleId);
-    applyMatchedRule(rule, payload, plen);
+    static unsigned long lastIgnoreLogMs = 0;
+    if ((long)(millis() - lastIgnoreLogMs) > 1000) {
+      lastIgnoreLogMs = millis();
+      Serial.printf("[Rule] ignore trailing repeat during %s id=%s\n",
+                    mbRulePhase == MB_RULE_DIP ? "DIP" : "FADE", ruleId);
+    }
     return;
   }
+
+  // COOLDOWN / black hold: onMatch may restart, but only after the original burst has
+  // been quiet long enough (mbEventTimestamp is from the previous packet — touch happens
+  // after this function returns).
   if (mbRulePhase == MB_RULE_COOLDOWN) {
     if (mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) return;
+    if ((long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
+      static unsigned long lastQuietLogMs = 0;
+      if ((long)(millis() - lastQuietLogMs) > 1000) {
+        lastQuietLogMs = millis();
+        Serial.printf("[Rule] ignore repeat during black hold (quiet %lums < %lums) id=%s\n",
+                      (unsigned long)(millis() - mbEventTimestamp),
+                      (unsigned long)MB_RULE_RETRIGGER_QUIET_MS, ruleId);
+      }
+      return;
+    }
     Serial.printf("[Rule] repeat during black hold — re-apply id=%s\n", ruleId);
     applyMatchedRule(rule, payload, plen);
     return;
@@ -1736,11 +1755,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
 
-  // Device-global remap — inject at the end so every build branch keeps it.
-  // Skip 0/absent: WLED default ledmap.json; avoid noise on every POST.
-  if (ledmapId > 0) {
-    wled["ledmap"] = ledmapId;
-  }
+  // Device-global remap — always explicit. Omission left WLED on whatever
+  // ledmap was previously active (partial update), not the default.
+  wled["ledmap"] = (ledmapId > 0) ? ledmapId : 0;
 
   String wledJson;
   serializeJson(wled, wledJson);

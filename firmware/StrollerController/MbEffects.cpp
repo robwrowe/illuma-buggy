@@ -158,8 +158,8 @@ void collectActiveSegIds(const MbSegMap& map, uint8_t* out, uint8_t& count) {
   }
 }
 
-String buildSolidBlackPayloadForSegMap(JsonObject segMap) {
-  String body = "{\"on\":true,\"seg\":[";
+String buildSolidBlackPayloadForSegMap(JsonObject segMap, int ledmapId) {
+  String body = "{\"on\":true,\"ledmap\":" + String(ledmapId > 0 ? ledmapId : 0) + ",\"seg\":[";
   bool first = true;
   uint8_t activeIds[MB_WLED_MAX_SEG] = {0};
   uint8_t activeCount = 0;

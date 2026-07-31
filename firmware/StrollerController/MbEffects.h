@@ -19,5 +19,6 @@ void appendWledSolidSeg(String& body, const WledSegRef& ref, uint8_t r, uint8_t 
 void addActiveSegId(uint8_t id, uint8_t* out, uint8_t& count);
 void collectActiveSegIds(const MbSegMap& map, uint8_t* out, uint8_t& count);
 
-/** Solid black on every segment in segMap at its current geometry (shape-safe FTB dip). */
-String buildSolidBlackPayloadForSegMap(JsonObject segMap);
+/** Solid black on every segment in segMap at its current geometry (shape-safe FTB dip).
+ *  ledmapId is always written (0 = WLED default / no remap) so a stale map cannot stick. */
+String buildSolidBlackPayloadForSegMap(JsonObject segMap, int ledmapId = 0);
