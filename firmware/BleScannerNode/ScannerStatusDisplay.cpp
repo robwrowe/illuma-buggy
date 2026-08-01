@@ -1,7 +1,29 @@
 #include "ScannerStatusDisplay.h"
 #include "Globals.h"
-#include "SdRawLogger.h"
 #include "Config.h"
+
+#if !HAS_OLED
+
+bool scannerStatusDisplayInit() {
+  Serial.println("[Display] skipped (HAS_OLED=0)");
+  return false;
+}
+
+bool scannerStatusDisplayReady() { return false; }
+
+void scannerStatusDisplayReassertWire() {}
+
+void scannerStatusDisplayNotePacket(const uint8_t* mfrData, size_t len, int rssi) {
+  (void)mfrData;
+  (void)len;
+  (void)rssi;
+}
+
+void scannerStatusDisplayUpdate() {}
+
+#else
+
+#include "SdRawLogger.h"
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -188,3 +210,5 @@ void scannerStatusDisplayUpdate() {
 
   display.display();
 }
+
+#endif  // HAS_OLED

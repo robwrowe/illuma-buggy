@@ -116,15 +116,15 @@
 
 // SD card SPI (independent card per board).
 // S3 logic: SPI pins 10–13. Classic ESP32 scanner: GPIO 6–11 are flash — use VSPI.
+// Flip HAS_SD_LOGGER to 1 when a card is installed; 0 skips SPI mount (RAM ring still works on logic).
+#define HAS_SD_LOGGER 0
 #if defined(ILLUMA_LOGIC_BOARD) || CONFIG_IDF_TARGET_ESP32S3
-#define HAS_SD_LOGGER 1
 #define SD_CS_PIN   10
 #define SD_SCK_PIN  12
 #define SD_MOSI_PIN 11
 #define SD_MISO_PIN 13
 #else
 // Classic ESP32-DevKitC-32 (scanner): CS=5 SCK=18 MOSI=23 MISO=19
-#define HAS_SD_LOGGER 1
 #define SD_CS_PIN   5
 #define SD_SCK_PIN  18
 #define SD_MOSI_PIN 23
@@ -134,6 +134,8 @@
 // OLED I2C
 // Logic S3: SDA 21 / SCL 47 (DevKitC-1 header; GPIO 22 not broken out).
 // Scanner classic ESP32: SDA 21 / SCL 22 (Arduino Wire defaults; free of UART/SD).
+// Flip HAS_OLED to 1 when the panel is wired; 0 skips Wire/SSD1306 init entirely.
+#define HAS_OLED 0
 #if defined(ILLUMA_LOGIC_BOARD) || CONFIG_IDF_TARGET_ESP32S3
 #define OLED_SDA_PIN 21
 #define OLED_SCL_PIN 47

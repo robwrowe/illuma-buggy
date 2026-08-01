@@ -1,12 +1,15 @@
 #include "SdRuleLogger.h"
 #include "Config.h"
-#include <SD.h>
-#include <SPI.h>
 #include <string.h>
 
 static bool sdReady = false;
-static File logFile;
 static char currentLogPath[32];
+
+#if HAS_SD_LOGGER
+#include <SD.h>
+#include <SPI.h>
+static File logFile;
+#endif
 
 // In-RAM ring so BLE pull does not need SD seek. Survives SD soft-fail after boot.
 static constexpr size_t SD_RULE_LOG_RING_CAP = 96;
@@ -52,6 +55,12 @@ static bool eventAllowed(const char* line, const char* eventFilter) {
 }
 
 bool sdRuleLoggerInit() {
+#if !HAS_SD_LOGGER
+  Serial.println("[SD] skipped (HAS_SD_LOGGER=0; RAM ring still active)");
+  sdReady = false;
+  currentLogPath[0] = '\0';
+  return false;
+#else
   // Pass SPI + pins explicitly. Plain SD.begin(cs) can re-call SPI.begin() with
   // core defaults and ignore the custom S3 map (CS10/SCK12/MOSI11/MISO13).
   pinMode(SD_CS_PIN, OUTPUT);
@@ -90,6 +99,7 @@ bool sdRuleLoggerInit() {
   sdReady = (bool)logFile;
   Serial.printf("[SD] %s, logging to %s\n", sdReady ? "ready" : "open failed", currentLogPath);
   return sdReady;
+#endif
 }
 
 bool sdRuleLoggerReady() { return sdReady; }
@@ -118,10 +128,12 @@ void sdRuleLoggerWrite(const char* event, const char* detailJson) {
 
   ringPush(line);
 
+#if HAS_SD_LOGGER
   if (!sdReady) return;
   logFile.print(line);
   logFile.print('\n');
   logFile.flush();
+#endif
 }
 
 size_t sdRuleLoggerBuildTailJson(String& out, size_t maxLines, const char* eventFilter) {

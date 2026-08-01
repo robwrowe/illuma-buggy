@@ -1,9 +1,29 @@
 #include "StatusDisplay.h"
 #include "Globals.h"
+#include "Config.h"
+
+void statusDisplaySetWledOk(bool ok) { wledHttpOk = ok; }
+
+#if !HAS_OLED
+
+void statusDisplaySetLastRule(const char* name) { (void)name; }
+
+bool statusDisplayInit() {
+  Serial.println("[Display] skipped (HAS_OLED=0)");
+  return false;
+}
+
+bool statusDisplayReady() { return false; }
+
+void statusDisplayReassertWire() {}
+
+void statusDisplayUpdate() {}
+
+#else
+
 #include "PayloadTransport.h"
 #include "MbRuleEngine.h"
 #include "PresetStore.h"
-#include "Config.h"
 #include "Types.h"
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -17,8 +37,6 @@ static unsigned long lastDisplayMs = 0;
 // Default GFX font is 6×8 → 21 cols × 8 rows on 128×64.
 static const int OLED_COLS = OLED_WIDTH / 6;
 static const int OLED_ROWS = OLED_HEIGHT / 8;
-
-void statusDisplaySetWledOk(bool ok) { wledHttpOk = ok; }
 
 void statusDisplaySetLastRule(const char* name) {
   lastFiredRuleName = name ? String(name) : "";
@@ -234,3 +252,5 @@ void statusDisplayUpdate() {
 
   display.display();
 }
+
+#endif  // HAS_OLED

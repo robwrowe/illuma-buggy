@@ -14,7 +14,7 @@ static char currentLogPath[32];
 
 bool sdRawLoggerInit() {
 #if !HAS_SD_LOGGER
-  Serial.println("[SD] skipped (disabled on this build)");
+  Serial.println("[SD] skipped (HAS_SD_LOGGER=0)");
   sdReady = false;
   return false;
 #else

@@ -36,9 +36,9 @@ void setup() {
   delay(500);
   randomSeed(esp_random());
   Serial.println("\n[Boot] StrollerController v2.1");
-  Serial.printf("[Boot] board=DevKitC-1-N16R8 pins uart TX=%d RX=%d led=%d oled SDA=%d SCL=%d\n",
+  Serial.printf("[Boot] board=DevKitC-1-N16R8 pins uart TX=%d RX=%d led=%d oled=%d sd=%d\n",
                 UART_LINK_TX_PIN, UART_LINK_RX_PIN, STATUS_LED_PIN,
-                OLED_SDA_PIN, OLED_SCL_PIN);
+                HAS_OLED, HAS_SD_LOGGER);
   Serial.printf("[Boot] freeHeap=%u maxAllocHeap=%u psramSize=%u psramFree=%u\n",
                 (unsigned)ESP.getFreeHeap(),
                 (unsigned)ESP.getMaxAllocHeap(),
@@ -164,8 +164,7 @@ void setup() {
   prefs.end();
   Serial.println("[NVS] Ready");
 
-  // OLED before NeoPixel/UART/BLE — GPIO47 I2C was reliable when brought up first;
-  // bit-banged status LED on GPIO48 shares the same header edge.
+  // OLED before NeoPixel/UART/BLE when present (HAS_OLED); no-op stubs otherwise.
   statusDisplayInit();  // non-fatal
 
   NimBLEDevice::init(BLE_NAME);
@@ -173,10 +172,12 @@ void setup() {
   statusLedInit();
   startBLEPeripheral();
   uartScannerLinkInit();
-  sdRuleLoggerInit();   // non-fatal
+  sdRuleLoggerInit();   // non-fatal (HAS_SD_LOGGER=0 skips SPI; RAM ring still on)
+#if HAS_OLED
   // SPI/SD can leave Wire in a weird state on some cores — re-assert OLED pins.
   statusDisplayReassertWire();
   if (!statusDisplayReady()) statusDisplayInit();
+#endif
 
   // Dual-board: logic board does NOT own the scan radio (no silent fallback).
   if (boardRole == BoardRole::STANDALONE) {

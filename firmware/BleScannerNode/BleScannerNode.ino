@@ -7,13 +7,13 @@
  *   - ESP32-DevKitC-32 (ESP-32D / WROOM-32D, 38-pin, CP2102 USB-C — WandSim class)
  *     — no onboard RGB; StatusLed is a no-op.
  *     UART: TX=GPIO17 RX=GPIO16. Wire to S3 logic: 17→RX**18**, 16←TX17, GND–GND.
- *     OLED (optional): SDA=GPIO21 SCL=GPIO22, 128×64 SSD1306 I2C @ 0x3C.
+ *     OLED (optional, HAS_OLED): SDA=GPIO21 SCL=GPIO22, 128×64 SSD1306 I2C @ 0x3C.
  *
  * Arduino IDE: Board = "ESP32 Dev Module" (not ESP32S3).
  *
  * No wireless pairing — cross-wire UART and shared GND. Heartbeats keep the
  * logic board's link-alive timer fresh when Disney air is quiet. Logic replies
- * to heartbeats so the scanner OLED can show Link:OK.
+ * to heartbeats so the scanner OLED can show Link:OK when HAS_OLED=1.
  */
 
 #include "Globals.h"
@@ -50,16 +50,18 @@ void setup() {
   scannerTransportInit();
   delay(300);
 
-  // OLED before SD — SPI bring-up / failed mounts must not block the display.
+  // OLED before SD when enabled (HAS_OLED / HAS_SD_LOGGER); both soft-skip when off.
   statusLedInit();
   scannerStatusDisplayInit();
   sdRawLoggerInit();
+#if HAS_OLED
   // SD uses VSPI; re-assert I2C pins in case the bus was disturbed.
   if (!scannerStatusDisplayReady()) {
     scannerStatusDisplayInit();
   } else {
     scannerStatusDisplayReassertWire();
   }
+#endif
 
   uint8_t mac[6];
   esp_read_mac(mac, ESP_MAC_BT);
