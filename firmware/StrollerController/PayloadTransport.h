@@ -12,6 +12,8 @@ extern uint32_t uartRxPacketCount;
 void payloadTransportInit();
 void transportSendParsedPacket(const ParsedDisneyPacket& pkt);
 void processParsedPacketQueue();
+/** Drop queued Disney frames (call on ON→DIP so trailing ads cannot restart FTB). */
+void flushParsedPacketQueue();
 
 // Legacy raw-byte mailbox (kept for any residual callers; prefer transportSendParsedPacket).
 void queueDisneyPayload(const uint8_t* payload, size_t plen);

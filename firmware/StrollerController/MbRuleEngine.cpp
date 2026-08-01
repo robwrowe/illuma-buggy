@@ -15,6 +15,7 @@
 #include "SdRuleLogger.h"
 #include "StatusDisplay.h"
 #include "MbEffects.h"
+#include "PayloadTransport.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -1083,6 +1084,10 @@ static void sendMbRuleOffLegacy(unsigned long fadeMs) {
 }
 
 static void beginMbRuleDip(unsigned long fadeMs) {
+  // Drop frames already queued from the cast that just ended — otherwise they
+  // drain into DIP/FADE/COOLDOWN and restart the BLE look mid-FTB.
+  flushParsedPacketQueue();
+
   JsonObject segMap = mbSegMapForActiveRule();
   if (segMap.isNull()) {
     // No known shape to hold — fall back to old behavior (root on:false / FTB
@@ -1268,38 +1273,24 @@ void serviceMbRuleLifecycle() {
 }
 
 void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen) {
+  (void)payload;
+  (void)plen;
   const char* ruleId = rule["id"] | "";
   if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
 
-  // DIP / FADE: ignore byte-identical trailing adverts from the cast that just ended.
-  // Re-applying here restarts ON mid-FTB (effect flashes back, then blacks out again).
-  if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
+  // DIP / FADE / COOLDOWN: stay black until lifecycle restore. Trailing ads (and
+  // late UART queue drain after a quiet gap) used to re-apply here → effect flashes
+  // back on, then blacks out, then restores. Fresh casts apply again after IDLE.
+  if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE ||
+      mbRulePhase == MB_RULE_COOLDOWN) {
     static unsigned long lastIgnoreLogMs = 0;
     if ((long)(millis() - lastIgnoreLogMs) > 1000) {
       lastIgnoreLogMs = millis();
-      Serial.printf("[Rule] ignore trailing repeat during %s id=%s\n",
-                    mbRulePhase == MB_RULE_DIP ? "DIP" : "FADE", ruleId);
+      const char* phase =
+        mbRulePhase == MB_RULE_DIP ? "DIP" :
+        mbRulePhase == MB_RULE_FADE ? "FADE" : "COOLDOWN";
+      Serial.printf("[Rule] ignore active-rule match during %s id=%s\n", phase, ruleId);
     }
-    return;
-  }
-
-  // COOLDOWN / black hold: onMatch may restart, but only after the original burst has
-  // been quiet long enough (mbEventTimestamp is from the previous packet — touch happens
-  // after this function returns).
-  if (mbRulePhase == MB_RULE_COOLDOWN) {
-    if (mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) return;
-    if ((long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
-      static unsigned long lastQuietLogMs = 0;
-      if ((long)(millis() - lastQuietLogMs) > 1000) {
-        lastQuietLogMs = millis();
-        Serial.printf("[Rule] ignore repeat during black hold (quiet %lums < %lums) id=%s\n",
-                      (unsigned long)(millis() - mbEventTimestamp),
-                      (unsigned long)MB_RULE_RETRIGGER_QUIET_MS, ruleId);
-      }
-      return;
-    }
-    Serial.printf("[Rule] repeat during black hold — re-apply id=%s\n", ruleId);
-    applyMatchedRule(rule, payload, plen);
     return;
   }
 
@@ -1332,14 +1323,27 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
 
+  // Non-identical payloads still match the active rule mid-FTB — do not rebuild WLED.
+  // Byte-identical repeats are handled earlier via onTimedRuleRepeatMatch; this catches
+  // rolling/variant frames that would otherwise restart ON during DIP/FADE/COOLDOWN.
+  if (src == BLE_MAGIC && mbRulePhase != MB_RULE_IDLE && mbActiveRuleId[0]) {
+    const char* rid = rule["id"] | "";
+    if (rid[0] && strcmp(rid, mbActiveRuleId) == 0 &&
+        (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE ||
+         mbRulePhase == MB_RULE_COOLDOWN)) {
+      onTimedRuleRepeatMatch(rule, payload, plen);
+      return;
+    }
+  }
+
   JsonObject timing = rule["timing"].as<JsonObject>();
   bool timingEn = !timing.isNull() && (timing["enabled"] | false);
 
   // Payload-identity dedup already happened in applyParsedDisneyPacket() /
   // mbEffectIsRepeatAdvert() before this function was called. A payload only
   // reaches here if it's new or the first match — never a true byte-identical
-  // repeat. Do not short-circuit on mbActiveRuleId alone (that skipped WLED
-  // rebuilds when the same rule matched a different packet).
+  // repeat. Do not short-circuit on mbActiveRuleId alone during ON (that skipped
+  // WLED rebuilds when the same rule matched a different packet).
 
   const char* mapId = rule["segmentMapId"] | "";
   JsonObject segMap = findSegmentMapById(mapId);

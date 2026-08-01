@@ -172,6 +172,14 @@ void transportSendParsedPacket(const ParsedDisneyPacket& pkt) {
   queueParsedPacket(pkt);
 }
 
+void flushParsedPacketQueue() {
+  portENTER_CRITICAL(&parsedJobMux);
+  parsedQueue.head = 0;
+  parsedQueue.tail = 0;
+  parsedQueue.count = 0;
+  portEXIT_CRITICAL(&parsedJobMux);
+}
+
 void processParsedPacketQueue() {
   if (parsedPacketDropCount != lastLoggedDropCount) {
     Serial.printf("[UART] parsed packet drops=%lu (queue full; oldest discarded)\n",
