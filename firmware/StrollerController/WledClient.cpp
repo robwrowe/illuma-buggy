@@ -37,24 +37,22 @@ String injectWledTransition(const String& jsonBody, unsigned long transitionMs) 
 
 String injectWledTransition(const String& jsonBody, unsigned long transitionMs, int blendingStyle) {
   if (jsonBody.length() < 2 || jsonBody.charAt(0) != '{') return jsonBody;
-  // Instant: no duration inject; still allow bs if caller asks.
-  if (transitionMs == 0 && blendingStyle < 0) return jsonBody;
 
   String prefix = "{";
-  bool needComma = false;
-  if (transitionMs > 0) {
-    unsigned tenths = transitionMs / 100;
-    if (tenths == 0) tenths = 1;
-    if (tenths > 655) tenths = 655;
-    prefix += "\"transition\":" + String(tenths);
-    needComma = true;
-  }
+  // Always inject "transition" explicitly, including 0. Omitting it when
+  // transitionMs == 0 does NOT force an instant change — WLED falls back to
+  // whatever transition duration is already active on the controller. An
+  // explicit "transition":0 is required to guarantee an instant cut.
+  unsigned tenths = transitionMs / 100;
+  if (transitionMs > 0 && tenths == 0) tenths = 1; // sub-100ms non-zero fade rounds up, not down to instant
+  if (tenths > 655) tenths = 655;
+  prefix += "\"transition\":" + String(tenths);
+  bool needComma = true;
+
   if (blendingStyle >= 0) {
-    if (needComma) prefix += ",";
-    prefix += "\"bs\":" + String(blendingStyle & 0x1F);
+    prefix += ",\"bs\":" + String(blendingStyle & 0x1F);
     needComma = true;
   }
-  if (!needComma) return jsonBody;
   prefix += ",";
   return prefix + jsonBody.substring(1);
 }
