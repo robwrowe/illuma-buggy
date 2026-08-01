@@ -1087,6 +1087,8 @@ static void beginMbRuleDip(unsigned long fadeMs) {
   // Drop frames already queued from the cast that just ended — otherwise they
   // drain into DIP/FADE/COOLDOWN and restart the BLE look mid-FTB.
   flushParsedPacketQueue();
+  // Quiet baseline for trailing vs intentional matches during DIP/FADE.
+  mbEventTimestamp = millis();
 
   JsonObject segMap = mbSegMapForActiveRule();
   if (segMap.isNull()) {
@@ -1257,6 +1259,10 @@ void serviceMbRuleLifecycle() {
     sdRuleLoggerWrite("lifecycle", "\"transition\":\"FADE_TO_BLACK_HOLD\"");
     mbRulePhase = MB_RULE_COOLDOWN;
     mbRulePhaseDeadlineMs = millis() + (mbRuleCooldownMs > 0 ? mbRuleCooldownMs : 1);
+    // Quiet gate for onMatch re-apply starts at black-hold entry — not from the
+    // last ON advert (a long DIP would otherwise make the first COOLDOWN frame
+    // look "quiet enough" and flash the effect back on).
+    mbEventTimestamp = millis();
     return;
   }
   if (mbRulePhase == MB_RULE_COOLDOWN) {
@@ -1272,26 +1278,46 @@ void serviceMbRuleLifecycle() {
   }
 }
 
-void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen) {
-  (void)payload;
-  (void)plen;
+bool onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen) {
   const char* ruleId = rule["id"] | "";
-  if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
+  if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return false;
 
-  // DIP / FADE / COOLDOWN: stay black until lifecycle restore. Trailing ads (and
-  // late UART queue drain after a quiet gap) used to re-apply here → effect flashes
-  // back on, then blacks out, then restores. Fresh casts apply again after IDLE.
-  if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE ||
-      mbRulePhase == MB_RULE_COOLDOWN) {
-    static unsigned long lastIgnoreLogMs = 0;
-    if ((long)(millis() - lastIgnoreLogMs) > 1000) {
-      lastIgnoreLogMs = millis();
-      const char* phase =
-        mbRulePhase == MB_RULE_DIP ? "DIP" :
-        mbRulePhase == MB_RULE_FADE ? "FADE" : "COOLDOWN";
-      Serial.printf("[Rule] ignore active-rule match during %s id=%s\n", phase, ruleId);
+  // DIP / FADE: trailing ads from the cast that just ended are ignored (queue is
+  // also flushed on ON→DIP). After a quiet gap, abort FTB and apply immediately
+  // (Disney-like — new cast cuts off the fade-to-black).
+  if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
+    if ((long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
+      static unsigned long lastIgnoreLogMs = 0;
+      if ((long)(millis() - lastIgnoreLogMs) > 1000) {
+        lastIgnoreLogMs = millis();
+        Serial.printf("[Rule] ignore trailing match during %s id=%s\n",
+                      mbRulePhase == MB_RULE_DIP ? "DIP" : "FADE", ruleId);
+      }
+      return false;
     }
-    return;
+    Serial.printf("[Rule] abort FTB — re-apply id=%s\n", ruleId);
+    applyMatchedRule(rule, payload, plen);
+    return true;
+  }
+
+  // COOLDOWN / black hold: onMatch may start a new cast after the original burst has
+  // been quiet long enough. Do not touch the idle timer on rejects — that would
+  // forever reset the quiet gap while trailing ads drain. Fixed mode never re-applies.
+  if (mbRulePhase == MB_RULE_COOLDOWN) {
+    if (mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) return false;
+    if ((long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
+      static unsigned long lastQuietLogMs = 0;
+      if ((long)(millis() - lastQuietLogMs) > 1000) {
+        lastQuietLogMs = millis();
+        Serial.printf("[Rule] ignore match during black hold (quiet %lums < %lums) id=%s\n",
+                      (unsigned long)(millis() - mbEventTimestamp),
+                      (unsigned long)MB_RULE_RETRIGGER_QUIET_MS, ruleId);
+      }
+      return false;
+    }
+    Serial.printf("[Rule] new cast during black hold — re-apply id=%s\n", ruleId);
+    applyMatchedRule(rule, payload, plen);
+    return true;
   }
 
   // ON: keep alive with a short slack window — do not rebuild WLED on every advert.
@@ -1300,7 +1326,9 @@ void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size
     if ((long)(slackDeadline - mbRulePhaseDeadlineMs) > 0) {
       mbRulePhaseDeadlineMs = slackDeadline;
     }
+    return true;
   }
+  return false;
 }
 
 void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t plen) {
@@ -1323,17 +1351,26 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
 
-  // Non-identical payloads still match the active rule mid-FTB — do not rebuild WLED.
-  // Byte-identical repeats are handled earlier via onTimedRuleRepeatMatch; this catches
-  // rolling/variant frames that would otherwise restart ON during DIP/FADE/COOLDOWN.
-  if (src == BLE_MAGIC && mbRulePhase != MB_RULE_IDLE && mbActiveRuleId[0]) {
+  // During DIP/FADE: trailing same-rule matches inside the quiet window are ignored.
+  // After quiet — or a different rule — abort FTB and apply now (Disney-like cut).
+  bool abortFtb = false;
+  if (src == BLE_MAGIC &&
+      (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE)) {
     const char* rid = rule["id"] | "";
-    if (rid[0] && strcmp(rid, mbActiveRuleId) == 0 &&
-        (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE ||
-         mbRulePhase == MB_RULE_COOLDOWN)) {
-      onTimedRuleRepeatMatch(rule, payload, plen);
+    bool sameRule = rid[0] && mbActiveRuleId[0] && strcmp(rid, mbActiveRuleId) == 0;
+    if (sameRule &&
+        (long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
+      static unsigned long lastIgnoreLogMs = 0;
+      if ((long)(millis() - lastIgnoreLogMs) > 1000) {
+        lastIgnoreLogMs = millis();
+        Serial.printf("[Rule] ignore trailing match during %s id=%s\n",
+                      mbRulePhase == MB_RULE_DIP ? "DIP" : "FADE", rid);
+      }
       return;
     }
+    abortFtb = true;
+    Serial.printf("[Rule] abort FTB — apply immediately id=%s\n", rid[0] ? rid : "(no id)");
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"ABORT_FTB_APPLY\"");
   }
 
   JsonObject timing = rule["timing"].as<JsonObject>();
@@ -1376,6 +1413,13 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       if (startTr.containsKey("timeMs")) startTransMs = (unsigned long)(startTr["timeMs"] | 0);
       blendingStyle = blendingStyleFromTypeString(ttype);
     }
+  }
+  // Aborting fade-to-black: snap to the new look so the FTB transition cannot keep
+  // running underneath (matches Disney receiver cut-over).
+  if (abortFtb) {
+    startTransMs = 0;
+    hasStartTr = true;
+    blendingStyle = 0;
   }
 
   saveWledStateForOverride();

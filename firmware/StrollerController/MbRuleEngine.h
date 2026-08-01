@@ -59,8 +59,10 @@ void resetMbRuleLifecycle();
 /** Force BLACK_HOLD→restore immediately (e.g. rule disabled mid-lifecycle). */
 void forceRuleLifecycleRestore();
 // Called when the active timed rule matches again while a lifecycle is active.
-// ON: extend slack. DIP/FADE/COOLDOWN: ignore (no mid-FTB re-apply).
-void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen);
+// ON: extend slack. DIP/FADE: ignore trailing / abort FTB and apply immediately.
+// COOLDOWN onMatch: re-apply after quiet gap.
+// Returns true if the match was accepted (caller should touch the idle timer).
+bool onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen);
 
 void notifyMbUnmatched(const uint8_t* payload, size_t plen, bool force = false);
 JsonArray mbRulesJsonArray();

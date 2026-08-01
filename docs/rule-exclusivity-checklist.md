@@ -8,9 +8,11 @@ Verify `ignoreLowerPriority` and `ignoreAllOtherRules` before relying on them in
 Lifecycle reminder (timed rules): **ON → DIP → FADE → COOLDOWN (black hold) → restore / IDLE**.
 Exclusivity holds for the whole window until IDLE — including while the strip is black.
 
-Exact re-match of the **active rule id**: ON slack extends the deadline; DIP/FADE/COOLDOWN
-ignore active-rule matches (do not restart mid-FTB — queue is also flushed on ON→DIP).
-A fresh cast after restore/IDLE applies normally.
+Exact re-match of the **active rule id**: ON slack extends the deadline; DIP/FADE ignore
+trailing matches for ~750ms (queue also flushed on ON→DIP), then **abort FTB and apply
+immediately** (Disney-like cut, `transition:0`). COOLDOWN onMatch may re-apply after
+~750ms quiet (fixed cooldown mode never re-applies). A different payload during DIP/FADE
+or COOLDOWN also applies immediately (after the same quiet gate for same-rule).
 
 ---
 
@@ -44,7 +46,7 @@ Lower priority number = runs first / higher precedence.
 | E1 | Ignore-lower blocks worse prio | Fire `ex-mid`, while ON/COOLDOWN fire `ex-low` | Strip stays on mid; log `suppressed` for low; no apply of low |
 | E2 | Ignore-lower allows better prio | Fire `ex-mid`, while ON fire `ex-high` | High preempts / applies; mid exclusivity does not block higher prio |
 | E3 | Ignore-all blocks any other | Fire `ex-lock`, while ON fire `ex-high` then `ex-low` | Both suppressed; strip stays on lock look |
-| E4 | Exact re-match still works | Fire `ex-lock`, re-send **same** lock payload during ON | Slack extends (no full rebuild spam); trailing matches during DIP/FADE/COOLDOWN stay black; after IDLE, a new cast applies |
+| E4 | Exact re-match still works | Fire `ex-lock`, re-send **same** lock payload during ON | Slack extends (no full rebuild spam); trailing matches during early DIP/FADE stay black; after quiet mid-fade, FTB aborts and new look snaps on; COOLDOWN onMatch re-applies after quiet |
 | E5 | Black hold still exclusive | Fire `ex-lock`, wait until black COOLDOWN, fire `ex-high` | Still suppressed until restore/IDLE; strip may be black |
 | E6 | After IDLE, others fire | Complete lock lifecycle to IDLE, then fire `ex-high` | High applies normally |
 | E7 | Disable active exclusive rule | Fire `ex-lock`, disable via `set_rule_enabled` / Settings | Forces restore; exclusivity clears; other rules can fire |

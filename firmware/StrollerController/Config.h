@@ -39,12 +39,13 @@
 /** Grace after last same-rule advert before ON→DIP (not a full on-time re-arm). */
 #define MB_RULE_REPEAT_SLACK_MS 400UL
 /**
- * Active-rule matches must not restart mid-FTB. ON slack ends when the advert burst
- * stops, but UART/queue often still drains frames into DIP/FADE/COOLDOWN — re-applying
- * there flashes the BLE look back on ("comes back, then black, then restore"),
- * especially on short on-times. Flush the queue on ON→DIP and ignore active-rule
- * matches until IDLE; a fresh cast after restore still applies normally.
+ * Mid-FTB (DIP/FADE): ignore active-rule matches so trailing ads / UART drain cannot
+ * restart the BLE look. Queue is also flushed on ON→DIP.
+ * Black hold (COOLDOWN, onMatch): allow re-apply only after this quiet gap since the
+ * last packet — intentional new cast, not the burst that just ended. Fixed cooldown
+ * mode never re-applies during black hold.
  */
+#define MB_RULE_RETRIGGER_QUIET_MS 750UL
 
 
 // Starlight wand

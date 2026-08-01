@@ -77,16 +77,17 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   }
 
   // MB effect dedupe — while ON, repeat matches only extend the slack deadline
-  // (must not rebuild WLED every advert). During DIP/FADE/COOLDOWN, active-rule
-  // matches are ignored until IDLE; a fresh cast after restore applies normally.
+  // (must not rebuild WLED every advert). During DIP/FADE, trailing frames are
+  // ignored; COOLDOWN onMatch may re-apply after a quiet gap.
   if (mbEffectIsRepeatAdvert(payload, plen)) {
     if (rulesPaused) return;
     if (mbRulePhase != MB_RULE_IDLE && magicBandEnabled) {
       JsonArray rules = mbRulesJsonArray();
       int matchIdx = findMatchingRule(payload, plen, rules);
       if (matchIdx >= 0) {
-        onTimedRuleRepeatMatch(rules[matchIdx].as<JsonObject>(), payload, plen);
-        touchOverrideIdleTimer(BLE_MAGIC);
+        if (onTimedRuleRepeatMatch(rules[matchIdx].as<JsonObject>(), payload, plen)) {
+          touchOverrideIdleTimer(BLE_MAGIC);
+        }
         return;
       }
     }
