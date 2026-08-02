@@ -6,17 +6,17 @@ export function BleMappingTabBar({ active, onChange }) {
     { id: 'segmentMaps', label: 'Segment Maps' },
     { id: 'timingModels', label: 'Timing Models' },
     { id: 'show', label: 'Show Mode' },
-    { id: 'colors', label: 'MB Colors' },
+    { id: 'colors', label: 'BLE Colors' },
     { id: 'general', label: 'General' },
   ];
   return (
-    <Group gap={4} mb="md" pb="xs" style={{ borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+    <Group gap="xs" wrap="wrap">
       {tabs.map((t) => (
         <Button
           key={t.id}
           size="compact-sm"
-          variant={active === t.id ? 'light' : 'default'}
-          color={active === t.id ? 'violet' : 'gray'}
+          variant={active === t.id ? 'filled' : 'light'}
+          color="violet"
           onClick={() => onChange(t.id)}
         >
           {t.label}

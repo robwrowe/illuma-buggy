@@ -16,12 +16,8 @@ size_t lastLogLen = 0;
 uint32_t scanRepeatCount = 0;
 unsigned long scanRepeatSummaryMs = 0;
 
-uint8_t pairedLogicMac[6] = {0};
-bool logicPeerConfigured = false;
-uint8_t pairedChannel = 0;   // Wi-Fi channel of the logic board (0 = unknown)
+uint32_t uartFwdSeq = 0;
 
-uint32_t espNowSendOk = 0;
-uint32_t espNowSendFail = 0;
-uint32_t espNowSendCbOk = 0;
-uint32_t espNowSendCbFail = 0;
-uint32_t espNowTxSeq = 0;
+unsigned long lastDisneySeenMs = 0;
+unsigned long lastForwardMs = 0;
+unsigned long lastLogicHbMs = 0;

@@ -6,9 +6,6 @@ String wledIp   = "wled.local";
 int    wledPort = 80;
 const char* BLE_NAME    = "IllumaBuggy";
 
-uint8_t mbChaseSpeed     = 128;
-uint8_t mbChaseThickness = 4;
-
 const char* MB_SEG_KEYS[] = {
   "all", "inner", "outer", "topLeft", "topRight", "bottomLeft", "bottomRight", "center",
   "band0", "band1", "band2", "band3", "band4", "band5", "band6", "band7"
@@ -56,15 +53,16 @@ String mbFadeToBlackPresetId = "";  // "" = fall back to {"on":false}
 
 int    currentBrightness = 128;
 String currentPresetId   = "";
+String currentPresetName = "";
 
 bool          starlightEnabled    = true;
 unsigned long starlightTimeoutMs  = 15000;
 bool          magicBandEnabled    = true;
 bool          mbDeferToApp        = false;
-bool          magicBandFivePoint  = true;
 unsigned long magicBandTimeoutMs  = 15000;
 unsigned long bleEffectTransitionMs = 700;
 bool          bleScanLogEnabled   = true;
+bool          rulesPaused         = false;
 
 unsigned long swEventTimestamp = 0;
 unsigned long mbEventTimestamp = 0;
@@ -109,6 +107,7 @@ String mbRulesJson = "";
 bool   mbMappingLoadedFromNvs = false;
 String bleDefaultPresetId = "";
 bool   wledWasConnected   = false;
+bool   wledHttpOk         = false;
 
 bool          mbUnmatchedLogEnabled = false;
 

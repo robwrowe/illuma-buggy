@@ -137,9 +137,11 @@ type WledLike = {
   col?: number[][];
 };
 
+/** Preset wins; segment-map value is fallback when preset field is null/undefined. */
 function pickSegOrWled(seg: Partial<WledSegmentDef> | undefined, wled: WledLike, key: keyof WledSegmentDef): unknown {
-  if (seg && seg[key] !== undefined && seg[key] !== null) return seg[key];
-  return wled[key as keyof WledLike];
+  const fromWled = wled[key as keyof WledLike];
+  if (fromWled !== undefined && fromWled !== null) return fromWled;
+  return seg ? seg[key] : undefined;
 }
 
 export function buildRecalledSegment(

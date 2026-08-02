@@ -26,14 +26,18 @@ void processSerialCommands() {
     Serial.println("  tx on            — broadcast WAND-IDLE beacon (pairing test)");
     Serial.println("  tx off           — stop wand TX beacon");
     Serial.println("  tx cast <0-31>   — broadcast WAND-CAST for 3s");
-    Serial.println("  chase speed <0-255>   — MB chase sx (0 = static)");
-    Serial.println("  chase thick <1-50>    — MB chase grp (pixels per block)");
     Serial.println("  mb five <tl bl br tr c>  — E909 five corners (palette 0-31)");
     Serial.println("  mb <palette> [mask]      — E905 single color (mask 0 = all)");
     Serial.println("  mb defer on|off          — forward E9 to app vs firmware apply");
     Serial.println("  role standalone|logic    — board role (reboot to apply scan)");
-    Serial.println("  scanner <mac>            — set ESP-NOW scanner MAC (AA:BB:...)");
+    Serial.println("  scanner <mac>            — save scanner MAC (informational)");
     Serial.println("  nvs wifi                 — dump stored vs in-memory WiFi config");
+    Serial.println("  uart                     — UART link pin + RX availability");
+  } else if (line == "uart") {
+    Serial.printf("[UART] config TX=%d RX=%d baud=%d lastPacket=%s\n",
+                  UART_LINK_TX_PIN, UART_LINK_RX_PIN, UART_LINK_BAUD,
+                  lastScannerPacketMs ? (String(millis() - lastScannerPacketMs) + "ms ago").c_str() : "never");
+    Serial.printf("[UART] Serial1.available=%d\n", Serial1.available());
   } else if (line == "status") {
     Serial.printf("[Status] WiFi=%s override=%d preset=%s bri=%d queue=%u role=%s scanner=%s age=%lums\n",
                   WiFi.status() == WL_CONNECTED ? "up" : "down",
@@ -44,8 +48,8 @@ void processSerialCommands() {
                   boardRole == BoardRole::LOGIC_BOARD ? "logic" : "standalone",
                   scannerPeerConfigured ? transportMacToString(scannerPeerMac).c_str() : "(none)",
                   lastScannerPacketMs ? (millis() - lastScannerPacketMs) : 0UL);
-    Serial.printf("[Status] ESP-NOW rx=%lu rejected=%lu drops=%lu last=%s\n",
-                  (unsigned long)espNowRxCount, (unsigned long)espNowRxRejected,
+    Serial.printf("[Status] UART rx=%lu drops=%lu last=%s\n",
+                  (unsigned long)uartRxPacketCount,
                   (unsigned long)parsedPacketDropCount,
                   lastScannerPacketMs ? String((millis() - lastScannerPacketMs)) + "ms ago" : String("never"));
   } else if (line == "nvs wifi") {
@@ -151,25 +155,6 @@ void processSerialCommands() {
     int sp = line.indexOf(' ', 7);
     if (sp > 0) pal = line.substring(sp + 1).toInt();
     startWandTxCast((uint8_t)pal, 3000);
-  } else if (line.startsWith("chase speed")) {
-    int sp = line.indexOf(' ', 11);
-    if (sp > 0) {
-      mbChaseSpeed = (uint8_t)line.substring(sp + 1).toInt();
-      prefs.begin("config", false);
-      prefs.putUChar("mbSpd", mbChaseSpeed);
-      prefs.end();
-      Serial.printf("[Serial] Chase speed (sx) = %u\n", mbChaseSpeed);
-    }
-  } else if (line.startsWith("chase thick")) {
-    int sp = line.indexOf(' ', 11);
-    if (sp > 0) {
-      mbChaseThickness = (uint8_t)line.substring(sp + 1).toInt();
-      if (mbChaseThickness < 1) mbChaseThickness = 1;
-      prefs.begin("config", false);
-      prefs.putUChar("mbGrp", mbChaseThickness);
-      prefs.end();
-      Serial.printf("[Serial] Chase thickness (grp) = %u\n", mbChaseThickness);
-    }
   } else if (line == "sniff off") {
     bleSniffUntilMs = 0;
     Serial.println("[Serial] Sniff off");

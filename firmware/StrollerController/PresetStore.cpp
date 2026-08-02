@@ -22,6 +22,7 @@ void savePreset(const String& id, const String& name, const String& wledJson,
     prefs.putString("index", index);
   }
   prefs.end();
+  if (id == currentPresetId) currentPresetName = name;
 }
 
 String getPreset(const String& id) {
@@ -29,6 +30,50 @@ String getPreset(const String& id) {
   String val = prefs.getString(("p_" + id).c_str(), "");
   prefs.end();
   return val;
+}
+
+String getPresetName(const String& id) {
+  if (id.length() == 0) return "";
+  String raw = getPreset(id);
+  if (raw.length() == 0) return id;
+
+  // First top-level "name":"…" (preset name comes before the large "wled" object).
+  int from = 0;
+  while (from < (int)raw.length()) {
+    int key = raw.indexOf("\"name\"", from);
+    if (key < 0) break;
+    int colon = raw.indexOf(':', key + 6);
+    if (colon < 0) break;
+    int i = colon + 1;
+    while (i < (int)raw.length() && (raw.charAt(i) == ' ' || raw.charAt(i) == '\t')) i++;
+    if (i >= (int)raw.length() || raw.charAt(i) != '"') {
+      from = key + 6;
+      continue;
+    }
+    i++;
+    int end = i;
+    while (end < (int)raw.length()) {
+      char c = raw.charAt(end);
+      if (c == '\\') { end += 2; continue; }
+      if (c == '"') break;
+      end++;
+    }
+    if (end > i) {
+      String name = raw.substring(i, end);
+      if (name.length() > 0) return name;
+    }
+    from = key + 6;
+  }
+  return id;
+}
+
+void setCurrentPreset(const String& id) {
+  currentPresetId = id;
+  if (id.length() == 0) {
+    currentPresetName = "";
+    return;
+  }
+  currentPresetName = getPresetName(id);
 }
 
 String getAllPresets() {
@@ -84,6 +129,7 @@ void deletePreset(const String& id) {
   }
   prefs.putString("index", newIndex);
   prefs.end();
+  if (id == currentPresetId) setCurrentPreset("");
 }
 
 // ─────────────────────────────────────────────
@@ -105,23 +151,24 @@ bool applyPreset(const String& id) {
   if (deserializeJson(wledDoc, doc["wled"]) != DeserializationError::Ok) return false;
 
   // Inherit device-global ledmap from the linked segment map (same lookup as rules).
+  // Always set explicitly — omitting leaves WLED on whatever ledmap was previously active.
+  // Segment map wins over any ledmap baked into the preset's stored wled blob.
+  int ledmapId = 0;
   const char* mapId = doc["segmentMapId"] | "";
   if (mapId[0]) {
     JsonObject segMap = findSegmentMapById(mapId);
-    if (!segMap.isNull()) {
-      int ledmapId = segMap["ledmap"] | 0;
-      if (ledmapId > 0) wledDoc["ledmap"] = ledmapId;
-    }
+    if (!segMap.isNull()) ledmapId = (int)(segMap["ledmap"] | 0);
   }
+  wledDoc["ledmap"] = ledmapId;
 
   String wledJson;
   serializeJson(wledDoc, wledJson);
   if (wledJson.length() == 0) return false;
-  currentPresetId = id;
   String payload = preparePresetApplyPayload(wledJson);
   // Single atomic POST — separate disable pass causes black flash between zone presets.
   bool ok = sendToWLEDForBleSolid(payload);
   if (ok) {
+    setCurrentPreset(id);
     // Preset JSON is partial — don't overwrite full polled state used for MB restore.
     liveWledState = "";
     lastLiveStatePollMs = 0;

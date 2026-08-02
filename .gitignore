@@ -11,3 +11,6 @@ firmware/**/*.bin      # compiled artifacts
 
 .env
 .env.local
+
+# Local rules seed for scripts/embed_rules.py (generated EmbeddedRules.h stays tracked as placeholder)
+firmware/StrollerController/embedded_rules.json

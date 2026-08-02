@@ -27,6 +27,12 @@ Do **not** compact for editor preview, normalize, or export JSON — those stay 
     "sx": { "mode": "stored" },
     "ix": { "mode": "stored" },
     "blend": { "mode": "stored" },
+    "c1": { "mode": "custom", "value": 200 },
+    "c2": { "mode": "stored" },
+    "c3": { "mode": "custom", "value": 16 },
+    "o1": { "mode": "custom", "value": true },
+    "o2": { "mode": "stored" },
+    "o3": { "mode": "default" },
     "colors": [
       { "mode": "stored" },
       { "mode": "custom", "value": "#ff0000" },
@@ -35,6 +41,11 @@ Do **not** compact for editor preview, normalize, or export JSON — those stay 
   }
 }
 ```
+
+Supported scalar override fields: `fx`, `pal`, `sx`, `ix`, `blend`, `c1`, `c2`
+(0–255), `c3` (0–31), `o1`, `o2`, `o3` (bool). `default` on `c*`/`o*` writes WLED
+defaults (`c1`/`c2`=128, `c3`=16, `o*`=false); on `fx`/`pal`/`sx`/`ix` it uses
+`rule.effect`.
 
 ### Compact (wire)
 

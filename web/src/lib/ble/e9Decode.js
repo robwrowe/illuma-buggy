@@ -244,6 +244,7 @@ export function applyCurve(rawValue, curve = {}) {
 function compareOp(lhs, op, rhs) {
   switch (op) {
     case 'eq': return lhs === rhs;
+    case 'neq': return lhs !== rhs;
     case 'gt': return lhs > rhs;
     case 'gte': return lhs >= rhs;
     case 'lt': return lhs < rhs;
@@ -298,6 +299,13 @@ export function evaluateLeaf(payloadBytes, leaf) {
     const v = extractBits(payloadBytes, offset, bitStart, bitCount);
     return compareOp(v, leaf.op || 'eq', Number(leaf.value ?? 0));
   }
+  if (type === 'byteCompare') {
+    const left = leaf.left || {};
+    const right = leaf.right || {};
+    const lv = extractBits(payloadBytes, Number(left.offset ?? 0), Number(left.bitStart ?? 0), Number(left.bitCount ?? 8));
+    const rv = extractBits(payloadBytes, Number(right.offset ?? 0), Number(right.bitStart ?? 0), Number(right.bitCount ?? 8));
+    return compareOp(lv, leaf.op || 'eq', rv);
+  }
   return false;
 }
 
@@ -351,6 +359,28 @@ export function findMatchingRule(payloadBytes, rules) {
 }
 
 /**
+ * True when an exclusive active rule should suppress applying `candidate`
+ * (different rule id). Exact re-match of the active rule is never blocked.
+ * @param {object|null} activeRule
+ * @param {object} candidate
+ * @param {string} phase  firmware-style phase name, or any non-'idle'
+ */
+export function exclusiveActiveBlocksRule(activeRule, candidate, phase = 'on') {
+  if (!activeRule || !candidate) return false;
+  if (!phase || phase === 'idle' || phase === 'IDLE') return false;
+  const activeId = activeRule.id || '';
+  const candId = candidate.id || '';
+  if (activeId && candId && activeId === candId) return false;
+  if (activeRule.ignoreAllOtherRules) return true;
+  if (activeRule.ignoreLowerPriority) {
+    const ap = Number.isFinite(activeRule.priority) ? Number(activeRule.priority) : 100;
+    const cp = Number.isFinite(candidate.priority) ? Number(candidate.priority) : 100;
+    if (cp > ap) return true;
+  }
+  return false;
+}
+
+/**
  * Lab-confirmed timing byte decode (docs/ble-packets-details/timing-byte.md).
  * bits[3:0]=t, bit6=scaler, bit7=extended (misnamed "always-on"), bits[5:4]=fadeBits.
  * @param {number} byte
@@ -362,6 +392,90 @@ export function decodeTimingByte(byte) {
   const scaler = (b & 0x40) !== 0;
   const extended = (b & 0x80) !== 0;
   return { raw: b, t, fadeBits, scaler, extended };
+}
+
+/** E905 fade-out seconds by fadeBits when no timing-model stretch table is active. */
+export const TIMING_FADE_BITS_SEC = [0, 0.5, 1.0, 1.5];
+
+/**
+ * @param {number} fadeBits
+ * @param {object|null} [model]
+ */
+export function fadeBitsToFadeSec(fadeBits, model = null) {
+  const arr = model?.fadeBitsStretchSec;
+  if (Array.isArray(arr) && arr.some((x) => Number(x) > 0)) {
+    return Number(arr[fadeBits & 3]) || 0;
+  }
+  return TIMING_FADE_BITS_SEC[fadeBits & 3] ?? 0;
+}
+
+/** @param {object} fields */
+export function encodeTimingByte({ t, fadeBits, scaler, extended }) {
+  let b = Number(t) & 0x0f;
+  b |= (Number(fadeBits) & 0x03) << 4;
+  if (scaler) b |= 0x40;
+  if (extended) b |= 0x80;
+  return b & 0xff;
+}
+
+/**
+ * Human-friendly timing fields for Wand Lab byte editing (default E905 model).
+ * @param {number} byte
+ * @param {object|null} [model]
+ */
+export function timingByteToEditFields(byte, model = null) {
+  const decoded = decodeTimingByte(byte);
+  const life = computeTimingLifecycle(byte, 2, model);
+  return {
+    onSec: Math.round(life.onSec * 100) / 100,
+    fadeSec: fadeBitsToFadeSec(decoded.fadeBits, model),
+    scaler: decoded.scaler,
+    extended: decoded.extended,
+    t: decoded.t,
+    fadeBits: decoded.fadeBits,
+  };
+}
+
+/**
+ * Encode timing byte from on-time, fade, and scaler flags.
+ * @param {{ onSec: number, fadeSec: number, scaler: boolean, extended: boolean }} fields
+ * @param {object|null} [model]
+ */
+export function timingByteFromEditFields(fields, model = null) {
+  const multNormal = Number.isFinite(model?.multNormal) ? Number(model.multNormal) : 1.6;
+  const multScaler = Number.isFinite(model?.multScaler) ? Number(model.multScaler) : 3.0;
+  const multExtended = Number.isFinite(model?.multExtended) ? Number(model.multExtended) : 7.6;
+  const t0Fallback = Number.isFinite(model?.t0FallbackSec) ? Number(model.t0FallbackSec) : 3.0;
+  const scaler = !!fields.scaler;
+  const extended = !!fields.extended;
+  const mult = extended ? multExtended : (scaler ? multScaler : multNormal);
+
+  const fadeOpts = (Array.isArray(model?.fadeBitsStretchSec) && model.fadeBitsStretchSec.some((x) => Number(x) > 0))
+    ? model.fadeBitsStretchSec
+    : TIMING_FADE_BITS_SEC;
+  let fadeBits = 0;
+  let bestDiff = Infinity;
+  const targetFade = Number(fields.fadeSec) || 0;
+  for (let i = 0; i < 4; i++) {
+    const diff = Math.abs((Number(fadeOpts[i]) || 0) - targetFade);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      fadeBits = i;
+    }
+  }
+
+  const onSec = Math.max(0, Number(fields.onSec) || 0);
+  let t;
+  if (onSec <= 0) {
+    t = 0;
+  } else {
+    const tRounded = Math.max(0, Math.min(15, Math.round(onSec / mult)));
+    const onFromRounded = tRounded === 0 ? t0Fallback : mult * tRounded;
+    const onFromZero = t0Fallback;
+    t = Math.abs(onSec - onFromZero) < Math.abs(onSec - onFromRounded) ? 0 : tRounded;
+  }
+
+  return encodeTimingByte({ t, fadeBits, scaler, extended });
 }
 
 /** WLED Strobe: cycleTime_ms = (255 - sx) * 20 → sx = 255 - 50 / flashRateHz. */
@@ -447,9 +561,17 @@ export function computeTimingLifecycle(byte, cooldownSec = 2, model = null) {
 export function formatExtractTargetLabel(target, segmentMap) {
   if (!target || typeof target !== 'object') return '(none)';
   const segs = Array.isArray(segmentMap?.segments) ? segmentMap.segments : [];
+  const displayName = (s) => {
+    const name = typeof s?.name === 'string' ? s.name.trim() : '';
+    return name || s?.id || '';
+  };
   const segName = (id) => {
     const s = segs.find((x) => x.id === id);
-    return s ? `${s.id} (${s.start}-${s.stop})` : id || '(no seg)';
+    if (!s) return id || '(no seg)';
+    const base = displayName(s);
+    return Number.isFinite(s.start) && Number.isFinite(s.stop)
+      ? `${base} (${s.start}-${s.stop})`
+      : base;
   };
   switch (target.kind) {
     case 'segmentColor': {
@@ -462,7 +584,7 @@ export function formatExtractTargetLabel(target, segmentMap) {
       const mask = target.mask || 'all';
       const hits = segs.filter((s) => s.maskAssignment === mask);
       if (!hits.length) return `maskColor ${mask} (no segments)`;
-      return `maskColor ${mask} → ${hits.map((s) => s.id).join(', ')}`;
+      return `maskColor ${mask} → ${hits.map(displayName).join(', ')}`;
     }
     case 'segmentField':
       return `segField ${segName(target.segmentId)}.${target.field || '?'}`;

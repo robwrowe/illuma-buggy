@@ -13,4 +13,6 @@ String compactWledStateForSave(const String& full);
 void snapshotWledBaseline();
 void loadWledBaselineFromNvs();
 void ensureWledPowerOn();
+/** Refresh `currentBrightness` from WLED state when reachable. Returns true on success. */
+bool refreshCurrentBrightnessFromWled(int timeoutMs = 800);
 String buildSeg0JsonBody(const String& seg0Inner);

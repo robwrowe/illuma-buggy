@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Box, Collapse, Group, Progress, Stack, Text, UnstyledButton } from '@mantine/core';
 import { estimateMbPayloadFootprint } from '../../lib/ble/mbMapping';
+import { AppCard } from '../shared/styles';
 
 function formatKb(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -25,16 +26,11 @@ export function MbPayloadCapacityGauge({ mbMapping }) {
   const pct = Math.min(100, Math.max(0, fp.pctOfBudget));
 
   return (
-    <Box
-      p="sm"
-      mb="sm"
-      style={{
-        borderRadius: 8,
-        border: '1px solid var(--border)',
-        background: 'var(--surface2)',
-      }}
-    >
-      <UnstyledButton onClick={() => setOpen((v) => !v)} style={{ width: '100%', textAlign: 'left' }}>
+    <AppCard p="sm">
+      <UnstyledButton
+        onClick={() => setOpen((v) => !v)}
+        style={{ width: '100%', textAlign: 'left' }}
+      >
         <Group justify="space-between" gap="xs" wrap="nowrap" mb={6}>
           <Text size="xs" fw={700}>
             Rules payload
@@ -52,10 +48,8 @@ export function MbPayloadCapacityGauge({ mbMapping }) {
       </UnstyledButton>
 
       <Text size="xs" c="dimmed" mt={8}>
-        Rules: {formatKb(fp.breakdown.rules || 0)} ({fp.ruleCount})
-        {' · '}
-        Maps: {formatKb(fp.breakdown.segmentMaps || 0)} ({fp.segmentMapCount})
-        {' · '}
+        Rules: {formatKb(fp.breakdown.rules || 0)} ({fp.ruleCount}){' · '}
+        Maps: {formatKb(fp.breakdown.segmentMaps || 0)} ({fp.segmentMapCount}){' · '}
         Timing: {formatKb(fp.breakdown.timingModels || 0)} ({fp.timingModelCount})
       </Text>
 
@@ -65,13 +59,16 @@ export function MbPayloadCapacityGauge({ mbMapping }) {
             Heaviest items
           </Text>
           {fp.heaviest.length === 0 && (
-            <Text size="xs" c="dimmed">No rules or maps yet.</Text>
+            <Text size="xs" c="dimmed">
+              No rules or maps yet.
+            </Text>
           )}
           {fp.heaviest.map((item) => (
             <Group key={`${item.kind}-${item.id}`} justify="space-between" gap="xs" wrap="nowrap">
               <Text size="xs" style={{ flex: 1, minWidth: 0 }} lineClamp={1}>
-                <Text span c="dimmed" ff="monospace">{item.kind === 'segmentMap' ? 'map' : item.kind === 'timingModel' ? 'tm' : 'rule'}</Text>
-                {' '}
+                <Text span c="dimmed" ff="monospace">
+                  {item.kind === 'segmentMap' ? 'map' : item.kind === 'timingModel' ? 'tm' : 'rule'}
+                </Text>{' '}
                 {item.name}
               </Text>
               <Text size="xs" ff="monospace" c="dimmed">
@@ -80,14 +77,22 @@ export function MbPayloadCapacityGauge({ mbMapping }) {
             </Group>
           ))}
           <Text size="xs" c="dimmed" mt={4} lh={1.4}>
-            Estimated pool size uses a {fp.estimatedParsedBytes && fp.totalRawBytes
+            Estimated pool size uses a{' '}
+            {fp.estimatedParsedBytes && fp.totalRawBytes
               ? (fp.estimatedParsedBytes / Math.max(1, fp.totalRawBytes)).toFixed(2)
-              : '1.55'}× overhead factor (calibrate via serial{' '}
-            <Text span ff="monospace">logRulesHeap</Text> psramFree delta — see{' '}
-            <Text span ff="monospace">ARDUINOJSON_OVERHEAD_FACTOR</Text>).
+              : '1.55'}
+            × overhead factor (calibrate via serial{' '}
+            <Text span ff="monospace">
+              logRulesHeap
+            </Text>{' '}
+            psramFree delta — see{' '}
+            <Text span ff="monospace">
+              ARDUINOJSON_OVERHEAD_FACTOR
+            </Text>
+            ).
           </Text>
         </Stack>
       </Collapse>
-    </Box>
+    </AppCard>
   );
 }

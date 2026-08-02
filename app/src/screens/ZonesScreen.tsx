@@ -20,11 +20,20 @@ import {
 } from "react-native";
 import * as Location from "expo-location";
 import MapView, { Polygon, Marker, MapPressEvent } from "react-native-maps";
+import { useFocusEffect } from "@react-navigation/native";
 import { useAppStore, Zone, IndoorZone, LatLng } from "../stores/store";
 import { polygonsOverlap, generateId } from "../utils/utils";
 import { useTheme } from "../utils/theme";
 
 type DrawMode = "none" | "preset" | "indoor";
+
+/** Avoid MapView defaulting to (0,0) / Africa before GPS arrives. */
+const FALLBACK_REGION = {
+  latitude: 28.4177,
+  longitude: -81.5812,
+  latitudeDelta: 0.08,
+  longitudeDelta: 0.08,
+};
 
 const ZONE_COLORS = [
   "#a78bfa",
@@ -44,7 +53,9 @@ export default function ZonesScreen() {
     indoorZones,
     presets,
     parks,
+    activePark,
     activeZoneIds,
+    userLocation,
     addZone,
     updateZone,
     removeZone,
@@ -55,6 +66,58 @@ export default function ZonesScreen() {
   } = useAppStore();
 
   const mapRef = useRef<MapView>(null);
+
+  const initialRegion = userLocation
+    ? {
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude,
+        latitudeDelta: 0.008,
+        longitudeDelta: 0.008,
+      }
+    : FALLBACK_REGION;
+
+  const centerOnUser = useCallback(async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const coord = {
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      };
+      mapRef.current?.animateToRegion(
+        { ...coord, latitudeDelta: 0.005, longitudeDelta: 0.005 },
+        800,
+      );
+    } catch {
+      /* keep fallback region */
+    }
+  }, []);
+
+  // ── Center map on user once (GPS watch lives in useZoneManager) ──
+  useEffect(() => {
+    void centerOnUser();
+  }, [centerOnUser]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (userLocation) {
+        mapRef.current?.animateToRegion(
+          {
+            latitude: userLocation.latitude,
+            longitude: userLocation.longitude,
+            latitudeDelta: 0.005,
+            longitudeDelta: 0.005,
+          },
+          500,
+        );
+      } else {
+        void centerOnUser();
+      }
+    }, [userLocation, centerOnUser]),
+  );
 
   // Drawing state
   const [drawMode, setDrawMode] = useState<DrawMode>("none");
@@ -79,6 +142,7 @@ export default function ZonesScreen() {
   const [showZoneForm, setShowZoneForm] = useState(false);
   const [newZoneName, setNewZoneName] = useState("");
   const [newZonePreset, setNewZonePreset] = useState("");
+  const [newZoneParkId, setNewZoneParkId] = useState<string | undefined>(undefined);
 
   // Zone editing
   const [editingZone, setEditingZone] = useState<Zone | null>(null);
@@ -88,25 +152,6 @@ export default function ZonesScreen() {
   // List
   const [showList, setShowList] = useState(false);
   const [listMode, setListMode] = useState<"preset" | "indoor">("preset");
-
-  // ── Center map on user once (GPS watch lives in useZoneManager) ──
-  useEffect(() => {
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") return;
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      const coord = {
-        latitude: loc.coords.latitude,
-        longitude: loc.coords.longitude,
-      };
-      mapRef.current?.animateToRegion(
-        { ...coord, latitudeDelta: 0.005, longitudeDelta: 0.005 },
-        800,
-      );
-    })();
-  }, []);
 
   // ── Map press — unified handler using refs ──
   const addDrawPointAt = useCallback((coord: LatLng) => {
@@ -202,6 +247,7 @@ export default function ZonesScreen() {
       Alert.alert("Too few points", "Draw at least 3 points.");
       return;
     }
+    setNewZoneParkId(activePark?.id);
     setShowZoneForm(true);
   };
 
@@ -212,6 +258,7 @@ export default function ZonesScreen() {
     setSelectedPinIdx(null);
     setNewZoneName("");
     setNewZonePreset("");
+    setNewZoneParkId(undefined);
   };
 
   const commitPresetZone = () => {
@@ -229,6 +276,7 @@ export default function ZonesScreen() {
         polygon: drawPoints,
         presetId: newZonePreset,
         enabled: true,
+        parkId: newZoneParkId,
       });
       saveToStorage();
       cancelDrawing();
@@ -251,6 +299,7 @@ export default function ZonesScreen() {
       name: newZoneName.trim(),
       polygon: drawPoints,
       enabled: true,
+      parkId: newZoneParkId,
     });
     saveToStorage();
     cancelDrawing();
@@ -302,6 +351,7 @@ export default function ZonesScreen() {
       <MapView
         ref={mapRef}
         style={s.map}
+        initialRegion={initialRegion}
         onPress={onMapPress}
         showsUserLocation
         showsMyLocationButton
@@ -546,6 +596,45 @@ export default function ZonesScreen() {
                         style={[
                           s.optionText,
                           newZonePreset === p.id && { color: colors.primary },
+                        ]}
+                      >
+                        {p.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
+            {parks.length > 0 && (
+              <>
+                <Text style={s.fieldLabel}>Park</Text>
+                <ScrollView style={{ maxHeight: 120 }}>
+                  <TouchableOpacity
+                    style={[s.option, !newZoneParkId && s.optionActive]}
+                    onPress={() => setNewZoneParkId(undefined)}
+                  >
+                    <Text
+                      style={[
+                        s.optionText,
+                        !newZoneParkId && { color: colors.primary },
+                      ]}
+                    >
+                      Ungrouped
+                    </Text>
+                  </TouchableOpacity>
+                  {parks.map((p) => (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={[
+                        s.option,
+                        newZoneParkId === p.id && s.optionActive,
+                      ]}
+                      onPress={() => setNewZoneParkId(p.id)}
+                    >
+                      <Text
+                        style={[
+                          s.optionText,
+                          newZoneParkId === p.id && { color: colors.primary },
                         ]}
                       >
                         {p.name}

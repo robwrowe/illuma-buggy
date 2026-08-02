@@ -88,6 +88,9 @@ String buildWledRestorePayload(const String& savedJson) {
 
   doc.remove("transition");
 
+  // Always explicit — old snapshots may lack ledmap; omission leaves WLED on a stale map.
+  if (!doc.containsKey("ledmap")) doc["ledmap"] = 0;
+
   JsonArray segs = doc["seg"].as<JsonArray>();
   if (!segs.isNull()) {
     for (size_t i = 0; i < segs.size(); i++) {
@@ -116,6 +119,8 @@ String prepareWledRestorePayload(const String& json) {
   if (segs.isNull() || segs.size() == 0) {
     DynamicJsonDocument wrapped(WLED_RESTORE_JSON_CAP);
     wrapped["on"] = doc["on"] | true;
+    // Preserve root ledmap across wrap; buildWledRestorePayload defaults missing to 0.
+    if (doc.containsKey("ledmap")) wrapped["ledmap"] = doc["ledmap"];
     JsonObject seg0 = wrapped.createNestedArray("seg").createNestedObject();
     seg0["id"] = 0;
     seg0["start"] = 0;
@@ -182,10 +187,25 @@ String preparePresetApplyPayload(const String& json) {
   return out;
 }
 
-bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBlackFirst) {
+static String buildDipPayload() {
+  if (mbActiveRuleId[0]) {
+    JsonObject segMap = mbSegMapForActiveRule();
+    if (!segMap.isNull()) {
+      int ledmapId = (int)(segMap["ledmap"] | 0);
+      return buildSolidBlackPayloadForSegMap(segMap, ledmapId);
+    }
+  }
+  return "{\"on\":false}";
+}
+
+bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBlackFirst,
+                         const String* dipBodyOverride) {
   if (json.length() == 0) return false;
   if (dipToBlackFirst && fadeMs > 0) {
-    sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+    String dipBody = (dipBodyOverride && dipBodyOverride->length() > 0)
+      ? *dipBodyOverride
+      : buildDipPayload();
+    sendToWLED(injectWledTransition(dipBody, fadeMs));
     pendingRestoreKind = PENDING_RESTORE_SNAPSHOT;
     pendingRestoreDeadlineMs = millis() + fadeMs + 100;
     pendingRestoreFadeMs = fadeMs;
@@ -202,10 +222,22 @@ bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, i
   if (preset.length() == 0) return false;
   DynamicJsonDocument doc(12288);
   if (deserializeJson(doc, preset)) return false;
+  DynamicJsonDocument wledDoc(WLED_RESTORE_JSON_CAP);
+  if (deserializeJson(wledDoc, doc["wled"]) != DeserializationError::Ok) return false;
+
+  // Same precedence as applyPreset(): segment-map ledmap wins; default 0.
+  int ledmapId = 0;
+  const char* mapId = doc["segmentMapId"] | "";
+  if (mapId[0]) {
+    JsonObject segMap = findSegmentMapById(mapId);
+    if (!segMap.isNull()) ledmapId = (int)(segMap["ledmap"] | 0);
+  }
+  wledDoc["ledmap"] = ledmapId;
+
   String wledJson;
-  serializeJson(doc["wled"], wledJson);
+  serializeJson(wledDoc, wledJson);
   if (wledJson.length() == 0) return false;
-  currentPresetId = id;
+  setCurrentPreset(id);
   disableAllSplitSegments();
   String payload = injectWledTransition(
     buildWledRestorePayload(prepareWledRestorePayload(wledJson)),
@@ -243,7 +275,7 @@ void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
   if (deserializeJson(doc, preset)) return;
   String wledJson;
   serializeJson(doc["wled"], wledJson);
-  currentPresetId = presetId;
+  setCurrentPreset(presetId);
   sendToWLED(injectWledTransition(prepareWledRestorePayload(wledJson), fadeMs));
   if (wledJson.length() > 0) liveWledState = wledJson;
 }
@@ -283,6 +315,10 @@ void clearOverride() {
   OverrideSource prev = currentOverride;
   unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
 
+  // Shape-safe dip payload must be captured before resetMbRuleLifecycle() clears mbActiveRuleId.
+  bool dipToBlack = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) && fadeMs > 0;
+  String dipBody = dipToBlack ? buildDipPayload() : String("{\"on\":false}");
+
   // Timed rule lifecycle ends with clearOverride — avoid double-reset from serviceMbRuleLifecycle.
   if (mbRulePhase != MB_RULE_IDLE && prev == BLE_MAGIC) {
     // Keep fade duration from the rule when we're finishing COOLDOWN via serviceMbRuleLifecycle
@@ -318,12 +354,11 @@ void clearOverride() {
 
   Serial.println("[Override] Cleared");
 
-  bool dipToBlack = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) && fadeMs > 0;
   bool restored = false;
   bool pending = false;
 
   if (snapshot.length() > 0) {
-    restored = restoreWledSnapshot(prepareWledRestorePayload(snapshot), fadeMs, dipToBlack);
+    restored = restoreWledSnapshot(prepareWledRestorePayload(snapshot), fadeMs, dipToBlack, &dipBody);
     if (dipToBlack) {
       // Scheduled in restoreWledSnapshot — finish bookkeeping in servicePendingRestore().
       pending = restored;
@@ -335,7 +370,7 @@ void clearOverride() {
   }
   if (!restored && !pending && presetId.length() > 0) {
     if (dipToBlack) {
-      sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+      sendToWLED(injectWledTransition(dipBody, fadeMs));
       pendingRestoreKind = PENDING_RESTORE_PRESET;
       pendingRestoreDeadlineMs = millis() + fadeMs + 100;
       pendingRestoreFadeMs = fadeMs;

@@ -147,7 +147,7 @@ function shouldForceMappingPresetSync(
 }
 
 async function runEssentialConfig(token: number): Promise<{ ok: boolean; mappingSyncOk: boolean }> {
-  setBoardSyncPhase('essential', 'Applying wand & MagicBand settings…', {
+  setBoardSyncPhase('essential', 'Applying BLE Data settings…', {
     mode: 'full',
     commandsReady: false,
     backgroundBusy: false,
@@ -161,7 +161,6 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
 
   await bleService.sendMbConfig(
     s.magicBandEnabled,
-    s.magicBandFivePoint,
     s.magicBandTimeoutSec * 1000,
     false,
   );
@@ -170,6 +169,10 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
 
   await bleService.sendBleEffectConfig(s.bleEffectTransitionMs);
   await delay(300);
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
+
+  await bleService.sendRulesPaused(s.rulesPaused);
+  await delay(200);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
   await bleService.sendMbRuleConfig(s.ftbPresetId || '');
@@ -263,7 +266,7 @@ function markSessionReadyAndStatus(
   bleService.markSessionReady(true);
   const finalDetail = mappingSyncOk
     ? detail
-    : 'Ready — MB+/Wand mapping incomplete, reconnect to retry';
+    : 'Ready — BLE Data mapping incomplete, reconnect to retry';
   setBoardSyncReady(mode, finalDetail, mappingSyncOk);
   void bleService.sendStatus();
 }
@@ -353,6 +356,12 @@ export async function runConnectBootstrap(): Promise<void> {
     return;
   }
 
+  // Park Mode: minimal traffic — status only, no config/rules/preset push.
+  if (useAppStore.getState().parkMode && !forceFullSync) {
+    markSessionReadyAndStatus('quick', 'Ready — park mode (minimal BLE)');
+    return;
+  }
+
   const fingerprint = getFingerprint();
   const meta = await loadBoardSyncMeta();
   const requestedFullSync = forceFullSync;
@@ -379,11 +388,11 @@ export async function runConnectBootstrap(): Promise<void> {
   // Reconcile board role / scanner MAC on every connect (incl. quick reconnect, which
   // skips runEssentialConfig). The board can boot Standalone from its own NVS if the
   // role was never persisted; push the app's desired role so the board writes NVS and
-  // comes up correctly after a reboot — this is what enables ESP-NOW to survive reboots.
+  // comes up correctly after a reboot (Dual-Board expects UART scanner, not local scan).
   await reconcileBoardRole(token, status);
 
   if (shouldForceMappingPresetSync(status, s.mbMapping)) {
-    setBoardSyncPhase('essential', 'Syncing MB+/Wand mapping presets…', {
+    setBoardSyncPhase('essential', 'Syncing BLE Data mapping presets…', {
       commandsReady: false,
       backgroundBusy: false,
     });

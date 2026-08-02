@@ -4,9 +4,11 @@
 NimBLE-Arduino    by h2zero             >= 2.0.0
 ArduinoJson       by Benoit Blanchon    >= 7.0.0
 Adafruit NeoPixel by Adafruit           >= 1.12.0
+Adafruit SSD1306  by Adafruit           >= 2.5.0
+Adafruit GFX      by Adafruit           >= 1.11.0
 
 # Built-in to ESP32 Arduino core (no install needed):
-# WiFi, Preferences, HTTPClient, ESP-NOW
+# WiFi, Preferences, HTTPClient, SD, SPI, Wire
 
 # Board (ESP32-S3 — this unit probes as 4MB flash):
 #   Board: ESP32S3 Dev Module

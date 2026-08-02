@@ -163,8 +163,8 @@ export interface DeviceStatus {
   starlightEnabled:     boolean;
   starlightTimeoutMs:   number;
   magicBandEnabled:     boolean;
-  mbFivePoint:          boolean;
   mbTimeoutMs:          number;
+  rulesPaused?:         boolean;
   showType?:            string;
   showPhase?:           string;
   boardPresetCount?:    number;
@@ -317,11 +317,13 @@ interface AppState {
   setStarlightTimeoutSec:(val: number) => void;
   magicBandEnabled:      boolean;
   setMagicBandEnabled:   (val: boolean) => void;
-  magicBandFivePoint:    boolean;
-  setMagicBandFivePoint: (val: boolean) => void;
   magicBandTimeoutSec:   number;
   setMagicBandTimeoutSec:(val: number) => void;
-  /** Continuous unmatched MB/Wand packet log (firmware → app). Persisted toggle. */
+  rulesPaused:           boolean;
+  setRulesPaused:        (val: boolean) => void;
+  logMarkerSnippets:     { key: string; value: string }[];
+  setLogMarkerSnippets:  (snippets: { key: string; value: string }[]) => void;
+  /** Continuous unmatched BLE Data packet log (firmware → app). Persisted toggle. */
   mbUnmatchedLogEnabled: boolean;
   setMbUnmatchedLogEnabled: (val: boolean) => void;
   /** Runtime rolling buffer (most-recent-first). Not persisted. */
@@ -351,6 +353,9 @@ interface AppState {
   /** When off, the app never scans for or connects to the IllumaBuggy board. */
   boardConnectEnabled:   boolean;
   setBoardConnectEnabled:(val: boolean) => void;
+  /** Park Mode: minimize BLE traffic — skip config push on connect; hide setup tabs. */
+  parkMode:              boolean;
+  setParkMode:           (val: boolean) => void;
   boardRole:             BoardRoleMode;
   setBoardRole:          (role: BoardRoleMode) => void;
   scannerMac:            string;
@@ -576,8 +581,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   starlightEnabled:    true,
   starlightTimeoutSec: 15,
   magicBandEnabled:    true,
-  magicBandFivePoint:  true,
   magicBandTimeoutSec: 15,
+  rulesPaused:         false,
+  logMarkerSnippets:   [],
   mbUnmatchedLogEnabled: false,
   mbUnmatchedLog:      [],
   bleEffectTransitionMs: 700,
@@ -593,6 +599,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   zonesEnabled:        true,
   syncMode:            'auto',
   boardConnectEnabled: true,
+  parkMode:            false,
   boardRole:           'standalone',
   scannerMac:          '',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
@@ -747,8 +754,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   setStarlightEnabled:   (val)          => set({ starlightEnabled: val }),
   setStarlightTimeoutSec:(val)          => set({ starlightTimeoutSec: val }),
   setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
-  setMagicBandFivePoint: (val)          => set({ magicBandFivePoint: val }),
   setMagicBandTimeoutSec:(val)          => set({ magicBandTimeoutSec: val }),
+  setRulesPaused: (val) => {
+    set({ rulesPaused: val });
+    if (bleService.isConnected()) void bleService.sendRulesPaused(val);
+    get().saveToStorage();
+  },
+  setLogMarkerSnippets: (snippets) => {
+    set({ logMarkerSnippets: snippets });
+    get().saveToStorage();
+  },
   setMbUnmatchedLogEnabled: (val) => {
     set({ mbUnmatchedLogEnabled: val });
     // Enable only when session is ready; always send disable while connected.
@@ -788,6 +803,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setZonesEnabled:       (val)          => set({ zonesEnabled: val }),
   setSyncMode:           (val)          => { set({ syncMode: val }); get().saveToStorage(); },
   setBoardConnectEnabled:(val)          => { set({ boardConnectEnabled: val }); get().saveToStorage(); },
+  setParkMode:           (val)          => { set({ parkMode: val }); get().saveToStorage(); },
   setBoardRole:          (role)         => { set({ boardRole: role }); get().saveToStorage(); },
   setScannerMac:         (mac)          => set({ scannerMac: mac }),
 
@@ -939,10 +955,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','colorCalibration','overrideKillOnZone',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
-                    'magicBandFivePoint','magicBandTimeoutSec','mbUnmatchedLogEnabled',
+                    'magicBandTimeoutSec','rulesPaused','logMarkerSnippets','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
                     'wledSsid','wledPass','wledIp','wledPort','sheetsEndpoint','sheetsUploadQueue',
-                    'zonesEnabled','syncMode','boardConnectEnabled',
+                    'zonesEnabled','syncMode','boardConnectEnabled','parkMode',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'bleCaptureIgnoreTags',
@@ -977,8 +993,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         starlightEnabled:   d.starlightEnabled   ?? true,
         starlightTimeoutSec:d.starlightTimeoutSec ?? 15,
         magicBandEnabled:   d.magicBandEnabled   ?? true,
-        magicBandFivePoint: d.magicBandFivePoint ?? true,
-        magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
+                magicBandTimeoutSec:d.magicBandTimeoutSec ?? 15,
+        rulesPaused:        !!d.rulesPaused,
+        logMarkerSnippets:  Array.isArray(d.logMarkerSnippets) ? d.logMarkerSnippets : [],
         mbUnmatchedLogEnabled: d.mbUnmatchedLogEnabled ?? false,
         bleEffectTransitionMs: d.bleEffectTransitionMs ?? 700,
         wledSsid:           d.wledSsid           ?? '',
@@ -990,6 +1007,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         zonesEnabled:       d.zonesEnabled       ?? true,
         syncMode:           d.syncMode           ?? 'auto',
         boardConnectEnabled:d.boardConnectEnabled ?? true,
+        parkMode:           d.parkMode ?? false,
         boardRole:          (d.boardRole as BoardRoleMode) ?? 'standalone',
         scannerMac:         (d.scannerMac as string) ?? '',
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
@@ -1036,8 +1054,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['starlightEnabled',   JSON.stringify(s.starlightEnabled)],
         ['starlightTimeoutSec',JSON.stringify(s.starlightTimeoutSec)],
         ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
-        ['magicBandFivePoint', JSON.stringify(s.magicBandFivePoint)],
         ['magicBandTimeoutSec',JSON.stringify(s.magicBandTimeoutSec)],
+        ['rulesPaused',        JSON.stringify(s.rulesPaused)],
+        ['logMarkerSnippets',  JSON.stringify(s.logMarkerSnippets)],
         ['mbUnmatchedLogEnabled', JSON.stringify(s.mbUnmatchedLogEnabled)],
         ['bleEffectTransitionMs', JSON.stringify(s.bleEffectTransitionMs)],
         ['wledSsid',           JSON.stringify(s.wledSsid)],
@@ -1049,6 +1068,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
         ['syncMode',           JSON.stringify(s.syncMode)],
         ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],
+        ['parkMode',            JSON.stringify(s.parkMode)],
         ['boardRole',           JSON.stringify(s.boardRole)],
         ['scannerMac',          JSON.stringify(s.scannerMac)],
         ['locationPollSec',    JSON.stringify(s.locationPollSec)],
@@ -1157,7 +1177,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       colorCalibration: s.colorCalibration,
       overrideKillOnZone: s.overrideKillOnZone,
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
-      magicBandEnabled:   s.magicBandEnabled,   magicBandFivePoint: s.magicBandFivePoint,
+      magicBandEnabled:   s.magicBandEnabled,
+      rulesPaused:        s.rulesPaused,
+      logMarkerSnippets:  s.logMarkerSnippets,
       magicBandTimeoutSec:s.magicBandTimeoutSec,
       bleEffectTransitionMs: s.bleEffectTransitionMs,
       boardRole:          s.boardRole,
@@ -1187,7 +1209,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       starlightEnabled:   m.starlightEnabled   ?? true,
       starlightTimeoutSec:m.starlightTimeoutSec ?? 15,
       magicBandEnabled:   m.magicBandEnabled   ?? true,
-      magicBandFivePoint: m.magicBandFivePoint ?? true,
+      rulesPaused: m.rulesPaused ?? false,
+      logMarkerSnippets: Array.isArray(m.logMarkerSnippets) ? m.logMarkerSnippets : [],
       magicBandTimeoutSec:m.magicBandTimeoutSec ?? 15,
       bleEffectTransitionMs: m.bleEffectTransitionMs ?? 700,
       boardRole:          (m.boardRole as BoardRoleMode) ?? 'standalone',

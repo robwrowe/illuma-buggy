@@ -1,9 +1,11 @@
 #include "WledClient.h"
 #include "Globals.h"
+#include "StatusDisplay.h"
 
 bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[WLED] WiFi not connected");
+    statusDisplaySetWledOk(false);
     return false;
   }
   HTTPClient http;
@@ -15,6 +17,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     code = http.POST(jsonBody);
     if (code == 200) {
       http.end();
+      statusDisplaySetWledOk(true);
       return true;
     }
     if (attempt < retries) delay(80);
@@ -24,6 +27,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     Serial.printf("[WLED]   body: %s\n", jsonBody.c_str());
   }
   http.end();
+  statusDisplaySetWledOk(false);
   return false;
 }
 
@@ -33,24 +37,22 @@ String injectWledTransition(const String& jsonBody, unsigned long transitionMs) 
 
 String injectWledTransition(const String& jsonBody, unsigned long transitionMs, int blendingStyle) {
   if (jsonBody.length() < 2 || jsonBody.charAt(0) != '{') return jsonBody;
-  // Instant: no duration inject; still allow bs if caller asks.
-  if (transitionMs == 0 && blendingStyle < 0) return jsonBody;
 
   String prefix = "{";
-  bool needComma = false;
-  if (transitionMs > 0) {
-    unsigned tenths = transitionMs / 100;
-    if (tenths == 0) tenths = 1;
-    if (tenths > 655) tenths = 655;
-    prefix += "\"transition\":" + String(tenths);
-    needComma = true;
-  }
+  // Always inject "transition" explicitly, including 0. Omitting it when
+  // transitionMs == 0 does NOT force an instant change — WLED falls back to
+  // whatever transition duration is already active on the controller. An
+  // explicit "transition":0 is required to guarantee an instant cut.
+  unsigned tenths = transitionMs / 100;
+  if (transitionMs > 0 && tenths == 0) tenths = 1; // sub-100ms non-zero fade rounds up, not down to instant
+  if (tenths > 655) tenths = 655;
+  prefix += "\"transition\":" + String(tenths);
+  bool needComma = true;
+
   if (blendingStyle >= 0) {
-    if (needComma) prefix += ",";
-    prefix += "\"bs\":" + String(blendingStyle & 0x1F);
+    prefix += ",\"bs\":" + String(blendingStyle & 0x1F);
     needComma = true;
   }
-  if (!needComma) return jsonBody;
   prefix += ",";
   return prefix + jsonBody.substring(1);
 }
@@ -64,7 +66,10 @@ bool sendToWLEDForBleSolid(const String& jsonBody) {
 }
 
 String getFromWLED(const String& path, int timeoutMs) {
-  if (WiFi.status() != WL_CONNECTED) return "";
+  if (WiFi.status() != WL_CONNECTED) {
+    statusDisplaySetWledOk(false);
+    return "";
+  }
   HTTPClient http;
   http.begin("http://" + wledIp + ":" + String(wledPort) + path);
   http.setTimeout(timeoutMs > 0 ? timeoutMs : 5000);
@@ -72,8 +77,10 @@ String getFromWLED(const String& path, int timeoutMs) {
   String body = "";
   if (code == 200) {
     body = http.getString();
+    statusDisplaySetWledOk(true);
   } else {
     Serial.printf("[WLED] GET %s failed: %d\n", path.c_str(), code);
+    statusDisplaySetWledOk(false);
   }
   http.end();
   return body;
@@ -88,6 +95,7 @@ String compactWledStateForSave(const String& full) {
   if (in.containsKey("bri")) out["bri"] = in["bri"];
   if (in.containsKey("nl")) out["nl"] = in["nl"];
   if (in.containsKey("fp")) out["fp"] = in["fp"];
+  if (in.containsKey("ledmap")) out["ledmap"] = in["ledmap"];
 
   JsonArray inSegs = in["seg"].as<JsonArray>();
   if (!inSegs.isNull() && inSegs.size() > 0) {
@@ -170,6 +178,22 @@ void ensureWledPowerOn() {
   // snapshot). Mid-session {"on":false} (FTB fallback, etc.) leaves that snapshot
   // stale and would skip the relay restore before the next rule payload.
   sendToWLED("{\"on\":true}");
+}
+
+bool refreshCurrentBrightnessFromWled(int timeoutMs) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  String state = getFromWLED("/json/si", timeoutMs);
+  if (state.length() == 0) {
+    state = getFromWLED("/json/state", timeoutMs);
+  }
+  if (state.length() == 0) return false;
+  DynamicJsonDocument doc(12288);
+  if (deserializeJson(doc, state)) return false;
+  JsonVariant bri = doc["state"]["bri"];
+  if (bri.isNull()) bri = doc["bri"];
+  if (bri.isNull()) return false;
+  currentBrightness = bri.as<int>();
+  return true;
 }
 
 // ─────────────────────────────────────────────

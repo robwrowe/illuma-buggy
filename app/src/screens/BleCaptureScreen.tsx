@@ -140,7 +140,7 @@ export default function BleCaptureScreen() {
       showInstanceOverrides,
       Date.now(),
       activeZoneIds,
-    ).filter((show) => show.status === 'pre' || show.status === 'live');
+    );
   }, [
     liveShowTick, activePark, showBindings, showSettings, showInstanceOverrides, activeZoneIds,
   ]);
@@ -331,7 +331,8 @@ export default function BleCaptureScreen() {
               disabled={bleCaptureActive}
             >
               <Text style={s.chipText}>
-                {show.status === 'live' ? '🔴 ' : ''}{show.name}
+                {show.status === 'live' ? '🔴 ' : show.status === 'pre' ? '⏳ ' : show.status === 'ended' ? '✓ ' : ''}
+                {show.name}
               </Text>
             </TouchableOpacity>
           ))}
@@ -416,8 +417,8 @@ export default function BleCaptureScreen() {
         </View>
         <View style={s.ignoreRow}>
           <View style={{ flex: 1 }}>
-            <Text style={s.ignoreLabel}>Wand idle beacons</Text>
-            <Text style={s.sub}>Skip WAND_IDLE / WAND-IDLE packets</Text>
+            <Text style={s.ignoreLabel}>Idle beacons</Text>
+            <Text style={s.sub}>Skip idle beacon packets (WAND_IDLE)</Text>
           </View>
           <Switch
             value={bleCaptureIgnoreTags.includes(BLE_CAPTURE_NOISE_WAND_IDLE)}

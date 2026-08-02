@@ -11,7 +11,8 @@ void saveWledStateForOverride();
 String buildWledRestorePayload(const String& savedJson);
 String prepareWledRestorePayload(const String& json);
 String preparePresetApplyPayload(const String& json);
-bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBlackFirst = false);
+bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBlackFirst = false,
+                         const String* dipBodyOverride = nullptr);
 bool restorePresetWithTransition(const String& id, unsigned long fadeMs);
 bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, int blendingStyle);
 void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs);

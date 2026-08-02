@@ -8,6 +8,7 @@
 #include "BlePeripheral.h"
 #include "DebugLog.h"
 #include "PresetStore.h"
+#include "SdRuleLogger.h"
 #include <string.h>
 
 static const uint8_t* pktRaw(const ParsedDisneyPacket& pkt) {
@@ -76,15 +77,17 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   }
 
   // MB effect dedupe — while ON, repeat matches only extend the slack deadline
-  // (must not rebuild WLED every advert). During FADE/COOLDOWN, onTimedRuleRepeatMatch
-  // re-applies the rule so FTB/black-hold can restart the same effect.
+  // (must not rebuild WLED every advert). During DIP/FADE, trailing frames are
+  // ignored; COOLDOWN onMatch may re-apply after a quiet gap.
   if (mbEffectIsRepeatAdvert(payload, plen)) {
+    if (rulesPaused) return;
     if (mbRulePhase != MB_RULE_IDLE && magicBandEnabled) {
       JsonArray rules = mbRulesJsonArray();
       int matchIdx = findMatchingRule(payload, plen, rules);
       if (matchIdx >= 0) {
-        onTimedRuleRepeatMatch(rules[matchIdx].as<JsonObject>(), payload, plen);
-        touchOverrideIdleTimer(BLE_MAGIC);
+        if (onTimedRuleRepeatMatch(rules[matchIdx].as<JsonObject>(), payload, plen)) {
+          touchOverrideIdleTimer(BLE_MAGIC);
+        }
         return;
       }
     }
@@ -111,12 +114,40 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     return;
   }
 
+  if (rulesPaused) {
+    static unsigned long lastPausedLogMs = 0;
+    if ((long)(millis() - lastPausedLogMs) > 5000) {
+      lastPausedLogMs = millis();
+      Serial.println("[Rules] paused — ignoring BLE Data packet");
+    }
+    return;
+  }
+
   JsonArray rules = mbRulesJsonArray();
   int matchIdx = findMatchingRule(payload, plen, rules);
   if (matchIdx >= 0) {
     JsonObject rule = rules[matchIdx].as<JsonObject>();
+    if (exclusiveActiveBlocksRule(rule)) {
+      Serial.printf("[Rule] suppressed by exclusive active id=%s (matched %s)\n",
+                    mbActiveRuleId, rule["id"] | "(no id)");
+      {
+        char detail[160];
+        snprintf(detail, sizeof(detail),
+                 "\"active\":\"%s\",\"matched\":\"%s\",\"name\":\"%s\"",
+                 mbActiveRuleId, rule["id"] | "", rule["name"] | "");
+        sdRuleLoggerWrite("suppressed", detail);
+      }
+      if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
+      return;
+    }
     Serial.printf("[Rule] match idx=%d id=%s name=%s\n",
                   matchIdx, rule["id"] | "(no id)", rule["name"] | "(no name)");
+    {
+      char detail[128];
+      snprintf(detail, sizeof(detail), "\"idx\":%d,\"id\":\"%s\",\"name\":\"%s\"",
+               matchIdx, rule["id"] | "", rule["name"] | "");
+      sdRuleLoggerWrite("match", detail);
+    }
     applyMatchedRule(rule, payload, plen);
     // Only dedupe after a successful apply (setOverride). Failed/hung applies must be
     // eligible to retry on the next advert.
@@ -132,6 +163,12 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   if (infraNoise) return;
 
   // No rule matched
+  Serial.printf("[Rule] no match len=%u rssi=%d\n", (unsigned)plen, rssi);
+  {
+    char detail[64];
+    snprintf(detail, sizeof(detail), "\"len\":%u,\"rssi\":%d", (unsigned)plen, rssi);
+    sdRuleLoggerWrite("no_match", detail);
+  }
   notifyMbUnmatched(payload, plen);
 
   if (bleDefaultPresetId.length() > 0) {
@@ -150,7 +187,6 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     return;
   }
 
-  Serial.printf("[Rule] no match len=%u rssi=%d\n", (unsigned)plen, rssi);
 }
 
 void handleDisneyPayload(const uint8_t* payload, size_t plen) {

@@ -1,13 +1,37 @@
 export const SW_FX_PRESET_BYTES = {
-  rainbow: [0xE1, 0x00, 0xE9, 0x0C, 0x00, 0x0F, 0x0F, 0x5D, 0x46, 0x5B, 0xF0, 0x05, 0x32, 0x37, 0x48, 0xB0],
-  blink: [0xE1, 0x00, 0xE9, 0x0C, 0x00, 0x0F, 0x0F, 0x5D, 0x46, 0x5B, 0xF0, 0x05, 0x32, 0x37, 0x48, 0x95],
-  palette5: [0xE1, 0x00, 0xE9, 0x0C, 0x00, 0x0F, 0x0F, 0xB1, 0xB9, 0xB5, 0xB1, 0xA2, 0x30, 0x7B, 0x7D, 0xB0],
-  flash: [0xE1, 0x00, 0xE9, 0x0E, 0x00, 0x01, 0x0F, 0xBD, 0xA0, 0xA0, 0xBD, 0xA0, 0x59, 0x07, 0x00, 0x48, 0xAE, 0xB5],
-  sparkle: [0xE1, 0x00, 0xE9, 0x10, 0x00, 0x13, 0x48, 0x97, 0xD0, 0x0E, 0xA0, 0xD1, 0x46, 0x06, 0x0F, 0x30, 0xD0, 0x4E, 0x07, 0xB0],
-  pulse: [0xE1, 0x00, 0xE9, 0x13, 0x00, 0x02, 0xD0, 0x37, 0xF0, 0xD2, 0x3D, 0x05, 0x05, 0x00, 0x0E, 0xFA, 0x89, 0x83, 0x51, 0x0E, 0xE7, 0xA0, 0xB0],
-  circle: [0xE2, 0x00, 0xE9, 0x12, 0x00, 0x03, 0x0F, 0xA2, 0xA2, 0xA4, 0xA4, 0xA2, 0x30, 0xD0, 0x37, 0xF4, 0xD2, 0x46, 0x00, 0x64, 0xFC, 0xB8],
-  fade: [0xE1, 0x00, 0xE9, 0x11, 0x00, 0x6F, 0x0F, 0x56, 0x48, 0x58, 0xF4, 0x48, 0x82, 0xD1, 0x46, 0x02, 0x08, 0xD0, 0x65, 0x00, 0xB0],
-  fade2: [0xE1, 0x00, 0xE9, 0x11, 0x00, 0x0F, 0x0F, 0x48, 0x59, 0x58, 0xF4, 0x48, 0x82, 0xD1, 0x46, 0x02, 0x0D, 0xD0, 0x65, 0x05, 0xB0],
+  rainbow: [
+    0xe1, 0x00, 0xe9, 0x0c, 0x00, 0x0f, 0x0f, 0x5d, 0x46, 0x5b, 0xf0, 0x05, 0x32, 0x37, 0x48, 0xb0,
+  ],
+  blink: [
+    0xe1, 0x00, 0xe9, 0x0c, 0x00, 0x0f, 0x0f, 0x5d, 0x46, 0x5b, 0xf0, 0x05, 0x32, 0x37, 0x48, 0x95,
+  ],
+  palette5: [
+    0xe1, 0x00, 0xe9, 0x0c, 0x00, 0x0f, 0x0f, 0xb1, 0xb9, 0xb5, 0xb1, 0xa2, 0x30, 0x7b, 0x7d, 0xb0,
+  ],
+  flash: [
+    0xe1, 0x00, 0xe9, 0x0e, 0x00, 0x01, 0x0f, 0xbd, 0xa0, 0xa0, 0xbd, 0xa0, 0x59, 0x07, 0x00, 0x48,
+    0xae, 0xb5,
+  ],
+  sparkle: [
+    0xe1, 0x00, 0xe9, 0x10, 0x00, 0x13, 0x48, 0x97, 0xd0, 0x0e, 0xa0, 0xd1, 0x46, 0x06, 0x0f, 0x30,
+    0xd0, 0x4e, 0x07, 0xb0,
+  ],
+  pulse: [
+    0xe1, 0x00, 0xe9, 0x13, 0x00, 0x02, 0xd0, 0x37, 0xf0, 0xd2, 0x3d, 0x05, 0x05, 0x00, 0x0e, 0xfa,
+    0x89, 0x83, 0x51, 0x0e, 0xe7, 0xa0, 0xb0,
+  ],
+  circle: [
+    0xe2, 0x00, 0xe9, 0x12, 0x00, 0x03, 0x0f, 0xa2, 0xa2, 0xa4, 0xa4, 0xa2, 0x30, 0xd0, 0x37, 0xf4,
+    0xd2, 0x46, 0x00, 0x64, 0xfc, 0xb8,
+  ],
+  fade: [
+    0xe1, 0x00, 0xe9, 0x11, 0x00, 0x6f, 0x0f, 0x56, 0x48, 0x58, 0xf4, 0x48, 0x82, 0xd1, 0x46, 0x02,
+    0x08, 0xd0, 0x65, 0x00, 0xb0,
+  ],
+  fade2: [
+    0xe1, 0x00, 0xe9, 0x11, 0x00, 0x0f, 0x0f, 0x48, 0x59, 0x58, 0xf4, 0x48, 0x82, 0xd1, 0x46, 0x02,
+    0x0d, 0xd0, 0x65, 0x05, 0xb0,
+  ],
 };
 
 export const WAND_LAB_TAGS = [
@@ -16,21 +40,13 @@ export const WAND_LAB_TAGS = [
   'animation_change',
   'ignored',
   'unknown',
-  'e9_0c',
-  'e9_10',
-  'e9_11',
-  'e9_12',
-  'cd07',
-  'c013',
-  'c00f',
-  'e409',
-  'e501',
+  'static',
 ];
 
 export const MB_PATTERN_MODES = [
   { id: 'solid', label: 'solid', nibble: 0x04 },
   { id: 'spin', label: 'spin', nibble: 0x03 },
-  { id: 'all', label: 'all', nibble: 0x0B },
+  { id: 'all', label: 'all', nibble: 0x0b },
   { id: 'corners', label: 'corners', nibble: 0x08 },
   { id: 'middle', label: 'middle', nibble: 0x02 },
 ];
@@ -44,28 +60,70 @@ export const WAND_LAB_MB_CMDS = [
   { id: 'ping', label: 'CC03 — ping' },
 ];
 
-export const MB_COLOR_NAMES = [
-  'cyan', 'purple', 'blue', 'midnight blue', 'blue 2', 'bright purple', 'lavender', 'purple',
-  'pink', 'pink 2', 'pink 3', 'pink 4', 'pink 5', 'pink 6', 'pink 7', 'yellow orange',
-  'off yellow', 'yellow orange 2', 'lime', 'orange', 'red orange', 'red',
-  'cyan 2', 'cyan 3', 'cyan 4', 'green', 'lime green', 'white', 'white 2',
-  'off', 'unique', 'random',
+/**
+ * MagicBand+ 5-bit palette (indices 0–29).
+ * Format for UI labels: "{n} - {color} - {description}"
+ */
+export const MB_PALETTE = [
+  { color: 'Green', description: 'Very light mint green', hex: '#e0ffe6' },
+  { color: 'Blue', description: 'Light sky blue', hex: '#99bdff' },
+  { color: 'Blue', description: 'Medium royal blue', hex: '#576aff' },
+  { color: 'Blue', description: 'Bright cornflower blue', hex: '#5985ff' },
+  { color: 'Blue', description: 'Deep vivid blue', hex: '#1c33ff' },
+  { color: 'Purple', description: 'Light lavender pink', hex: '#e2a3ff' },
+  { color: 'Purple', description: 'Very light periwinkle', hex: '#d5baff' },
+  { color: 'Purple', description: 'Light orchid', hex: '#d7a6ff' },
+  { color: 'Purple', description: 'Bright purple-pink', hex: '#d470ff' },
+  { color: 'Pink', description: 'Bright pink', hex: '#ffa3fc' },
+  { color: 'Pink', description: 'Soft bright pink', hex: '#ec9eff' },
+  { color: 'Pink', description: 'Vibrant hot pink', hex: '#f678ff' },
+  { color: 'Pink', description: 'Bright pink-purple', hex: '#e485ff' },
+  { color: 'Pink', description: 'Strong neon magenta', hex: '#f86eff' },
+  { color: 'Red', description: 'Bright cherry red', hex: '#ff3856' },
+  { color: 'Yellow', description: 'Bright golden yellow', hex: '#ffbb00' },
+  { color: 'Yellow', description: 'Pale lemon yellow', hex: '#ffff8e' },
+  { color: 'Yellow', description: 'Strong golden yellow', hex: '#ffdd00' },
+  { color: 'Yellow', description: 'Electric chartreuse', hex: '#ccff00' },
+  { color: 'Orange', description: 'Bright orange', hex: '#ff9d00' },
+  { color: 'Orange', description: 'Vivid orange', hex: '#ff7300' },
+  { color: 'Red', description: 'Bright red-orange', hex: '#ff2200' },
+  { color: 'Teal', description: 'Bright cyan', hex: '#00ffea' },
+  { color: 'Teal', description: 'Bright mint aqua', hex: '#66ffd1' },
+  { color: 'Teal', description: 'Light cyan', hex: '#8fffee' },
+  { color: 'Green', description: 'Bright lime green', hex: '#00ff26' },
+  { color: 'Yellow', description: 'Bright neon yellow-green', hex: '#afff03' },
+  { color: 'White', description: 'Dimmed white', hex: '#f0f0f0' },
+  { color: 'White', description: 'Pure white', hex: '#ffffff' },
+  { color: 'Black', description: 'Pure black', hex: '#000000' },
 ];
 
+/** Short color-family names for indices 0–31 (30=unique, 31=random). */
+export const MB_COLOR_NAMES = [...MB_PALETTE.map((p) => p.color), 'Unique', 'Random'];
+
+export function mbPaletteLabel(idx) {
+  const i = Number(idx);
+  if (!Number.isInteger(i) || i < 0) return String(idx);
+  if (i < MB_PALETTE.length) {
+    const p = MB_PALETTE[i];
+    return `${String(i).padStart(2, '0')} - ${p.color} (${p.description})`;
+  }
+  if (i === 30) return '30 - Unique - Runtime unique color';
+  if (i === 31) return '31 - Random - Runtime random from pool';
+  return String(i);
+}
+
 export function mbPaletteOptions() {
-  return MB_COLOR_NAMES.map((name, i) => ({
+  return Array.from({ length: 32 }, (_, i) => ({
     value: String(i),
-    label: `${i} — ${name}`,
-    searchText: `${i} ${name}`,
+    label: mbPaletteLabel(i),
+    searchText: mbPaletteLabel(i),
   }));
 }
 
 export const DEFAULT_MB_WLED_COLORS = [
-  '#00ffff', '#9900ff', '#0000ff', '#000080', '#0066ff', '#cc44ff', '#cc99ff', '#7700cc',
-  '#ff66b2', '#ff5aa8', '#ff509e', '#ff4a94', '#ff6e96', '#ff82a0', '#ffa0aa', '#ffaa00',
-  '#cccc00', '#ff8800', '#aaff00', '#ff6600', '#ff3300', '#ff0000',
-  '#3cffff', '#28f0ff', '#14c8ff', '#00ff00', '#66ff28', '#ffffff', '#f0f0f0',
-  '#000000', '#ff9933', '#ff00ff',
+  ...MB_PALETTE.map((p) => p.hex),
+  '#ff9933', // unique placeholder
+  '#ff00ff', // random placeholder
 ];
 
 export const MB_PAL_OFF = 29;
@@ -75,7 +133,9 @@ export const MB_PAL_UNIQUE = 30;
 export const MB_PAL_RANDOM = 31;
 
 export function mbPaletteEligibleForRandom(idx) {
-  return Number.isInteger(idx) && idx >= 0 && idx <= 30 && idx !== MB_PAL_OFF && idx !== MB_PAL_UNIQUE;
+  return (
+    Number.isInteger(idx) && idx >= 0 && idx <= 30 && idx !== MB_PAL_OFF && idx !== MB_PAL_UNIQUE
+  );
 }
 
 export function defaultRandomPaletteIndices() {
@@ -91,7 +151,8 @@ export function normalizeRandomPool(raw) {
   if (Array.isArray(raw?.custom)) {
     for (const entry of raw.custom) {
       if (!entry || typeof entry !== 'object') continue;
-      const hex = typeof entry.hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(entry.hex) ? entry.hex : '';
+      const hex =
+        typeof entry.hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(entry.hex) ? entry.hex : '';
       if (!hex) continue;
       custom.push({
         id: typeof entry.id === 'string' && entry.id ? entry.id : `custom-${custom.length}`,
@@ -102,27 +163,87 @@ export function normalizeRandomPool(raw) {
     }
   }
   return {
-    paletteIndices: paletteIndices.length > 0 || custom.length > 0 ? paletteIndices : defaultPalettes,
+    paletteIndices:
+      paletteIndices.length > 0 || custom.length > 0 ? paletteIndices : defaultPalettes,
     custom,
   };
 }
 
 export const MB_EFFECT_CLASS_META = [
-  { key: 'singleColor', label: 'Single Color', description: 'E905 — one palette color on selected LEDs', badge: 'Fully Decoded', tier: 1 },
-  { key: 'dualColor', label: 'Dual Color', description: 'E906 — inner + outer ring colors', badge: 'Fully Decoded', tier: 1 },
-  { key: 'sixBitColor', label: '6-bit Color', description: 'E908 packed 6-bit RGB channels (legacy bit-replicate)', badge: 'Fully Decoded', tier: 1 },
-  { key: 'rgbDirectColor', label: 'RGB (8-bit) Color', description: 'E907 / E908 d2 55 / E90D — raw 8-bit RGB triples', badge: 'Fully Decoded', tier: 1 },
-  { key: 'fivePositionPalette', label: '5-Position Palette', description: 'E909 / E90C palette mode — five corner slots', badge: 'Fully Decoded', tier: 1 },
-  { key: 'fivePositionFlash', label: '5-Position Flash Pattern', description: 'E90E — subset flash/hold patterns', badge: 'Partially Decoded', tier: 1 },
-  { key: 'unclassified', label: 'Unclassified / Unknown', description: 'E910, E913, E90C animation mode, etc.', badge: 'Preset Only', tier: 2 },
+  {
+    key: 'singleColor',
+    label: 'Single Color',
+    description: 'E905 — one palette color on selected LEDs',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'dualColor',
+    label: 'Dual Color',
+    description: 'E906 — inner + outer ring colors',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'sixBitColor',
+    label: '6-bit Color',
+    description: 'E908 packed 6-bit RGB channels (legacy bit-replicate)',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'rgbDirectColor',
+    label: 'RGB (8-bit) Color',
+    description: 'E907 / E908 d2 55 / E90D — raw 8-bit RGB triples',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'fivePositionPalette',
+    label: '5-Position Palette',
+    description: 'E909 / E90C palette mode — five corner slots',
+    badge: 'Fully Decoded',
+    tier: 1,
+  },
+  {
+    key: 'fivePositionFlash',
+    label: '5-Position Flash Pattern',
+    description: 'E90E — subset flash/hold patterns',
+    badge: 'Partially Decoded',
+    tier: 1,
+  },
+  {
+    key: 'unclassified',
+    label: 'Unclassified / Unknown',
+    description: 'E910, E913, E90C animation mode, etc.',
+    badge: 'Preset Only',
+    tier: 2,
+  },
 ];
 
-export const TIER2_OPCODE_OPTIONS = ['E90C', 'E90F', 'E910', 'E911', 'E912', 'E913', 'E914', 'E91B'];
+export const TIER2_OPCODE_OPTIONS = [
+  'E90C',
+  'E90F',
+  'E910',
+  'E911',
+  'E912',
+  'E913',
+  'E914',
+  'E91B',
+];
 
 export const MB_SEGMENT_META = [
   { id: 'all', label: 'All', hint: 'E905 mask 000 — full strip (WLED seg 0)' },
-  { id: 'inner', label: 'Inner ring', hint: 'E906 inner — start/stop only; id assigned at runtime' },
-  { id: 'outer', label: 'Outer ring', hint: 'E906 outer — start/stop only; id assigned at runtime' },
+  {
+    id: 'inner',
+    label: 'Inner ring',
+    hint: 'E906 inner — start/stop only; id assigned at runtime',
+  },
+  {
+    id: 'outer',
+    label: 'Outer ring',
+    hint: 'E906 outer — start/stop only; id assigned at runtime',
+  },
   { id: 'topLeft', label: 'Top left', hint: 'E909 TL — start/stop only' },
   { id: 'topRight', label: 'Top right', hint: 'E909 TR — start/stop only' },
   { id: 'bottomLeft', label: 'Bottom left', hint: 'E909 BL — start/stop only' },
@@ -233,17 +354,32 @@ export const BLEND_MODE_SELECT_OPTS = WLED_SEG_BLEND_MODES.map((m) => ({
 }));
 
 export const MB_SEGMENT_SIM_COMMAND = {
-  all: 'test all', inner: 'test inner', outer: 'test outer',
-  topLeft: 'test topLeft', topRight: 'test topRight',
-  bottomLeft: 'test bottomLeft', bottomRight: 'test bottomRight',
+  all: 'test all',
+  inner: 'test inner',
+  outer: 'test outer',
+  topLeft: 'test topLeft',
+  topRight: 'test topRight',
+  bottomLeft: 'test bottomLeft',
+  bottomRight: 'test bottomRight',
   center: 'test center',
-  band0: 'test band0', band1: 'test band1', band2: 'test band2',
-  band3: 'test band3', band4: 'test band4', band5: 'test band5',
-  band6: 'test band6', band7: 'test band7',
+  band0: 'test band0',
+  band1: 'test band1',
+  band2: 'test band2',
+  band3: 'test band3',
+  band4: 'test band4',
+  band5: 'test band5',
+  band6: 'test band6',
+  band7: 'test band7',
 };
 
 export const SIM_FIVE_CORNERS = 'test five';
 
 export const FIVE_CORNER_IDS = ['topLeft', 'bottomLeft', 'bottomRight', 'topRight', 'center'];
 
-export const FIVE_CORNER_RGB = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255], [255, 255, 0]];
+export const FIVE_CORNER_RGB = [
+  [255, 0, 0],
+  [0, 255, 0],
+  [0, 0, 255],
+  [255, 255, 255],
+  [255, 255, 0],
+];

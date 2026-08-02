@@ -37,3 +37,7 @@ body {
   width: 100%;
   height: 100%;
 }
+
+.mantine-Input-input::placeholder {
+  color: var(--mantine-primary-color-light-color);
+}

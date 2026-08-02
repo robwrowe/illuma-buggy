@@ -15,6 +15,7 @@ import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { SectionHead } from '../shared/SectionHead';
 import { AppButton, AppCard } from '../shared/styles';
+import { CopyPasteButtons, RULE_CLIP, RuleClipProvider, useRuleClip } from './ruleClipboard';
 import { MB_SEGMENT_META, BLEND_MODE_SELECT_OPTS } from '../../lib/ble/mbConstants';
 import {
   createEmptySegment,
@@ -23,6 +24,7 @@ import {
   normalizeMbMapping,
   normalizeSegment,
   normalizeSegmentMap,
+  segmentDisplayName,
   wledSegmentToSegmentMapSegment,
 } from '../../lib/ble/mbMapping';
 import { fetchWledSegmentsFromIp } from '../../lib/wled/capture';
@@ -87,7 +89,9 @@ function PresetVarRows({ vars, onChange }) {
               styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
             />
           </Field>
-          <AppButton variant="danger" size="compact-xs" onClick={() => removeEntry(i)}>×</AppButton>
+          <AppButton variant="danger" size="compact-xs" onClick={() => removeEntry(i)}>
+            ×
+          </AppButton>
         </Group>
       ))}
       <AppButton
@@ -101,8 +105,19 @@ function PresetVarRows({ vars, onChange }) {
   );
 }
 
-function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions = [], onChange, onDelete }) {
+function SegmentRowEditor({
+  segment,
+  presets,
+  effectOptions = [],
+  paletteOptions = [],
+  onChange,
+  onDelete,
+  onDuplicate,
+  onPasteAfter,
+}) {
   const seg = normalizeSegment(segment);
+  const { hasKind, takeKind } = useRuleClip();
+  const canPaste = hasKind(RULE_CLIP.segment);
   const set = (patch) => onChange({ ...seg, ...patch });
   const presetOpts = (presets || []).map((p) => ({
     value: p.id,
@@ -120,182 +135,300 @@ function SegmentRowEditor({ segment, presets, effectOptions = [], paletteOptions
     searchText: `${p.id} ${p.name}`,
   }));
 
+  const pasteFresh = () => {
+    const data = takeKind(RULE_CLIP.segment);
+    if (!data) return null;
+    // Fresh id so paste-after / duplicate don't collide with the source segment.
+    return normalizeSegment({ ...data, id: undefined });
+  };
+
+  const [open, setOpen] = useState(false);
+  const maskLabel =
+    MASK_OPTS.find((o) => o.value === (seg.maskAssignment || 'all'))?.label ||
+    seg.maskAssignment ||
+    'all';
+  const summary = [
+    `wled ${seg.wledSegId}`,
+    `${seg.start}–${seg.stop}`,
+    maskLabel,
+    seg.fx >= 0 ? `fx ${seg.fx}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const title = segmentDisplayName(seg);
+
   return (
     <Paper p="sm" withBorder bg="var(--surface2)">
-      <Group justify="space-between" mb="xs" wrap="wrap">
-        <Text size="xs" fw={700} ff="monospace">{seg.id}</Text>
-        <AppButton variant="danger" size="compact-xs" onClick={onDelete}>Delete</AppButton>
+      <Group justify="space-between" mb={open ? 'xs' : 0} wrap="wrap">
+        <Group gap="xs" wrap="wrap" style={{ flex: 1, minWidth: 0 }}>
+          <AppButton size="compact-xs" variant="default" onClick={() => setOpen((v) => !v)}>
+            {open ? '▾' : '▸'}
+          </AppButton>
+          <Text size="xs" fw={700} ff={seg.name?.trim() ? undefined : 'monospace'}>
+            {title}
+          </Text>
+          {!open && (
+            <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {summary}
+            </Text>
+          )}
+        </Group>
+        <Group gap="xs" wrap="wrap">
+          <CopyPasteButtons
+            kind={RULE_CLIP.segment}
+            getData={() => normalizeSegment(seg)}
+            onPaste={(data) => {
+              // Keep this row's id so rule segmentOverrides stay pointed here.
+              onChange(normalizeSegment({ ...data, id: seg.id }));
+            }}
+          />
+          {onPasteAfter && (
+            <AppButton
+              size="compact-xs"
+              variant="default"
+              disabled={!canPaste}
+              onClick={() => {
+                const next = pasteFresh();
+                if (next) onPasteAfter(next);
+              }}
+            >
+              Paste after
+            </AppButton>
+          )}
+          {onDuplicate && (
+            <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>
+              Duplicate
+            </AppButton>
+          )}
+          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+            Delete
+          </AppButton>
+        </Group>
       </Group>
 
-      <Group gap={6} align="center" wrap="wrap" mb="xs">
-        <Text size="xs" c="dimmed">wled id</Text>
-        <NumberInput
-          w={52}
-          size="xs"
-          value={seg.wledSegId}
-          onChange={(v) => set({ wledSegId: Math.max(0, parseInt(v, 10) || 0) })}
-          hideControls
-          styles={{ input: { textAlign: 'center', fontFamily: 'monospace' } }}
-        />
-        <Text size="xs" c="dimmed">start</Text>
-        <NumberInput
-          w={52}
-          size="xs"
-          value={seg.start}
-          onChange={(v) => set({ start: Math.max(0, parseInt(v, 10) || 0) })}
-          hideControls
-          styles={{ input: { textAlign: 'center', fontFamily: 'monospace' } }}
-        />
-        <Text size="xs" c="dimmed">stop</Text>
-        <NumberInput
-          w={52}
-          size="xs"
-          value={seg.stop}
-          onChange={(v) => set({ stop: Math.max(0, parseInt(v, 10) || 0) })}
-          hideControls
-          styles={{ input: { textAlign: 'center', fontFamily: 'monospace' } }}
-        />
-      </Group>
-
-      <SimpleGrid cols={3} spacing="xs" mb="xs">
-        {['grp', 'spc', 'of'].map((f) => (
-          <Field key={f} label={f}>
+      {open && (
+        <>
+          <Field label="Name (optional)" mb="xs">
+            <TextInput
+              value={seg.name || ''}
+              onChange={(e) => set({ name: e.target.value })}
+              placeholder="e.g. Canopy left"
+            />
+          </Field>
+          <Group gap={6} align="center" wrap="wrap" mb="xs">
+            <Text size="xs" c="dimmed">
+              wled id
+            </Text>
             <NumberInput
+              w={52}
               size="xs"
-              value={seg[f]}
-              onChange={(v) => set({ [f]: f === 'grp' ? Math.max(1, parseInt(v, 10) || 1) : (parseInt(v, 10) || 0) })}
+              value={seg.wledSegId}
+              onChange={(v) => set({ wledSegId: Math.max(0, parseInt(v, 10) || 0) })}
               hideControls
               styles={{ input: { textAlign: 'center', fontFamily: 'monospace' } }}
             />
-          </Field>
-        ))}
-      </SimpleGrid>
-
-      <Group gap="md" mb="xs">
-        <Checkbox label="rev" size="xs" checked={!!seg.rev} onChange={(e) => set({ rev: e.target.checked })} />
-        <Checkbox label="mi" size="xs" checked={!!seg.mi} onChange={(e) => set({ mi: e.target.checked })} />
-      </Group>
-
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
-        <Field label="Blend">
-          <SearchableSelect
-            value={seg.blend || 'top'}
-            onChange={(blend) => set({ blend })}
-            options={BLEND_MODE_SELECT_OPTS}
-            allowEmpty={false}
-          />
-        </Field>
-        <Field label="Mask assignment">
-          <SearchableSelect
-            value={seg.maskAssignment || 'all'}
-            onChange={(maskAssignment) => set({ maskAssignment })}
-            options={MASK_OPTS}
-            allowEmpty={false}
-          />
-        </Field>
-      </SimpleGrid>
-
-      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
-        <Field label="Effect">
-          <SearchableSelect
-            value={seg.fx >= 0 ? String(seg.fx) : ''}
-            onChange={(v) => set({ fx: v === '' ? -1 : parseInt(v, 10) })}
-            options={fxOpts}
-            placeholder="(use rule fx)"
-            allowEmpty
-          />
-          {seg.fx >= 0 && (
-            <Text size="xs" c="dimmed" mt={4}>
-              Overrides the rule&apos;s effect for this segment. Leave blank to use the rule&apos;s fx.
+            <Text size="xs" c="dimmed">
+              start
             </Text>
-          )}
-        </Field>
-        <Field label="Palette">
-          <SearchableSelect
-            value={seg.pal >= 0 ? String(seg.pal) : ''}
-            onChange={(v) => set({ pal: v === '' ? -1 : parseInt(v, 10) })}
-            options={palOpts}
-            placeholder="(none)"
-            allowEmpty
-          />
-        </Field>
-      </SimpleGrid>
+            <NumberInput
+              w={52}
+              size="xs"
+              value={seg.start}
+              onChange={(v) => set({ start: Math.max(0, parseInt(v, 10) || 0) })}
+              hideControls
+              styles={{ input: { textAlign: 'center', fontFamily: 'monospace' } }}
+            />
+            <Text size="xs" c="dimmed">
+              stop
+            </Text>
+            <NumberInput
+              w={52}
+              size="xs"
+              value={seg.stop}
+              onChange={(v) => set({ stop: Math.max(0, parseInt(v, 10) || 0) })}
+              hideControls
+              styles={{ input: { textAlign: 'center', fontFamily: 'monospace' } }}
+            />
+          </Group>
 
-      <SimpleGrid cols={2} spacing="xs" mb="xs">
-        <Stack gap={2}>
-          <Text size="xs" c="dimmed">sx</Text>
-          <Slider min={0} max={255} value={seg.sx ?? 128} onChange={(v) => set({ sx: v })} size="xs" />
-        </Stack>
-        <Stack gap={2}>
-          <Text size="xs" c="dimmed">ix</Text>
-          <Slider min={0} max={255} value={seg.ix ?? 128} onChange={(v) => set({ ix: v })} size="xs" />
-        </Stack>
-      </SimpleGrid>
-
-      <Field label="Preset (optional)">
-        <SearchableSelect
-          value={seg.presetId || ''}
-          onChange={(presetId) => set({ presetId })}
-          placeholder="(none)"
-          options={presetOpts}
-          allowEmpty
-        />
-      </Field>
-
-      <Text size="xs" fw={600} c="dimmed" mt="xs" mb={4}>Colors (col0–col2, empty = untouched)</Text>
-      <SimpleGrid cols={3} spacing="xs" mb="xs">
-        {[0, 1, 2].map((i) => (
-          <Field key={i} label={`col${i}`}>
-            <Group gap={4} wrap="nowrap">
-              <div
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: 3,
-                  flexShrink: 0,
-                  background: seg.colors[i] || 'transparent',
-                  border: '1px solid var(--border)',
-                }}
-              />
-              <TextInput
-                size="xs"
-                value={seg.colors[i] || ''}
-                placeholder="#rrggbb"
-                onChange={(e) => {
-                  const raw = e.target.value.trim();
-                  const colors = [...seg.colors];
-                  if (!raw) {
-                    colors[i] = '';
-                    set({ colors });
-                  } else if (/^#?[0-9a-fA-F]{6}$/.test(raw)) {
-                    colors[i] = raw.startsWith('#') ? `#${raw.replace(/^#/, '').toLowerCase()}` : `#${raw.toLowerCase()}`;
-                    set({ colors });
+          <SimpleGrid cols={3} spacing="xs" mb="xs">
+            {['grp', 'spc', 'of'].map((f) => (
+              <Field key={f} label={f}>
+                <NumberInput
+                  size="xs"
+                  value={seg[f]}
+                  onChange={(v) =>
+                    set({
+                      [f]: f === 'grp' ? Math.max(1, parseInt(v, 10) || 1) : parseInt(v, 10) || 0,
+                    })
                   }
-                }}
-                styles={{ input: { fontFamily: 'monospace', fontSize: 11 } }}
-                style={{ flex: 1, minWidth: 0 }}
-              />
-              <CloseButton
-                size="sm"
-                aria-label={`Clear col${i}`}
-                title="Clear"
-                disabled={!seg.colors[i]}
-                onClick={() => {
-                  const colors = [...seg.colors];
-                  colors[i] = '';
-                  set({ colors });
-                }}
-              />
-            </Group>
-          </Field>
-        ))}
-      </SimpleGrid>
+                  hideControls
+                  styles={{ input: { textAlign: 'center', fontFamily: 'monospace' } }}
+                />
+              </Field>
+            ))}
+          </SimpleGrid>
 
-      <Text size="xs" fw={600} c="dimmed" mt="xs" mb={4}>Preset variables</Text>
-      <PresetVarRows
-        vars={seg.presetVariables}
-        onChange={(presetVariables) => set({ presetVariables })}
-      />
+          <Group gap="md" mb="xs">
+            <Checkbox
+              label="rev"
+              size="xs"
+              checked={!!seg.rev}
+              onChange={(e) => set({ rev: e.target.checked })}
+            />
+            <Checkbox
+              label="mi"
+              size="xs"
+              checked={!!seg.mi}
+              onChange={(e) => set({ mi: e.target.checked })}
+            />
+          </Group>
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
+            <Field label="Blend">
+              <SearchableSelect
+                value={seg.blend || 'top'}
+                onChange={(blend) => set({ blend })}
+                options={BLEND_MODE_SELECT_OPTS}
+                allowEmpty={false}
+              />
+            </Field>
+            <Field label="Mask assignment">
+              <SearchableSelect
+                value={seg.maskAssignment || 'all'}
+                onChange={(maskAssignment) => set({ maskAssignment })}
+                options={MASK_OPTS}
+                allowEmpty={false}
+              />
+            </Field>
+          </SimpleGrid>
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="xs">
+            <Field label="Effect">
+              <SearchableSelect
+                value={seg.fx >= 0 ? String(seg.fx) : ''}
+                onChange={(v) => set({ fx: v === '' ? -1 : parseInt(v, 10) })}
+                options={fxOpts}
+                placeholder="(use rule fx)"
+                allowEmpty
+              />
+              {seg.fx >= 0 && (
+                <Text size="xs" c="dimmed" mt={4}>
+                  Overrides the rule&apos;s effect for this segment. Leave blank to use the
+                  rule&apos;s fx.
+                </Text>
+              )}
+            </Field>
+            <Field label="Palette">
+              <SearchableSelect
+                value={seg.pal >= 0 ? String(seg.pal) : ''}
+                onChange={(v) => set({ pal: v === '' ? -1 : parseInt(v, 10) })}
+                options={palOpts}
+                placeholder="(none)"
+                allowEmpty
+              />
+            </Field>
+          </SimpleGrid>
+
+          <SimpleGrid cols={2} spacing="xs" mb="xs">
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed">
+                sx
+              </Text>
+              <Slider
+                min={0}
+                max={255}
+                value={seg.sx ?? 128}
+                onChange={(v) => set({ sx: v })}
+                size="xs"
+              />
+            </Stack>
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed">
+                ix
+              </Text>
+              <Slider
+                min={0}
+                max={255}
+                value={seg.ix ?? 128}
+                onChange={(v) => set({ ix: v })}
+                size="xs"
+              />
+            </Stack>
+          </SimpleGrid>
+
+          <Field label="Preset (optional)">
+            <SearchableSelect
+              value={seg.presetId || ''}
+              onChange={(presetId) => set({ presetId })}
+              placeholder="(none)"
+              options={presetOpts}
+              allowEmpty
+            />
+          </Field>
+
+          <Text size="xs" fw={600} c="dimmed" mt="xs" mb={4}>
+            Colors (col0–col2, empty = untouched)
+          </Text>
+          <SimpleGrid cols={3} spacing="xs" mb="xs">
+            {[0, 1, 2].map((i) => (
+              <Field key={i} label={`col${i}`}>
+                <Group gap={4} wrap="nowrap">
+                  <div
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 3,
+                      flexShrink: 0,
+                      background: seg.colors[i] || 'transparent',
+                      border: '1px solid var(--border)',
+                    }}
+                  />
+                  <TextInput
+                    size="xs"
+                    value={seg.colors[i] || ''}
+                    placeholder="#rrggbb"
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      const colors = [...seg.colors];
+                      if (!raw) {
+                        colors[i] = '';
+                        set({ colors });
+                      } else if (/^#?[0-9a-fA-F]{6}$/.test(raw)) {
+                        colors[i] = raw.startsWith('#')
+                          ? `#${raw.replace(/^#/, '').toLowerCase()}`
+                          : `#${raw.toLowerCase()}`;
+                        set({ colors });
+                      }
+                    }}
+                    styles={{ input: { fontFamily: 'monospace', fontSize: 11 } }}
+                    style={{ flex: 1, minWidth: 0 }}
+                  />
+                  <CloseButton
+                    size="sm"
+                    aria-label={`Clear col${i}`}
+                    title="Clear"
+                    disabled={!seg.colors[i]}
+                    onClick={() => {
+                      const colors = [...seg.colors];
+                      colors[i] = '';
+                      set({ colors });
+                    }}
+                  />
+                </Group>
+              </Field>
+            ))}
+          </SimpleGrid>
+
+          <Text size="xs" fw={600} c="dimmed" mt="xs" mb={4}>
+            Preset variables
+          </Text>
+          <PresetVarRows
+            vars={seg.presetVariables}
+            onChange={(presetVariables) => set({ presetVariables })}
+          />
+        </>
+      )}
     </Paper>
   );
 }
@@ -350,25 +483,26 @@ export function SegmentMapEditor({
         ...inUseByRules.map((r) => `rule "${r.name}"`),
         ...inUseByPresets.map((p) => `preset "${p.name}"`),
       ].join(', ');
-      if (!window.confirm(
-        `This map is used by ${names}. Deleting it will leave those references pointing at ` +
-        `nothing (rules fall back to single-segment mode; presets fall back to no segment data). ` +
-        `Delete anyway?`,
-      )) return;
+      if (
+        !window.confirm(
+          `This map is used by ${names}. Deleting it will leave those references pointing at ` +
+            `nothing (rules fall back to single-segment mode; presets fall back to no segment data). ` +
+            `Delete anyway?`,
+        )
+      )
+        return;
     }
     const next = maps.filter((m) => m.id !== id);
     onChange({
       ...mapping,
       segmentMaps: next.map(normalizeSegmentMap),
-      rules: (mapping.rules || []).map((r) => (
-        r.segmentMapId === id ? { ...r, segmentMapId: '' } : r
-      )),
+      rules: (mapping.rules || []).map((r) =>
+        r.segmentMapId === id ? { ...r, segmentMapId: '' } : r,
+      ),
     });
     if (inUseByPresets.length && onPresetsChange) {
       onPresetsChange(
-        (presets || []).map((p) => (
-          p.segmentMapId === id ? { ...p, segmentMapId: undefined } : p
-        )),
+        (presets || []).map((p) => (p.segmentMapId === id ? { ...p, segmentMapId: undefined } : p)),
       );
     }
     if (selectedId === id) setSelectedId(next[0]?.id || null);
@@ -385,7 +519,10 @@ export function SegmentMapEditor({
       localStorage.setItem('wled-ip', ip);
       const rawSegs = await fetchWledSegmentsFromIp(ip);
       const imported = rawSegs.map(wledSegmentToSegmentMapSegment);
-      const { segments, updated, added } = mergeImportedSegmentsIntoMap(selected.segments, imported);
+      const { segments, updated, added } = mergeImportedSegmentsIntoMap(
+        selected.segments,
+        imported,
+      );
       updateMap(selected.id, { segments });
       setImportMsg(
         updated || added
@@ -401,7 +538,11 @@ export function SegmentMapEditor({
 
   const replaceFromWled = async () => {
     if (!selected) return;
-    if (!window.confirm('Replace all segments in this map with the live WLED strip? Mask assignments and presets will be lost.')) {
+    if (
+      !window.confirm(
+        'Replace all segments in this map with the live WLED strip? Mask assignments and presets will be lost.',
+      )
+    ) {
       return;
     }
     setImportErr('');
@@ -425,128 +566,183 @@ export function SegmentMapEditor({
   const canImport = !!(wledIp || '').trim() && !!selected && !importing;
 
   return (
-    <Stack gap="md">
-      <Text size="xs" c="dimmed" lh={1.5}>
-        Shareable segment maps referenced by rules and presets via{' '}
-        <code style={{ fontFamily: 'monospace' }}>segmentMapId</code>.
-        Mask assignment links a segment to MB region extracts; <strong>ignore</strong> excludes it from mask fan-out.
-        Leave segment Effect blank (<code style={{ fontFamily: 'monospace' }}>fx: -1</code>) to use the rule&apos;s effect.
-      </Text>
+    <RuleClipProvider>
+      <Stack gap="md">
+        <Text size="xs" c="dimmed" lh={1.5}>
+          Shareable segment maps referenced by rules and presets via{' '}
+          <code style={{ fontFamily: 'monospace' }}>segmentMapId</code>. Mask assignment links a
+          segment to MB region extracts; <strong>ignore</strong> excludes it from mask fan-out.
+          Leave segment Effect blank (<code style={{ fontFamily: 'monospace' }}>fx: -1</code>) to
+          use the rule&apos;s effect.
+        </Text>
 
-      <Group gap="xs" wrap="wrap">
-        <AppButton size="compact-sm" variant="primary" onClick={addMap}>Add map</AppButton>
-        <Text size="xs" c="dimmed">{maps.length} map{maps.length === 1 ? '' : 's'}</Text>
-      </Group>
-
-      {maps.length === 0 ? (
-        <Paper p="sm" withBorder>
-          <Text size="sm" c="dimmed">No segment maps yet. Create one, then select it from a rule.</Text>
-        </Paper>
-      ) : (
-        <Group gap={6} wrap="wrap">
-          {maps.map((m) => (
-            <AppButton
-              key={m.id}
-              size="compact-sm"
-              variant={m.id === selected?.id ? 'primary' : 'default'}
-              onClick={() => setSelectedId(m.id)}
-            >
-              {m.name || m.id}
-            </AppButton>
-          ))}
-        </Group>
-      )}
-
-      {selected && (
-        <AppCard>
-          <SectionHead>Edit map</SectionHead>
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="sm">
-            <Field label="Name">
-              <TextInput
-                value={selected.name || ''}
-                onChange={(e) => updateMap(selected.id, { name: e.target.value })}
-              />
-            </Field>
-            <Field label="Id">
-              <TextInput value={selected.id} disabled styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }} />
-            </Field>
-            <Field label="LED map">
-              <SearchableSelect
-                value={String(selected.ledmap ?? 0)}
-                onChange={(v) => updateMap(selected.id, { ledmap: parseInt(v, 10) || 0 })}
-                options={LEDMAP_OPTS}
-                allowEmpty={false}
-              />
-            </Field>
-          </SimpleGrid>
-          <Text size="xs" c="dimmed" mb="sm" lh={1.45}>
-            WLED device-global pixel remap (<code style={{ fontFamily: 'monospace' }}>ledmap.json</code> /
-            <code style={{ fontFamily: 'monospace' }}>ledmap1–9.json</code>).
-            Rules and presets that reference this map inherit the selection. Files must already
-            exist on the GLEDOPTO — selecting a map only sends the index.
+        <Group gap="xs" wrap="wrap">
+          <AppButton size="compact-sm" variant="primary" onClick={addMap}>
+            Add map
+          </AppButton>
+          <Text size="xs" c="dimmed">
+            {maps.length} map{maps.length === 1 ? '' : 's'}
           </Text>
-          <Group gap="xs" mb="md" wrap="wrap">
-            <AppButton size="compact-xs" variant="default" onClick={() => duplicateMap(selected)}>
-              Duplicate
-            </AppButton>
-            <AppButton size="compact-xs" variant="danger" onClick={() => deleteMap(selected.id)}>
-              Delete map
-            </AppButton>
-          </Group>
+        </Group>
 
-          <SectionHead>Segments</SectionHead>
-          <Group gap="xs" mb="sm" wrap="wrap">
-            <AppButton
-              size="compact-sm"
-              variant="primary"
-              disabled={!canImport}
-              onClick={importFromWled}
-            >
-              {importing ? 'Importing…' : '↻ Import from WLED'}
-            </AppButton>
-            <AppButton
-              size="compact-sm"
-              variant="default"
-              disabled={!canImport}
-              onClick={replaceFromWled}
-            >
-              Replace from WLED
-            </AppButton>
-            <AppButton
-              size="compact-sm"
-              variant="default"
-              onClick={() => updateMap(selected.id, {
-                segments: [...(selected.segments || []), createEmptySegment()],
-              })}
-            >
-              Add segment
-            </AppButton>
-          </Group>
-          {importErr && <Text size="xs" c="red" mb="xs">{importErr}</Text>}
-          {importMsg && !importErr && <Text size="xs" c="dimmed" mb="xs">{importMsg}</Text>}
-
-          <Stack gap="sm">
-            {(selected.segments || []).map((seg, i) => (
-              <SegmentRowEditor
-                key={seg.id || i}
-                segment={seg}
-                presets={presets}
-                effectOptions={effectOptions}
-                paletteOptions={paletteOptions}
-                onChange={(next) => {
-                  const segments = [...(selected.segments || [])];
-                  segments[i] = next;
-                  updateMap(selected.id, { segments });
-                }}
-                onDelete={() => {
-                  const segments = (selected.segments || []).filter((_, j) => j !== i);
-                  updateMap(selected.id, { segments: segments.length ? segments : [createEmptySegment()] });
-                }}
-              />
+        {maps.length === 0 ? (
+          <Paper p="sm" withBorder>
+            <Text size="sm" c="dimmed">
+              No segment maps yet. Create one, then select it from a rule.
+            </Text>
+          </Paper>
+        ) : (
+          <Group gap={6} wrap="wrap">
+            {maps.map((m) => (
+              <AppButton
+                key={m.id}
+                size="compact-sm"
+                variant={m.id === selected?.id ? 'primary' : 'light'}
+                onClick={() => setSelectedId(m.id)}
+              >
+                {m.name || m.id}
+              </AppButton>
             ))}
-          </Stack>
-        </AppCard>
-      )}
-    </Stack>
+          </Group>
+        )}
+
+        {selected && (
+          <AppCard>
+            <SectionHead>Edit map</SectionHead>
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="sm">
+              <Field label="Name">
+                <TextInput
+                  value={selected.name || ''}
+                  onChange={(e) => updateMap(selected.id, { name: e.target.value })}
+                />
+              </Field>
+              <Field label="Id">
+                <TextInput
+                  value={selected.id}
+                  disabled
+                  styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                />
+              </Field>
+              <Field label="LED map">
+                <SearchableSelect
+                  value={String(selected.ledmap ?? 0)}
+                  onChange={(v) => updateMap(selected.id, { ledmap: parseInt(v, 10) || 0 })}
+                  options={LEDMAP_OPTS}
+                  allowEmpty={false}
+                />
+              </Field>
+            </SimpleGrid>
+            <Text size="xs" c="dimmed" mb="sm" lh={1.45}>
+              WLED device-global pixel remap (
+              <code style={{ fontFamily: 'monospace' }}>ledmap.json</code> /
+              <code style={{ fontFamily: 'monospace' }}>ledmap1–9.json</code>). Rules and presets
+              that reference this map inherit the selection. Files must already exist on the
+              GLEDOPTO — selecting a map only sends the index.
+            </Text>
+            <Group gap="xs" mb="md" wrap="wrap">
+              <AppButton size="compact-xs" variant="default" onClick={() => duplicateMap(selected)}>
+                Duplicate
+              </AppButton>
+              <AppButton size="compact-xs" variant="danger" onClick={() => deleteMap(selected.id)}>
+                Delete map
+              </AppButton>
+            </Group>
+
+            <SectionHead>Segments</SectionHead>
+            <SegmentListActions
+              canImport={canImport}
+              importing={importing}
+              onImport={importFromWled}
+              onReplace={replaceFromWled}
+              onAdd={() =>
+                updateMap(selected.id, {
+                  segments: [...(selected.segments || []), createEmptySegment()],
+                })
+              }
+              onPasteAppend={(seg) =>
+                updateMap(selected.id, {
+                  segments: [...(selected.segments || []), seg],
+                })
+              }
+            />
+            {importErr && (
+              <Text size="xs" c="red" mb="xs">
+                {importErr}
+              </Text>
+            )}
+            {importMsg && !importErr && (
+              <Text size="xs" c="dimmed" mb="xs">
+                {importMsg}
+              </Text>
+            )}
+
+            <Stack gap="sm">
+              {(selected.segments || []).map((seg, i) => (
+                <SegmentRowEditor
+                  key={seg.id || i}
+                  segment={seg}
+                  presets={presets}
+                  effectOptions={effectOptions}
+                  paletteOptions={paletteOptions}
+                  onChange={(next) => {
+                    const segments = [...(selected.segments || [])];
+                    segments[i] = next;
+                    updateMap(selected.id, { segments });
+                  }}
+                  onDelete={() => {
+                    const segments = (selected.segments || []).filter((_, j) => j !== i);
+                    updateMap(selected.id, {
+                      segments: segments.length ? segments : [createEmptySegment()],
+                    });
+                  }}
+                  onDuplicate={() => {
+                    const segments = [...(selected.segments || [])];
+                    const copy = normalizeSegment({ ...seg, id: undefined });
+                    segments.splice(i + 1, 0, copy);
+                    updateMap(selected.id, { segments });
+                  }}
+                  onPasteAfter={(pasted) => {
+                    const segments = [...(selected.segments || [])];
+                    segments.splice(i + 1, 0, pasted);
+                    updateMap(selected.id, { segments });
+                  }}
+                />
+              ))}
+            </Stack>
+          </AppCard>
+        )}
+      </Stack>
+    </RuleClipProvider>
+  );
+}
+
+/** Import / add / paste toolbar — needs clip context for Paste enablement. */
+function SegmentListActions({ canImport, importing, onImport, onReplace, onAdd, onPasteAppend }) {
+  const { hasKind, takeKind } = useRuleClip();
+  const canPaste = hasKind(RULE_CLIP.segment);
+  return (
+    <Group gap="xs" mb="sm" wrap="wrap">
+      <AppButton size="compact-sm" variant="primary" disabled={!canImport} onClick={onImport}>
+        {importing ? 'Importing…' : '↻ Import from WLED'}
+      </AppButton>
+      <AppButton size="compact-sm" variant="default" disabled={!canImport} onClick={onReplace}>
+        Replace from WLED
+      </AppButton>
+      <AppButton size="compact-sm" variant="default" onClick={onAdd}>
+        Add segment
+      </AppButton>
+      <AppButton
+        size="compact-sm"
+        variant="default"
+        disabled={!canPaste}
+        onClick={() => {
+          const data = takeKind(RULE_CLIP.segment);
+          if (!data) return;
+          onPasteAppend(normalizeSegment({ ...data, id: undefined }));
+        }}
+      >
+        Paste segment
+      </AppButton>
+    </Group>
   );
 }

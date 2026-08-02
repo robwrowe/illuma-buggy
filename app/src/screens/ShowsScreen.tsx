@@ -235,7 +235,7 @@ export default function ShowsScreen() {
         <View style={s.section}>
           <Text style={s.sectionTitle}>Show brightness</Text>
           <Text style={s.hint}>
-            At nighttime (below your solar threshold in Settings → Brightness), entering live
+            At nighttime (below your solar threshold in More → Brightness), entering live
             applies this brightness — manual Start or auto live for fireworks.
           </Text>
           <View style={s.switchRow}>
@@ -295,7 +295,7 @@ export default function ShowsScreen() {
           <Text style={s.sectionTitle}>Auto BLE capture</Text>
           <Text style={s.hint}>
             Phone-direct capture auto-starts around in-scope shows (no board needed). Configure
-            show bindings and active park in Settings → Shows.
+            show bindings and active park in More → Park Shows.
           </Text>
           <View style={s.switchRow}>
             <Text style={s.rowLabel}>Auto-capture at show time</Text>

@@ -194,7 +194,7 @@ export const DEFAULT_DATA = {
   brightnessConfig: { daytime: 200, nighttime: 80, indoor: 120, transitionMinutes: 30, solarThresholdDeg: 6 },
   colorCalibration: createEmptyColorCalibration(),
   recallState: { effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never' },
-  overrideKillOnZone: false, magicBandFivePoint: true, bleEffectTransitionMs: 700,
+  overrideKillOnZone: false, bleEffectTransitionMs: 700,
   starlightEnabled: true, starlightTimeoutSec: 15,
   magicBandEnabled: true, magicBandTimeoutSec: 15,
   customPalettes: [], paletteSets: [], savedColors: [],

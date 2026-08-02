@@ -1,8 +1,13 @@
 #include "ScannerSerial.h"
 #include "Globals.h"
 #include "ScannerPayloadTransport.h"
-#include "ScannerAdvertise.h"
-#include <WiFi.h>
+#include "SdRawLogger.h"
+#include "Config.h"
+#include <esp_mac.h>
+
+static void fillScannerMac(uint8_t out[6]) {
+  esp_read_mac(out, ESP_MAC_BT);
+}
 
 void processScannerSerial() {
   if (!Serial.available()) return;
@@ -12,43 +17,28 @@ void processScannerSerial() {
 
   if (line == "help") {
     Serial.println("[Serial] Commands:");
-    Serial.println("  status           — pairing + ESP-NOW send stats");
-    Serial.println("  pair <mac>       — set logic board MAC (AA:BB:CC:DD:EE:FF)");
-    Serial.println("  unpair           — clear pairing, resume unpaired advertisement");
+    Serial.println("  status           — UART link + forward stats");
     Serial.println("  sniff [seconds]  — log all manufacturer data (default 30)");
     Serial.println("  sniff off        — stop sniffing");
     Serial.println("  scanlog on|off   — Disney packet hex logging");
   } else if (line == "status") {
     uint8_t myMac[6];
-    WiFi.macAddress(myMac);
-    Serial.printf("[Status] paired=%s logic=%s ch=%u espnow tx-queued ok/fail=%u/%u cb ok/fail=%u/%u seq=%u scanlog=%s\n",
-                  logicPeerConfigured ? "yes" : "no",
-                  logicPeerConfigured ? scannerMacToString(pairedLogicMac).c_str() : "(none)",
-                  (unsigned)pairedChannel,
-                  espNowSendOk, espNowSendFail,
-                  espNowSendCbOk, espNowSendCbFail, espNowTxSeq,
-                  bleScanLogEnabled ? "on" : "off");
-    Serial.println("[Status] (queued=esp_now_send OK; cb=over-the-air — compare cb-ok vs logic board rx)");
-    Serial.printf("[Status] scanner MAC=%s\n", scannerMacToString(myMac).c_str());
-  } else if (line.startsWith("pair ")) {
-    String macStr = line.substring(5);
-    macStr.trim();
-    uint8_t mac[6];
-    if (!scannerParseMacString(macStr.c_str(), mac)) {
-      Serial.println("[Serial] usage: pair AA:BB:CC:DD:EE:FF");
-    } else {
-      scannerSetLogicMac(mac);
+    fillScannerMac(myMac);
+    unsigned long now = millis();
+    const char* link = "never";
+    char ageBuf[24] = "never";
+    if (lastLogicHbMs) {
+      unsigned long age = now - lastLogicHbMs;
+      link = (age < SCANNER_ALIVE_MS) ? "OK" : "LOST";
+      snprintf(ageBuf, sizeof(ageBuf), "%lums ago", age);
     }
-  } else if (line == "unpair") {
-    logicPeerConfigured = false;
-    memset(pairedLogicMac, 0, 6);
-    pairedChannel = 0;
-    prefs.begin("config", false);
-    prefs.remove("pairedLogicMac");
-    prefs.remove("pairedChan");
-    prefs.end();
-    scannerAdvertiseInit();
-    Serial.println("[Serial] Unpaired — advertising + sweeping channels for discovery");
+    Serial.printf("[Status] link=%s logic_hb=%s fwd_seq=%u scanlog=%s sd=%s MAC=%s\n",
+                  link,
+                  ageBuf,
+                  uartFwdSeq,
+                  bleScanLogEnabled ? "on" : "off",
+                  sdRawLoggerReady() ? "ok" : "--",
+                  scannerMacToString(myMac).c_str());
   } else if (line == "scanlog on") {
     bleScanLogEnabled = true;
     Serial.println("[Serial] Scan log ON");

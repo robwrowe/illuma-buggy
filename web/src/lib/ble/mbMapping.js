@@ -1,8 +1,8 @@
 import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId, blendModeIdToBm } from './mbConstants';
 import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
 
-const BYTE_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
-const CMP_OPS = new Set(['eq', 'gt', 'gte', 'lt', 'lte']);
+const BYTE_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
+const CMP_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte']);
 const MB_SEG_KEY_SET = new Set(MB_SEG_KEYS);
 const COOLDOWN_RESET_MODES = new Set(['onMatch', 'fixed']);
 
@@ -57,6 +57,14 @@ export function createEmptyCondition(type = 'hexPrefix') {
   if (type === 'length') return { type: 'length', op: 'eq', value: 0 };
   if (type === 'byte') return { type: 'byte', offset: 0, op: 'eq', value: 0, mask: 0xff };
   if (type === 'bits') return { type: 'bits', offset: 0, bitStart: 0, bitCount: 1, op: 'eq', value: 0 };
+  if (type === 'byteCompare') {
+    return {
+      type: 'byteCompare',
+      left: { offset: 0, bitStart: 0, bitCount: 8 },
+      op: 'eq',
+      right: { offset: 0, bitStart: 0, bitCount: 8 },
+    };
+  }
   return { type: 'hexPrefix', value: '' };
 }
 
@@ -238,6 +246,7 @@ export function createEmptyTimingParamBinding(source = 'timingFlashRate') {
 export function createEmptySegment(overrides = {}) {
   return {
     id: shortSegmentId(),
+    name: '',
     wledSegId: 0,
     start: 0,
     stop: 100,
@@ -257,6 +266,24 @@ export function createEmptySegment(overrides = {}) {
     maskAssignment: 'all',
     ...overrides,
   };
+}
+
+/** Prefer optional segment name; fall back to stable id. */
+export function segmentDisplayName(seg) {
+  if (!seg || typeof seg !== 'object') return '';
+  const name = typeof seg.name === 'string' ? seg.name.trim() : '';
+  if (name) return name;
+  return typeof seg.id === 'string' && seg.id ? seg.id : '';
+}
+
+/** UI label: display name, optionally with LED range. */
+export function segmentLabel(seg, { withRange = true } = {}) {
+  const base = segmentDisplayName(seg) || '(segment)';
+  if (!withRange) return base;
+  if (Number.isFinite(seg?.start) && Number.isFinite(seg?.stop)) {
+    return `${base} · ${seg.start}-${seg.stop}`;
+  }
+  return base;
 }
 
 /** RGB array from WLED `col[i]` → `#rrggbb`, or '' if missing. */
@@ -302,6 +329,7 @@ export function mergeImportedSegmentsIntoMap(existingSegments, importedSegments)
         ...merged[idx],
         ...seg,
         id: merged[idx].id,
+        name: merged[idx].name,
         maskAssignment: merged[idx].maskAssignment,
         presetId: merged[idx].presetId,
         presetVariables: merged[idx].presetVariables,
@@ -562,7 +590,23 @@ export function createEmptyRuleEffect() {
 
 /** Per-property source modes for rule.segmentOverrides. */
 export const SEG_OVERRIDE_MODES = ['default', 'stored', 'custom', 'extract'];
-export const SEG_OVERRIDE_PROPS = ['fx', 'pal', 'sx', 'ix', 'blend'];
+export const SEG_OVERRIDE_PROPS = [
+  'fx', 'pal', 'sx', 'ix', 'blend',
+  'c1', 'c2', 'c3', 'o1', 'o2', 'o3',
+];
+
+/** WLED custom numeric params: c1/c2 8-bit, c3 5-bit (matches PresetsTab). */
+export const SEG_OVERRIDE_CUSTOM_NUM = {
+  c1: { min: 0, max: 255, def: 128, label: 'Custom 1' },
+  c2: { min: 0, max: 255, def: 128, label: 'Custom 2' },
+  c3: { min: 0, max: 31, def: 16, label: 'Custom 3' },
+};
+
+export const SEG_OVERRIDE_CUSTOM_BOOL = {
+  o1: { def: false, label: 'Option 1' },
+  o2: { def: false, label: 'Option 2' },
+  o3: { def: false, label: 'Option 3' },
+};
 
 export function createEmptyPropOverride(mode = 'stored') {
   return { mode };
@@ -575,6 +619,12 @@ export function createEmptySegmentOverride() {
     sx: createEmptyPropOverride('stored'),
     ix: createEmptyPropOverride('stored'),
     blend: createEmptyPropOverride('stored'),
+    c1: createEmptyPropOverride('stored'),
+    c2: createEmptyPropOverride('stored'),
+    c3: createEmptyPropOverride('stored'),
+    o1: createEmptyPropOverride('stored'),
+    o2: createEmptyPropOverride('stored'),
+    o3: createEmptyPropOverride('stored'),
     colors: [
       createEmptyPropOverride('stored'),
       createEmptyPropOverride('stored'),
@@ -627,6 +677,19 @@ export function normalizeSegmentOverrides(raw) {
         n[prop] = normalizePropOverride(ov[prop]);
         if (prop === 'blend' && n[prop].mode === 'custom') {
           n[prop] = { mode: 'custom', value: normalizeBlendModeId(n[prop].value) };
+        }
+        if (n[prop].mode === 'custom' && SEG_OVERRIDE_CUSTOM_NUM[prop]) {
+          const meta = SEG_OVERRIDE_CUSTOM_NUM[prop];
+          const raw = Number(n[prop].value);
+          n[prop] = {
+            mode: 'custom',
+            value: Number.isFinite(raw)
+              ? Math.min(meta.max, Math.max(meta.min, Math.round(raw)))
+              : meta.def,
+          };
+        }
+        if (n[prop].mode === 'custom' && SEG_OVERRIDE_CUSTOM_BOOL[prop]) {
+          n[prop] = { mode: 'custom', value: !!n[prop].value };
         }
       }
     });
@@ -726,6 +789,12 @@ export function createEmptyRule(overrides = {}) {
     name: 'New rule',
     enabled: true,
     priority: 0,
+    /** While this rule's lifecycle is active (through COOLDOWN), block lower-priority matches. */
+    ignoreLowerPriority: false,
+    /** While this rule's lifecycle is active, block every other rule (exact re-match still allowed). */
+    ignoreAllOtherRules: false,
+    /** When applied, also emit mb_unmatched for capture / Sheets. */
+    reportAsUnmatched: false,
     match: createEmptyMatchGroup('all'),
     colorSources: [],
     extract: [],
@@ -1147,6 +1216,20 @@ export function normalizeConditionNode(raw) {
         value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
       };
     }
+    if (type === 'byteCompare') {
+      const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
+      const normSide = (side) => ({
+        offset: Number.isFinite(side?.offset) ? Math.max(0, Number(side.offset)) : 0,
+        bitStart: Number.isFinite(side?.bitStart) ? Math.min(7, Math.max(0, Number(side.bitStart))) : 0,
+        bitCount: Number.isFinite(side?.bitCount) ? Math.min(32, Math.max(1, Number(side.bitCount))) : 8,
+      });
+      return {
+        type: 'byteCompare',
+        left: normSide(raw.left),
+        op,
+        right: normSide(raw.right),
+      };
+    }
     return createEmptyCondition('hexPrefix');
   }
 
@@ -1154,7 +1237,8 @@ export function normalizeConditionNode(raw) {
   const children = Array.isArray(raw.children)
     ? raw.children.map(normalizeConditionNode)
     : [];
-  return { mode, children };
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  return name ? { mode, children, name } : { mode, children };
 }
 
 export function normalizePresetVariables(raw) {
@@ -1181,6 +1265,7 @@ export function normalizeSegment(raw) {
   const colorsSrc = Array.isArray(raw.colors) ? raw.colors : [];
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : shortSegmentId(),
+    name: typeof raw.name === 'string' ? raw.name.trim() : '',
     wledSegId: Number.isFinite(raw.wledSegId) ? Math.max(0, Number(raw.wledSegId)) : d.wledSegId,
     start: Number.isFinite(raw.start) ? Math.max(0, Number(raw.start)) : d.start,
     stop: Number.isFinite(raw.stop) ? Math.max(0, Number(raw.stop)) : d.stop,
@@ -1283,6 +1368,9 @@ export function normalizeMbRule(raw, index = 0) {
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : `Rule ${index + 1}`,
     enabled: raw.enabled !== false,
     priority: Number.isFinite(raw.priority) ? Number(raw.priority) : index * 10,
+    ignoreLowerPriority: !!(raw.ignoreLowerPriority ?? raw.ignore_lower_priority),
+    ignoreAllOtherRules: !!(raw.ignoreAllOtherRules ?? raw.ignore_all_other_rules),
+    reportAsUnmatched: !!(raw.reportAsUnmatched ?? raw.report_as_unmatched),
     match: normalizeConditionNode(raw.match || createEmptyMatchGroup('all')),
     colorSources: normalizeColorSources(raw.colorSources),
     extract: Array.isArray(raw.extract) ? raw.extract.map(normalizeExtract) : [],
@@ -1383,6 +1471,7 @@ export const SEG_OVERRIDE_DEFAULT_SENTINEL = 'd';
 /**
  * Compact segmentOverrides for BLE: omit stored/extract no-ops; custom → bare value;
  * default → sentinel "d". Colors only emit custom slots.
+ * Boolean customs (o1–o3) keep `false` as a real custom value.
  */
 export function compactSegmentOverrides(segmentOverrides) {
   if (!segmentOverrides || typeof segmentOverrides !== 'object') return undefined;
@@ -1394,6 +1483,8 @@ export function compactSegmentOverrides(segmentOverrides) {
       const ov = seg[field];
       if (!ov || typeof ov !== 'object') continue;
       if (ov.mode === 'custom' && ov.value !== undefined && ov.value !== null && ov.value !== '') {
+        compactSeg[field] = ov.value;
+      } else if (ov.mode === 'custom' && typeof ov.value === 'boolean') {
         compactSeg[field] = ov.value;
       } else if (ov.mode === 'default') {
         compactSeg[field] = SEG_OVERRIDE_DEFAULT_SENTINEL;

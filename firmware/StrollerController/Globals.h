@@ -14,9 +14,6 @@ extern String wledIp;
 extern int    wledPort;
 extern const char* BLE_NAME;
 
-extern uint8_t mbChaseSpeed;
-extern uint8_t mbChaseThickness;
-
 extern const char* MB_SEG_KEYS[];
 extern const uint8_t MB_DEFAULT_COLORS[32][3];
 
@@ -48,15 +45,18 @@ extern String mbFadeToBlackPresetId;
 
 extern int    currentBrightness;
 extern String currentPresetId;
+/** Human-readable name for OLED; kept in sync via setCurrentPreset(). */
+extern String currentPresetName;
 
 extern bool          starlightEnabled;
 extern unsigned long starlightTimeoutMs;
 extern bool          magicBandEnabled;
 extern bool          mbDeferToApp;
-extern bool          magicBandFivePoint;
 extern unsigned long magicBandTimeoutMs;
 extern unsigned long bleEffectTransitionMs;
 extern bool          bleScanLogEnabled;
+/** When true, Disney BLE Data packets skip rule match/apply (zones/manual still work). */
+extern bool          rulesPaused;
 
 extern unsigned long swEventTimestamp;
 extern unsigned long mbEventTimestamp;
@@ -148,6 +148,9 @@ extern uint8_t mbActiveLayoutIdx;
 extern String  mbLayoutsJson;
 extern unsigned long lastWifiRetry;
 extern volatile bool wifiConnectInProgress;
+
+/** True after a successful WLED HTTP call; cleared on WiFi loss / HTTP failure. */
+extern bool wledHttpOk;
 
 extern QueueHandle_t cmdQueue;
 extern QueueHandle_t bleCmdQueue;

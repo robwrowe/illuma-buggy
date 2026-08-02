@@ -17,12 +17,10 @@ extern size_t lastLogLen;
 extern uint32_t scanRepeatCount;
 extern unsigned long scanRepeatSummaryMs;
 
-extern uint8_t pairedLogicMac[6];
-extern bool logicPeerConfigured;
-extern uint8_t pairedChannel;
+extern uint32_t uartFwdSeq;  // packets forwarded over UART
 
-extern uint32_t espNowSendOk;
-extern uint32_t espNowSendFail;
-extern uint32_t espNowSendCbOk;    // ESP_NOW_SEND_SUCCESS from send callback
-extern uint32_t espNowSendCbFail;  // ESP_NOW_SEND_FAIL from send callback
-extern uint32_t espNowTxSeq;       // packets attempted (pre-queue)
+/** Status LED / OLED activity stamps (millis). */
+extern unsigned long lastDisneySeenMs;
+extern unsigned long lastForwardMs;
+/** Last UART heartbeat received from logic (0 = never). */
+extern unsigned long lastLogicHbMs;

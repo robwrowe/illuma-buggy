@@ -1,66 +1,87 @@
-# BleScannerNode — Disney BLE scanner relay (ESP32-S3)
+# BleScannerNode — Disney BLE scanner relay
 
-Forwards `ParsedDisneyPacket` structs to the logic board over ESP-NOW.
+Forwards `ParsedDisneyPacket` structs to the logic board over **UART**.
 Shares portable modules with `StrollerController/` via symlinks.
 
 ## Libraries
 
-NimBLE-Arduino (h2zero) >= 2.0.0
+- NimBLE-Arduino (h2zero) >= 2.0.0
+- Adafruit SSD1306 >= 2.5.0 (optional status OLED)
+- Adafruit GFX >= 1.11.0
 
 ## Arduino IDE settings
 
-Same as StrollerController on this hardware:
+Classic ESP32 scanner (DevKitC-32 / ESP-32D):
 
-- Board: **ESP32S3 Dev Module**
-- Flash Size: **4MB (32Mb)** (match your chip probe at boot)
-- Partition Scheme: **Huge APP (3MB No OTA/1MB SPIFFS)**
-- PSRAM: OPI PSRAM if present
+- Board: **ESP32 Dev Module**
+- Flash Size: match your chip
+- Partition Scheme: default / Huge APP as needed
 
-## Pairing
+ESP32-S3 scanner variant: same as StrollerController for that hardware.
 
-1. Flash scanner node — it advertises as `IllumaScan` (manufacturer data `49 53` + MAC) until paired.
-2. On logic board (Dual-Board mode): use app discovery or `set_scanner_mac` with scanner MAC.
-3. Logic board re-sends a reflected ESP-NOW pair message (its MAC + **Wi-Fi channel**) for ~8s.
-   While unpaired the scanner **sweeps Wi-Fi channels** (1–13) so it catches that message
-   regardless of the router/AP channel, then locks onto the logic board's channel, persists
-   `pairedLogicMac` + `pairedChan` to NVS, and stops advertising.
+## Wiring (UART)
 
-ESP-NOW only works when both radios share a Wi-Fi channel. The logic board follows its AP's
-channel (STA); the scanner has no AP, so it locks onto the channel from the pair message and
-restores it on boot. Caveat: if the AP uses auto-channel and later changes, re-pair (or pin
-the AP to a fixed channel).
+Cross-wire + common ground (no wireless pairing):
 
-When a scanner MAC is configured, the logic board does **not** fall back to local NimBLE
-scan after silence — that re-introduces radio contention and can block ESP-NOW RX even
-while the scanner reports send-cb SUCCESS.
+| Scanner | Logic (S3) |
+|---------|------------|
+| TX GPIO **17** | RX GPIO **18** |
+| RX GPIO **16** | TX GPIO **17** |
+| GND | GND |
 
-### Scanner-alive keepalives
-
-Classified Disney packets (`MB+`, wand casts, etc.) are always forwarded. Unclassified frames
-tagged `[Scan:DISNEY]` / `PING` / `WAND-IDLE` decode as `UNKNOWN` — these are still forwarded
-(rate-limited ~2s) with raw payload so the logic board's scanner-alive watchdog advances.
-Without that, pairing beacons alone leave `lastScannerPacketMs` at 0 and the logic board
-falls back to local BLE scan (re-introducing NimBLE contention).
+Heartbeats every ~2s keep the logic board's link-alive timer fresh when Disney
+air is quiet. Logic **replies** to those heartbeats so the scanner can show
+`Link:OK` on its OLED. Classified Disney packets are always forwarded.
 
 Healthy session serial cues:
 
-- Scanner: `[ESP-NOW] forwarding scan packet #N …` then `send cb: SUCCESS`
-- Logic: `[ESP-NOW] recv from … type=scan` — **no** `[Fallback] Scanner silent`
+- Scanner: `[UART] forwarding scan packet #N …` / `[UART] heartbeat #N`
+- Logic: `[UART] recv packet #N …` — amber status LED clears to green when link is alive
+- Scanner OLED: `Link:OK` within a few seconds of heartbeats (needs RX wired)
 
-Manual fallback on scanner serial @ 115200 (note: manual `pair` does not carry a channel —
-use app discovery so the channel is synced):
+Logic board Dual-Board mode does **not** fall back to local NimBLE scan after
+UART silence (protects phone BLE in parks). STANDALONE still uses local scan.
+
+## Wiring (OLED — optional, classic ESP32)
+
+128×64 SSD1306 I2C (soft-fail if absent):
+
+| OLED | Scanner |
+|------|---------|
+| SDA | GPIO **21** |
+| SCL | GPIO **22** |
+| VCC | **3.3V** |
+| GND | GND |
+
+Address **0x3C** (fallback **0x3D**). Do not reuse UART 16/17 or SD 5/18/23/19.
+
+Display layout: `Link` + `SD`, then `Heap` + `pps`, then a rolling list of
+post-`8301` hex (up to 16 chars) with RSSI in the last 5 columns.
+
+## Wiring (SD — optional)
+
+| SD | Scanner (classic) |
+|----|-------------------|
+| CS | GPIO **5** |
+| SCK | GPIO **18** |
+| MOSI | GPIO **23** |
+| MISO | GPIO **19** |
+
+FAT32 microSD; soft-fail if missing. Logs to `/scan_<millis>.jsonl` (new file each boot).
+
+### Serial (@ 115200)
 
 ```
-pair AA:BB:CC:DD:EE:FF
 status
+sniff [seconds]
+scanlog on|off
 help
 ```
-
-Clear pairing: `unpair`
 
 ## Symlinked modules (from StrollerController)
 
 - Config.h, Types.h
 - DisneyBleFilter, MbPacketDecode
+- UartLink.h
 
 Do not edit symlinks in-place; change the source under StrollerController.

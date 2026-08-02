@@ -234,9 +234,14 @@ static void handleChunkEnvelopeDirect(const String& val) {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
     bleConnected = true;
-    Serial.println("[BLE] App connected");
+    // Prefer wider interval + longer supervision for field radio contention.
+    server->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 400);
+    Serial.printf("[BLE] App connected, MTU=%u\n", connInfo.getMTU());
   }
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
+    (void)server;
+    (void)connInfo;
+    (void)reason;
     bleConnected = false;
     resetCmdChunkBuffer();
     drainBleCmdQueue();
@@ -262,6 +267,8 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 void startBLEPeripheral() {
+  NimBLEDevice::setMTU(247);
+
   bleServer = NimBLEDevice::createServer();
   bleServer->setCallbacks(new ServerCallbacks());
 
@@ -282,9 +289,11 @@ void startBLEPeripheral() {
   advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
   advData.setName(BLE_NAME);
   adv->setAdvertisementData(advData);
+  // Prefer 30–50ms connection interval (units of 1.25ms).
+  adv->setPreferredParams(24, 40);
   adv->start();
 
-  Serial.printf("[BLE] Peripheral advertising as: %s\n", BLE_NAME);
+  Serial.printf("[BLE] Peripheral advertising as: %s (MTU req 247, pref int 24–40)\n", BLE_NAME);
 }
 
 // ─────────────────────────────────────────────

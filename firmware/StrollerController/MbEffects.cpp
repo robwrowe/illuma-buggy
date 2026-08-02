@@ -158,6 +158,43 @@ void collectActiveSegIds(const MbSegMap& map, uint8_t* out, uint8_t& count) {
   }
 }
 
+String buildSolidBlackPayloadForSegMap(JsonObject segMap, int ledmapId) {
+  String body = "{\"on\":true,\"ledmap\":" + String(ledmapId > 0 ? ledmapId : 0) + ",\"seg\":[";
+  bool first = true;
+  uint8_t activeIds[MB_WLED_MAX_SEG] = {0};
+  uint8_t activeCount = 0;
+
+  JsonArray defs = segMap["segments"].as<JsonArray>();
+  if (!defs.isNull()) {
+    for (JsonVariant v : defs) {
+      if (!v.is<JsonObject>()) continue;
+      JsonObject def = v.as<JsonObject>();
+      if (!(def["enabled"] | true)) continue;
+      int start = def["start"] | 0;
+      int stop  = def["stop"]  | 0;
+      if (stop <= start) continue;
+      int wledId = def["wledSegId"] | def["id"] | 0;
+      if (wledId < 0 || wledId >= MB_WLED_MAX_SEG) continue;
+      addActiveSegId((uint8_t)wledId, activeIds, activeCount);
+
+      if (!first) body += ",";
+      first = false;
+      body += "{\"id\":" + String(wledId)
+           + ",\"start\":" + String(start)
+           + ",\"stop\":" + String(stop)
+           + ",\"grp\":" + String((int)(def["grp"] | 1))
+           + ",\"spc\":" + String((int)(def["spc"] | 0))
+           + ",\"of\":" + String((int)(def["of"] | 0))
+           + ",\"rev\":" + String((def["rev"] | false) ? "true" : "false")
+           + ",\"mi\":" + String((def["mi"] | false) ? "true" : "false")
+           + ",\"on\":true,\"fx\":0,\"col\":[[0,0,0]]}";
+    }
+  }
+  appendDisableInactiveSegments(body, first, activeIds, activeCount, /*disableSeg0=*/true);
+  body += "]}";
+  return body;
+}
+
 void applyMbSingleMask(uint8_t mask8, uint8_t pal, OverrideSource src) {
   if (WiFi.status() != WL_CONNECTED) return;
   if (mask8 == 0) {

@@ -83,10 +83,17 @@ export class WebBleBoard {
     this.sendRunning = false;
     this.sendQueue = [];
     this.connListeners = new Set();
+    this.msgListeners = new Set();
     this._chunkFailListeners = new Set();
+    this.chunkBuffer = {};
+    this.chunkNextSeq = {};
     this._onNotify = this._onNotify.bind(this);
     this._onDisconnect = this._onDisconnect.bind(this);
   }
+
+  static CHUNKED_TYPES = {
+    rule_log: 'rule_log_done',
+  };
 
   get supported() {
     return typeof navigator !== 'undefined' && !!navigator.bluetooth;
@@ -96,6 +103,17 @@ export class WebBleBoard {
     this.connListeners.add(fn);
     fn(this.connected);
     return () => this.connListeners.delete(fn);
+  }
+
+  onMessage(fn) {
+    this.msgListeners.add(fn);
+    return () => this.msgListeners.delete(fn);
+  }
+
+  _emit(msg) {
+    this.msgListeners.forEach((fn) => {
+      try { fn(msg); } catch (e) { console.error('[BLE] message handler', e); }
+    });
   }
 
   _setConnected(v) {
@@ -129,18 +147,59 @@ export class WebBleBoard {
     this.cmdChar = null;
     this.notifyChar = null;
     this.notifyBuffer = '';
+    this.chunkBuffer = {};
+    this.chunkNextSeq = {};
     this._setConnected(false);
   }
 
+  _handleParsed(msg) {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg?.type === 'chunk_sync_failed') {
+      console.error('[BLE] chunk_sync_failed', msg);
+      this._chunkFailListeners.forEach((fn) => fn(msg));
+      this._emit(msg);
+      return;
+    }
+    const doneType = WebBleBoard.CHUNKED_TYPES[msg.type];
+    if (doneType && typeof msg.seq === 'number' && typeof msg.data === 'string') {
+      if (msg.seq === 0) {
+        this.chunkBuffer[msg.type] = msg.data;
+        this.chunkNextSeq[msg.type] = 1;
+      } else if (this.chunkNextSeq[msg.type] === msg.seq) {
+        this.chunkBuffer[msg.type] = (this.chunkBuffer[msg.type] || '') + msg.data;
+        this.chunkNextSeq[msg.type] = msg.seq + 1;
+      } else {
+        console.warn('[BLE] chunk seq gap', msg.type, msg.seq, this.chunkNextSeq[msg.type]);
+        delete this.chunkBuffer[msg.type];
+        delete this.chunkNextSeq[msg.type];
+        return;
+      }
+      if (msg.last) {
+        const data = this.chunkBuffer[msg.type] || '';
+        delete this.chunkBuffer[msg.type];
+        delete this.chunkNextSeq[msg.type];
+        this._emit({ type: doneType, data });
+      }
+      return;
+    }
+    this._emit(msg);
+  }
+
   _onNotify(event) {
-    this.notifyBuffer += new TextDecoder().decode(event.target.value);
+    const incoming = new TextDecoder().decode(event.target.value);
+    try {
+      const msg = JSON.parse(incoming);
+      this.notifyBuffer = '';
+      this._handleParsed(msg);
+      return;
+    } catch {
+      /* MTU-fragmented — accumulate */
+    }
+    this.notifyBuffer += incoming;
     try {
       const msg = JSON.parse(this.notifyBuffer);
       this.notifyBuffer = '';
-      if (msg?.type === 'chunk_sync_failed') {
-        console.error('[BLE] chunk_sync_failed', msg);
-        this._chunkFailListeners.forEach((fn) => fn(msg));
-      }
+      this._handleParsed(msg);
     } catch {
       if (this.notifyBuffer.length > 131072) this.notifyBuffer = '';
     }
@@ -149,6 +208,43 @@ export class WebBleBoard {
   disconnect() {
     if (this.device?.gatt?.connected) this.device.gatt.disconnect();
     else this._onDisconnect();
+  }
+
+  /**
+   * Pull recent rule-engine log lines from the board (RAM ring ± SD mirror).
+   * @param {{ limit?: number, events?: string|string[], timeoutMs?: number }} opts
+   * @returns {Promise<{ meta: object|null, lines: object[] }>}
+   */
+  async requestRuleLog({ limit = 50, events = null, timeoutMs = 20000 } = {}) {
+    if (!this.cmdChar) throw new Error('Not connected to IllumaBuggy');
+    const payload = { type: 'get_rule_log', limit };
+    if (Array.isArray(events) && events.length) payload.events = events;
+    else if (typeof events === 'string' && events.trim()) payload.events = events.trim();
+
+    return new Promise((resolve, reject) => {
+      let meta = null;
+      let settled = false;
+      const finish = (fn, arg) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        unsub();
+        fn(arg);
+      };
+      const unsub = this.onMessage((msg) => {
+        if (msg.type === 'rule_log_meta') meta = msg;
+        if (msg.type === 'rule_log_done') {
+          try {
+            const lines = JSON.parse(msg.data || '[]');
+            finish(resolve, { meta, lines: Array.isArray(lines) ? lines : [] });
+          } catch (e) {
+            finish(reject, e);
+          }
+        }
+      });
+      const timer = setTimeout(() => finish(reject, new Error('get_rule_log timed out')), timeoutMs);
+      this.send(payload).catch((e) => finish(reject, e));
+    });
   }
 
   async send(msg) {

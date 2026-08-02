@@ -11,6 +11,11 @@
 #include "DisneyBleFilter.h"
 #include "JsonPsram.h"
 #include "Config.h"
+#include "MbRulesStore.h"
+#include "SdRuleLogger.h"
+#include "StatusDisplay.h"
+#include "MbEffects.h"
+#include "PayloadTransport.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -114,6 +119,7 @@ static bool matchHexPrefix(const uint8_t* payload, size_t plen, const char* hex)
 static bool compareOp(uint32_t lhs, const char* op, uint32_t rhs) {
   if (!op) return false;
   if (strcmp(op, "eq") == 0)  return lhs == rhs;
+  if (strcmp(op, "neq") == 0) return lhs != rhs;
   if (strcmp(op, "gt") == 0)  return lhs > rhs;
   if (strcmp(op, "gte") == 0) return lhs >= rhs;
   if (strcmp(op, "lt") == 0)  return lhs < rhs;
@@ -155,6 +161,20 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     uint8_t bitCount = (uint8_t)(leaf["bitCount"] | 1);
     uint32_t v = extractBits(payload, plen, offset, bitStart, bitCount);
     return compareOp(v, leaf["op"] | "eq", (uint32_t)(leaf["value"] | 0));
+  }
+  if (strcmp(type, "byteCompare") == 0) {
+    JsonObject left = leaf["left"].as<JsonObject>();
+    JsonObject right = leaf["right"].as<JsonObject>();
+    if (left.isNull() || right.isNull()) return false;
+    uint8_t lOffset = (uint8_t)(left["offset"] | 0);
+    uint8_t lBitStart = (uint8_t)(left["bitStart"] | 0);
+    uint8_t lBitCount = (uint8_t)(left["bitCount"] | 8);
+    uint8_t rOffset = (uint8_t)(right["offset"] | 0);
+    uint8_t rBitStart = (uint8_t)(right["bitStart"] | 0);
+    uint8_t rBitCount = (uint8_t)(right["bitCount"] | 8);
+    uint32_t lv = extractBits(payload, plen, lOffset, lBitStart, lBitCount);
+    uint32_t rv = extractBits(payload, plen, rOffset, rBitStart, rBitCount);
+    return compareOp(lv, leaf["op"] | "eq", rv);
   }
   return false;
 }
@@ -545,7 +565,7 @@ JsonObject findSegmentMapById(const char* mapId) {
   return empty;
 }
 
-static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
+JsonObject findSegmentInMap(JsonObject segMap, const char* segmentId) {
   JsonObject empty;
   if (segMap.isNull() || !segmentId) return empty;
   JsonArray segs = segMap["segments"].as<JsonArray>();
@@ -556,6 +576,51 @@ static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
     if (strcmp(s["id"] | "", segmentId) == 0) return s;
   }
   return empty;
+}
+
+JsonObject findRuleById(const char* ruleId) {
+  JsonObject empty;
+  if (!ruleId || !ruleId[0]) return empty;
+  JsonArray rules = gRulesDoc["rules"].as<JsonArray>();
+  if (rules.isNull()) return empty;
+  for (JsonVariant v : rules) {
+    if (!v.is<JsonObject>()) continue;
+    JsonObject r = v.as<JsonObject>();
+    if (strcmp(r["id"] | "", ruleId) == 0) return r;
+  }
+  return empty;
+}
+
+JsonObject mbSegMapForActiveRule() {
+  JsonObject empty;
+  if (!mbActiveRuleId[0]) return empty;
+  JsonObject r = findRuleById(mbActiveRuleId);
+  if (r.isNull()) return empty;
+  return findSegmentMapById(r["segmentMapId"] | "");
+}
+
+bool exclusiveActiveBlocksRule(const JsonObject& candidate) {
+  if (mbRulePhase == MB_RULE_IDLE || !mbActiveRuleId[0] || candidate.isNull()) return false;
+  const char* cid = candidate["id"] | "";
+  if (cid[0] && strcmp(cid, mbActiveRuleId) == 0) return false;
+
+  JsonObject active = findRuleById(mbActiveRuleId);
+  if (active.isNull()) return false;
+
+  bool ignoreAll = active["ignoreAllOtherRules"] | active["ignore_all_other_rules"] | false;
+  if (ignoreAll) return true;
+
+  bool ignoreLower = active["ignoreLowerPriority"] | active["ignore_lower_priority"] | false;
+  if (!ignoreLower) return false;
+
+  int ap = active["priority"] | active["prio"] | 100;
+  int cp = candidate["priority"] | candidate["prio"] | 100;
+  // Higher number = lower priority (same convention as findMatchingRule).
+  return cp > ap;
+}
+
+static JsonObject findSegInMap(JsonObject segMap, const char* segmentId) {
+  return findSegmentInMap(segMap, segmentId);
 }
 
 static JsonObject ensureWledSegByLocalId(JsonObject wled, JsonObject segDef) {
@@ -686,10 +751,14 @@ static void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
   for (JsonVariant v : defs) {
     if (!v.is<JsonObject>()) continue;
     JsonObject def = v.as<JsonObject>();
+    if (!(def["enabled"] | true)) continue;  // Part 8: disabled segments skipped
+    int start = def["start"] | 0;
+    int stop = def["stop"] | STRIP_LED_COUNT;
+    if (stop <= start) continue;
     JsonObject seg = segs.createNestedObject();
     seg["id"] = def["wledSegId"] | 0;
-    seg["start"] = def["start"] | 0;
-    seg["stop"] = def["stop"] | STRIP_LED_COUNT;
+    seg["start"] = start;
+    seg["stop"] = stop;
     seg["grp"] = def["grp"] | 1;
     seg["spc"] = def["spc"] | 0;
     seg["of"] = def["of"] | 0;
@@ -873,12 +942,71 @@ static void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
         seg["bm"] = blendModeToBm(bv.as<const char*>() ? bv.as<const char*>() : "top");
       }
     };
+    auto applyIntCustom = [&](const char* key, int defVal, int maxVal) {
+      if (!ov.containsKey(key)) return;
+      JsonVariant v = ov[key];
+      int n = defVal;
+      if (v.is<JsonObject>()) {
+        const char* mode = v["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          // Don't use `|` — 0 is a valid custom value and would fall through to defVal.
+          n = v["value"].isNull() ? defVal : v["value"].as<int>();
+        } else if (strcmp(mode, "default") == 0) {
+          n = defVal;
+        } else {
+          return; // stored
+        }
+      } else if (isDefaultSentinel(v)) {
+        n = defVal;
+      } else if (v.is<int>() || v.is<float>()) {
+        n = v.as<int>();
+      } else {
+        return;
+      }
+      if (n < 0) n = 0;
+      if (n > maxVal) n = maxVal;
+      seg[key] = n;
+    };
+    auto applyBoolCustom = [&](const char* key, bool defVal) {
+      if (!ov.containsKey(key)) return;
+      JsonVariant v = ov[key];
+      bool b = defVal;
+      if (v.is<JsonObject>()) {
+        const char* mode = v["mode"] | "stored";
+        if (strcmp(mode, "custom") == 0) {
+          // Don't use `|` — false is a valid custom value.
+          if (v["value"].is<bool>()) b = v["value"].as<bool>();
+          else if (v["value"].is<int>()) b = v["value"].as<int>() != 0;
+          else if (v["value"].isNull()) b = defVal;
+          else b = defVal;
+        } else if (strcmp(mode, "default") == 0) {
+          b = defVal;
+        } else {
+          return; // stored
+        }
+      } else if (isDefaultSentinel(v)) {
+        b = defVal;
+      } else if (v.is<bool>()) {
+        b = v.as<bool>();
+      } else if (v.is<int>()) {
+        b = v.as<int>() != 0;
+      } else {
+        return;
+      }
+      seg[key] = b;
+    };
 
     applyFx();
     applyPal();
     applySx();
     applyIx();
     applyBlend();
+    applyIntCustom("c1", 128, 255);
+    applyIntCustom("c2", 128, 255);
+    applyIntCustom("c3", 16, 31);
+    applyBoolCustom("o1", false);
+    applyBoolCustom("o2", false);
+    applyBoolCustom("o3", false);
 
     JsonArray ovColors = ov["colors"].as<JsonArray>();
     if (!ovColors.isNull()) {
@@ -941,7 +1069,9 @@ static int blendingStyleFromTypeString(const char* ttype) {
 // -1 = no bs override on FTB (plain transition); set from stopTransition when enabled.
 static int mbRuleStopBlendingStyle = -1;
 
-static void sendMbRuleOff(unsigned long fadeMs) {
+// Shape-safe FTB swap (runs after DIP has already faded to black on the old shape).
+// fadeMs should normally be 0 — the visible fade already happened during DIP.
+static void sendMbRuleOffLegacy(unsigned long fadeMs) {
   int bs = mbRuleStopBlendingStyle;  // -1 if no stopTransition configured
   if (mbFadeToBlackPresetId.length() > 0) {
     if (restorePresetWithTransitionStyled(mbFadeToBlackPresetId, fadeMs, bs)) return;
@@ -951,6 +1081,30 @@ static void sendMbRuleOff(unsigned long fadeMs) {
               mbFadeToBlackPresetId + "\"}");
   }
   sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+}
+
+static void beginMbRuleDip(unsigned long fadeMs) {
+  // Drop frames already queued from the cast that just ended — otherwise they
+  // drain into DIP/FADE/COOLDOWN and restart the BLE look mid-FTB.
+  flushParsedPacketQueue();
+  // Quiet baseline for trailing vs intentional matches during DIP/FADE.
+  mbEventTimestamp = millis();
+
+  JsonObject segMap = mbSegMapForActiveRule();
+  if (segMap.isNull()) {
+    // No known shape to hold — fall back to old behavior (root on:false / FTB
+    // preset directly). Preserves current behavior for rules with no segmentMapId.
+    sendMbRuleOffLegacy(fadeMs);
+    mbRulePhase = MB_RULE_FADE;
+    mbRulePhaseDeadlineMs = millis() + (fadeMs > 0 ? fadeMs : 1);
+    return;
+  }
+  int ledmapId = (int)(segMap["ledmap"] | 0);
+  String body = buildSolidBlackPayloadForSegMap(segMap, ledmapId);
+  sendToWLED(injectWledTransition(body, fadeMs));
+  mbRulePhase = MB_RULE_DIP;
+  mbRulePhaseDeadlineMs = millis() + (fadeMs > 0 ? fadeMs : 1);
+  sdRuleLoggerWrite("lifecycle", "\"transition\":\"ON_TO_DIP\"");
 }
 
 static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload, size_t plen) {
@@ -1062,6 +1216,20 @@ void resetMbRuleLifecycle() {
   mbActiveRuleId[0] = '\0';
 }
 
+void forceRuleLifecycleRestore() {
+  if (mbRulePhase == MB_RULE_IDLE) return;
+  Serial.println("[Rule] force restore (rule disabled mid-lifecycle)");
+  if (mbRulePhase == MB_RULE_ON || mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
+    sendMbRuleOffLegacy(0);
+  }
+  unsigned long savedFade = bleEffectTransitionMs;
+  bleEffectTransitionMs = 0;
+  resetMbRuleLifecycle();
+  clearOverride();
+  bleEffectTransitionMs = savedFade;
+  bleNotify("{\"type\":\"ble_event\",\"event\":\"rule_disabled\"}");
+}
+
 void serviceMbRuleLifecycle() {
   if (mbRulePhase == MB_RULE_IDLE) return;
   if (currentOverride != BLE_MAGIC) {
@@ -1071,21 +1239,36 @@ void serviceMbRuleLifecycle() {
   if ((long)(millis() - mbRulePhaseDeadlineMs) < 0) return;
 
   if (mbRulePhase == MB_RULE_ON) {
-    Serial.printf("[Rule] ON→FADE fadeMs=%lu\n", mbRuleFadeMs);
-    sendMbRuleOff(mbRuleFadeMs);
+    Serial.printf("[Rule] ON→DIP fadeMs=%lu\n", mbRuleFadeMs);
+    beginMbRuleDip(mbRuleFadeMs);
+    return;
+  }
+  if (mbRulePhase == MB_RULE_DIP) {
+    // Already black on the OLD shape. Swap shape + apply FTB/resume look now —
+    // geometry changes while color is 0,0,0 so no crossfade artifact is visible.
+    Serial.println("[Rule] DIP→FADE (shape swap at black)");
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"DIP_TO_FADE\"");
+    sendMbRuleOffLegacy(0);
     mbRulePhase = MB_RULE_FADE;
-    mbRulePhaseDeadlineMs = millis() + (mbRuleFadeMs > 0 ? mbRuleFadeMs : 1);
+    // FADE is a brief settle window before COOLDOWN — visible fade was during DIP.
+    mbRulePhaseDeadlineMs = millis() + 1;
     return;
   }
   if (mbRulePhase == MB_RULE_FADE) {
     Serial.printf("[Rule] FADE→BLACK_HOLD holdMs=%lu\n", mbRuleCooldownMs);
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"FADE_TO_BLACK_HOLD\"");
     mbRulePhase = MB_RULE_COOLDOWN;
     mbRulePhaseDeadlineMs = millis() + (mbRuleCooldownMs > 0 ? mbRuleCooldownMs : 1);
+    // Quiet gate for onMatch re-apply starts at black-hold entry — not from the
+    // last ON advert (a long DIP would otherwise make the first COOLDOWN frame
+    // look "quiet enough" and flash the effect back on).
+    mbEventTimestamp = millis();
     return;
   }
   if (mbRulePhase == MB_RULE_COOLDOWN) {
     Serial.println("[Rule] BLACK_HOLD→restore");
-    // Already black from FADE — restore without a second dip-to-black.
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"BLACK_HOLD_TO_RESTORE\"");
+    // Already black from DIP/FADE — restore without a second dip-to-black.
     unsigned long savedFade = bleEffectTransitionMs;
     bleEffectTransitionMs = 0;
     resetMbRuleLifecycle();
@@ -1095,22 +1278,46 @@ void serviceMbRuleLifecycle() {
   }
 }
 
-void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen) {
+bool onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size_t plen) {
   const char* ruleId = rule["id"] | "";
-  if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return;
+  if (!ruleId[0] || strcmp(mbActiveRuleId, ruleId) != 0) return false;
 
-  // FADE / COOLDOWN: FTB (or black hold) already turned the effect off. A same-payload
-  // match must re-POST WLED — flipping phase/deadline alone leaves the strip black.
-  if (mbRulePhase == MB_RULE_FADE) {
-    Serial.printf("[Rule] repeat during FTB — re-apply id=%s\n", ruleId);
+  // DIP / FADE: trailing ads from the cast that just ended are ignored (queue is
+  // also flushed on ON→DIP). After a quiet gap, abort FTB and apply immediately
+  // (Disney-like — new cast cuts off the fade-to-black).
+  if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
+    if ((long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
+      static unsigned long lastIgnoreLogMs = 0;
+      if ((long)(millis() - lastIgnoreLogMs) > 1000) {
+        lastIgnoreLogMs = millis();
+        Serial.printf("[Rule] ignore trailing match during %s id=%s\n",
+                      mbRulePhase == MB_RULE_DIP ? "DIP" : "FADE", ruleId);
+      }
+      return false;
+    }
+    Serial.printf("[Rule] abort FTB — re-apply id=%s\n", ruleId);
     applyMatchedRule(rule, payload, plen);
-    return;
+    return true;
   }
+
+  // COOLDOWN / black hold: onMatch may start a new cast after the original burst has
+  // been quiet long enough. Do not touch the idle timer on rejects — that would
+  // forever reset the quiet gap while trailing ads drain. Fixed mode never re-applies.
   if (mbRulePhase == MB_RULE_COOLDOWN) {
-    if (mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) return;
-    Serial.printf("[Rule] repeat during black hold — re-apply id=%s\n", ruleId);
+    if (mbActiveRuleCooldownMode == MB_COOLDOWN_FIXED) return false;
+    if ((long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
+      static unsigned long lastQuietLogMs = 0;
+      if ((long)(millis() - lastQuietLogMs) > 1000) {
+        lastQuietLogMs = millis();
+        Serial.printf("[Rule] ignore match during black hold (quiet %lums < %lums) id=%s\n",
+                      (unsigned long)(millis() - mbEventTimestamp),
+                      (unsigned long)MB_RULE_RETRIGGER_QUIET_MS, ruleId);
+      }
+      return false;
+    }
+    Serial.printf("[Rule] new cast during black hold — re-apply id=%s\n", ruleId);
     applyMatchedRule(rule, payload, plen);
-    return;
+    return true;
   }
 
   // ON: keep alive with a short slack window — do not rebuild WLED on every advert.
@@ -1119,7 +1326,9 @@ void onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size
     if ((long)(slackDeadline - mbRulePhaseDeadlineMs) > 0) {
       mbRulePhaseDeadlineMs = slackDeadline;
     }
+    return true;
   }
+  return false;
 }
 
 void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t plen) {
@@ -1142,14 +1351,36 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
 
+  // During DIP/FADE: trailing same-rule matches inside the quiet window are ignored.
+  // After quiet — or a different rule — abort FTB and apply now (Disney-like cut).
+  bool abortFtb = false;
+  if (src == BLE_MAGIC &&
+      (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE)) {
+    const char* rid = rule["id"] | "";
+    bool sameRule = rid[0] && mbActiveRuleId[0] && strcmp(rid, mbActiveRuleId) == 0;
+    if (sameRule &&
+        (long)(millis() - mbEventTimestamp) < (long)MB_RULE_RETRIGGER_QUIET_MS) {
+      static unsigned long lastIgnoreLogMs = 0;
+      if ((long)(millis() - lastIgnoreLogMs) > 1000) {
+        lastIgnoreLogMs = millis();
+        Serial.printf("[Rule] ignore trailing match during %s id=%s\n",
+                      mbRulePhase == MB_RULE_DIP ? "DIP" : "FADE", rid);
+      }
+      return;
+    }
+    abortFtb = true;
+    Serial.printf("[Rule] abort FTB — apply immediately id=%s\n", rid[0] ? rid : "(no id)");
+    sdRuleLoggerWrite("lifecycle", "\"transition\":\"ABORT_FTB_APPLY\"");
+  }
+
   JsonObject timing = rule["timing"].as<JsonObject>();
   bool timingEn = !timing.isNull() && (timing["enabled"] | false);
 
   // Payload-identity dedup already happened in applyParsedDisneyPacket() /
   // mbEffectIsRepeatAdvert() before this function was called. A payload only
   // reaches here if it's new or the first match — never a true byte-identical
-  // repeat. Do not short-circuit on mbActiveRuleId alone (that skipped WLED
-  // rebuilds when the same rule matched a different packet).
+  // repeat. Do not short-circuit on mbActiveRuleId alone during ON (that skipped
+  // WLED rebuilds when the same rule matched a different packet).
 
   const char* mapId = rule["segmentMapId"] | "";
   JsonObject segMap = findSegmentMapById(mapId);
@@ -1183,6 +1414,13 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       blendingStyle = blendingStyleFromTypeString(ttype);
     }
   }
+  // Aborting fade-to-black: snap to the new look so the FTB transition cannot keep
+  // running underneath (matches Disney receiver cut-over).
+  if (abortFtb) {
+    startTransMs = 0;
+    hasStartTr = true;
+    blendingStyle = 0;
+  }
 
   saveWledStateForOverride();
   // Use the same cap as restore payloads — segment maps + extracts need headroom.
@@ -1203,7 +1441,7 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         serializeJson(pdoc["wled"], wledStr);
         if (!deserializeJson(wled, wledStr)) {
           haveWled = true;
-          currentPresetId = presetId;
+          setCurrentPreset(presetId);
         }
       }
     }
@@ -1565,11 +1803,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
 
-  // Device-global remap — inject at the end so every build branch keeps it.
-  // Skip 0/absent: WLED default ledmap.json; avoid noise on every POST.
-  if (ledmapId > 0) {
-    wled["ledmap"] = ledmapId;
-  }
+  // Device-global remap — always explicit. Omission left WLED on whatever
+  // ledmap was previously active (partial update), not the default.
+  wled["ledmap"] = (ledmapId > 0) ? ledmapId : 0;
 
   String wledJson;
   serializeJson(wled, wledJson);
@@ -1592,6 +1828,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   if (!ok) {
     Serial.printf("[Rule] WLED apply failed id=%s name=%s\n",
                   rule["id"] | "(no id)", rule["name"] | "(no name)");
+    sdRuleLoggerWrite("wled_apply_failed",
+                      (String("\"id\":\"") + (rule["id"] | "") + "\",\"name\":\"" + (rule["name"] | "") + "\"").c_str());
     return;
   }
 
@@ -1606,18 +1844,34 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     touchOverrideIdleTimer(src);
   }
 
+  const char* appliedName = rule["name"] | "(no name)";
+  statusDisplaySetLastRule(appliedName);
   Serial.printf("[Rule] Applied id=%s name=%s preset=%s map=%s src=%d\n",
-                rule["id"] | "(no id)", rule["name"] | "(no name)",
+                rule["id"] | "(no id)", appliedName,
                 presetId.c_str(), mapId, (int)src);
+  {
+    char detail[192];
+    snprintf(detail, sizeof(detail),
+             "\"id\":\"%s\",\"name\":\"%s\",\"preset\":\"%s\",\"map\":\"%s\",\"src\":%d",
+             rule["id"] | "", appliedName, presetId.c_str(), mapId, (int)src);
+    sdRuleLoggerWrite("applied", detail);
+  }
   bleNotify(wand
     ? "{\"type\":\"sw_event\",\"event\":\"rule\"}"
     : "{\"type\":\"ble_event\",\"event\":\"rule\"}");
+
+  bool reportUnmatched = rule["reportAsUnmatched"] | rule["report_as_unmatched"] | false;
+  if (reportUnmatched && payload && plen > 0) {
+    sdRuleLoggerWrite("unmatched_rule",
+                      (String("\"id\":\"") + (rule["id"] | "") + "\",\"name\":\"" + (rule["name"] | "") + "\"").c_str());
+    notifyMbUnmatched(payload, plen, true);
+  }
 }
 
 // ── Unmatched notify ────────────────────────────────────────────────────
 
-void notifyMbUnmatched(const uint8_t* payload, size_t plen) {
-  if (!mbUnmatchedLogEnabled || !bleConnected) return;
+void notifyMbUnmatched(const uint8_t* payload, size_t plen, bool force) {
+  if ((!force && !mbUnmatchedLogEnabled) || !bleConnected) return;
   bleNotify("{\"type\":\"mb_unmatched\",\"hex\":\"" + mfrToHexFull(payload, plen, 64) +
             "\",\"len\":" + String(plen) +
             ",\"ts\":" + String(millis()) + "}");
@@ -1625,7 +1879,8 @@ void notifyMbUnmatched(const uint8_t* payload, size_t plen) {
 
 // ── Rules JSON load ─────────────────────────────────────────────────────
 
-void applyMbRulesJson(JsonObject doc) {
+bool applyMbRulesJson(JsonObject doc) {
+  bool cacheOk = true;
   // Reuse colors / segments / randomPool / defaultPresetId via existing mapper
   applyMbMappingJson(doc);
 
@@ -1655,16 +1910,32 @@ void applyMbRulesJson(JsonObject doc) {
       }
       logRulesHeap("after in-place merge");
     } else {
-      // Full replace — serialize incoming mapping once, then fill gRulesDoc from that string.
+      // Full replace — parse into a scratch doc first so a failed reparse
+      // cannot wipe the last-known-good gRulesDoc.
       String raw;
       serializeJson(doc, raw);
-      gRulesDoc.clear();
-      DeserializationError cacheErr = deserializeJson(gRulesDoc, raw, DeserializationOption::NestingLimit(32));
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+      JsonDocument scratch(&jsonPsramAllocator());
+#else
+      PsramJsonDocument scratch(BLE_JSON_DOC_SIZE);
+#endif
+      DeserializationError cacheErr = deserializeJson(scratch, raw, DeserializationOption::NestingLimit(32));
       if (cacheErr) {
-        Serial.printf("[Rules] cache deserialize failed: %s (raw=%u)\n",
-                      cacheErr.c_str(), (unsigned)raw.length());
+        // Transient PSRAM contention at boot — one short retry often succeeds.
+        delay(75);
+        scratch.clear();
+        cacheErr = deserializeJson(scratch, raw, DeserializationOption::NestingLimit(32));
       }
-      logRulesHeap("after full replace");
+      if (cacheErr) {
+        cacheOk = false;
+        Serial.printf("[Rules] cache deserialize failed: %s (raw=%u) — keeping previous rules cache\n",
+                      cacheErr.c_str(), (unsigned)raw.length());
+        logRulesHeap("after failed reparse (cache untouched)");
+      } else {
+        gRulesDoc.clear();
+        gRulesDoc.set(scratch.as<JsonVariantConst>());
+        logRulesHeap("after full replace");
+      }
     }
   } else if (doc.containsKey("paradeDetection") || doc.containsKey("defaultPresetId") ||
              doc.containsKey("colors") || doc.containsKey("segments") || doc.containsKey("randomPool")) {
@@ -1715,6 +1986,7 @@ void applyMbRulesJson(JsonObject doc) {
                 tms.isNull() ? 0u : (unsigned)tms.size(),
                 bleDefaultPresetId.c_str(), paradeDetectEnabled ? 1 : 0,
                 paradeBeaconPrefix, paradeRssiThreshold, paradeCooldownMs);
+  return cacheOk;
 }
 
 void loadMbRulesFromJson() {
@@ -1755,6 +2027,20 @@ JsonArray mbRulesJsonArray() {
 
 JsonArray mbSegmentMapsArray() {
   return gRulesDoc["segmentMaps"].as<JsonArray>();
+}
+
+bool mbRulesCacheSerialize(String& out) {
+  out = "";
+  serializeJson(gRulesDoc, out);
+  return out.length() > 0;
+}
+
+bool persistMbRulesCache() {
+  String updatedJson;
+  if (!mbRulesCacheSerialize(updatedJson)) return false;
+  mbRulesJson = updatedJson;
+  mbMappingJson = updatedJson;
+  return mbRulesFsSave(updatedJson);
 }
 
 // ── Parade detection ────────────────────────────────────────────────────

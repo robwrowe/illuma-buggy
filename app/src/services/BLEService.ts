@@ -359,6 +359,16 @@ class BLEService {
   sendMbRuleConfig(ftbPresetId: string) {
     return this.send({ type: 'mb_rule_config', ftbPresetId: ftbPresetId || '' });
   }
+  sendListRules() {
+    return this.send({ type: 'list_rules' });
+  }
+  sendSetRuleEnabled(ruleId: string, enabled: boolean) {
+    return this.send({ type: 'set_rule_enabled', ruleId, enabled });
+  }
+  /** Write a greppable marker to board Serial (+ SD rule log when mounted). */
+  sendLogMarker(msg: string) {
+    return this.send({ type: 'log_marker', msg: String(msg || '').slice(0, 120) });
+  }
   sendBrightness(value: number)                           { return this.send({ type: 'brightness', value }); }
   sendWledRaw(wled: object, presetId?: string) {
     const msg: BLEMessage = { type: 'wled_raw', wled };
@@ -373,11 +383,14 @@ class BLEService {
   sendBleEffectConfig(transitionMs: number) {
     return this.send({ type: 'ble_effect_config', transition_ms: transitionMs });
   }
-  sendMbConfig(enabled: boolean, fivePoint: boolean, timeoutMs?: number, deferToApp?: boolean) {
-    const msg: BLEMessage = { type: 'mb_config', enabled, five_point: fivePoint };
+  sendMbConfig(enabled: boolean, timeoutMs?: number, deferToApp?: boolean) {
+    const msg: BLEMessage = { type: 'mb_config', enabled };
     if (timeoutMs !== undefined) msg.timeout_ms = timeoutMs;
     if (deferToApp !== undefined) msg.defer_to_app = deferToApp;
     return this.send(msg);
+  }
+  sendRulesPaused(paused: boolean) {
+    return this.send({ type: 'rules_pause_config', paused });
   }
   sendSwConfig(enabled: boolean, timeoutMs?: number) {
     const msg: BLEMessage = { type: 'sw_config', enabled };

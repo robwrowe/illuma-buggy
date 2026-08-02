@@ -16,6 +16,8 @@
 #include "DisneyBleScan.h"
 #include "MbRulesStore.h"
 #include "MbCalibrationStore.h"
+#include "RuntimeFields.h"
+#include "SdRuleLogger.h"
 #include <WiFi.h>
 #include "JsonPsram.h"
 
@@ -206,7 +208,7 @@ void handleBLECommand(const String& msg) {
         return;
       }
       setOverride(MANUAL);
-      currentPresetId = presetId;
+      setCurrentPreset(presetId);
     }
     ensureWledPowerOn();
     // preparePresetApplyPayload folds inactive seg ids into one POST — no separate disable pass.
@@ -236,6 +238,57 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"scan_log_config\","
               "\"enabled\":" + String(bleScanLogEnabled ? "true" : "false") + "}");
     Serial.printf("[Scan] logging %s\n", bleScanLogEnabled ? "enabled" : "disabled");
+  }
+
+  // ── App log marker (Serial + optional SD rule log) ──
+  else if (type == "log_marker") {
+    String msg = doc["msg"] | doc["message"] | "";
+    if (msg.length() > 120) msg = msg.substring(0, 120);
+    // Keep printable ASCII so Serial / JSONL stay greppable mid-show.
+    for (size_t i = 0; i < msg.length(); i++) {
+      char c = msg[i];
+      if (c < 0x20 || c > 0x7E) msg.setCharAt(i, '?');
+      if (c == '"' || c == '\\') msg.setCharAt(i, '\'');
+    }
+    Serial.printf("[Marker] %s\n", msg.c_str());
+    {
+      char detail[160];
+      snprintf(detail, sizeof(detail), "\"msg\":\"%s\"", msg.c_str());
+      sdRuleLoggerWrite("marker", detail);
+    }
+    bleNotify("{\"type\":\"ack\",\"action\":\"log_marker\",\"ok\":true}");
+  }
+
+  // ── Pull recent rule-engine log (RAM ring; also mirrored to SD when mounted) ──
+  else if (type == "get_rule_log") {
+    int limit = doc["limit"] | 50;
+    if (limit < 1) limit = 1;
+    if (limit > 96) limit = 96;
+    String filter;
+    if (doc["events"].is<JsonArray>()) {
+      bool first = true;
+      for (JsonVariant v : doc["events"].as<JsonArray>()) {
+        if (!first) filter += ",";
+        first = false;
+        filter += v.as<const char*>();
+      }
+    } else {
+      filter = doc["events"] | "";
+    }
+    String body;
+    size_t n = sdRuleLoggerBuildTailJson(body, (size_t)limit, filter.c_str());
+    String path = sdRuleLoggerPath();
+    // Escape path for JSON (paths are ASCII `/rules_N.jsonl`).
+    bleNotify(
+      "{\"type\":\"rule_log_meta\",\"ok\":true"
+      ",\"sd\":" + String(sdRuleLoggerReady() ? "true" : "false") +
+      ",\"path\":\"" + path + "\""
+      ",\"ring\":" + String((unsigned)sdRuleLoggerRingCount()) +
+      ",\"count\":" + String((unsigned)n) +
+      ",\"limit\":" + String(limit) +
+      "}"
+    );
+    bleNotifyChunked("rule_log", body);
   }
 
   // ── App packet capture (parade / show recording) ──
@@ -330,22 +383,32 @@ void handleBLECommand(const String& msg) {
     bleNotify(ack);
   }
 
-  // ── MagicBand chase tuning ──
-  else if (type == "mb_chase_config") {
-    if (doc.containsKey("speed"))     mbChaseSpeed     = (uint8_t)doc["speed"].as<int>();
-    if (doc.containsKey("thickness")) mbChaseThickness = (uint8_t)doc["thickness"].as<int>();
-    if (mbChaseThickness < 1) mbChaseThickness = 1;
+  // ── MagicBand config ──
+  else if (type == "mb_config") {
+    if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
+    if (doc.containsKey("timeout_ms")) magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
+    if (doc.containsKey("defer_to_app")) mbDeferToApp = doc["defer_to_app"].as<bool>();
     prefs.begin("config", false);
-    prefs.putUChar("mbSpd", mbChaseSpeed);
-    prefs.putUChar("mbGrp", mbChaseThickness);
+    prefs.putBool("mbEn", magicBandEnabled);
+    prefs.putULong("mbTimeout", magicBandTimeoutMs);
+    prefs.putBool("mbDefer", mbDeferToApp);
     prefs.end();
-    String ack = "{\"type\":\"ack\",\"action\":\"mb_chase_config\","
-                 "\"speed\":" + String(mbChaseSpeed) + ","
-                 "\"thickness\":" + String(mbChaseThickness) + "}";
+    String ack = "{\"type\":\"ack\",\"action\":\"mb_config\","
+                 "\"enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
+                 "\"timeout_ms\":" + String(magicBandTimeoutMs) + ","
+                 "\"defer_to_app\":" + String(mbDeferToApp ? "true" : "false") + "}";
     bleNotify(ack);
   }
 
-  // ── MB rule engine config (rules + colors + segments + paradeDetection) ──
+  else if (type == "rules_pause_config") {
+    if (doc.containsKey("paused")) rulesPaused = doc["paused"].as<bool>();
+    prefs.begin("config", false);
+    prefs.putBool("rulesPaused", rulesPaused);
+    prefs.end();
+    bleNotify("{\"type\":\"ack\",\"action\":\"rules_pause_config\",\"paused\":" +
+              String(rulesPaused ? "true" : "false") + "}");
+    Serial.printf("[Rules] %s\n", rulesPaused ? "paused" : "resumed");
+  }
   else if (type == "set_mb_rules" || type == "mb_rules_config" || type == "mb_mapping_config") {
     JsonObject mapping = doc.containsKey("mapping") ? doc["mapping"].as<JsonObject>()
                        : doc.as<JsonObject>();
@@ -371,17 +434,21 @@ void handleBLECommand(const String& msg) {
         prefs.end();
       }
       mbMappingLoadedFromNvs = true;
-      applyMbRulesJson(mapping);
-      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes, fs=%s)\n",
+      bool cacheOk = applyMbRulesJson(mapping);
+      Serial.printf("[Rules] updated (rulesOrMaps=%d, %u bytes, fs=%s, cache=%s)\n",
                     hasRules ? 1 : 0,
                     (unsigned)(hasRules ? mbRulesJson.length() : mbMappingJson.length()),
-                    persisted ? "ok" : "FAIL");
+                    persisted ? "ok" : "FAIL",
+                    cacheOk ? "ok" : "FAIL");
       if (!persisted) {
         bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":false,\"reason\":\"fs_persist\"}");
         return;
       }
+      bleNotify(String("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true,\"cacheApplied\":") +
+                (cacheOk ? "true" : "false") + "}");
+      return;
     }
-    bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true}");
+    bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":true,\"cacheApplied\":true}");
   }
 
   else if (type == "set_color_calibration") {
@@ -456,26 +523,6 @@ void handleBLECommand(const String& msg) {
     }
   }
 
-  // ── MagicBand config ──
-  else if (type == "mb_config") {
-    if (doc.containsKey("enabled"))    magicBandEnabled   = doc["enabled"].as<bool>();
-    if (doc.containsKey("five_point")) magicBandFivePoint = doc["five_point"].as<bool>();
-    if (doc.containsKey("timeout_ms")) magicBandTimeoutMs = (unsigned long)doc["timeout_ms"].as<long>();
-    if (doc.containsKey("defer_to_app")) mbDeferToApp = doc["defer_to_app"].as<bool>();
-    prefs.begin("config", false);
-    prefs.putBool("mbEn", magicBandEnabled);
-    prefs.putBool("mb5pt", magicBandFivePoint);
-    prefs.putULong("mbTimeout", magicBandTimeoutMs);
-    prefs.putBool("mbDefer", mbDeferToApp);
-    prefs.end();
-    String ack = "{\"type\":\"ack\",\"action\":\"mb_config\","
-                 "\"enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
-                 "\"five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
-                 "\"timeout_ms\":" + String(magicBandTimeoutMs) + ","
-                 "\"defer_to_app\":" + String(mbDeferToApp ? "true" : "false") + "}";
-    bleNotify(ack);
-  }
-
   // ── Dual-board role / scanner pairing ──
   else if (type == "set_board_role") {
     String role = doc["role"] | "standalone";
@@ -504,8 +551,142 @@ void handleBLECommand(const String& msg) {
     }
   }
 
+  else if (type == "set_field") {
+    handleSetFieldCommand(doc["field"] | "", doc["value"]);
+  }
+  else if (type == "list_fields") {
+    handleListFieldsCommand();
+  }
+
+  else if (type == "list_rules") {
+    JsonArray rules = mbRulesJsonArray();
+    String out = "{\"type\":\"rules_summary\",\"rules\":[";
+    bool first = true;
+    for (JsonVariant v : rules) {
+      if (!v.is<JsonObject>()) continue;
+      JsonObject r = v.as<JsonObject>();
+      if (!first) out += ",";
+      first = false;
+      out += "{\"id\":\"";
+      out += (r["id"] | "");
+      out += "\",\"name\":\"";
+      out += (r["name"] | "");
+      out += "\",\"prio\":";
+      out += String((int)(r["priority"] | r["prio"] | 0));
+      out += ",\"enabled\":";
+      out += (r["enabled"] | true) ? "true" : "false";
+      out += "}";
+    }
+    out += "]}";
+    bleNotify(out);
+  }
+
+  else if (type == "set_rule_enabled") {
+    String ruleId = doc["ruleId"] | "";
+    bool enabled = doc["enabled"] | true;
+    JsonArray rules = mbRulesJsonArray();
+    JsonObject match;
+    for (JsonVariant v : rules) {
+      if (!v.is<JsonObject>()) continue;
+      JsonObject r = v.as<JsonObject>();
+      if (ruleId == (r["id"] | "")) { match = r; break; }
+    }
+    if (match.isNull()) {
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_rule_enabled\",\"ruleId\":\"" + ruleId +
+                "\",\"ok\":false,\"reason\":\"not_found\"}");
+    } else {
+      match["enabled"] = enabled;
+      if (!enabled && mbActiveRuleId[0] && ruleId == mbActiveRuleId) {
+        Serial.printf("[Rule] disabling currently-active rule %s — forcing restore\n", ruleId.c_str());
+        forceRuleLifecycleRestore();
+      }
+      bool persisted = persistMbRulesCache();
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_rule_enabled\",\"ruleId\":\"" + ruleId +
+                "\",\"ok\":true,\"enabled\":" + String(enabled ? "true" : "false") +
+                ",\"persisted\":" + String(persisted ? "true" : "false") + "}");
+    }
+  }
+
+  else if (type == "list_segments") {
+    String mapId = doc["mapId"] | "";
+    JsonObject segMap = findSegmentMapById(mapId.c_str());
+    if (segMap.isNull()) {
+      bleNotify("{\"type\":\"segments_summary\",\"mapId\":\"" + mapId +
+                "\",\"ok\":false,\"reason\":\"map_not_found\",\"segments\":[]}");
+    } else {
+      String out = "{\"type\":\"segments_summary\",\"mapId\":\"" + mapId + "\",\"segments\":[";
+      JsonArray segs = segMap["segments"].as<JsonArray>();
+      bool first = true;
+      for (JsonVariant v : segs) {
+        if (!v.is<JsonObject>()) continue;
+        JsonObject s = v.as<JsonObject>();
+        if (!first) out += ",";
+        first = false;
+        out += "{\"id\":\"";
+        out += (s["id"] | "");
+        out += "\",\"start\":";
+        out += String((int)(s["start"] | 0));
+        out += ",\"stop\":";
+        out += String((int)(s["stop"] | 0));
+        out += ",\"enabled\":";
+        out += (s["enabled"] | true) ? "true" : "false";
+        out += "}";
+      }
+      out += "]}";
+      bleNotify(out);
+    }
+  }
+
+  else if (type == "set_segment_field") {
+    String mapId = doc["mapId"] | "";
+    String segmentId = doc["segmentId"] | "";
+    String field = doc["field"] | "";
+    if (field != "enabled" && field != "start" && field != "stop") {
+      bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"not_whitelisted\"}");
+    } else {
+      JsonObject segMap = findSegmentMapById(mapId.c_str());
+      if (segMap.isNull()) {
+        bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"map_not_found\"}");
+      } else {
+        JsonObject seg = findSegmentInMap(segMap, segmentId.c_str());
+        if (seg.isNull()) {
+          bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"segment_not_found\"}");
+        } else {
+          bool ok = true;
+          String reason;
+          if (field == "enabled") {
+            if (!doc["value"].is<bool>()) { ok = false; reason = "wrong_type"; }
+            else seg["enabled"] = doc["value"].as<bool>();
+          } else {
+            if (!doc["value"].is<int>()) { ok = false; reason = "wrong_type"; }
+            else {
+              int v = doc["value"].as<int>();
+              if (v < 0 || v > STRIP_LED_COUNT) { ok = false; reason = "out_of_range"; }
+              else seg[field] = v;
+            }
+          }
+          if (ok) {
+            int start = seg["start"] | 0;
+            int stop = seg["stop"] | 0;
+            bool segmentNowEmpty = (stop <= start);
+            bool persisted = persistMbRulesCache();
+            bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"mapId\":\"" + mapId +
+                      "\",\"segmentId\":\"" + segmentId + "\",\"field\":\"" + field +
+                      "\",\"ok\":true,\"persisted\":" + String(persisted ? "true" : "false") +
+                      ",\"segmentNowEmpty\":" + String(segmentNowEmpty ? "true" : "false") + "}");
+          } else {
+            bleNotify("{\"type\":\"ack\",\"action\":\"set_segment_field\",\"ok\":false,\"reason\":\"" + reason + "\"}");
+          }
+        }
+      }
+    }
+  }
+
   // ── Status ──
   else if (type == "status") {
+    if (WiFi.status() == WL_CONNECTED) {
+      refreshCurrentBrightnessFromWled(600);
+    }
     unsigned long scannerAgeMs = 0;
     bool scannerSeen = (lastScannerPacketMs > 0);
     if (scannerSeen) scannerAgeMs = millis() - lastScannerPacketMs;
@@ -524,11 +705,9 @@ void handleBLECommand(const String& msg) {
       "\"sw_enabled\":" + String(starlightEnabled ? "true" : "false") + ","
       "\"sw_timeout_ms\":" + String(starlightTimeoutMs) + ","
       "\"mb_enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
-      "\"mb_five_point\":" + String(magicBandFivePoint ? "true" : "false") + ","
       "\"mb_timeout_ms\":" + String(magicBandTimeoutMs) + ","
       "\"ble_transition_ms\":" + String(bleEffectTransitionMs) + ","
-      "\"mb_chase_speed\":" + String(mbChaseSpeed) + ","
-      "\"mb_chase_thickness\":" + String(mbChaseThickness) + ","
+      "\"rules_paused\":" + String(rulesPaused ? "true" : "false") + ","
       "\"mb_mapping_loaded\":" + String(mbMappingLoadedFromNvs ? "true" : "false") + ","
       "\"mb_layout_active\":" + String((int)mbActiveLayoutIdx) + ","
       "\"mb_layout_name\":\"" + String(mbLayoutCount > 0 ? mbLayouts[mbActiveLayoutIdx].name : "Default") + "\","
@@ -536,6 +715,9 @@ void handleBLECommand(const String& msg) {
       "\"show_type\":\"" + String(showTypeStatusStr()) + "\","
       "\"show_phase\":\"" + String(showPhaseStatusStr()) + "\","
       "\"scan_log\":" + String(bleScanLogEnabled ? "true" : "false") + ","
+      "\"sd_rule_log\":" + String(sdRuleLoggerReady() ? "true" : "false") + ","
+      "\"sd_rule_log_path\":\"" + String(sdRuleLoggerPath()) + "\","
+      "\"sd_rule_log_ring\":" + String((unsigned)sdRuleLoggerRingCount()) + ","
       "\"capture_active\":" + String(bleCaptureToApp ? "true" : "false") + ","
       "\"preset_count\":" + String(countBoardPresets()) + ","
       "\"board_role\":\"" + String(boardRole == BoardRole::LOGIC_BOARD ? "logic_board" : "standalone") + "\","

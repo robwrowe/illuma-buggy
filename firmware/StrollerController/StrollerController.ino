@@ -2,8 +2,12 @@
  * StrollerController Firmware v2.1
  * ESP32-S3-DevKitC-1-N16R8
  *
- * Modular split + optional dual-board ESP-NOW scanner (BoardRole).
+ * Modular split + optional dual-board scanner over UART.
  */
+
+#if !CONFIG_IDF_TARGET_ESP32S3
+#error "StrollerController requires Board = ESP32S3 Dev Module (N16R8). Classic ESP32 builds listen on UART RX=16 instead of RX=8."
+#endif
 
 #include "Globals.h"
 #include "WiFiManager.h"
@@ -22,12 +26,19 @@
 #include "MbRulesStore.h"
 #include "MbCalibrationStore.h"
 #include "StatusLed.h"
+#include "SdRuleLogger.h"
+#include "StatusDisplay.h"
+#include "EmbeddedRules.h"
+#include <ArduinoJson.h>
 
 void setup() {
   Serial.begin(115200);
   delay(500);
   randomSeed(esp_random());
   Serial.println("\n[Boot] StrollerController v2.1");
+  Serial.printf("[Boot] board=DevKitC-1-N16R8 pins uart TX=%d RX=%d led=%d oled=%d sd=%d\n",
+                UART_LINK_TX_PIN, UART_LINK_RX_PIN, STATUS_LED_PIN,
+                HAS_OLED, HAS_SD_LOGGER);
   Serial.printf("[Boot] freeHeap=%u maxAllocHeap=%u psramSize=%u psramFree=%u\n",
                 (unsigned)ESP.getFreeHeap(),
                 (unsigned)ESP.getMaxAllocHeap(),
@@ -42,15 +53,12 @@ void setup() {
   starlightTimeoutMs  = prefs.getULong("swTimeout", 15000);
   magicBandEnabled    = prefs.getBool("mbEn", true);
   mbDeferToApp        = prefs.getBool("mbDefer", false);
-  magicBandFivePoint  = prefs.getBool("mb5pt", true);
   overrideKillOnZone  = prefs.getBool("killOnZone", false);
   magicBandTimeoutMs  = prefs.getULong("mbTimeout", 15000);
   bleEffectTransitionMs = prefs.getULong("bleTransMs", 700);
-  mbChaseSpeed        = prefs.getUChar("mbSpd", 128);
-  mbChaseThickness    = prefs.getUChar("mbGrp", 4);
-  if (mbChaseThickness < 1) mbChaseThickness = 4;
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
   mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
+  rulesPaused         = prefs.getBool("rulesPaused", false);
   // Prefer SPIFFS for large rules JSON; migrate leftover NVS blobs once.
   // Discard corrupt/empty blobs so a truncated legacy file doesn't look like a
   // successful load (rules=0) and block a clean "waiting for push" state.
@@ -118,6 +126,24 @@ void setup() {
     nvsRemoveLargeString(prefs, "mbMapping");
     prefs.end();
   }
+
+  // Part 9: seed from compile-time embedded_rules.json when empty or forceOverride.
+  if (kHasEmbeddedRules) {
+    StaticJsonDocument<256> peek;
+    deserializeJson(peek, kEmbeddedRulesJson, DeserializationOption::NestingLimit(2));
+    bool forceOverride = peek["forceOverride"] | false;
+    if (forceOverride || mbRulesJson.length() == 0) {
+      Serial.printf("[Rules] Seeding from embedded_rules.json (force=%d)\n", forceOverride ? 1 : 0);
+      mbRulesJson = String(kEmbeddedRulesJson);
+      mbMappingJson = mbRulesJson;
+      if (mbRulesFsSave(mbRulesJson)) {
+        Serial.println("[Rules] Embedded rules persisted to SPIFFS");
+      } else {
+        Serial.println("[Rules] WARNING: embedded rules loaded into RAM but SPIFFS persist failed");
+      }
+    }
+  }
+
   loadMbMappingDefaults();
   if (mbLayoutsJson.length() > 0) loadMbLayoutsFromJson();
   loadMbRulesFromJson();
@@ -127,9 +153,9 @@ void setup() {
     if (calJson.length() > 0) mbCalibrationApply(calJson);
   }
   loadWledBaselineFromNvs();
-  Serial.printf("[NVS] swEn=%d mbEn=%d mb5pt=%d killOnZone=%d scanLog=%d chase=%u/%u bleFade=%lums role=%u\n",
-                starlightEnabled, magicBandEnabled, magicBandFivePoint, overrideKillOnZone,
-                bleScanLogEnabled, mbChaseSpeed, mbChaseThickness, bleEffectTransitionMs,
+  Serial.printf("[NVS] swEn=%d mbEn=%d killOnZone=%d scanLog=%d rulesPaused=%d bleFade=%lums role=%u\n",
+                starlightEnabled, magicBandEnabled, overrideKillOnZone,
+                bleScanLogEnabled, rulesPaused ? 1 : 0, bleEffectTransitionMs,
                 (unsigned)boardRole);
   Serial.printf("[NVS] mbRules=%u bytes mbMapping=%u bytes\n",
                 (unsigned)mbRulesJson.length(), (unsigned)mbMappingJson.length());
@@ -138,16 +164,26 @@ void setup() {
   prefs.end();
   Serial.println("[NVS] Ready");
 
+  // OLED before NeoPixel/UART/BLE when present (HAS_OLED); no-op stubs otherwise.
+  statusDisplayInit();  // non-fatal
+
   NimBLEDevice::init(BLE_NAME);
   delay(200);
   statusLedInit();
   startBLEPeripheral();
+  uartScannerLinkInit();
+  sdRuleLoggerInit();   // non-fatal (HAS_SD_LOGGER=0 skips SPI; RAM ring still on)
+#if HAS_OLED
+  // SPI/SD can leave Wire in a weird state on some cores — re-assert OLED pins.
+  statusDisplayReassertWire();
+  if (!statusDisplayReady()) statusDisplayInit();
+#endif
 
   // Dual-board: logic board does NOT own the scan radio (no silent fallback).
   if (boardRole == BoardRole::STANDALONE) {
     startBLEScan();
   } else {
-    Serial.println("[BLE] LOGIC_BOARD — scan disabled; waiting for ESP-NOW scanner");
+    Serial.println("[BLE] LOGIC_BOARD — scan disabled; waiting for UART scanner");
   }
 
   payloadTransportInit();
@@ -202,14 +238,15 @@ void processPendingCommands() {
 
 void loop() {
   statusLedTick();
-  // BLE first — app preset fire / status must not wait behind ESP-NOW rule applies.
+  uartScannerLinkPoll();
+  // BLE first — app preset fire / status must not wait behind UART rule applies.
   processBleCmdQueue();
   processPendingCommands();
   processParsedPacketQueue();
-  transportPairResendTick();
-  serviceScannerFallback();
+  serviceScannerLinkHealth();
   processSerialCommands();
   serviceWandTx();
+  statusDisplayUpdate();
 
   // Auto-clear Starlight Wand override after timeout
   if (currentOverride == BLE_STARLIGHT && starlightTimeoutMs > 0) {
@@ -245,6 +282,7 @@ void loop() {
       connectToWLED();
     }
     wledWasConnected = false;
+    wledHttpOk = false;
   } else if (!wledWasConnected) {
     wledWasConnected = true;
     delay(300);  // let AP/WLED settle after STA join
