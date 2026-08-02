@@ -1,14 +1,17 @@
 import { hexToBytes, bytesToHex } from './e9Decode';
 import { createEmptyRule, createEmptyExtract, createEmptyExtractTarget } from './mbMapping';
+import { hasCompanyIdPrefix, stripCompanyId } from './wandSimClient';
 
 /** One pasted line → one packet row for the analyzer grid. */
-export function parseAnalyzerInput(text) {
+export function parseAnalyzerInput(text, { strip8301 = true } = {}) {
   return String(text || '')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line, i) => {
-      const bytes = hexToBytes(line);
+      let hex = line;
+      if (strip8301 && hasCompanyIdPrefix(hex)) hex = stripCompanyId(hex);
+      const bytes = hexToBytes(hex);
       return { id: `row-${i}-${Date.now()}`, raw: line, bytes };
     })
     .filter((row) => row.bytes.length > 0);

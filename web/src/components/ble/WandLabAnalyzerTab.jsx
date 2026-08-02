@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Box,
   Button,
+  Checkbox,
   Group,
   Popover,
   ScrollArea,
@@ -323,6 +324,7 @@ export function WandLabAnalyzerTab({
 }) {
   const [pasteText, setPasteText] = useState('');
   const [rows, setRows] = useState([]);
+  const [strip8301, setStrip8301] = useState(true);
   const [columnTags, setColumnTags] = useState({});
   const [cellTags, setCellTags] = useState({});
   const [activeTag, setActiveTag] = useState('signature');
@@ -330,10 +332,11 @@ export function WandLabAnalyzerTab({
   const [loggingRowId, setLoggingRowId] = useState(null);
 
   const parseInput = () => {
-    setRows(parseAnalyzerInput(pasteText));
+    setRows(parseAnalyzerInput(pasteText, { strip8301 }));
     setColumnTags({});
     setCellTags({});
     setDetailPopover(null);
+    setLoggingRowId(null);
   };
 
   const maxLen = useMemo(() => rows.reduce((m, r) => Math.max(m, r.bytes.length), 0), [rows]);
@@ -422,13 +425,19 @@ export function WandLabAnalyzerTab({
         onChange={(e) => setPasteText(e.target.value)}
         styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
       />
-      <Group gap="xs">
+      <Group gap="xs" align="center" wrap="wrap">
+        <Checkbox
+          label="Strip 8301 for payload bytes"
+          checked={strip8301}
+          onChange={(e) => setStrip8301(e.currentTarget.checked)}
+        />
         <Button size="xs" onClick={parseInput}>
           Parse {pasteText.split('\n').filter((l) => l.trim()).length || ''} lines
         </Button>
         {rows.length > 0 && (
           <Text size="xs" c="dimmed">
             {rows.length} packets, max {maxLen} bytes
+            {strip8301 ? ' (8301 stripped)' : ''}
           </Text>
         )}
       </Group>
