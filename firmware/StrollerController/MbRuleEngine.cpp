@@ -101,6 +101,51 @@ static int hexNibble(char c) {
   return -1;
 }
 
+// ── Anchor-relative offset resolution ───────────────────────────────────
+
+// Returns -1 (not found) or a valid index < plen.
+static int resolveAnchorOffset(const uint8_t* payload, size_t plen, const JsonObject& anchor) {
+  if (anchor.isNull() || !payload) return -1;
+  const char* byteHex = anchor["byte"] | "";
+  if (!byteHex || strlen(byteHex) < 2) return -1;
+  int hi = hexNibble(byteHex[0]);
+  int lo = hexNibble(byteHex[1]);
+  if (hi < 0 || lo < 0) return -1;
+  uint8_t target = (uint8_t)((hi << 4) | lo);
+
+  int occurrence = anchor["occurrence"] | 1;
+  if (occurrence < 1) occurrence = 1;
+  size_t start = (size_t)(anchor["searchFrom"] | 0);
+  if (start > plen) start = plen;
+  int searchLen = anchor["searchLen"] | 0;
+  size_t end = (searchLen > 0) ? min(plen, start + (size_t)searchLen) : plen;
+
+  int count = 0;
+  for (size_t i = start; i < end; i++) {
+    if (payload[i] == target) {
+      count++;
+      if (count == occurrence) {
+        long result = (long)i + (long)(anchor["deltaBytes"] | 0);
+        if (result < 0 || (size_t)result >= plen) return -1;
+        return (int)result;
+      }
+    }
+  }
+  return -1;
+}
+
+// Resolves offset from either node["anchor"] (if present) or node["offset"] (fallback).
+// Returns -1 when an anchor is present but its marker isn't found — callers must treat
+// -1 as "value unavailable", NOT as offset 0.
+static int resolveOffsetOrAnchor(const uint8_t* payload, size_t plen, const JsonObject& node,
+                                 int fallbackOffset) {
+  JsonObject anchor = node["anchor"].as<JsonObject>();
+  if (!anchor.isNull()) {
+    return resolveAnchorOffset(payload, plen, anchor);
+  }
+  return node["offset"] | fallbackOffset;
+}
+
 static bool matchHexPrefix(const uint8_t* payload, size_t plen, const char* hex) {
   if (!hex || !payload) return false;
   size_t hexLen = strlen(hex);
@@ -143,7 +188,9 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     return compareOp((uint32_t)plen, leaf["op"] | "eq", (uint32_t)(leaf["value"] | 0));
   }
   if (strcmp(type, "byte") == 0) {
-    uint8_t offset = (uint8_t)(leaf["offset"] | 0);
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, leaf, 0);
+    if (offsetResolved < 0) return false;
+    uint8_t offset = (uint8_t)offsetResolved;
     const char* op = leaf["op"] | "eq";
     if (strcmp(op, "maskEq") == 0) {
       if (offset >= plen) return false;
@@ -156,7 +203,9 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     return compareOp(v, op, (uint32_t)(leaf["value"] | 0));
   }
   if (strcmp(type, "bits") == 0) {
-    uint8_t offset = (uint8_t)(leaf["offset"] | 0);
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, leaf, 0);
+    if (offsetResolved < 0) return false;
+    uint8_t offset = (uint8_t)offsetResolved;
     uint8_t bitStart = (uint8_t)(leaf["bitStart"] | 0);
     uint8_t bitCount = (uint8_t)(leaf["bitCount"] | 1);
     uint32_t v = extractBits(payload, plen, offset, bitStart, bitCount);
@@ -166,10 +215,13 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     JsonObject left = leaf["left"].as<JsonObject>();
     JsonObject right = leaf["right"].as<JsonObject>();
     if (left.isNull() || right.isNull()) return false;
-    uint8_t lOffset = (uint8_t)(left["offset"] | 0);
+    int lResolved = resolveOffsetOrAnchor(payload, plen, left, 0);
+    int rResolved = resolveOffsetOrAnchor(payload, plen, right, 0);
+    if (lResolved < 0 || rResolved < 0) return false;
+    uint8_t lOffset = (uint8_t)lResolved;
     uint8_t lBitStart = (uint8_t)(left["bitStart"] | 0);
     uint8_t lBitCount = (uint8_t)(left["bitCount"] | 8);
-    uint8_t rOffset = (uint8_t)(right["offset"] | 0);
+    uint8_t rOffset = (uint8_t)rResolved;
     uint8_t rBitStart = (uint8_t)(right["bitStart"] | 0);
     uint8_t rBitCount = (uint8_t)(right["bitCount"] | 8);
     uint32_t lv = extractBits(payload, plen, lOffset, lBitStart, lBitCount);
@@ -380,7 +432,9 @@ static float resolveFlashRateHz(const JsonObject& rule, const uint8_t* payload, 
   if (timingObj.isNull() || !(timingObj["enabled"] | false)) return 0.0f;
   const char* tmId = timingObj["timingModelId"] | "";
   JsonObject tm = findTimingModelById(tmId);
-  uint8_t tOff = (uint8_t)(timingObj["offset"] | 5);
+  int tOffResolved = resolveOffsetOrAnchor(payload, plen, timingObj, 5);
+  if (tOffResolved < 0) return 0.0f;
+  uint8_t tOff = (uint8_t)tOffResolved;
   uint8_t tByte = (payload && tOff < plen) ? payload[tOff] : 0;
   TimingDecode td = decodeTimingByte(tByte, tm);
   JsonObject strobe = tm.isNull() ? JsonObject() : tm["strobeEffect"].as<JsonObject>();
@@ -401,7 +455,9 @@ static float resolveTimingDerivedValue(const JsonObject& rule, const uint8_t* pa
   if (timingObj.isNull() || !(timingObj["enabled"] | false)) return 0.0f;
   const char* tmId = timingObj["timingModelId"] | "";
   JsonObject tm = findTimingModelById(tmId);
-  uint8_t tOff = (uint8_t)(timingObj["offset"] | 5);
+  int tOffResolved = resolveOffsetOrAnchor(payload, plen, timingObj, 5);
+  if (tOffResolved < 0) return 0.0f;
+  uint8_t tOff = (uint8_t)tOffResolved;
   uint8_t tByte = (payload && tOff < plen) ? payload[tOff] : 0;
   TimingDecode td = decodeTimingByte(tByte, tm);
   if (strcmp(source, "timingOnSec") == 0) return td.onTimeMs / 1000.0f;
@@ -506,7 +562,9 @@ static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t
     auto extractChannel = [&](const char* key) -> uint8_t {
       JsonObject ch = channelGroup[key].as<JsonObject>();
       if (ch.isNull()) return 0;
-      uint8_t offset = (uint8_t)(ch["offset"] | 0);
+      int offsetResolved = resolveOffsetOrAnchor(payload, plen, ch, 0);
+      if (offsetResolved < 0) return 0;
+      uint8_t offset = (uint8_t)offsetResolved;
       uint8_t bitStart = (uint8_t)(ch["bitStart"] | 0);
       uint8_t bitCount = (uint8_t)(ch["bitCount"] | 6);
       uint32_t chRaw = extractBits(payload, plen, offset, bitStart, bitCount);
@@ -522,7 +580,12 @@ static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t
     return;
   }
 
-  uint8_t offset = (uint8_t)(srcObj["offset"] | 0);
+  int offsetResolved = resolveOffsetOrAnchor(payload, plen, srcObj, 0);
+  if (offsetResolved < 0) {
+    r = g = b = 0;
+    return;
+  }
+  uint8_t offset = (uint8_t)offsetResolved;
   uint8_t bitStart = (uint8_t)(srcObj["bitStart"] | 0);
   uint8_t bitCount = (uint8_t)(srcObj["bitCount"] | 8);
   uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
@@ -539,7 +602,9 @@ static float resolveBlendRatio(JsonObject ratioObj, const uint8_t* payload, size
   if (ratioObj.isNull()) return 0.5f;
   const char* mode = ratioObj["mode"] | "fixed";
   if (strcmp(mode, "extract") == 0) {
-    uint8_t offset = (uint8_t)(ratioObj["offset"] | 0);
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, ratioObj, 0);
+    if (offsetResolved < 0) return 0.5f;
+    uint8_t offset = (uint8_t)offsetResolved;
     uint8_t bitStart = (uint8_t)(ratioObj["bitStart"] | 0);
     uint8_t bitCount = (uint8_t)(ratioObj["bitCount"] | 8);
     uint32_t raw = extractBits(payload, plen, offset, bitStart, bitCount);
@@ -1118,8 +1183,10 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   const char* timingModelId = "";
 
   if (timingActive) {
-    uint8_t offset = (uint8_t)(timing["offset"] | 5);
-    timingByte = (payload && offset < plen) ? payload[offset] : 0;
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, timing, 5);
+    uint8_t offset = offsetResolved < 0 ? 5 : (uint8_t)offsetResolved;
+    // If anchor not found, treat timing byte as 0 (same as offset >= plen)
+    timingByte = (offsetResolved >= 0 && payload && offset < plen) ? payload[offset] : 0;
     timingModelId = timing["timingModelId"] | "";
     JsonObject timingModel = findTimingModelById(timingModelId);
     td = decodeTimingByte(timingByte, timingModel);
@@ -1232,7 +1299,7 @@ void forceRuleLifecycleRestore() {
 
 void serviceMbRuleLifecycle() {
   if (mbRulePhase == MB_RULE_IDLE) return;
-  if (currentOverride != BLE_MAGIC) {
+  if (currentOverride != BLE_EFFECT) {
     resetMbRuleLifecycle();
     return;
   }
@@ -1335,8 +1402,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   if (!payload || plen == 0) return;
 
   bool wand = looksLikeWand(payload, plen);
+  lastMatchedRuleWasWand = wand;
   if (wand) {
-    if (currentOverride == BLE_MAGIC) return;
     if (!starlightEnabled) {
       bleNotify("{\"type\":\"sw_event\",\"event\":\"disabled\"}");
       return;
@@ -1345,17 +1412,16 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     if (!magicBandEnabled) return;
   }
 
-  OverrideSource src = wand ? BLE_STARLIGHT : BLE_MAGIC;
-  if (!canTakeOverride(src)) {
+  if (!canTakeOverride(BLE_EFFECT)) {
     if (wand) bleNotify("{\"type\":\"sw_event\",\"event\":\"blocked\"}");
+    else bleNotify("{\"type\":\"ble_event\",\"event\":\"blocked\"}");
     return;
   }
 
   // During DIP/FADE: trailing same-rule matches inside the quiet window are ignored.
   // After quiet — or a different rule — abort FTB and apply now (Disney-like cut).
   bool abortFtb = false;
-  if (src == BLE_MAGIC &&
-      (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE)) {
+  if (mbRulePhase == MB_RULE_DIP || mbRulePhase == MB_RULE_FADE) {
     const char* rid = rule["id"] | "";
     bool sameRule = rid[0] && mbActiveRuleId[0] && strcmp(rid, mbActiveRuleId) == 0;
     if (sameRule &&
@@ -1496,20 +1562,27 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     JsonObject timingObj = rule["timing"].as<JsonObject>();
     const char* tmId = timingObj.isNull() ? "" : (timingObj["timingModelId"] | "");
     JsonObject tm = findTimingModelById(tmId);
-    uint8_t tOff = (uint8_t)(timingObj.isNull() ? 5 : (timingObj["offset"] | 5));
-    uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
-
-    int bucketValue = 0;
-    const char* bucketField = nullptr;
-    if (resolveSpeedBucketValue(tm, tByte, &bucketValue, &bucketField)) {
-      JsonArray segs = wled["seg"].as<JsonArray>();
-      if (!segs.isNull()) {
-        for (JsonObject seg : segs) setSegNumericField(seg, bucketField, (float)bucketValue);
-      }
-      Serial.printf("[Rule] speedBuckets %s=%d (timing=0x%02X)\n",
-                    bucketField ? bucketField : "sx", bucketValue, tByte);
-    } else {
+    int tOffResolved = timingObj.isNull()
+      ? 5
+      : resolveOffsetOrAnchor(payload, plen, timingObj, 5);
+    if (tOffResolved < 0) {
       applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
+    } else {
+      uint8_t tOff = (uint8_t)tOffResolved;
+      uint8_t tByte = (tOff < plen) ? payload[tOff] : 0;
+
+      int bucketValue = 0;
+      const char* bucketField = nullptr;
+      if (resolveSpeedBucketValue(tm, tByte, &bucketValue, &bucketField)) {
+        JsonArray segs = wled["seg"].as<JsonArray>();
+        if (!segs.isNull()) {
+          for (JsonObject seg : segs) setSegNumericField(seg, bucketField, (float)bucketValue);
+        }
+        Serial.printf("[Rule] speedBuckets %s=%d (timing=0x%02X)\n",
+                      bucketField ? bucketField : "sx", bucketValue, tByte);
+      } else {
+        applyStrobeFromTimingModel(wled.as<JsonObject>(), rule, payload, plen);
+      }
     }
   }
 
@@ -1562,10 +1635,11 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
         paletteMap = false;
       } else if (!hasFixedColor && !hasChannelGroup && !hasColorBlend && !hasColorSourceBlend) {
-        uint8_t offset = (uint8_t)(ex["offset"] | 0);
+        int offsetResolved = resolveOffsetOrAnchor(payload, plen, ex, 0);
+        uint8_t offset = offsetResolved < 0 ? 0 : (uint8_t)offsetResolved;
         uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
         uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
-        raw = extractBits(payload, plen, offset, bitStart, bitCount);
+        raw = offsetResolved < 0 ? 0 : extractBits(payload, plen, offset, bitStart, bitCount);
       }
 
       uint8_t r = 0, g = 0, b = 0;
@@ -1581,7 +1655,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
             if (flashOut) *flashOut = false;
             return 0;
           }
-          uint8_t offset = (uint8_t)(ch["offset"] | 0);
+          int offsetResolved = resolveOffsetOrAnchor(payload, plen, ch, 0);
+          if (offsetResolved < 0) {
+            if (flashOut) *flashOut = false;
+            return 0;
+          }
+          uint8_t offset = (uint8_t)offsetResolved;
           uint8_t bitStart = (uint8_t)(ch["bitStart"] | 0);
           uint8_t bitCount = (uint8_t)(ch["bitCount"] | 6);
           uint32_t chRaw = extractBits(payload, plen, offset, bitStart, bitCount);
@@ -1589,9 +1668,14 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
             *flashOut = false;
             JsonObject flashBit = ch["flashBit"].as<JsonObject>();
             if (!flashBit.isNull()) {
-              uint8_t fOff = (uint8_t)(flashBit["offset"] | offset);
-              uint8_t fBit = (uint8_t)(flashBit["bit"] | 7);
-              *flashOut = extractBits(payload, plen, fOff, fBit, 1) != 0;
+              int fOffResolved = resolveOffsetOrAnchor(payload, plen, flashBit, offset);
+              if (fOffResolved < 0) {
+                *flashOut = false;
+              } else {
+                uint8_t fOff = (uint8_t)fOffResolved;
+                uint8_t fBit = (uint8_t)(flashBit["bit"] | 7);
+                *flashOut = extractBits(payload, plen, fOff, fBit, 1) != 0;
+              }
             }
           }
           const char* scale = channelGroup["scale"] | "bitReplicate6to8";
@@ -1833,27 +1917,26 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
     return;
   }
 
-  setOverride(src);
+  setOverride(BLE_EFFECT);
   // Fallback duration reuses the timed ON→FADE→COOLDOWN machine when timing is off.
-  // Keep BLE_MAGIC-only (same restriction as the packet-timing path).
   bool hasFallback = !timingEn && (rule["fallbackDuration"]["enabled"] | false);
-  if ((timingEn || hasFallback) && src == BLE_MAGIC) {
+  if (timingEn || hasFallback) {
     beginTimedRuleOnPhase(rule, payload, plen);
   } else {
     resetMbRuleLifecycle();
-    touchOverrideIdleTimer(src);
+    touchOverrideIdleTimer(BLE_EFFECT);
   }
 
   const char* appliedName = rule["name"] | "(no name)";
   statusDisplaySetLastRule(appliedName);
-  Serial.printf("[Rule] Applied id=%s name=%s preset=%s map=%s src=%d\n",
+  Serial.printf("[Rule] Applied id=%s name=%s preset=%s map=%s wand=%d\n",
                 rule["id"] | "(no id)", appliedName,
-                presetId.c_str(), mapId, (int)src);
+                presetId.c_str(), mapId, wand ? 1 : 0);
   {
     char detail[192];
     snprintf(detail, sizeof(detail),
-             "\"id\":\"%s\",\"name\":\"%s\",\"preset\":\"%s\",\"map\":\"%s\",\"src\":%d",
-             rule["id"] | "", appliedName, presetId.c_str(), mapId, (int)src);
+             "\"id\":\"%s\",\"name\":\"%s\",\"preset\":\"%s\",\"map\":\"%s\",\"wand\":%d",
+             rule["id"] | "", appliedName, presetId.c_str(), mapId, wand ? 1 : 0);
     sdRuleLoggerWrite("applied", detail);
   }
   bleNotify(wand
@@ -2060,7 +2143,7 @@ void checkParadeBeacon(const uint8_t* payload, size_t plen, int rssi) {
   // Fresh crossing into parade: enter LIVE if not already in parade show
   if (showModeType != SHOW_PARADE || showModePhase == PHASE_NONE || showModePhase == PHASE_POST) {
     Serial.printf("[Parade] beacon match rssi=%d — start LIVE\n", rssi);
-    if (currentOverride != SHOW_MODE && currentOverride != BLE_MAGIC && currentOverride != BLE_STARLIGHT) {
+    if (currentOverride != SHOW_MODE && currentOverride != BLE_EFFECT) {
       saveWledStateForOverride();
     }
     showModeType = SHOW_PARADE;

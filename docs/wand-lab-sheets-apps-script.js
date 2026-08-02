@@ -11,8 +11,16 @@
  *   raw_captures: hex | opcode | first_seen_show | first_seen_ts | last_seen_ts |
  *                 times_seen | tested_in_wandlab | finding_id | best_rssi
  *   observations: observation_id | session_id | session_name | hex | opcode | tag |
- *                 board_ts | received_at | rssi | len | quality | func | label | note |
+ *                 board_ts_date | board_ts_time | received_at_date | received_at_time |
+ *                 rssi | len | quality | func | label | note |
  *                 device_id | lat | lng | accuracy_m | gps_updated_at
+ *                 (date = YYYY-MM-DD, time = HH:MM:SS — script timezone)
+ *   byte_tags: finding_id | created_at | opcode | hex | byte_tags | linked_rule_id |
+ *              generated_rule_id | notes
+ *              (byte_tags is comma-separated "idx:kind" pairs, e.g. "0:signature,9:color";
+ *               param entries are "idx:param:bitStart:bitCount:paramName";
+ *               rgb-mode color entries are "idx:color:rgb:role:groupId", e.g. "10:color:rgb:r:grp1";
+ *               palette-mode color entries are just "idx:color")
  *
  * Optional: set SCRIPT_TOKEN and require body.token to match.
  */
@@ -28,6 +36,28 @@ function doGet() {
     service: 'illuma-wandlab',
     hint: 'POST JSON { sheet, rows } to write. Redeploy as New version after edits.',
   })).setMimeType(ContentService.MimeType.JSON);
+}
+
+/** Split epoch-ms / ISO / Date into [YYYY-MM-DD, HH:MM:SS] in the script timezone. */
+function splitTsDateTime(raw) {
+  if (raw === '' || raw == null) return ['', ''];
+  var d = null;
+  if (Object.prototype.toString.call(raw) === '[object Date]') {
+    d = raw;
+  } else if (typeof raw === 'number' || (/^\d+$/).test(String(raw))) {
+    var n = Number(raw);
+    // seconds vs milliseconds
+    if (n > 0 && n < 1e12) n *= 1000;
+    d = new Date(n);
+  } else {
+    d = new Date(String(raw));
+  }
+  if (!d || isNaN(d.getTime())) return ['', ''];
+  var tz = Session.getScriptTimeZone();
+  return [
+    Utilities.formatDate(d, tz, 'yyyy-MM-dd'),
+    Utilities.formatDate(d, tz, 'HH:mm:ss'),
+  ];
 }
 
 function doPost(e) {
@@ -90,11 +120,23 @@ function doPost(e) {
   if (body.sheet === 'observations') {
     const sheet = ss.getSheetByName('observations');
     body.rows.forEach((r) => {
+      const board = splitTsDateTime(r.board_ts);
+      const recv = splitTsDateTime(r.received_at);
       sheet.appendRow([
         r.observation_id, r.session_id, r.session_name, r.hex, r.opcode,
-        r.tag, r.board_ts, r.received_at, r.rssi, r.len, r.quality,
+        r.tag, board[0], board[1], recv[0], recv[1], r.rssi, r.len, r.quality,
         r.func, r.label, r.note, r.device_id, r.lat, r.lng,
         r.accuracy_m, r.gps_updated_at,
+      ]);
+    });
+  }
+
+  if (body.sheet === 'byte_tags') {
+    const sheet = ss.getSheetByName('byte_tags');
+    body.rows.forEach((r) => {
+      sheet.appendRow([
+        r.finding_id, r.created_at, r.opcode, r.hex, r.byte_tags,
+        r.linked_rule_id, r.generated_rule_id, r.notes,
       ]);
     });
   }

@@ -27,7 +27,9 @@ import { deriveOpcodeFromHex } from '../../lib/ble/e9Decode';
 import { DEFAULT_DATA, generateId } from '../../lib/utils';
 import { WAND_LAB_SECTIONS } from '../../lib/routes';
 import { EMPTY_FINDING_FORM, formAfterLog } from '../../lib/sheets/wandLabFindings';
-import { postFinding } from '../../lib/sheets/wandLabSheetsClient';
+import { postByteTagFinding, postFinding } from '../../lib/sheets/wandLabSheetsClient';
+import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
+import { WandLabAnalyzerTab } from './WandLabAnalyzerTab';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
 import { WandLabLogPanel } from './WandLabLogPanel';
 import { WandLabPacketSequence } from './WandLabPacketSequence';
@@ -77,6 +79,7 @@ export function WandLabTab({ data, update }) {
   }, [section, navigate]);
 
   const lab = data.wandLab || DEFAULT_DATA.wandLab;
+  const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const [presetKey, setPresetKey] = useState('rainbow');
   const [bytes, setBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
   const [origBytes, setOrigBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
@@ -212,6 +215,16 @@ export function WandLabTab({ data, update }) {
     } finally {
       setSending(false);
     }
+  };
+
+  const generateRuleFromAnalyzer = (draftRule) => {
+    update({
+      mbMapping: normalizeMbMapping({
+        ...mb,
+        rules: [...(mb.rules || []), draftRule],
+      }),
+    });
+    setStatus(`Created draft rule "${draftRule.name}" — open Settings → Rules to finish it`);
   };
 
   const sendMbCommand = async () => {
@@ -622,6 +635,22 @@ export function WandLabTab({ data, update }) {
                 onStatus={setStatus}
                 onLoadToEditor={loadFromSequence}
                 onSequenceComplete={(payload) => addLogEntry(payload)}
+              />
+            </Tabs.Panel>
+
+            <Tabs.Panel value="analyze" pt="md">
+              <WandLabAnalyzerTab
+                simIp={lab.simIp}
+                onStatus={setStatus}
+                onSendPacket={sendBytes}
+                onLoadToByteEditor={(arr) => { setByteArray(arr, 'analyzer'); setLabTab('bytes'); }}
+                onLogFinding={(entry) =>
+                  postByteTagFinding(entry).catch((err) =>
+                    setStatus(err.message || 'Sheets write failed'),
+                  )
+                }
+                rules={mb.rules}
+                onGenerateRule={generateRuleFromAnalyzer}
               />
             </Tabs.Panel>
           </Tabs>

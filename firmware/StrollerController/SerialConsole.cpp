@@ -131,7 +131,7 @@ void processSerialCommands() {
       Serial.println("[Serial] Usage: mb five <tl bl br tr c>  (palette indices 0-31)");
     } else {
       Serial.printf("[Serial] MB five %d %d %d %d %d\n", vals[0], vals[1], vals[2], vals[3], vals[4]);
-      applyMbFive((uint8_t)vals[0], (uint8_t)vals[1], (uint8_t)vals[2], (uint8_t)vals[3], (uint8_t)vals[4], BLE_MAGIC);
+      applyMbFive((uint8_t)vals[0], (uint8_t)vals[1], (uint8_t)vals[2], (uint8_t)vals[3], (uint8_t)vals[4], BLE_EFFECT);
     }
   } else if (line.startsWith("mb ")) {
     int sp = line.indexOf(' ', 3);
@@ -139,8 +139,8 @@ void processSerialCommands() {
     uint8_t mask = 0;
     if (sp > 0) mask = (uint8_t)line.substring(sp + 1).toInt();
     Serial.printf("[Serial] MB single pal=%u mask=%u\n", pal, mask);
-    if (mask == 0) applyMbSegmentSolid("all", pal, BLE_MAGIC);
-    else applyMbSingleMask(mask, pal, BLE_MAGIC);
+    if (mask == 0) applyMbSegmentSolid("all", pal, BLE_EFFECT);
+    else applyMbSingleMask(mask, pal, BLE_EFFECT);
   } else if (line == "tx on") {
     wandTxBeacon = true;
     wandTxLastAdvMs = 0;

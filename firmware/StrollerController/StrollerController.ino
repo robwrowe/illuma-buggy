@@ -248,21 +248,16 @@ void loop() {
   serviceWandTx();
   statusDisplayUpdate();
 
-  // Auto-clear Starlight Wand override after timeout
-  if (currentOverride == BLE_STARLIGHT && starlightTimeoutMs > 0) {
-    if (millis() - swEventTimestamp >= starlightTimeoutMs) {
-      Serial.printf("[SW] Timeout after %lums — restoring state\n", starlightTimeoutMs);
+  // Auto-clear BLE effect override after timeout (flat path — skipped while
+  // timed rule lifecycle is running; that machine owns its own restore).
+  if (currentOverride == BLE_EFFECT && mbRulePhase == MB_RULE_IDLE) {
+    unsigned long timeoutMs = lastMatchedRuleWasWand ? starlightTimeoutMs : magicBandTimeoutMs;
+    if (timeoutMs > 0 && millis() - mbEventTimestamp >= timeoutMs) {
+      Serial.printf("[BLE] Timeout after %lums — restoring state\n", timeoutMs);
       clearOverride();
-      bleNotify("{\"type\":\"sw_event\",\"event\":\"timeout\"}");
-    }
-  }
-
-  // Auto-clear MagicBand override after timeout (flat path — skipped while timed rule lifecycle runs)
-  if (currentOverride == BLE_MAGIC && magicBandTimeoutMs > 0 && mbRulePhase == MB_RULE_IDLE) {
-    if (millis() - mbEventTimestamp >= magicBandTimeoutMs) {
-      Serial.printf("[MB] Timeout after %lums — restoring state\n", magicBandTimeoutMs);
-      clearOverride();
-      bleNotify("{\"type\":\"ble_event\",\"event\":\"timeout\"}");
+      bleNotify(lastMatchedRuleWasWand
+        ? "{\"type\":\"sw_event\",\"event\":\"timeout\"}"
+        : "{\"type\":\"ble_event\",\"event\":\"timeout\"}");
     }
   }
 

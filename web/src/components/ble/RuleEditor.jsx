@@ -51,6 +51,7 @@ import {
   isColorSourceBlendSource,
   isFixedColorSource,
   isTimingDerivedSource,
+  normalizeAnchor,
   normalizeColorSource,
   normalizeColorSources,
   normalizeConditionNode,
@@ -74,9 +75,11 @@ import {
   computeTimingLifecycle,
   disneyPayload,
   findMatchingRule,
+  formatOffsetOrAnchorLabel,
   hexToBytes,
   previewExtracts,
   previewPacketAgainstRules,
+  resolveOffsetOrAnchor,
 } from '../../lib/ble/e9Decode';
 import { parseCapturePaste } from '../../lib/ble/captureImport';
 import { sendHex, stripCompanyId } from '../../lib/ble/wandSimClient';
@@ -225,6 +228,76 @@ function HexByteInput({ value, onChange, placeholder = '0x00' }) {
   );
 }
 
+/**
+ * Drop-in replacement for a bare "Offset" NumberInput field. Toggles between
+ * absolute offset and marker-anchor mode. `node` must have `.offset` and optionally `.anchor`.
+ * `onPatch(partialNode)` merges into the parent node (same convention as `set()` callers).
+ */
+function OffsetOrAnchorField({ node, onPatch, label = 'Offset', disabled = false }) {
+  const mode = node?.anchor ? 'anchor' : 'offset';
+  const anchor = node?.anchor || { byte: '0F', occurrence: 1, searchFrom: 0, searchLen: 0, deltaBytes: 0 };
+
+  const setMode = (next) => {
+    if (next === 'offset') onPatch({ anchor: null });
+    else onPatch({ anchor: normalizeAnchor(anchor) || anchor });
+  };
+  const patchAnchor = (partial) => onPatch({ anchor: normalizeAnchor({ ...anchor, ...partial }) });
+
+  return (
+    <Stack gap={4}>
+      <Group gap={6} wrap="nowrap">
+        <Text size="xs" c="dimmed" style={{ flex: 1 }}>{label}</Text>
+        <SegmentedControl
+          size="xs"
+          value={mode}
+          onChange={setMode}
+          disabled={disabled}
+          data={[{ value: 'offset', label: 'Fixed' }, { value: 'anchor', label: 'Anchor' }]}
+        />
+      </Group>
+      {mode === 'offset' ? (
+        <NumberInput
+          size="xs"
+          value={node?.offset ?? 0}
+          onChange={(v) => onPatch({ offset: Math.max(0, parseInt(v, 10) || 0) })}
+          min={0}
+          disabled={disabled}
+        />
+      ) : (
+        <SimpleGrid cols={2} spacing={4}>
+          <Field label="Marker byte" style={{ marginBottom: 0 }}>
+            <HexByteInput
+              value={parseInt(anchor.byte || '0F', 16)}
+              onChange={(v) => patchAnchor({ byte: v.toString(16).padStart(2, '0') })}
+              placeholder="0x0F"
+            />
+          </Field>
+          <Field label="Occurrence" style={{ marginBottom: 0 }}>
+            <NumberInput size="xs" min={1} value={anchor.occurrence ?? 1}
+              onChange={(v) => patchAnchor({ occurrence: Math.max(1, parseInt(v, 10) || 1) })}
+              disabled={disabled} />
+          </Field>
+          <Field label="Search from" style={{ marginBottom: 0 }}>
+            <NumberInput size="xs" min={0} value={anchor.searchFrom ?? 0}
+              onChange={(v) => patchAnchor({ searchFrom: Math.max(0, parseInt(v, 10) || 0) })}
+              disabled={disabled} />
+          </Field>
+          <Field label="Search len (0=all)" style={{ marginBottom: 0 }}>
+            <NumberInput size="xs" min={0} value={anchor.searchLen ?? 0}
+              onChange={(v) => patchAnchor({ searchLen: Math.max(0, parseInt(v, 10) || 0) })}
+              disabled={disabled} />
+          </Field>
+          <Field label="Δ bytes after match" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
+            <NumberInput size="xs" value={anchor.deltaBytes ?? 0}
+              onChange={(v) => patchAnchor({ deltaBytes: parseInt(v, 10) || 0 })}
+              disabled={disabled} />
+          </Field>
+        </SimpleGrid>
+      )}
+    </Stack>
+  );
+}
+
 function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAfter }) {
   const { copyKind, hasKind, takeKind } = useRuleClip();
   const [clipMsg, setClipMsg] = useState('');
@@ -347,97 +420,84 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
         </Group>
       )}
       {node.type === 'byte' && (
-        <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
-          <Field label="Offset">
-            <NumberInput
-              value={node.offset ?? 0}
-              onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })}
-              min={0}
-            />
-          </Field>
-          <Field label="Op">
-            <SearchableSelect
-              value={node.op || 'eq'}
-              onChange={(op) => set({ op })}
-              options={BYTE_OP_OPTS}
-              allowEmpty={false}
-            />
-          </Field>
-          <Field label="Value">
-            <HexByteInput
-              value={node.value ?? 0}
-              onChange={(value) => set({ value })}
-              placeholder="0x19"
-            />
-          </Field>
-          {node.op === 'maskEq' && (
-            <Field label="Mask">
-              <HexByteInput
-                value={node.mask ?? 255}
-                onChange={(mask) => set({ mask })}
-                placeholder="0xFF"
+        <Stack gap="xs">
+          <OffsetOrAnchorField node={node} onPatch={(p) => set(p)} />
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
+            <Field label="Op">
+              <SearchableSelect
+                value={node.op || 'eq'}
+                onChange={(op) => set({ op })}
+                options={BYTE_OP_OPTS}
+                allowEmpty={false}
               />
             </Field>
-          )}
-        </SimpleGrid>
+            <Field label="Value">
+              <HexByteInput
+                value={node.value ?? 0}
+                onChange={(value) => set({ value })}
+                placeholder="0x19"
+              />
+            </Field>
+            {node.op === 'maskEq' && (
+              <Field label="Mask">
+                <HexByteInput
+                  value={node.mask ?? 255}
+                  onChange={(mask) => set({ mask })}
+                  placeholder="0xFF"
+                />
+              </Field>
+            )}
+          </SimpleGrid>
+        </Stack>
       )}
       {node.type === 'bits' && (
-        <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
-          <Field label="Offset">
-            <NumberInput
-              value={node.offset ?? 0}
-              onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })}
-              min={0}
-            />
-          </Field>
-          <Field label="bitStart">
-            <NumberInput
-              value={node.bitStart ?? 0}
-              onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
-              min={0}
-              max={7}
-            />
-          </Field>
-          <Field label="bitCount">
-            <NumberInput
-              value={node.bitCount ?? 1}
-              onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
-              min={1}
-              max={32}
-            />
-          </Field>
-          <Field label="Op">
-            <SearchableSelect
-              value={node.op || 'eq'}
-              onChange={(op) => set({ op })}
-              options={CMP_OP_OPTS}
-              allowEmpty={false}
-            />
-          </Field>
-          <Field label="Value">
-            <NumberInput
-              value={node.value ?? 0}
-              onChange={(v) => set({ value: parseInt(v, 10) || 0 })}
-              min={0}
-            />
-          </Field>
-        </SimpleGrid>
-      )}
-      {node.type === 'byteCompare' && (
         <Stack gap="xs">
-          <Group gap="xs" grow align="flex-end">
-            <Text size="xs" fw={600} c="dimmed">
-              Left
-            </Text>
-            <Field label="Offset">
+          <OffsetOrAnchorField node={node} onPatch={(p) => set(p)} />
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
+            <Field label="bitStart">
               <NumberInput
-                value={node.left?.offset ?? 0}
-                onChange={(v) =>
-                  set({ left: { ...node.left, offset: Math.max(0, parseInt(v, 10) || 0) } })
-                }
+                value={node.bitStart ?? 0}
+                onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+                min={0}
+                max={7}
+              />
+            </Field>
+            <Field label="bitCount">
+              <NumberInput
+                value={node.bitCount ?? 1}
+                onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+                min={1}
+                max={32}
+              />
+            </Field>
+            <Field label="Op">
+              <SearchableSelect
+                value={node.op || 'eq'}
+                onChange={(op) => set({ op })}
+                options={CMP_OP_OPTS}
+                allowEmpty={false}
+              />
+            </Field>
+            <Field label="Value">
+              <NumberInput
+                value={node.value ?? 0}
+                onChange={(v) => set({ value: parseInt(v, 10) || 0 })}
                 min={0}
               />
             </Field>
+          </SimpleGrid>
+        </Stack>
+      )}
+      {node.type === 'byteCompare' && (
+        <Stack gap="xs">
+          <Text size="xs" fw={600} c="dimmed">
+            Left
+          </Text>
+          <OffsetOrAnchorField
+            node={node.left}
+            onPatch={(p) => set({ left: { ...node.left, ...p } })}
+          />
+          <Group gap="xs" grow align="flex-end">
             <Field label="bitStart">
               <NumberInput
                 value={node.left?.bitStart ?? 0}
@@ -477,19 +537,14 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
               allowEmpty={false}
             />
           </Field>
+          <Text size="xs" fw={600} c="dimmed">
+            Right
+          </Text>
+          <OffsetOrAnchorField
+            node={node.right}
+            onPatch={(p) => set({ right: { ...node.right, ...p } })}
+          />
           <Group gap="xs" grow align="flex-end">
-            <Text size="xs" fw={600} c="dimmed">
-              Right
-            </Text>
-            <Field label="Offset">
-              <NumberInput
-                value={node.right?.offset ?? 0}
-                onChange={(v) =>
-                  set({ right: { ...node.right, offset: Math.max(0, parseInt(v, 10) || 0) } })
-                }
-                min={0}
-              />
-            </Field>
             <Field label="bitStart">
               <NumberInput
                 value={node.right?.bitStart ?? 0}
@@ -1136,35 +1191,31 @@ function ChannelGroupFields({ channelGroup, onChange }) {
             <Text size="xs" fw={600} mb={4}>
               {key.toUpperCase()} channel
             </Text>
-            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
-              <Field label="Offset">
-                <NumberInput
-                  value={ch.offset ?? 0}
-                  onChange={(v) => setChannel(key, { offset: Math.max(0, parseInt(v, 10) || 0) })}
-                  min={0}
-                />
-              </Field>
-              <Field label="bitStart">
-                <NumberInput
-                  value={ch.bitStart ?? 0}
-                  onChange={(v) =>
-                    setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })
-                  }
-                  min={0}
-                  max={7}
-                />
-              </Field>
-              <Field label="bitCount">
-                <NumberInput
-                  value={ch.bitCount ?? 8}
-                  onChange={(v) =>
-                    setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })
-                  }
-                  min={1}
-                  max={32}
-                />
-              </Field>
-            </SimpleGrid>
+            <Stack gap="xs">
+              <OffsetOrAnchorField node={ch} onPatch={(p) => setChannel(key, p)} />
+              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+                <Field label="bitStart">
+                  <NumberInput
+                    value={ch.bitStart ?? 0}
+                    onChange={(v) =>
+                      setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })
+                    }
+                    min={0}
+                    max={7}
+                  />
+                </Field>
+                <Field label="bitCount">
+                  <NumberInput
+                    value={ch.bitCount ?? 8}
+                    onChange={(v) =>
+                      setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })
+                    }
+                    min={1}
+                    max={32}
+                  />
+                </Field>
+              </SimpleGrid>
+            </Stack>
           </Paper>
         );
       })}
@@ -1309,35 +1360,31 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
           onChange={(channelGroup) => onChange({ ...src, kind: 'rgb', channelGroup })}
         />
       ) : (
-        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
-          <Field label="Offset">
-            <NumberInput
-              value={src.offset ?? 0}
-              onChange={(v) => onChange({ ...src, offset: Math.max(0, parseInt(v, 10) || 0) })}
-              min={0}
-            />
-          </Field>
-          <Field label="bitStart">
-            <NumberInput
-              value={src.bitStart ?? 0}
-              onChange={(v) =>
-                onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })
-              }
-              min={0}
-              max={7}
-            />
-          </Field>
-          <Field label="bitCount">
-            <NumberInput
-              value={src.bitCount ?? 8}
-              onChange={(v) =>
-                onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })
-              }
-              min={1}
-              max={32}
-            />
-          </Field>
-        </SimpleGrid>
+        <Stack gap="xs">
+          <OffsetOrAnchorField node={src} onPatch={(p) => onChange({ ...src, ...p })} />
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+            <Field label="bitStart">
+              <NumberInput
+                value={src.bitStart ?? 0}
+                onChange={(v) =>
+                  onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })
+                }
+                min={0}
+                max={7}
+              />
+            </Field>
+            <Field label="bitCount">
+              <NumberInput
+                value={src.bitCount ?? 8}
+                onChange={(v) =>
+                  onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })
+                }
+                min={1}
+                max={32}
+              />
+            </Field>
+          </SimpleGrid>
+        </Stack>
       )}
     </Paper>
   );
@@ -1462,16 +1509,12 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
           onChange={(channelGroup) => onChange({ kind: 'rgb', paletteMap: false, channelGroup })}
         />
       ) : (
-        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-          <Field label="Offset">
-            <NumberInput
-              value={src.offset ?? 0}
-              onChange={(v) =>
-                onChange({ ...src, kind: 'palette', offset: Math.max(0, parseInt(v, 10) || 0) })
-              }
-              min={0}
-            />
-          </Field>
+        <Stack gap="xs">
+          <OffsetOrAnchorField
+            node={src}
+            onPatch={(p) => onChange({ ...src, kind: 'palette', ...p })}
+          />
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
           <Field label="bitStart">
             <NumberInput
               value={src.bitStart ?? 0}
@@ -1514,7 +1557,8 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
               ]}
             />
           </Field>
-        </SimpleGrid>
+          </SimpleGrid>
+        </Stack>
       )}
     </Paper>
   );
@@ -1580,7 +1624,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
             ? 'named blend'
             : extractMode === 'colorBlend'
               ? 'color blend'
-              : `off ${extract.offset ?? 0}`,
+              : formatOffsetOrAnchorLabel(extract),
     extractMode === 'fixedColor'
       ? 'hard-coded'
       : extractMode === 'namedSource'
@@ -1830,7 +1874,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
         extractMode !== 'colorSourceBlend' &&
         extractMode !== 'fixedColor' &&
         extractMode !== 'namedSource' && (
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="xs">
+          <Stack gap="xs" mt="xs">
             <Field label="Name">
               <TextInput
                 value={extract.name || ''}
@@ -1838,30 +1882,26 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                 placeholder="topLeft"
               />
             </Field>
-            <Field label="Offset">
-              <NumberInput
-                value={extract.offset ?? 0}
-                onChange={(v) => set({ offset: Math.max(0, parseInt(v, 10) || 0) })}
-                min={0}
-              />
-            </Field>
-            <Field label="bitStart">
-              <NumberInput
-                value={extract.bitStart ?? 0}
-                onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
-                min={0}
-                max={7}
-              />
-            </Field>
-            <Field label="bitCount">
-              <NumberInput
-                value={extract.bitCount ?? 5}
-                onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
-                min={1}
-                max={32}
-              />
-            </Field>
-          </SimpleGrid>
+            <OffsetOrAnchorField node={extract} onPatch={(p) => set(p)} />
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+              <Field label="bitStart">
+                <NumberInput
+                  value={extract.bitStart ?? 0}
+                  onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)) })}
+                  min={0}
+                  max={7}
+                />
+              </Field>
+              <Field label="bitCount">
+                <NumberInput
+                  value={extract.bitCount ?? 5}
+                  onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)) })}
+                  min={1}
+                  max={32}
+                />
+              </Field>
+            </SimpleGrid>
+          </Stack>
         )}
       {extractMode === 'channelGroup' && (
         <Stack gap="xs" mt="xs">
@@ -1879,41 +1919,35 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                 <Text size="xs" fw={600} mb={4}>
                   {key.toUpperCase()} channel
                 </Text>
-                <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
-                  <Field label="Offset">
-                    <NumberInput
-                      value={ch.offset ?? 0}
-                      onChange={(v) =>
-                        setChannel(key, { offset: Math.max(0, parseInt(v, 10) || 0) })
-                      }
-                      min={0}
-                    />
-                  </Field>
-                  <Field label="bitStart">
-                    <NumberInput
-                      value={ch.bitStart ?? (scale === 'direct8' ? 0 : 1)}
-                      onChange={(v) =>
-                        setChannel(key, {
-                          bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
-                        })
-                      }
-                      min={0}
-                      max={7}
-                    />
-                  </Field>
-                  <Field label="bitCount">
-                    <NumberInput
-                      value={ch.bitCount ?? (scale === 'direct8' ? 8 : 6)}
-                      onChange={(v) =>
-                        setChannel(key, {
-                          bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)),
-                        })
-                      }
-                      min={1}
-                      max={32}
-                    />
-                  </Field>
-                </SimpleGrid>
+                <Stack gap="xs">
+                  <OffsetOrAnchorField node={ch} onPatch={(p) => setChannel(key, p)} />
+                  <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+                    <Field label="bitStart">
+                      <NumberInput
+                        value={ch.bitStart ?? (scale === 'direct8' ? 0 : 1)}
+                        onChange={(v) =>
+                          setChannel(key, {
+                            bitStart: Math.min(7, Math.max(0, parseInt(v, 10) || 0)),
+                          })
+                        }
+                        min={0}
+                        max={7}
+                      />
+                    </Field>
+                    <Field label="bitCount">
+                      <NumberInput
+                        value={ch.bitCount ?? (scale === 'direct8' ? 8 : 6)}
+                        onChange={(v) =>
+                          setChannel(key, {
+                            bitCount: Math.min(32, Math.max(1, parseInt(v, 10) || 1)),
+                          })
+                        }
+                        min={1}
+                        max={32}
+                      />
+                    </Field>
+                  </SimpleGrid>
+                </Stack>
               </Paper>
             );
           })}
@@ -2073,21 +2107,19 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
               ]}
             />
             {colorBlend.ratio?.mode === 'extract' ? (
-              <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xs">
-                <Field label="Offset">
-                  <NumberInput
-                    value={colorBlend.ratio.offset ?? 0}
-                    onChange={(v) =>
-                      set({
-                        colorBlend: {
-                          ...colorBlend,
-                          ratio: { ...colorBlend.ratio, offset: Math.max(0, parseInt(v, 10) || 0) },
-                        },
-                      })
-                    }
-                    min={0}
-                  />
-                </Field>
+              <Stack gap="xs">
+                <OffsetOrAnchorField
+                  node={colorBlend.ratio}
+                  onPatch={(p) =>
+                    set({
+                      colorBlend: {
+                        ...colorBlend,
+                        ratio: { ...colorBlend.ratio, ...p },
+                      },
+                    })
+                  }
+                />
+                <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
                 <Field label="bitStart">
                   <NumberInput
                     value={colorBlend.ratio.bitStart ?? 0}
@@ -2124,7 +2156,8 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                     max={32}
                   />
                 </Field>
-              </SimpleGrid>
+                </SimpleGrid>
+              </Stack>
             ) : (
               <Field label={`Ratio (${((colorBlend.ratio?.value ?? 0.5) * 100).toFixed(0)}% B)`}>
                 <Slider
@@ -2574,20 +2607,18 @@ function RuleCard({
               }
               mb="xs"
             />
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-              <Field label="Byte offset">
-                <NumberInput
-                  value={timing.offset ?? 5}
-                  onChange={(v) =>
-                    onChange({
-                      ...rule,
-                      timing: { ...timing, offset: Math.max(0, parseInt(v, 10) || 0) },
-                    })
-                  }
-                  min={0}
-                  disabled={!timing.enabled}
-                />
-              </Field>
+            <Stack gap="xs">
+              <OffsetOrAnchorField
+                label="Byte offset"
+                node={timing}
+                disabled={!timing.enabled}
+                onPatch={(p) =>
+                  onChange({
+                    ...rule,
+                    timing: { ...timing, ...p },
+                  })
+                }
+              />
               <Field label="Black hold / cooldown (sec)">
                 <NumberInput
                   value={timing.cooldownSec ?? 2}
@@ -2619,7 +2650,7 @@ function RuleCard({
                   disabled={!timing.enabled}
                 />
               </Field>
-            </SimpleGrid>
+            </Stack>
             <Field label="Timing model" mt="xs">
               <SearchableSelect
                 value={timing.timingModelId || ''}
@@ -3104,16 +3135,15 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
             })
           : [];
         let timing = null;
-        if (
-          matched &&
-          selectedRule.timing?.enabled &&
-          bytes.length > Number(selectedRule.timing.offset ?? 0)
-        ) {
-          timing = computeTimingLifecycle(
-            bytes[Number(selectedRule.timing.offset ?? 0)],
-            selectedRule.timing.cooldownSec ?? 2,
-            modelFor(selectedRule),
-          );
+        if (matched && selectedRule.timing?.enabled) {
+          const tOff = resolveOffsetOrAnchor(bytes, selectedRule.timing, 5);
+          if (tOff >= 0 && tOff < bytes.length) {
+            timing = computeTimingLifecycle(
+              bytes[tOff],
+              selectedRule.timing.cooldownSec ?? 2,
+              modelFor(selectedRule),
+            );
+          }
         }
         return {
           rowIdx,
@@ -3159,12 +3189,15 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           })
         : [];
       let timing = null;
-      if (first?.timing?.enabled && bytes.length > Number(first.timing.offset ?? 0)) {
-        timing = computeTimingLifecycle(
-          bytes[Number(first.timing.offset ?? 0)],
-          first.timing.cooldownSec ?? 2,
-          modelFor(first),
-        );
+      if (first?.timing?.enabled) {
+        const tOff = resolveOffsetOrAnchor(bytes, first.timing, 5);
+        if (tOff >= 0 && tOff < bytes.length) {
+          timing = computeTimingLifecycle(
+            bytes[tOff],
+            first.timing.cooldownSec ?? 2,
+            modelFor(first),
+          );
+        }
       }
       return {
         rowIdx,

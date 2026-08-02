@@ -80,3 +80,38 @@ export async function postFinding(entry) {
     }],
   });
 }
+
+/**
+ * entry.byteTags: array aligned to entry.hex bytes; each element is either null or
+ * `{ kind, detail }`.
+ * entry.linkedRuleId: existing rule id this finding maps to, or '' if none.
+ * entry.generatedRuleId: id of a rule this finding created, or '' if none.
+ */
+export async function postByteTagFinding(entry) {
+  await postToSheets({
+    sheet: 'byte_tags',
+    rows: [{
+      finding_id: entry.id,
+      created_at: entry.createdAt,
+      opcode: entry.opcode,
+      hex: entry.hex,
+      byte_tags: (entry.byteTags || [])
+        .map((t, i) => {
+          if (!t) return null;
+          if (t.kind === 'param') {
+            const d = t.detail || {};
+            return `${i}:param:${d.bitStart ?? 0}:${d.bitCount ?? 8}:${(d.paramName || '').replace(/[:,]/g, '_')}`;
+          }
+          if (t.kind === 'color' && t.detail?.mode === 'rgb') {
+            return `${i}:color:rgb:${t.detail.channelRole}:${(t.detail.groupId || '').replace(/[:,]/g, '_')}`;
+          }
+          return `${i}:${t.kind}`;
+        })
+        .filter(Boolean)
+        .join(','),
+      linked_rule_id: entry.linkedRuleId || '',
+      generated_rule_id: entry.generatedRuleId || '',
+      notes: entry.notes ?? '',
+    }],
+  });
+}

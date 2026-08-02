@@ -29,7 +29,7 @@ export async function fireActiveZonePreset(): Promise<QuickActionResult> {
   if (!preset) {
     return { ok: false, message: `Preset missing for zone "${zone.name}".` };
   }
-  // Firmware override priority: NONE < ZONE < MANUAL < SHOW_MODE < BLE_MAGIC < BLE_STARLIGHT.
+  // Firmware override priority: NONE < ZONE < MANUAL < SHOW_MODE < BLE_EFFECT.
   // wled_raw with a preset_id sets MANUAL itself — only pre-clear when something outranks
   // MANUAL, otherwise clearing here just restores the old look for a moment before we
   // overwrite it (visible flash) with nothing gained.

@@ -10,6 +10,7 @@ import LogicBoardScreen from '../screens/more/LogicBoardScreen';
 import MoreHomeScreen from '../screens/more/MoreHomeScreen';
 import ParkShowsScreen from '../screens/more/ParkShowsScreen';
 import PresetsConfigScreen from '../screens/more/PresetsConfigScreen';
+import LiveLogScreen from '../screens/more/LiveLogScreen';
 import { useTheme } from '../utils/theme';
 
 const Stack = createNativeStackNavigator();
@@ -34,6 +35,7 @@ export default function MoreNavigator() {
       <Stack.Screen name="BleData" component={BleDataScreen} options={{ title: 'BLE Data' }} />
       <Stack.Screen name="LogicBoard" component={LogicBoardScreen} options={{ title: 'Logic Board' }} />
       <Stack.Screen name="Diagnostics" component={DiagnosticsScreen} />
+      <Stack.Screen name="LiveLog" component={LiveLogScreen} options={{ title: 'Live Log' }} />
       <Stack.Screen name="Zones" component={ZonesScreen} options={{ title: 'Locations' }} />
     </Stack.Navigator>
   );

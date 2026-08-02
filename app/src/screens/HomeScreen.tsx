@@ -211,6 +211,20 @@ export default function HomeScreen() {
   }, []);
 
   const overrideIndex = deviceStatus?.override ?? 0;
+  const OVERRIDE_LABELS: Record<number, string> = {
+    0: 'None',
+    1: 'Zone',
+    2: 'Manual',
+    3: 'Show Mode',
+    4: 'BLE Effect',
+  };
+  const OVERRIDE_COLORS: Record<number, keyof typeof colors> = {
+    0: 'success',
+    1: 'warning',
+    2: 'warning',
+    3: 'primary',
+    4: 'primary', // no accent token — use primary for BLE Effect
+  };
   const activeZones = zones.filter((z) => activeZoneIds.includes(z.id));
   const fireZone = activeZones.find((z) => z.presetId) ?? null;
   const firePreset = fireZone
@@ -346,6 +360,28 @@ export default function HomeScreen() {
           <View style={s.row}>
             {deviceStatus.wifiConnected ? <IconWifi size={13} color={colors.success} /> : <IconWifiOff size={13} color={colors.danger} />}
             <Text style={s.subText}>WLED: {deviceStatus.wifiConnected ? "connected" : "not connected"}</Text>
+          </View>
+        )}
+        {deviceStatus && (
+          <View style={s.row}>
+            <View
+              style={[
+                s.badge,
+                {
+                  borderColor: colors[OVERRIDE_COLORS[deviceStatus.override] ?? 'border'],
+                  backgroundColor: colors[OVERRIDE_COLORS[deviceStatus.override] ?? 'border'] + '18',
+                },
+              ]}
+            >
+              <Text style={[s.badgeText, { color: colors[OVERRIDE_COLORS[deviceStatus.override] ?? 'textPrimary'] }]}>
+                {OVERRIDE_LABELS[deviceStatus.override] ?? `Override ${deviceStatus.override}`}
+              </Text>
+            </View>
+            {deviceStatus.override === 3 && deviceStatus.showType ? (
+              <Text style={s.subText}>
+                {deviceStatus.showType}{deviceStatus.showPhase ? ` · ${deviceStatus.showPhase}` : ''}
+              </Text>
+            ) : null}
           </View>
         )}
       </View>

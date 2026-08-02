@@ -8,19 +8,17 @@
 #include "MbRuleEngine.h"
 
 void touchOverrideIdleTimer(OverrideSource src) {
-  unsigned long now = millis();
-  if (src == BLE_MAGIC) mbEventTimestamp = now;
-  else if (src == BLE_STARLIGHT) swEventTimestamp = now;
+  if (src == BLE_EFFECT) mbEventTimestamp = millis();
 }
 
 int overridePriority(OverrideSource src) {
   switch (src) {
-    case ZONE:          return 1;
-    case MANUAL:        return 2;
-    case SHOW_MODE:     return 3;
-    case BLE_STARLIGHT: return 4;
-    case BLE_MAGIC:     return 5;
-    default:            return 0;
+    case NONE:       return 0;
+    case ZONE:       return 1;
+    case MANUAL:     return 2;
+    case SHOW_MODE:  return 3;
+    case BLE_EFFECT: return 4;
+    default:         return 0;
   }
 }
 
@@ -31,12 +29,12 @@ bool canTakeOverride(OverrideSource incoming) {
 }
 
 void setOverride(OverrideSource src) {
-  if (currentOverride == SHOW_MODE && (src == BLE_MAGIC || src == BLE_STARLIGHT)) {
+  if (currentOverride == SHOW_MODE && src == BLE_EFFECT) {
     overrideBeforeInterrupt = SHOW_MODE;
   }
   currentOverride = src;
   overrideTimestamp = millis();
-  if (src == BLE_MAGIC && pendingMbEffectPayload && pendingMbEffectPayloadLen > 0) {
+  if (src == BLE_EFFECT && pendingMbEffectPayload && pendingMbEffectPayloadLen > 0) {
     rememberMbEffect(pendingMbEffectPayload, pendingMbEffectPayloadLen);
   }
   Serial.printf("[Override] Set to %d\n", (int)src);
@@ -47,8 +45,7 @@ void saveWledStateForOverride() {
 
   if (savedRestoreOverride == NONE && savedRestorePresetId.length() == 0) {
     savedRestoreOverride = currentOverride;
-    if (savedRestoreOverride == BLE_MAGIC || savedRestoreOverride == BLE_STARLIGHT ||
-        savedRestoreOverride == SHOW_MODE) {
+    if (savedRestoreOverride == BLE_EFFECT || savedRestoreOverride == SHOW_MODE) {
       savedRestoreOverride = NONE;
     }
     if ((currentOverride == ZONE || currentOverride == MANUAL) && currentPresetId.length() > 0) {
@@ -313,14 +310,14 @@ void pollLiveWledState() {
 
 void clearOverride() {
   OverrideSource prev = currentOverride;
-  unsigned long fadeMs = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) ? bleEffectTransitionMs : 0;
+  unsigned long fadeMs = (prev == BLE_EFFECT) ? bleEffectTransitionMs : 0;
 
   // Shape-safe dip payload must be captured before resetMbRuleLifecycle() clears mbActiveRuleId.
-  bool dipToBlack = (prev == BLE_MAGIC || prev == BLE_STARLIGHT) && fadeMs > 0;
+  bool dipToBlack = (prev == BLE_EFFECT) && fadeMs > 0;
   String dipBody = dipToBlack ? buildDipPayload() : String("{\"on\":false}");
 
   // Timed rule lifecycle ends with clearOverride — avoid double-reset from serviceMbRuleLifecycle.
-  if (mbRulePhase != MB_RULE_IDLE && prev == BLE_MAGIC) {
+  if (mbRulePhase != MB_RULE_IDLE && prev == BLE_EFFECT) {
     // Keep fade duration from the rule when we're finishing COOLDOWN via serviceMbRuleLifecycle
     // (already faded). For external clears, reset phase tracking.
   }
@@ -335,7 +332,7 @@ void clearOverride() {
   pendingRestoreBlendingStyle = -1;
   pendingRestoreAfterOverride = NONE;
 
-  if (overrideBeforeInterrupt == SHOW_MODE && (prev == BLE_MAGIC || prev == BLE_STARLIGHT)) {
+  if (overrideBeforeInterrupt == SHOW_MODE && prev == BLE_EFFECT) {
     overrideBeforeInterrupt = NONE;
     currentOverride = SHOW_MODE;
     overrideTimestamp = millis();
@@ -481,7 +478,7 @@ bool zoneWantsPreset(const String& presetId) {
     Serial.println("[Zone] Boundary-only zone (no preset)");
     return false;
   }
-  if (currentOverride == BLE_STARLIGHT || currentOverride == BLE_MAGIC) {
+  if (currentOverride == BLE_EFFECT) {
     if (!overrideKillOnZone) {
       Serial.println("[Zone] Blocked by active override");
       return false;

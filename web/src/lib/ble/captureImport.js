@@ -13,7 +13,7 @@ const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/i;
 
 /** Default Sheets / observation export header (tab- or comma-separated). */
 export const SHEETS_CAPTURE_HEADER =
-  'observation_id\tsession_id\tsession_name\thex\topcode\ttag\tboard_ts\treceived_at\trssi\tlen\tquality\tfunc\tlabel\tnote\tdevice_id\tlat\tlng\taccuracy_m\tgps_updated_at';
+  'observation_id\tsession_id\tsession_name\thex\topcode\ttag\tboard_ts_date\tboard_ts_time\treceived_at_date\treceived_at_time\trssi\tlen\tquality\tfunc\tlabel\tnote\tdevice_id\tlat\tlng\taccuracy_m\tgps_updated_at';
 
 /** Column indices for legacy tab-delimited Illuma capture exports. */
 const CAPTURE_LAYOUTS = {
@@ -97,7 +97,11 @@ function sheetsColumnMap(headerLine) {
     tag: idx('tag'),
     label: idx('label'),
     boardTs: idx('board_ts'),
+    boardTsDate: idx('board_ts_date'),
+    boardTsTime: idx('board_ts_time'),
     receivedAt: idx('received_at'),
+    receivedAtDate: idx('received_at_date'),
+    receivedAtTime: idx('received_at_time'),
     deviceId: idx('device_id'),
     lat: idx('lat'),
     lng: idx('lng'),
@@ -123,6 +127,14 @@ function parseTimestampMs(raw) {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+/** Combine YYYY-MM-DD + HH:MM:SS sheet columns into epoch ms. */
+function parseSplitDateTimeMs(dateStr, timeStr) {
+  const d = String(dateStr || '').trim();
+  const t = String(timeStr || '').trim();
+  if (!d) return null;
+  return parseTimestampMs(t ? `${d}T${t}` : d);
 }
 
 function cleanHex(raw) {
@@ -267,7 +279,9 @@ function parseSheetsCaptureLine(line, colMap) {
   const tag = fieldAt(fields, colMap.tag) || fieldAt(fields, colMap.label) || '';
   const ts =
     parseTimestampMs(fieldAt(fields, colMap.boardTs)) ??
-    parseTimestampMs(fieldAt(fields, colMap.receivedAt));
+    parseSplitDateTimeMs(fieldAt(fields, colMap.boardTsDate), fieldAt(fields, colMap.boardTsTime)) ??
+    parseTimestampMs(fieldAt(fields, colMap.receivedAt)) ??
+    parseSplitDateTimeMs(fieldAt(fields, colMap.receivedAtDate), fieldAt(fields, colMap.receivedAtTime));
   const deviceId = fieldAt(fields, colMap.deviceId) || undefined;
   const lat = parseOptionalFloat(fieldAt(fields, colMap.lat));
   const lng = parseOptionalFloat(fieldAt(fields, colMap.lng));

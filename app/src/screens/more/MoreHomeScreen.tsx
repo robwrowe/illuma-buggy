@@ -11,6 +11,7 @@ const MORE_DESTINATIONS = [
   ['BleData', 'Calibration and BLE mapping'],
   ['LogicBoard', 'Board mode and WLED network'],
   ['Diagnostics', 'Capture diagnostics'],
+  ['LiveLog', 'Real-time BLE command and status log'],
   ['Zones', 'Edit location zones'],
 ] as const;
 
@@ -25,7 +26,7 @@ export default function MoreHomeScreen({ navigation }: { navigation: any }) {
         {MORE_DESTINATIONS.map(([route, hint]) => (
           <TouchableOpacity key={route} style={s.row} onPress={() => navigation.navigate(route)}>
             <View style={{ flex: 1 }}>
-              <Text style={s.rowLabel}>{route === 'PresetsConfig' ? 'Presets' : route === 'BleData' ? 'BLE Data' : route === 'LogicBoard' ? 'Logic Board' : route === 'ParkShows' ? 'Park Shows' : route}</Text>
+              <Text style={s.rowLabel}>{route === 'PresetsConfig' ? 'Presets' : route === 'BleData' ? 'BLE Data' : route === 'LogicBoard' ? 'Logic Board' : route === 'ParkShows' ? 'Park Shows' : route === 'LiveLog' ? 'Live Log' : route}</Text>
               <Text style={s.rowHint}>{hint}</Text>
             </View>
             <Text style={{ color: colors.primary, fontSize: 20 }}>›</Text>

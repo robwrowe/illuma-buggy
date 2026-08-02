@@ -123,9 +123,9 @@ App `CHUNKED_TYPES` entry: `'rule_log': 'rule_log_done'`.
 }
 ```
 
-**`override` values:** `0`=NONE · `1`=ZONE · `2`=MANUAL · `3`=BLE_MAGIC · `4`=BLE_STARLIGHT
+**`override` values:** `0`=NONE · `1`=ZONE · `2`=MANUAL · `3`=SHOW_MODE · `4`=BLE_EFFECT
 
-Priority: Starlight Wand > MagicBand+ > Manual > Zone.
+Priority: BLE Effect > Show Mode > Manual > Zone. MagicBand+ and Starlight Wand share `BLE_EFFECT` (same priority tier); per-rule exclusivity flags arbitrate between them.
 
 When WiFi/WLED is up, `brightness` is refreshed from WLED `/json/si` before status is emitted (avoids cold default `128`).
 

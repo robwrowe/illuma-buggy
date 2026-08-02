@@ -298,20 +298,21 @@ ls app/node_modules/@tabler/icons-react-native/dist/esm/icons/ | grep "^IconName
 NimBLECharacteristic* notifyChar;
 bool bleConnected;
 
-// Override system — priority: Starlight Wand > MagicBand+ > Manual > Zone
-enum OverrideSource { NONE, ZONE, MANUAL, BLE_MAGIC, BLE_STARLIGHT };
+// Override system — priority: BLE_EFFECT > SHOW_MODE > MANUAL > ZONE
+enum OverrideSource { NONE, ZONE, MANUAL, SHOW_MODE, BLE_EFFECT };
 OverrideSource currentOverride;
 unsigned long overrideTimestamp;
 
 // Starlight Wand
 bool starlightEnabled;
 unsigned long starlightTimeoutMs; // ms before auto-clear (0 = never)
-unsigned long swEventTimestamp;
 
 // MagicBand / BLE Data
 bool magicBandEnabled;
 bool rulesPaused;                 // pause rule match/apply (NVS); does not clear override
 unsigned long magicBandTimeoutMs;
+unsigned long mbEventTimestamp;   // shared BLE_EFFECT idle timer
+bool lastMatchedRuleWasWand;      // selects flat timeout (sw vs mb)
 unsigned long mbEventTimestamp;
 
 // WLED

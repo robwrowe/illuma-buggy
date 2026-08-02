@@ -180,6 +180,28 @@ export function extractE9Opcode(payload: number[]): number | null {
   return null;
 }
 
+/**
+ * Display opcode for Sheets / capture UI.
+ * Recognizes packets after optional 8301 CID:
+ *   8301 e1/e2 … e9 xx  → E9XX
+ *   8301 e9 xx          → E9XX
+ *   8301 cd 07 …        → CD07 (parade / starlight beacon family)
+ *   8301 cf 0b/9b …     → CF0B / CF9B (wand cast)
+ */
+export function deriveDisneyOpcodeHex(hex: string): string {
+  const payload = disneyPayload(hexToBytes(hex));
+  if (payload.length < 2) return '';
+  const e9 = extractE9Opcode(payload);
+  if (e9 != null) {
+    return e9.toString(16).toUpperCase().padStart(4, '0');
+  }
+  // CD## (parade beacon / starlight) and CF## (wand cast) — first two payload bytes
+  if (payload[0] === 0xcd || payload[0] === 0xcf) {
+    return ((payload[0] << 8) | payload[1]).toString(16).toUpperCase().padStart(4, '0');
+  }
+  return '';
+}
+
 export function opcodeToHex(op: number): string {
   return `E${op.toString(16).toUpperCase().padStart(4, '0')}`;
 }
