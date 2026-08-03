@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
+  Box,
   Center,
   Checkbox,
   ColorInput,
@@ -77,13 +78,16 @@ import {
   findMatchingRule,
   formatOffsetOrAnchorLabel,
   hexToBytes,
+  previewColorSourcesList,
   previewExtracts,
   previewPacketAgainstRules,
   resolveOffsetOrAnchor,
 } from '../../lib/ble/e9Decode';
 import { parseCapturePaste } from '../../lib/ble/captureImport';
 import { sendHex, stripCompanyId } from '../../lib/ble/wandSimClient';
+import { rgbToHex } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
+import { ColorSwatch } from '../shared/ColorSwatch';
 
 const CMP_OP_OPTS = [
   { value: 'eq', label: 'eq' },
@@ -98,7 +102,7 @@ const BYTE_OP_OPTS = [...CMP_OP_OPTS, { value: 'maskEq', label: 'maskEq' }];
 
 const LEAF_TYPE_OPTS = [
   { value: 'hexPrefix', label: 'hexPrefix' },
-  { value: 'length', label: 'length' },
+  { value: 'length', label: 'byte length' },
   { value: 'byte', label: 'byte' },
   { value: 'bits', label: 'bits' },
   { value: 'byteCompare', label: 'byteCompare' },
@@ -232,14 +236,28 @@ function HexByteInput({ value, onChange, placeholder = '0x00' }) {
  * Drop-in replacement for a bare "Offset" NumberInput field. Toggles between
  * absolute offset and marker-anchor mode. `node` must have `.offset` and optionally `.anchor`.
  * `onPatch(partialNode)` merges into the parent node (same convention as `set()` callers).
+ * When `showAnchorExtras` is true (default), anchor mode also exposes fallbackValue + requireAnchor.
  */
-function OffsetOrAnchorField({ node, onPatch, label = 'Offset', disabled = false }) {
+function OffsetOrAnchorField({
+  node,
+  onPatch,
+  label = 'Offset',
+  disabled = false,
+  showAnchorExtras = true,
+}) {
   const mode = node?.anchor ? 'anchor' : 'offset';
   const anchor = node?.anchor || { byte: '0F', occurrence: 1, searchFrom: 0, searchLen: 0, deltaBytes: 0 };
 
   const setMode = (next) => {
-    if (next === 'offset') onPatch({ anchor: null });
-    else onPatch({ anchor: normalizeAnchor(anchor) || anchor });
+    if (next === 'offset') {
+      onPatch({ anchor: null, fallbackValue: 0, requireAnchor: false });
+    } else {
+      onPatch({
+        anchor: normalizeAnchor(anchor) || anchor,
+        fallbackValue: Number.isFinite(node?.fallbackValue) ? node.fallbackValue : 0,
+        requireAnchor: !!node?.requireAnchor,
+      });
+    }
   };
   const patchAnchor = (partial) => onPatch({ anchor: normalizeAnchor({ ...anchor, ...partial }) });
 
@@ -264,35 +282,60 @@ function OffsetOrAnchorField({ node, onPatch, label = 'Offset', disabled = false
           disabled={disabled}
         />
       ) : (
-        <SimpleGrid cols={2} spacing={4}>
-          <Field label="Marker byte" style={{ marginBottom: 0 }}>
-            <HexByteInput
-              value={parseInt(anchor.byte || '0F', 16)}
-              onChange={(v) => patchAnchor({ byte: v.toString(16).padStart(2, '0') })}
-              placeholder="0x0F"
-            />
-          </Field>
-          <Field label="Occurrence" style={{ marginBottom: 0 }}>
-            <NumberInput size="xs" min={1} value={anchor.occurrence ?? 1}
-              onChange={(v) => patchAnchor({ occurrence: Math.max(1, parseInt(v, 10) || 1) })}
-              disabled={disabled} />
-          </Field>
-          <Field label="Search from" style={{ marginBottom: 0 }}>
-            <NumberInput size="xs" min={0} value={anchor.searchFrom ?? 0}
-              onChange={(v) => patchAnchor({ searchFrom: Math.max(0, parseInt(v, 10) || 0) })}
-              disabled={disabled} />
-          </Field>
-          <Field label="Search len (0=all)" style={{ marginBottom: 0 }}>
-            <NumberInput size="xs" min={0} value={anchor.searchLen ?? 0}
-              onChange={(v) => patchAnchor({ searchLen: Math.max(0, parseInt(v, 10) || 0) })}
-              disabled={disabled} />
-          </Field>
-          <Field label="Δ bytes after match" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
-            <NumberInput size="xs" value={anchor.deltaBytes ?? 0}
-              onChange={(v) => patchAnchor({ deltaBytes: parseInt(v, 10) || 0 })}
-              disabled={disabled} />
-          </Field>
-        </SimpleGrid>
+        <Stack gap={4}>
+          <SimpleGrid cols={2} spacing={4}>
+            <Field label="Marker byte" style={{ marginBottom: 0 }}>
+              <HexByteInput
+                value={parseInt(anchor.byte || '0F', 16)}
+                onChange={(v) => patchAnchor({ byte: v.toString(16).padStart(2, '0') })}
+                placeholder="0x0F"
+              />
+            </Field>
+            <Field label="Occurrence" style={{ marginBottom: 0 }}>
+              <NumberInput size="xs" min={1} value={anchor.occurrence ?? 1}
+                onChange={(v) => patchAnchor({ occurrence: Math.max(1, parseInt(v, 10) || 1) })}
+                disabled={disabled} />
+            </Field>
+            <Field label="Search from" style={{ marginBottom: 0 }}>
+              <NumberInput size="xs" min={0} value={anchor.searchFrom ?? 0}
+                onChange={(v) => patchAnchor({ searchFrom: Math.max(0, parseInt(v, 10) || 0) })}
+                disabled={disabled} />
+            </Field>
+            <Field label="Search len (0=all)" style={{ marginBottom: 0 }}>
+              <NumberInput size="xs" min={0} value={anchor.searchLen ?? 0}
+                onChange={(v) => patchAnchor({ searchLen: Math.max(0, parseInt(v, 10) || 0) })}
+                disabled={disabled} />
+            </Field>
+            <Field label="Δ bytes after match" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
+              <NumberInput size="xs" value={anchor.deltaBytes ?? 0}
+                onChange={(v) => patchAnchor({ deltaBytes: parseInt(v, 10) || 0 })}
+                disabled={disabled} />
+            </Field>
+          </SimpleGrid>
+          {showAnchorExtras && (
+            <Stack gap={4}>
+              <Field label="Fallback value (if marker missing)" style={{ marginBottom: 0 }}>
+                <NumberInput
+                  size="xs"
+                  min={0}
+                  max={255}
+                  value={node?.fallbackValue ?? 0}
+                  onChange={(v) => onPatch({
+                    fallbackValue: Math.max(0, Math.min(255, parseInt(v, 10) || 0)),
+                  })}
+                  disabled={disabled}
+                />
+              </Field>
+              <Checkbox
+                size="xs"
+                label="Fail rule match if marker not found"
+                checked={!!node?.requireAnchor}
+                onChange={(e) => onPatch({ requireAnchor: e.currentTarget.checked })}
+                disabled={disabled}
+              />
+            </Stack>
+          )}
+        </Stack>
       )}
     </Stack>
   );
@@ -401,27 +444,32 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
         </Field>
       )}
       {node.type === 'length' && (
-        <Group gap="xs" grow>
-          <Field label="Op">
-            <SearchableSelect
-              value={node.op || 'eq'}
-              onChange={(op) => set({ op })}
-              options={CMP_OP_OPTS}
-              allowEmpty={false}
-            />
-          </Field>
-          <Field label="Value">
-            <NumberInput
-              value={node.value ?? 0}
-              onChange={(v) => set({ value: parseInt(v, 10) || 0 })}
-              min={0}
-            />
-          </Field>
-        </Group>
+        <Stack gap={4}>
+          <Group gap="xs" grow>
+            <Field label="Op">
+              <SearchableSelect
+                value={node.op || 'eq'}
+                onChange={(op) => set({ op })}
+                options={CMP_OP_OPTS}
+                allowEmpty={false}
+              />
+            </Field>
+            <Field label="Byte length">
+              <NumberInput
+                value={node.value ?? 0}
+                onChange={(v) => set({ value: Math.max(0, parseInt(v, 10) || 0) })}
+                min={0}
+              />
+            </Field>
+          </Group>
+          <Text size="xs" c="dimmed">
+            Compares payload length after the 8301 CID is stripped (eq / neq / lt / lte / gt / gte).
+          </Text>
+        </Stack>
       )}
       {node.type === 'byte' && (
         <Stack gap="xs">
-          <OffsetOrAnchorField node={node} onPatch={(p) => set(p)} />
+          <OffsetOrAnchorField node={node} onPatch={(p) => set(p)} showAnchorExtras={false} />
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
             <Field label="Op">
               <SearchableSelect
@@ -452,7 +500,7 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
       )}
       {node.type === 'bits' && (
         <Stack gap="xs">
-          <OffsetOrAnchorField node={node} onPatch={(p) => set(p)} />
+          <OffsetOrAnchorField node={node} onPatch={(p) => set(p)} showAnchorExtras={false} />
           <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
             <Field label="bitStart">
               <NumberInput
@@ -496,6 +544,7 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
           <OffsetOrAnchorField
             node={node.left}
             onPatch={(p) => set({ left: { ...node.left, ...p } })}
+            showAnchorExtras={false}
           />
           <Group gap="xs" grow align="flex-end">
             <Field label="bitStart">
@@ -543,6 +592,7 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
           <OffsetOrAnchorField
             node={node.right}
             onPatch={(p) => set({ right: { ...node.right, ...p } })}
+            showAnchorExtras={false}
           />
           <Group gap="xs" grow align="flex-end">
             <Field label="bitStart">
@@ -3087,6 +3137,82 @@ function RuleCard({
   );
 }
 
+function formatExtractValueLabel(ex) {
+  if (!ex) return '';
+  if (ex.rgb) {
+    const hex = rgbToHex(ex.rgb[0], ex.rgb[1], ex.rgb[2]);
+    if (ex.paletteIndex != null) return `pal ${ex.paletteIndex} · ${hex}`;
+    if (ex.source === 'timingFlashRate') return `${Number(ex.mapped).toFixed(2)} Hz`;
+    if (ex.source === 'timingOnSec' || ex.source === 'timingFadeSec') {
+      return `${Number(ex.mapped).toFixed(2)}s`;
+    }
+    if (typeof ex.mapped === 'number' && ex.mapped !== 0 && !Number.isInteger(ex.mapped)) {
+      return `${ex.mapped}`;
+    }
+    return hex;
+  }
+  if (ex.paletteIndex != null) return `pal ${ex.paletteIndex}`;
+  if (ex.source === 'timingFlashRate') return `${Number(ex.mapped ?? ex.raw).toFixed(2)} Hz`;
+  if (ex.source === 'timingOnSec' || ex.source === 'timingFadeSec') {
+    return `${Number(ex.mapped ?? ex.raw).toFixed(2)}s`;
+  }
+  if (ex.mapped != null && ex.mapped !== ex.raw) return `raw ${ex.raw} → ${ex.mapped}`;
+  return `raw ${ex.raw}`;
+}
+
+/** Compact color + extract readout for coverage preview rows. */
+function PreviewPacketExtracts({ colorSources = [], extracts = [] }) {
+  const hasColors = (colorSources || []).length > 0;
+  const hasExtracts = (extracts || []).length > 0;
+  if (!hasColors && !hasExtracts) {
+    return (
+      <Text size="xs" c="dimmed">
+        —
+      </Text>
+    );
+  }
+  return (
+    <Stack gap={4}>
+      {hasColors && (
+        <Group gap={6} wrap="wrap">
+          {(colorSources || []).map((cs) => {
+            const hex = cs.rgb ? rgbToHex(cs.rgb[0], cs.rgb[1], cs.rgb[2]) : '#000000';
+            return (
+              <Group key={`cs-${cs.name}`} gap={4} wrap="nowrap">
+                <ColorSwatch colors={[hex]} size={12} />
+                <Text size="xs" ff="monospace">
+                  {cs.name || 'color'} {hex}
+                </Text>
+              </Group>
+            );
+          })}
+        </Group>
+      )}
+      {(extracts || []).map((ex, i) => {
+        const hex = ex.rgb ? rgbToHex(ex.rgb[0], ex.rgb[1], ex.rgb[2]) : null;
+        return (
+          <Group key={`ex-${ex.name || i}`} gap={6} wrap="nowrap" align="flex-start">
+            {hex ? (
+              <Box mt={2}>
+                <ColorSwatch colors={[hex]} size={12} />
+              </Box>
+            ) : (
+              <Box w={12} />
+            )}
+            <Text size="xs" ff="monospace" style={{ flex: 1, lineHeight: 1.35 }}>
+              <Text span fw={600}>
+                {ex.name || `ex${i}`}
+              </Text>
+              {' · '}
+              {formatExtractValueLabel(ex)}
+            </Text>
+          </Group>
+        );
+      })}
+    </Stack>
+  );
+}
+
 function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels, simIp = '' }) {
   const navigate = useNavigate();
   const [paste, setPaste] = useState('');
@@ -3134,6 +3260,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
               timingModels,
             })
           : [];
+        const colorSources = matched
+          ? previewColorSourcesList(selectedRule.colorSources || [], bytes, colors)
+          : [];
         let timing = null;
         if (matched && selectedRule.timing?.enabled) {
           const tOff = resolveOffsetOrAnchor(bytes, selectedRule.timing, 5);
@@ -3153,6 +3282,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           ruleName: matched ? selectedRule.name : null,
           priority: matched ? selectedRule.priority : null,
           extracts,
+          colorSources,
           timing,
         };
       }
@@ -3164,6 +3294,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           segmentMaps,
           timingModels,
         });
+        const extractRule = selectedRule || prev.matchedRule;
         return {
           rowIdx,
           hex: prev.hex,
@@ -3172,12 +3303,15 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           ruleName: prev.matchingRules.map((m) => m.rule.name).join(', ') || null,
           ruleNames: prev.matchingRules.map((m) => m.rule.name),
           priority: prev.matchingRules[0]?.rule?.priority ?? null,
-          extracts: selectedRule
-            ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule), {
-                rule: selectedRule,
+          extracts: extractRule
+            ? previewExtracts(bytes, extractRule.extract || [], colors, mapFor(extractRule), {
+                rule: extractRule,
                 timingModels,
               })
-            : prev.extracts,
+            : [],
+          colorSources: extractRule
+            ? previewColorSourcesList(extractRule.colorSources || [], bytes, colors)
+            : [],
           timing: prev.timing,
         };
       }
@@ -3187,6 +3321,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
             rule: first,
             timingModels,
           })
+        : [];
+      const colorSources = first
+        ? previewColorSourcesList(first.colorSources || [], bytes, colors)
         : [];
       let timing = null;
       if (first?.timing?.enabled) {
@@ -3207,6 +3344,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
         ruleName: first?.name || null,
         priority: first?.priority ?? null,
         extracts,
+        colorSources,
         timing,
       };
     });
@@ -3347,7 +3485,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
         )}
 
         {packets.length > 0 && (
-          <Table.ScrollContainer minWidth={760}>
+          <Table.ScrollContainer minWidth={980}>
             <Table striped highlightOnHover withTableBorder withColumnBorders fz="xs">
               <Table.Thead>
                 <Table.Tr>
@@ -3356,6 +3494,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                   <Table.Th w={70}>Pri</Table.Th>
                   <Table.Th>Rule</Table.Th>
                   <Table.Th>Hex (payload)</Table.Th>
+                  <Table.Th miw={220}>Colors / extracts</Table.Th>
                   <Table.Th w={160}>Timing</Table.Th>
                   <Table.Th w={150}>Wand Lab</Table.Th>
                 </Table.Tr>
@@ -3403,12 +3542,12 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                       <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
                         {p.hex}
                       </Text>
-                      {(p.extracts || []).length > 0 && (
-                        <Text size="xs" c="dimmed" mt={2}>
-                          {(p.extracts || []).map((ex) => ex.name || 'ex').join(', ')} extract
-                          {(p.extracts || []).length === 1 ? '' : 's'}
-                        </Text>
-                      )}
+                    </Table.Td>
+                    <Table.Td>
+                      <PreviewPacketExtracts
+                        colorSources={p.colorSources}
+                        extracts={p.extracts}
+                      />
                     </Table.Td>
                     <Table.Td>
                       {p.timing ? (
@@ -3456,7 +3595,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                 ))}
                 {visiblePackets.length === 0 && (
                   <Table.Tr>
-                    <Table.Td colSpan={7}>
+                    <Table.Td colSpan={8}>
                       <Text size="xs" c="dimmed">
                         No unmatched packets in this paste.
                       </Text>

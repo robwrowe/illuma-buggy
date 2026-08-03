@@ -55,6 +55,18 @@ export function normalizeAnchor(raw) {
   };
 }
 
+/** Normalize optional fallback / require flags used when an anchor marker is missing. */
+export function normalizeAnchorExtras(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { fallbackValue: 0, requireAnchor: false };
+  }
+  const fv = Number(raw.fallbackValue);
+  return {
+    fallbackValue: Number.isFinite(fv) ? Math.max(0, Math.min(255, Math.round(fv))) : 0,
+    requireAnchor: !!raw.requireAnchor,
+  };
+}
+
 export function shortSegmentMapId() {
   return `sm${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
 }
@@ -983,6 +995,7 @@ function normalizeColorBlendSource(raw, fallbackOffset = 0) {
       return {
         offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fo,
         anchor: normalizeAnchor(src.anchor),
+        ...normalizeAnchorExtras(src),
         bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : 0,
         bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : 8,
       };
@@ -1005,6 +1018,7 @@ function normalizeColorBlendSource(raw, fallbackOffset = 0) {
     kind: 'palette',
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : fallbackOffset,
     anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
     paletteMap: raw.paletteMap !== false,
@@ -1021,6 +1035,7 @@ function normalizeColorBlend(raw) {
       mode: 'extract',
       offset: Number.isFinite(ratioRaw.offset) ? Math.max(0, Number(ratioRaw.offset)) : 0,
       anchor: normalizeAnchor(ratioRaw.anchor),
+      ...normalizeAnchorExtras(ratioRaw),
       bitStart: Number.isFinite(ratioRaw.bitStart) ? Math.min(7, Math.max(0, Number(ratioRaw.bitStart))) : 0,
       bitCount: Number.isFinite(ratioRaw.bitCount) ? Math.min(32, Math.max(1, Number(ratioRaw.bitCount))) : 8,
     }
@@ -1046,6 +1061,7 @@ function normalizeChannelGroup(raw, fallbackOffset = 8) {
     return {
       offset: Number.isFinite(c.offset) ? Math.max(0, Number(c.offset)) : fo,
       anchor: normalizeAnchor(c.anchor),
+      ...normalizeAnchorExtras(c),
       bitStart: Number.isFinite(c.bitStart) ? Math.min(7, Math.max(0, Number(c.bitStart))) : 0,
       bitCount: Number.isFinite(c.bitCount) ? Math.min(32, Math.max(1, Number(c.bitCount))) : 8,
     };
@@ -1082,6 +1098,7 @@ export function normalizeColorSource(raw, index = 0) {
     kind: 'palette',
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
     anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
   };
@@ -1162,6 +1179,7 @@ export function normalizeExtract(raw) {
     source,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
     anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
     paletteMap,
@@ -1185,6 +1203,7 @@ export function normalizeExtract(raw) {
       return {
         offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fallbackOffset,
         anchor: normalizeAnchor(src.anchor),
+        ...normalizeAnchorExtras(src),
         bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : defaultBitStart,
         bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : defaultBitCount,
       };
@@ -1339,6 +1358,7 @@ export function normalizeRuleTiming(raw) {
     enabled: !!raw.enabled,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : d.offset,
     anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     cooldownSec: Number.isFinite(raw.cooldownSec) ? Math.max(0, Number(raw.cooldownSec)) : d.cooldownSec,
     cooldownResetMode: COOLDOWN_RESET_MODES.has(raw.cooldownResetMode) ? raw.cooldownResetMode : d.cooldownResetMode,
     timingModelId: typeof raw.timingModelId === 'string' ? raw.timingModelId : '',

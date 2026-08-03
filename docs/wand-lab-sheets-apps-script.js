@@ -11,10 +11,11 @@
  *   raw_captures: hex | opcode | first_seen_show | first_seen_ts | last_seen_ts |
  *                 times_seen | tested_in_wandlab | finding_id | best_rssi
  *   observations: observation_id | session_id | session_name | hex | opcode | tag |
- *                 board_ts_date | board_ts_time | received_at_date | received_at_time |
+ *                 board_ts | board_ts_date | board_ts_time |
+ *                 received_at | received_at_date | received_at_time |
  *                 rssi | len | quality | func | label | note |
  *                 device_id | lat | lng | accuracy_m | gps_updated_at
- *                 (date = YYYY-MM-DD, time = HH:MM:SS — script timezone)
+ *                 (board_ts / received_at = unix epoch ms; date = YYYY-MM-DD, time = HH:MM:SS — script timezone)
  *   byte_tags: finding_id | created_at | opcode | hex | byte_tags | linked_rule_id |
  *              generated_rule_id | notes
  *              (byte_tags is comma-separated "idx:kind" pairs, e.g. "0:signature,9:color";
@@ -58,6 +59,24 @@ function splitTsDateTime(raw) {
     Utilities.formatDate(d, tz, 'yyyy-MM-dd'),
     Utilities.formatDate(d, tz, 'HH:mm:ss'),
   ];
+}
+
+/** Normalize to unix epoch milliseconds (empty string if unparseable). */
+function toUnixMs(raw) {
+  if (raw === '' || raw == null) return '';
+  if (Object.prototype.toString.call(raw) === '[object Date]') {
+    var t = raw.getTime();
+    return isNaN(t) ? '' : t;
+  }
+  if (typeof raw === 'number' || (/^\d+$/).test(String(raw))) {
+    var n = Number(raw);
+    if (!isFinite(n) || n <= 0) return '';
+    if (n < 1e12) n *= 1000;
+    return Math.round(n);
+  }
+  var d = new Date(String(raw));
+  if (isNaN(d.getTime())) return '';
+  return d.getTime();
 }
 
 function doPost(e) {
@@ -124,7 +143,9 @@ function doPost(e) {
       const recv = splitTsDateTime(r.received_at);
       sheet.appendRow([
         r.observation_id, r.session_id, r.session_name, r.hex, r.opcode,
-        r.tag, board[0], board[1], recv[0], recv[1], r.rssi, r.len, r.quality,
+        r.tag, toUnixMs(r.board_ts), board[0], board[1],
+        toUnixMs(r.received_at), recv[0], recv[1],
+        r.rssi, r.len, r.quality,
         r.func, r.label, r.note, r.device_id, r.lat, r.lng,
         r.accuracy_m, r.gps_updated_at,
       ]);

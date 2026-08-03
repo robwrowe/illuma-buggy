@@ -28,7 +28,11 @@ Every place a rule currently accepts `"offset": N` may also carry an optional `a
     "searchFrom": 0,    // start scanning at this payload index (default 0)
     "searchLen": 0,     // max bytes to scan; 0 = to end of payload (default 0)
     "deltaBytes": 1     // add to found index → final offset (default 0)
-  }
+  },
+  // Optional — extracts / color channels / blend ratio / timing only
+  // (not condition leaves; those already fail the condition when the marker is missing):
+  "fallbackValue": 0,   // raw extract value when marker not found (default 0)
+  "requireAnchor": false // if true, skip this rule entirely when marker not found
 }
 ```
 
@@ -38,12 +42,12 @@ rules without `anchor` are byte-for-byte unchanged.
 When an anchor is present but the marker is not found (or the result index is out of
 range), firmware and the web preview treat that as “value unavailable”:
 
-| Call site | Not-found behavior |
-|-----------|--------------------|
-| Condition leaves | condition → `false` |
-| Extracts / color channels | value → `0` |
-| Blend ratio extract | ratio → `0.5` |
-| Timing byte | derived value → `0` / no strobe |
+| Call site | Default not-found behavior | With `requireAnchor: true` |
+|-----------|----------------------------|----------------------------|
+| Condition leaves | condition → `false` | n/a (extras not used) |
+| Extracts / color channels | value → `fallbackValue` (default `0`) | rule skipped (no match) |
+| Blend ratio extract | ratio from `fallbackValue` / bitCount max | rule skipped |
+| Timing byte | derived from `fallbackValue` | rule skipped |
 
 ## Worked example
 

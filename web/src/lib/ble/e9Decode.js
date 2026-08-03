@@ -130,13 +130,14 @@ function previewChannelGroupRgb(channelGroup, payloadBytes) {
   const one = (key) => {
     const ch = channelGroup[key] || {};
     const offset = resolveOffsetOrAnchor(payloadBytes, ch, 0);
-    if (offset < 0) return 0;
-    const raw = extractBits(
-      payloadBytes,
-      offset,
-      Number(ch.bitStart ?? (scale === 'direct8' ? 0 : 1)),
-      Number(ch.bitCount ?? (scale === 'direct8' ? 8 : 6)),
-    );
+    const raw = offset < 0
+      ? fallbackValueOrZero(ch)
+      : extractBits(
+        payloadBytes,
+        offset,
+        Number(ch.bitStart ?? (scale === 'direct8' ? 0 : 1)),
+        Number(ch.bitCount ?? (scale === 'direct8' ? 8 : 6)),
+      );
     if (scale === 'bitReplicate6to8') return scale6To8(raw);
     return raw & 0xff;
   };
@@ -152,13 +153,14 @@ function previewColorSource(srcObj, payloadBytes, colors) {
     return previewChannelGroupRgb(srcObj.channelGroup, payloadBytes);
   }
   const offset = resolveOffsetOrAnchor(payloadBytes, srcObj, 0);
-  if (offset < 0) return [0, 0, 0];
-  const raw = extractBits(
-    payloadBytes,
-    offset,
-    Number(srcObj.bitStart ?? 0),
-    Number(srcObj.bitCount ?? 8),
-  );
+  const raw = offset < 0
+    ? fallbackValueOrZero(srcObj)
+    : extractBits(
+      payloadBytes,
+      offset,
+      Number(srcObj.bitStart ?? 0),
+      Number(srcObj.bitCount ?? 8),
+    );
   if (srcObj.kind === 'palette' || srcObj.paletteMap !== false) {
     const pal = raw & 0x1f;
     return hexToRgb(Array.isArray(colors) ? colors[pal] : null) || [0, 0, 0];
@@ -170,14 +172,15 @@ function previewBlendRatio(ratioObj, payloadBytes) {
   if (!ratioObj || typeof ratioObj !== 'object') return 0.5;
   if (ratioObj.mode === 'extract') {
     const offset = resolveOffsetOrAnchor(payloadBytes, ratioObj, 0);
-    if (offset < 0) return 0.5;
     const bitCount = Number(ratioObj.bitCount ?? 8);
-    const raw = extractBits(
-      payloadBytes,
-      offset,
-      Number(ratioObj.bitStart ?? 0),
-      bitCount,
-    );
+    const raw = offset < 0
+      ? fallbackValueOrZero(ratioObj)
+      : extractBits(
+        payloadBytes,
+        offset,
+        Number(ratioObj.bitStart ?? 0),
+        bitCount,
+      );
     const maxVal = bitCount >= 32 ? 0xffffffff : (1 << bitCount) - 1;
     return maxVal > 0 ? raw / maxVal : 0.5;
   }
@@ -325,6 +328,48 @@ export function resolveOffsetOrAnchor(payloadBytes, node, fallbackOffset) {
   return Number(node?.offset ?? fallbackOffset);
 }
 
+export function fallbackValueOrZero(node) {
+  const n = Number(node?.fallbackValue);
+  return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.round(n))) : 0;
+}
+
+function nodeRequiresUnresolvedAnchor(payloadBytes, node) {
+  if (!node?.requireAnchor || !node?.anchor) return false;
+  return resolveAnchorOffset(payloadBytes, node.anchor) < 0;
+}
+
+function channelGroupRequiresUnresolvedAnchor(payloadBytes, channelGroup) {
+  if (!channelGroup || typeof channelGroup !== 'object') return false;
+  return ['r', 'g', 'b'].some((key) => nodeRequiresUnresolvedAnchor(payloadBytes, channelGroup[key]));
+}
+
+/** Mirrors firmware ruleRequiredAnchorsOk — false when a requireAnchor marker is missing. */
+export function ruleRequiredAnchorsOk(rule, payloadBytes) {
+  if (!rule) return true;
+  const colorSources = Array.isArray(rule.colorSources) ? rule.colorSources : [];
+  for (const src of colorSources) {
+    if (nodeRequiresUnresolvedAnchor(payloadBytes, src)) return false;
+    if (channelGroupRequiresUnresolvedAnchor(payloadBytes, src?.channelGroup)) return false;
+  }
+  const extracts = Array.isArray(rule.extract) ? rule.extract : [];
+  for (const ex of extracts) {
+    if (nodeRequiresUnresolvedAnchor(payloadBytes, ex)) return false;
+    if (channelGroupRequiresUnresolvedAnchor(payloadBytes, ex?.channelGroup)) return false;
+    const blend = ex?.colorBlend;
+    if (blend && typeof blend === 'object') {
+      if (nodeRequiresUnresolvedAnchor(payloadBytes, blend.a)) return false;
+      if (nodeRequiresUnresolvedAnchor(payloadBytes, blend.b)) return false;
+      if (channelGroupRequiresUnresolvedAnchor(payloadBytes, blend.a?.channelGroup)) return false;
+      if (channelGroupRequiresUnresolvedAnchor(payloadBytes, blend.b?.channelGroup)) return false;
+      if (blend.ratio?.mode === 'extract' && nodeRequiresUnresolvedAnchor(payloadBytes, blend.ratio)) {
+        return false;
+      }
+    }
+  }
+  if (rule.timing?.enabled && nodeRequiresUnresolvedAnchor(payloadBytes, rule.timing)) return false;
+  return true;
+}
+
 /** Display label for an offset or anchor-relative node (extract / leaf / channel). */
 export function formatOffsetOrAnchorLabel(node) {
   if (node?.anchor) {
@@ -427,7 +472,9 @@ export function findMatchingRule(payloadBytes, rules) {
     return a.index - b.index;
   });
   for (const { rule } of indexed) {
-    if (rule.match && evaluateConditionGroup(payloadBytes, rule.match)) return rule;
+    if (!rule.match || !evaluateConditionGroup(payloadBytes, rule.match)) continue;
+    if (!ruleRequiredAnchorsOk(rule, payloadBytes)) continue;
+    return rule;
   }
   return null;
 }
@@ -686,8 +733,9 @@ export function resolveTimingDerivedValue(rule, payloadBytes, timingModels = [],
     : null;
   const bytes = Array.isArray(payloadBytes) ? payloadBytes : [];
   const offset = resolveOffsetOrAnchor(bytes, timing, 5);
-  if (offset < 0) return 0;
-  const byte = offset < bytes.length ? bytes[offset] : 0;
+  const byte = offset < 0
+    ? fallbackValueOrZero(timing)
+    : (offset < bytes.length ? bytes[offset] : 0);
 
   if (source === 'timingFlashRate') {
     return resolveFlashRateHz(rule, payloadBytes, timingModels);
@@ -714,8 +762,9 @@ export function resolveFlashRateHz(rule, payloadBytes, timingModels = []) {
     : null;
   const bytes = Array.isArray(payloadBytes) ? payloadBytes : [];
   const offset = resolveOffsetOrAnchor(bytes, timing, 5);
-  if (offset < 0) return 0;
-  const byte = offset < bytes.length ? bytes[offset] : 0;
+  const byte = offset < 0
+    ? fallbackValueOrZero(timing)
+    : (offset < bytes.length ? bytes[offset] : 0);
   const { scaler, extended } = decodeTimingByte(byte);
   const se = model?.strobeEffect;
   let hz = Number.isFinite(se?.flashRateNormalHz) ? Number(se.flashRateNormalHz) : 2;
@@ -727,7 +776,7 @@ export function resolveFlashRateHz(rule, payloadBytes, timingModels = []) {
   return hz;
 }
 
-function previewNamedColorSources(colorSources, payloadBytes, colors) {
+export function previewNamedColorSources(colorSources, payloadBytes, colors) {
   const map = {};
   (colorSources || []).forEach((src) => {
     const name = typeof src?.name === 'string' ? src.name.trim() : '';
@@ -740,6 +789,8 @@ function previewNamedColorSources(colorSources, payloadBytes, colors) {
       map[name] = previewColorSource({
         offset: src.offset,
         anchor: src.anchor,
+        fallbackValue: src.fallbackValue,
+        requireAnchor: src.requireAnchor,
         bitStart: src.bitStart,
         bitCount: src.bitCount,
         paletteMap: true,
@@ -747,6 +798,12 @@ function previewNamedColorSources(colorSources, payloadBytes, colors) {
     }
   });
   return map;
+}
+
+/** Named color sources as a list for coverage-preview UI. */
+export function previewColorSourcesList(colorSources, payloadBytes, colors) {
+  const map = previewNamedColorSources(colorSources, payloadBytes, colors);
+  return Object.entries(map).map(([name, rgb]) => ({ name, rgb }));
 }
 
 /**
@@ -828,7 +885,9 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
       const offset = resolveOffsetOrAnchor(payloadBytes, ex, 0);
       const bitStart = Number(ex?.bitStart ?? 0);
       const bitCount = Number(ex?.bitCount ?? 8);
-      raw = offset < 0 ? 0 : extractBits(payloadBytes, offset, bitStart, bitCount);
+      raw = offset < 0
+        ? fallbackValueOrZero(ex)
+        : extractBits(payloadBytes, offset, bitStart, bitCount);
       mapped = raw;
       if (paletteMap) {
         paletteIndex = raw & 0x1f;
@@ -886,16 +945,20 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
       timingModels: opts.timingModels,
     })
     : [];
+  const colorSources = extractRule
+    ? previewColorSourcesList(extractRule.colorSources || [], bytes, opts.colors)
+    : [];
   let timing = null;
   if (extractRule?.timing?.enabled) {
     const offset = resolveOffsetOrAnchor(bytes, extractRule.timing, 5);
-    if (offset >= 0 && offset < bytes.length) {
-      const timingModels = Array.isArray(opts.timingModels) ? opts.timingModels : [];
-      const model = extractRule.timing.timingModelId
-        ? timingModels.find((m) => m.id === extractRule.timing.timingModelId) || null
-        : null;
-      timing = computeTimingLifecycle(bytes[offset], extractRule.timing.cooldownSec ?? 2, model);
-    }
+    const timingByte = offset < 0
+      ? fallbackValueOrZero(extractRule.timing)
+      : (offset < bytes.length ? bytes[offset] : 0);
+    const timingModels = Array.isArray(opts.timingModels) ? opts.timingModels : [];
+    const model = extractRule.timing.timingModelId
+      ? timingModels.find((m) => m.id === extractRule.timing.timingModelId) || null
+      : null;
+    timing = computeTimingLifecycle(timingByte, extractRule.timing.cooldownSec ?? 2, model);
   }
   return {
     hex,
@@ -908,6 +971,7 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
         ? [{ rule: first, index: (rules || []).indexOf(first) }]
         : [],
     extracts,
+    colorSources,
     timing,
     segmentMap,
   };

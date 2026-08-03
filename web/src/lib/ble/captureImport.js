@@ -13,7 +13,7 @@ const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/i;
 
 /** Default Sheets / observation export header (tab- or comma-separated). */
 export const SHEETS_CAPTURE_HEADER =
-  'observation_id\tsession_id\tsession_name\thex\topcode\ttag\tboard_ts_date\tboard_ts_time\treceived_at_date\treceived_at_time\trssi\tlen\tquality\tfunc\tlabel\tnote\tdevice_id\tlat\tlng\taccuracy_m\tgps_updated_at';
+  'observation_id\tsession_id\tsession_name\thex\topcode\ttag\tboard_ts\tboard_ts_date\tboard_ts_time\treceived_at\treceived_at_date\treceived_at_time\trssi\tlen\tquality\tfunc\tlabel\tnote\tdevice_id\tlat\tlng\taccuracy_m\tgps_updated_at';
 
 /** Column indices for legacy tab-delimited Illuma capture exports. */
 const CAPTURE_LAYOUTS = {
