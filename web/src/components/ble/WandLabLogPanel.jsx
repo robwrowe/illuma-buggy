@@ -401,11 +401,15 @@ export function WandLabLogPanel({
               >
                 <Group justify="space-between" wrap="nowrap" align="flex-start" gap={4}>
                   <Text size="xs" fw={600} style={{ flex: 1, minWidth: 0 }}>
-                    {e.opcode || e.presetKey}
+                    {e.kind === 'byte_tags' ? 'analyzer' : (e.opcode || e.presetKey)}
+                    {e.kind === 'byte_tags' && e.opcode ? ` · ${e.opcode}` : ''}
                     {e.deviceType ? ` · ${e.deviceType}` : e.tag ? ` · ${e.tag}` : ''}
                     {e.synced === false ? ' · pending' : ''}
                     {e.kind === 'sequence' && e.packets?.length
                       ? ` · ${e.packets.length} pkts`
+                      : ''}
+                    {e.kind === 'byte_tags' && e.byteTagsSerialized
+                      ? ` · ${e.byteTagsSerialized.split(',').filter(Boolean).length} tags`
                       : ''}
                   </Text>
                   <Group gap={4} wrap="nowrap">
@@ -422,6 +426,11 @@ export function WandLabLogPanel({
                     {[e.layout, (e.colors || []).join(','), e.show].filter(Boolean).join(' · ')}
                   </Text>
                 )}
+                {e.kind === 'byte_tags' && e.byteTagsSerialized ? (
+                  <Text size="xs" ff="monospace" c="dimmed" style={{ wordBreak: 'break-all' }}>
+                    {e.byteTagsSerialized}
+                  </Text>
+                ) : null}
                 {e.kind === 'sequence' && e.packets?.length ? (
                   <Stack gap={2}>
                     {e.packets.slice(0, 4).map((p, i) => (
@@ -435,7 +444,7 @@ export function WandLabLogPanel({
                   </Stack>
                 ) : (
                   <Text size="xs" ff="monospace" c="dimmed" style={{ wordBreak: 'break-all' }}>
-                    {e.bytes}
+                    {e.bytes || e.hex}
                   </Text>
                 )}
               </Stack>

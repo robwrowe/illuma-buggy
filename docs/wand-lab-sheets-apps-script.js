@@ -18,10 +18,11 @@
  *                 (board_ts / received_at = unix epoch ms; date = YYYY-MM-DD, time = HH:MM:SS — script timezone)
  *   byte_tags: finding_id | created_at | opcode | hex | byte_tags | linked_rule_id |
  *              generated_rule_id | notes
- *              (byte_tags is comma-separated "idx:kind" pairs, e.g. "0:signature,9:color";
+ *              (byte_tags is comma-separated "idx:kind" pairs, e.g. "0:signature,5:anchor,9:color";
  *               param entries are "idx:param:bitStart:bitCount:paramName";
  *               rgb-mode color entries are "idx:color:rgb:role:groupId", e.g. "10:color:rgb:r:grp1";
- *               palette-mode color entries are just "idx:color")
+ *               palette-mode color entries are just "idx:color";
+ *               anchor markers are "idx:anchor")
  *
  * Optional: set SCRIPT_TOKEN and require body.token to match.
  */
@@ -79,35 +80,56 @@ function toUnixMs(raw) {
   return d.getTime();
 }
 
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function doPost(e) {
   const body = JSON.parse(e.postData.contents);
   if (SCRIPT_TOKEN && body.token !== SCRIPT_TOKEN) {
-    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: 'unauthorized' }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return jsonOut({ ok: false, error: 'unauthorized' });
+  }
+
+  const sheetName = body.sheet || '';
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+  if (!sheetName) {
+    return jsonOut({ ok: false, error: 'missing body.sheet' });
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    return jsonOut({
+      ok: false,
+      error: 'No active spreadsheet — open Apps Script from the Sheet (Extensions → Apps Script), not a standalone project.',
+    });
+  }
 
-  if (body.sheet === 'findings') {
+  var wrote = null;
+  var rowCount = 0;
+
+  if (sheetName === 'findings') {
     const sheet = ss.getSheetByName('findings');
-    body.rows.forEach((r) => {
+    if (!sheet) return jsonOut({ ok: false, error: 'missing tab: findings' });
+    rows.forEach((r) => {
       sheet.appendRow([
         r.finding_id, r.created_at, r.updated_at, r.opcode, r.device_type,
         r.hex, r.total_time_s, r.fade_time_s, r.cycle_time_s, r.num_cycles,
         r.colors, r.layout, r.show, r.notes,
       ]);
     });
-    maybeBackfillFindingId(ss, body.rows);
-  }
-
-  if (body.sheet === 'raw_captures') {
+    maybeBackfillFindingId(ss, rows);
+    wrote = 'findings';
+    rowCount = rows.length;
+  } else if (sheetName === 'raw_captures') {
     const sheet = ss.getSheetByName('raw_captures');
+    if (!sheet) return jsonOut({ ok: false, error: 'missing tab: raw_captures' });
     const data = sheet.getDataRange().getValues();
     const hexCol = 0;
     const timesSeenCol = 5;
     const lastSeenCol = 4;
     const bestRssiCol = 8;
-    body.rows.forEach((r) => {
+    rows.forEach((r) => {
       const idx = data.findIndex((row, i) => i > 0 && row[hexCol] === r.hex);
       if (idx === -1) {
         const row = [
@@ -117,8 +139,8 @@ function doPost(e) {
         ];
         sheet.appendRow(row);
         data.push(row);
+        rowCount++;
       } else {
-        // idx is 0-based array index; sheet rows are 1-based → row = idx + 1
         const rowNum = idx + 1;
         const nextTimes = Number(data[idx][timesSeenCol] || 0) + Number(r.times_seen || 0);
         sheet.getRange(rowNum, timesSeenCol + 1).setValue(nextTimes);
@@ -132,13 +154,14 @@ function doPost(e) {
             data[idx][bestRssiCol] = r.best_rssi;
           }
         }
+        rowCount++;
       }
     });
-  }
-
-  if (body.sheet === 'observations') {
+    wrote = 'raw_captures';
+  } else if (sheetName === 'observations') {
     const sheet = ss.getSheetByName('observations');
-    body.rows.forEach((r) => {
+    if (!sheet) return jsonOut({ ok: false, error: 'missing tab: observations' });
+    rows.forEach((r) => {
       const board = splitTsDateTime(r.board_ts);
       const recv = splitTsDateTime(r.received_at);
       sheet.appendRow([
@@ -150,20 +173,39 @@ function doPost(e) {
         r.accuracy_m, r.gps_updated_at,
       ]);
     });
-  }
-
-  if (body.sheet === 'byte_tags') {
-    const sheet = ss.getSheetByName('byte_tags');
-    body.rows.forEach((r) => {
+    wrote = 'observations';
+    rowCount = rows.length;
+  } else if (sheetName === 'byte_tags') {
+    var sheet = ss.getSheetByName('byte_tags');
+    if (!sheet) {
+      sheet = ss.insertSheet('byte_tags');
+      sheet.appendRow([
+        'finding_id', 'created_at', 'opcode', 'hex', 'byte_tags',
+        'linked_rule_id', 'generated_rule_id', 'notes',
+      ]);
+    }
+    rows.forEach((r) => {
       sheet.appendRow([
         r.finding_id, r.created_at, r.opcode, r.hex, r.byte_tags,
         r.linked_rule_id, r.generated_rule_id, r.notes,
       ]);
     });
+    wrote = 'byte_tags';
+    rowCount = rows.length;
+  } else {
+    return jsonOut({
+      ok: false,
+      error: 'unknown sheet "' + sheetName + '" — redeploy Apps Script from docs/wand-lab-sheets-apps-script.js as a New version',
+    });
   }
 
-  return ContentService.createTextOutput(JSON.stringify({ ok: true, wrote: body.sheet || null }))
-    .setMimeType(ContentService.MimeType.JSON);
+  return jsonOut({
+    ok: true,
+    wrote: wrote,
+    rows: rowCount,
+    spreadsheetId: ss.getId(),
+    spreadsheetName: ss.getName(),
+  });
 }
 
 /** Link findings → raw_captures when hex already exists. */

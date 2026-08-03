@@ -22,6 +22,7 @@ export const BYTE_TAG_KINDS = [
   { id: 'timing', label: 'Timing', color: 'orange' },
   { id: 'color', label: 'Color', color: 'grape' },
   { id: 'param', label: 'Param', color: 'blue' },
+  { id: 'anchor', label: 'Anchor', color: 'yellow' },
   { id: 'signature', label: 'Signature', color: 'teal' },
   { id: 'vibration', label: 'Vibration', color: 'gray' },
 ];
@@ -32,6 +33,51 @@ export function createEmptyParamDetail() {
 
 export function createEmptyColorDetail() {
   return { mode: 'palette', channelRole: '', groupId: '' };
+}
+
+/** 1-based occurrence of bytes[index] within bytes[0..index]. */
+export function byteOccurrenceAt(bytes, index) {
+  if (!bytes?.length || index < 0 || index >= bytes.length) return 1;
+  const v = bytes[index] & 0xff;
+  let n = 0;
+  for (let i = 0; i <= index; i++) {
+    if ((bytes[i] & 0xff) === v) n++;
+  }
+  return Math.max(1, n);
+}
+
+/**
+ * Nearest anchor-tagged index at or before `index`, or -1.
+ * Used so extracts / colors / timing can be emitted relative to a marker.
+ */
+export function nearestAnchorIndex(byteTags, index) {
+  if (!Array.isArray(byteTags) || index < 0) return -1;
+  for (let j = Math.min(index, byteTags.length - 1); j >= 0; j--) {
+    if (byteTags[j]?.kind === 'anchor') return j;
+  }
+  return -1;
+}
+
+/**
+ * Absolute offset, or anchor-relative fields when an Anchor tag precedes this index.
+ * @returns {{ offset: number, anchor?: object }}
+ */
+export function offsetOrAnchorFromTags(bytes, byteTags, index) {
+  const offset = Math.max(0, index);
+  const anchorIdx = nearestAnchorIndex(byteTags, index);
+  if (anchorIdx < 0 || !bytes?.length || anchorIdx >= bytes.length) {
+    return { offset };
+  }
+  return {
+    offset,
+    anchor: {
+      byte: (bytes[anchorIdx] & 0xff).toString(16).padStart(2, '0').toUpperCase(),
+      occurrence: byteOccurrenceAt(bytes, anchorIdx),
+      searchFrom: 0,
+      searchLen: 0,
+      deltaBytes: index - anchorIdx,
+    },
+  };
 }
 
 /**
@@ -114,11 +160,13 @@ export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
   const paletteColorIndices = [];
   const rgbColorEntries = [];
   const paramEntries = [];
+  const anchorIndices = [];
   let timingIndex = -1;
 
   byteTags.forEach((t, i) => {
     if (!t) return;
     if (t.kind === 'signature') sigIndices.push(i);
+    else if (t.kind === 'anchor') anchorIndices.push(i);
     else if (t.kind === 'color' && t.detail?.mode === 'rgb') rgbColorEntries.push({ index: i, detail: t.detail });
     else if (t.kind === 'color') paletteColorIndices.push(i);
     else if (t.kind === 'param') paramEntries.push({ index: i, detail: t.detail || {} });
@@ -131,6 +179,13 @@ export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
   if (!paletteColorIndices.length && !rgbColorEntries.length && !paramEntries.length) {
     warnings.push('No color or param bytes tagged — this rule will only match, it will not drive any output yet.');
   }
+  if (anchorIndices.length) {
+    warnings.push(
+      `${anchorIndices.length} anchor marker(s) tagged — extracts/colors/timing after a marker use anchor-relative offsets when generating.`,
+    );
+  }
+
+  const loc = (index) => offsetOrAnchorFromTags(bytes, byteTags, index);
 
   const rule = createEmptyRule({
     name: ruleName || 'Generated from analyzer',
@@ -146,7 +201,7 @@ export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
   paletteColorIndices.forEach((i, n) => {
     rule.extract.push({
       ...createEmptyExtract(`color${n}`),
-      offset: i,
+      ...loc(i),
       bitStart: 0,
       bitCount: 8,
       paletteMap: true,
@@ -160,9 +215,9 @@ export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
       name: groupId,
       kind: 'rgb',
       channelGroup: {
-        r: { offset: r, bitStart: 0, bitCount: 8 },
-        g: { offset: g, bitStart: 0, bitCount: 8 },
-        b: { offset: b, bitStart: 0, bitCount: 8 },
+        r: { ...loc(r), bitStart: 0, bitCount: 8 },
+        g: { ...loc(g), bitStart: 0, bitCount: 8 },
+        b: { ...loc(b), bitStart: 0, bitCount: 8 },
         scale: 'direct8',
       },
     });
@@ -179,7 +234,7 @@ export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
     rule.extract.push({
       ...createEmptyExtract(detail.paramName || `param${index}`),
       source: 'payloadBits',
-      offset: index,
+      ...loc(index),
       bitStart: detail.bitStart ?? 0,
       bitCount: detail.bitCount ?? 8,
       paletteMap: false,
@@ -191,7 +246,12 @@ export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
   }
 
   if (timingIndex >= 0) {
-    rule.timing = { ...rule.timing, offset: timingIndex, enabled: false, timingModelId: '' };
+    rule.timing = {
+      ...rule.timing,
+      ...loc(timingIndex),
+      enabled: false,
+      timingModelId: '',
+    };
     warnings.push(`Timing byte tagged at offset ${timingIndex} — timing is left disabled; enable it and pick a timing model in the Rules → Timing Models tab once you've confirmed the byte's encoding.`);
   }
 

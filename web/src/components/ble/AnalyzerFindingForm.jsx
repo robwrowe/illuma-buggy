@@ -121,6 +121,11 @@ export function AnalyzerFindingForm({
             {mode === 'generate' ? 'Generate rule + log finding' : 'Log finding'}
           </Button>
         </Group>
+        <Text size="xs" c="dimmed">
+          Saves to the Wand Lab log (Export JSON) and posts to the Sheets{' '}
+          <Text span ff="monospace">byte_tags</Text> tab. Watch the status line / browser console
+          if Sheets fails.
+        </Text>
       </Stack>
     </Modal>
   );

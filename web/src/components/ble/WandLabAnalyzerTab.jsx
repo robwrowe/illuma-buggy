@@ -31,7 +31,14 @@ function nextGroupId(existingGroupIds) {
   return `grp${n}`;
 }
 
-function ParamDetailPopover({ opened, initialDetail, onConfirm, onCancel, anchorLabel }) {
+function ParamDetailPopover({
+  opened,
+  initialDetail,
+  existingParamNames = [],
+  onConfirm,
+  onCancel,
+  anchorLabel,
+}) {
   const [name, setName] = useState(initialDetail?.paramName || '');
   const [bitStart, setBitStart] = useState(initialDetail?.bitStart ?? 0);
   const [bitCount, setBitCount] = useState(initialDetail?.bitCount ?? 8);
@@ -54,15 +61,35 @@ function ParamDetailPopover({ opened, initialDetail, onConfirm, onCancel, anchor
 
   if (!opened) return null;
 
+  const knownNames = [...new Set(existingParamNames.filter(Boolean))];
+
   return (
     <Popover.Dropdown>
       <Stack gap={6} p={4} miw={220}>
         <Text size="xs" fw={600}>{anchorLabel}</Text>
+        {knownNames.length > 0 && (
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">Reuse name</Text>
+            <Group gap={4}>
+              {knownNames.map((n) => (
+                <Button
+                  key={n}
+                  size="compact-xs"
+                  variant={name === n ? 'filled' : 'light'}
+                  onClick={() => setName(n)}
+                >
+                  {n}
+                </Button>
+              ))}
+            </Group>
+          </Stack>
+        )}
         <TextInput
           size="xs"
-          label="Param name"
+          label={knownNames.length ? 'Or type new name' : 'Param name'}
           value={name}
           onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. sx, intensity"
         />
         <Group gap={2} justify="center">
           {[7, 6, 5, 4, 3, 2, 1, 0].map((bitIdx) => (
@@ -116,7 +143,8 @@ function ParamDetailPopover({ opened, initialDetail, onConfirm, onCancel, anchor
   );
 }
 
-function ColorDetailPopover({
+/** RGB channel + group picker — only used when Color mode is RGB. */
+function RgbChannelPopover({
   opened,
   initialDetail,
   existingGroupIds,
@@ -124,7 +152,6 @@ function ColorDetailPopover({
   onCancel,
   anchorLabel,
 }) {
-  const [mode, setMode] = useState(initialDetail?.mode || 'palette');
   const [channelRole, setChannelRole] = useState(initialDetail?.channelRole || 'r');
   const [groupId, setGroupId] = useState(
     initialDetail?.groupId || nextGroupId(existingGroupIds),
@@ -143,43 +170,30 @@ function ColorDetailPopover({
         <Text size="xs" fw={600}>{anchorLabel}</Text>
         <SegmentedControl
           size="xs"
-          value={mode}
-          onChange={setMode}
+          value={channelRole}
+          onChange={setChannelRole}
           data={[
-            { value: 'palette', label: 'Palette' },
-            { value: 'rgb', label: 'RGB channel' },
+            { value: 'r', label: 'R' },
+            { value: 'g', label: 'G' },
+            { value: 'b', label: 'B' },
           ]}
         />
-        {mode === 'rgb' && (
-          <>
-            <SegmentedControl
-              size="xs"
-              value={channelRole}
-              onChange={setChannelRole}
-              data={[
-                { value: 'r', label: 'R' },
-                { value: 'g', label: 'G' },
-                { value: 'b', label: 'B' },
-              ]}
-            />
-            <Field label="Group" style={{ marginBottom: 0 }}>
-              <SearchableSelect
-                size="xs"
-                value={groupId}
-                allowEmpty={false}
-                onChange={setGroupId}
-                options={groupOptions}
-              />
-            </Field>
-            <TextInput
-              size="xs"
-              label="Or type new group id"
-              value={groupId}
-              onChange={(e) => setGroupId(e.target.value.trim())}
-              placeholder="grp1"
-            />
-          </>
-        )}
+        <Field label="Group" style={{ marginBottom: 0 }}>
+          <SearchableSelect
+            size="xs"
+            value={groupId}
+            allowEmpty={false}
+            onChange={setGroupId}
+            options={groupOptions}
+          />
+        </Field>
+        <TextInput
+          size="xs"
+          label="Or type new group id"
+          value={groupId}
+          onChange={(e) => setGroupId(e.target.value.trim())}
+          placeholder="grp1"
+        />
         <Group justify="flex-end" gap={6}>
           <Button size="compact-xs" variant="default" onClick={onCancel}>
             Cancel
@@ -187,11 +201,11 @@ function ColorDetailPopover({
           <Button
             size="compact-xs"
             onClick={() =>
-              onConfirm(
-                mode === 'palette'
-                  ? { mode: 'palette' }
-                  : { mode: 'rgb', channelRole, groupId: groupId || nextGroupId(existingGroupIds) },
-              )
+              onConfirm({
+                mode: 'rgb',
+                channelRole,
+                groupId: groupId || nextGroupId(existingGroupIds),
+              })
             }
           >
             Set
@@ -227,6 +241,7 @@ function AnalyzerRow({
   cellTags,
   detailPopover,
   existingGroupIds,
+  existingParamNames,
   onCellClick,
   onDetailConfirm,
   onDetailCancel,
@@ -293,13 +308,14 @@ function AnalyzerRow({
               <ParamDetailPopover
                 opened
                 initialDetail={detailPopover.initial}
+                existingParamNames={existingParamNames}
                 anchorLabel={`row cell[${i}]`}
                 onCancel={onDetailCancel}
                 onConfirm={onDetailConfirm}
               />
             )}
             {popoverOpen && detailPopover.kind === 'color' && (
-              <ColorDetailPopover
+              <RgbChannelPopover
                 opened
                 initialDetail={detailPopover.initial}
                 existingGroupIds={existingGroupIds}
@@ -328,6 +344,7 @@ export function WandLabAnalyzerTab({
   const [columnTags, setColumnTags] = useState({});
   const [cellTags, setCellTags] = useState({});
   const [activeTag, setActiveTag] = useState('signature');
+  const [colorMode, setColorMode] = useState('palette');
   const [detailPopover, setDetailPopover] = useState(null);
   const [loggingRowId, setLoggingRowId] = useState(null);
 
@@ -354,6 +371,17 @@ export function WandLabAnalyzerTab({
     return [...ids];
   }, [columnTags, cellTags]);
 
+  const existingParamNames = useMemo(() => {
+    const names = new Set();
+    const scan = (tag) => {
+      const n = tag?.kind === 'param' ? String(tag.detail?.paramName || '').trim() : '';
+      if (n) names.add(n);
+    };
+    Object.values(columnTags).forEach(scan);
+    Object.values(cellTags).forEach((rowMap) => Object.values(rowMap).forEach(scan));
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [columnTags, cellTags]);
+
   const applyTag = (rowId, index, entry) => {
     if (rowId == null) {
       setColumnTags((prev) => {
@@ -372,28 +400,48 @@ export function WandLabAnalyzerTab({
     }
   };
 
+  /** Clear the assignment that paints this cell (cell override, else column default). */
+  const clearAssignment = (rowId, index) => {
+    if (rowId != null && cellTags[rowId]?.[index]) {
+      applyTag(rowId, index, null);
+    } else {
+      applyTag(null, index, null);
+    }
+    setDetailPopover(null);
+  };
+
   const handleClick = (rowId, index) => {
-    const current = rowId == null ? columnTags[index] : cellTags[rowId]?.[index];
+    const assigned = effectiveTag(index, rowId ?? undefined, columnTags, cellTags);
+    if (assigned) {
+      clearAssignment(rowId, index);
+      return;
+    }
+
     if (activeTag === 'param') {
       setDetailPopover({
         kind: 'param',
         rowId,
         index,
-        initial: current?.kind === 'param' ? current.detail : createEmptyParamDetail(),
+        initial: createEmptyParamDetail(),
       });
       return;
     }
+
     if (activeTag === 'color') {
+      if (colorMode === 'palette') {
+        applyTag(rowId, index, { kind: 'color', detail: { mode: 'palette' } });
+        return;
+      }
       setDetailPopover({
         kind: 'color',
         rowId,
         index,
-        initial: current?.kind === 'color' ? current.detail : createEmptyColorDetail(),
+        initial: { ...createEmptyColorDetail(), mode: 'rgb', channelRole: 'r' },
       });
       return;
     }
-    const next = current?.kind === activeTag ? null : { kind: activeTag, detail: {} };
-    applyTag(rowId, index, next);
+
+    applyTag(rowId, index, { kind: activeTag, detail: {} });
   };
 
   const confirmDetailPopover = (detail) => {
@@ -413,7 +461,8 @@ export function WandLabAnalyzerTab({
     <Stack gap="md">
       <Text size="xs" c="dimmed">
         Paste one packet (hex) per line. Click a column header to tag that byte position across
-        every row; click an individual cell to override just that packet.
+        every row; click an individual cell to override just that packet. Click an assigned cell
+        again to clear it.
       </Text>
 
       <Textarea
@@ -442,7 +491,7 @@ export function WandLabAnalyzerTab({
         )}
       </Group>
 
-      <Group gap={6}>
+      <Group gap={6} align="center" wrap="wrap">
         <Text size="xs" c="dimmed" fw={600}>
           Tag:
         </Text>
@@ -457,6 +506,17 @@ export function WandLabAnalyzerTab({
             {k.label}
           </Button>
         ))}
+        {activeTag === 'color' && (
+          <SegmentedControl
+            size="xs"
+            value={colorMode}
+            onChange={setColorMode}
+            data={[
+              { value: 'palette', label: 'Palette' },
+              { value: 'rgb', label: 'RGB' },
+            ]}
+          />
+        )}
       </Group>
 
       {rows.length > 0 && (
@@ -508,13 +568,14 @@ export function WandLabAnalyzerTab({
                       key={`col-param-${i}`}
                       opened
                       initialDetail={detailPopover.initial}
+                      existingParamNames={existingParamNames}
                       anchorLabel={`byte[${i}]`}
                       onCancel={() => setDetailPopover(null)}
                       onConfirm={confirmDetailPopover}
                     />
                   )}
                   {popoverOpen && detailPopover.kind === 'color' && (
-                    <ColorDetailPopover
+                    <RgbChannelPopover
                       key={`col-color-${i}`}
                       opened
                       initialDetail={detailPopover.initial}
@@ -537,6 +598,7 @@ export function WandLabAnalyzerTab({
                 cellTags={cellTags}
                 detailPopover={detailPopover}
                 existingGroupIds={existingGroupIds}
+                existingParamNames={existingParamNames}
                 onCellClick={(i) => handleClick(row.id, i)}
                 onDetailConfirm={confirmDetailPopover}
                 onDetailCancel={() => setDetailPopover(null)}
