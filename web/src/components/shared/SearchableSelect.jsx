@@ -33,6 +33,7 @@ export function SearchableSelect({
   emptyLabel = 'No matches',
   allowEmpty = true,
   maxListHeight = 240,
+  comboboxProps,
   ...rest
 }) {
   const data = useMemo(() => toSelectData(options), [options]);
@@ -46,7 +47,8 @@ export function SearchableSelect({
       data={data}
       placeholder={placeholder}
       nothingFoundMessage={emptyLabel}
-      comboboxProps={{ withinPortal: true }}
+      // Above shared Modal (zIndex 1000) so dropdowns aren't clipped under it
+      comboboxProps={{ withinPortal: true, zIndex: 1100, ...comboboxProps }}
       maxDropdownHeight={maxListHeight}
       {...rest}
     />

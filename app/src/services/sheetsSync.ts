@@ -10,7 +10,7 @@
 import NetInfo from '@react-native-community/netinfo';
 import { useAppStore, type SheetsUploadItem } from '../stores/store';
 import type { BleCaptureSession } from '../utils/bleCapture';
-import { disneyPayload, extractE9Opcode, hexToBytes } from '../utils/e9Parser';
+import { deriveDisneyOpcodeHex } from '../utils/e9Parser';
 import { generateId } from '../utils/utils';
 
 const MAX_ATTEMPTS = 8;
@@ -18,9 +18,7 @@ const BACKOFF_BASE_MS = 30_000;
 const BACKOFF_CAP_MS = 15 * 60_000;
 
 function deriveOpcode(hex: string): string {
-  const op = extractE9Opcode(disneyPayload(hexToBytes(hex)));
-  if (op == null) return '';
-  return op.toString(16).toUpperCase().padStart(4, '0');
+  return deriveDisneyOpcodeHex(hex);
 }
 
 async function postToSheets(

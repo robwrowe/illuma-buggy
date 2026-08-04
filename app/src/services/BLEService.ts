@@ -56,6 +56,32 @@ export function getGattActivitySince(since: number): GattActivityWindow[] {
   return gattActivityLog.filter(activity => activity.end >= since);
 }
 
+export type CommandLogLevel = 'send' | 'ack_ok' | 'ack_fail' | 'notify' | 'warn' | 'error';
+
+export interface CommandLogEntry {
+  ts: number;
+  level: CommandLogLevel;
+  summary: string;
+  detail?: string;
+}
+
+const COMMAND_LOG_MAX = 500;
+export const commandLog: CommandLogEntry[] = [];
+type CommandLogListener = (entry: CommandLogEntry) => void;
+const commandLogListeners = new Set<CommandLogListener>();
+
+export function pushLogEntry(entry: Omit<CommandLogEntry, 'ts'>): void {
+  const full: CommandLogEntry = { ts: Date.now(), ...entry };
+  commandLog.push(full);
+  if (commandLog.length > COMMAND_LOG_MAX) commandLog.shift();
+  commandLogListeners.forEach((l) => l(full));
+}
+
+export function onCommandLogEntry(listener: CommandLogListener): () => void {
+  commandLogListeners.add(listener);
+  return () => { commandLogListeners.delete(listener); };
+}
+
 function isGattBusy(e: unknown): boolean {
   const code = (e as { errorCode?: number })?.errorCode;
   if (code === GATT_BUSY_ERROR_CODE) return true;
@@ -243,6 +269,7 @@ class BLEService {
     if (kind !== 'status') {
       const extra = msg.id ? ` id=${msg.id}` : msg.preset_id ? ` preset=${msg.preset_id}` : '';
       console.log(`[BLE] → ${kind}${extra}`);
+      pushLogEntry({ level: 'send', summary: `→ ${kind}${extra}` });
     }
     try {
       await this.sendJsonCommand(msg);
@@ -709,10 +736,23 @@ class BLEService {
       console.log(
         `[BLE] ← ack ${action}${msg.id ? ` id=${msg.id}` : ''} ${ok ? 'ok' : `FAIL${msg.reason ? ` (${msg.reason})` : ''}`}`,
       );
+      pushLogEntry({
+        level: ok ? 'ack_ok' : 'ack_fail',
+        summary: `← ack ${action} ${ok ? 'ok' : `FAIL${msg.reason ? ` (${msg.reason})` : ''}`}`,
+      });
     } else if (msg.type === 'chunk_sync_failed') {
       console.error('[BLE] ← chunk_sync_failed', msg);
+      pushLogEntry({ level: 'error', summary: '← chunk_sync_failed' });
     } else if (msg.type === 'error') {
       console.warn('[BLE] ← error', msg.msg);
+      pushLogEntry({ level: 'error', summary: `← error: ${String(msg.msg ?? '')}` });
+    } else if (msg.type === 'status') {
+      pushLogEntry({
+        level: 'notify',
+        summary: `← status override=${msg.override} show=${msg.show_type ?? '–'}/${msg.show_phase ?? '–'}`,
+      });
+    } else if (msg.type === 'ble_event' || msg.type === 'sw_event') {
+      pushLogEntry({ level: 'notify', summary: `← ${msg.type}: ${String(msg.event ?? '')}` });
     }
     this.msgHandlers.forEach(h => h(msg));
   }

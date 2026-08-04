@@ -288,7 +288,8 @@ export function buildRecallPayload(preset, recall, segmentMaps) {
   const recallLayout = should('segments', m.segments) && activeSegments.length > 0;
 
   if (recallLayout) {
-    payload.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, w, should, m, i));
+    const perSegment = activeSegments.length > 1;
+    payload.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, w, should, m, i, perSegment));
   } else {
     const base = activeSegments.find(isActiveSegment) || activeSegments[0] || { id: 0 };
     payload.seg = [buildRecalledSegment(base, w, should, m, 0)];

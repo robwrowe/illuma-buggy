@@ -64,8 +64,8 @@ unsigned long bleEffectTransitionMs = 700;
 bool          bleScanLogEnabled   = true;
 bool          rulesPaused         = false;
 
-unsigned long swEventTimestamp = 0;
 unsigned long mbEventTimestamp = 0;
+bool          lastMatchedRuleWasWand = false;
 unsigned long swDebugLastNotify = 0;
 uint8_t       lastLogBytes[48];
 size_t        lastLogLen      = 0;

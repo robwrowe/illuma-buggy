@@ -25,6 +25,7 @@ import { runConnectBootstrap, cancelConnectBootstrap } from "./src/utils/connect
 import { useZoneManager } from "./src/hooks/useZoneManager";
 import { useCaptureAutomation } from "./src/hooks/useCaptureAutomation";
 import { useSheetsQueueDrain } from "./src/hooks/useSheetsQueueDrain";
+import { useDeviceStatusSync } from "./src/hooks/useDeviceStatusSync";
 import { useTheme, useThemeStore } from "./src/utils/theme";
 import * as Notifications from "expo-notifications";
 import { initStrollerNotifications } from "./src/services/strollerNotification";
@@ -42,6 +43,7 @@ function AppNavigator() {
   useZoneManager();
   useCaptureAutomation();
   useSheetsQueueDrain();
+  useDeviceStatusSync();
   const { colors, isDark } = useTheme();
 
   const navTheme = {
@@ -122,7 +124,6 @@ function formatBleEffectLabel(msg: Record<string, unknown>): string | null {
 export default function App() {
   const {
     loadFromStorage,
-    setDeviceStatus,
     setOverrideDetail,
     ingestWledEffectsRaw,
     ingestWledPalettesRaw,
@@ -250,30 +251,7 @@ export default function App() {
       if (effectLabel) setOverrideDetail(effectLabel);
       if (msg.type === "status") {
         const override = msg.override as number;
-        setDeviceStatus({
-          override,
-          killOnZone: msg.kill_on_zone as boolean,
-          brightness: msg.brightness as number,
-          currentPreset: msg.preset as string,
-          wifiConnected: msg.wifi as boolean,
-          starlightEnabled: msg.sw_enabled as boolean,
-          starlightTimeoutMs: msg.sw_timeout_ms as number,
-          magicBandEnabled: msg.mb_enabled as boolean,
-          mbTimeoutMs: msg.mb_timeout_ms as number,
-          rulesPaused: msg.rules_paused as boolean | undefined,
-          showType: msg.show_type as string | undefined,
-          showPhase: msg.show_phase as string | undefined,
-          boardPresetCount: msg.preset_count as number | undefined,
-          wledSsid: msg.wled_ssid as string | undefined,
-          wledIp: msg.wled_ip as string | undefined,
-          wledPort: msg.wled_port as number | undefined,
-          mbMappingLoaded: msg.mb_mapping_loaded as boolean | undefined,
-          boardRole: (msg.board_role as 'standalone' | 'logic_board' | undefined) ?? undefined,
-          scannerMac: msg.scanner_mac as string | undefined,
-          logicMac: msg.logic_mac as string | undefined,
-          scannerSeen: msg.scanner_seen as boolean | undefined,
-          scannerAgeMs: msg.scanner_age_ms as number | undefined,
-        });
+        // deviceStatus mirroring lives in useDeviceStatusSync — keep side-effects here.
         if (typeof msg.rules_paused === "boolean") {
           const cur = useAppStore.getState().rulesPaused;
           if (cur !== msg.rules_paused) {

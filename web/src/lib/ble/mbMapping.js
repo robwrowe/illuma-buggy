@@ -41,6 +41,41 @@ export function shortRuleId() {
   return `r${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
 }
 
+/** Normalize (or drop) an anchor spec. Returns null if invalid/absent — offset then applies. */
+export function normalizeAnchor(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const byte = String(raw.byte ?? '').replace(/[^0-9a-fA-F]/g, '').slice(0, 2);
+  if (byte.length !== 2) return null;
+  return {
+    byte: byte.toUpperCase(),
+    occurrence: Math.max(1, Number.isFinite(raw.occurrence) ? Math.round(Number(raw.occurrence)) : 1),
+    searchFrom: Math.max(0, Number.isFinite(raw.searchFrom) ? Math.round(Number(raw.searchFrom)) : 0),
+    searchLen: Math.max(0, Number.isFinite(raw.searchLen) ? Math.round(Number(raw.searchLen)) : 0),
+    deltaBytes: Number.isFinite(raw.deltaBytes) ? Math.round(Number(raw.deltaBytes)) : 0,
+  };
+}
+
+/** Normalize optional fallback / require flags used when an anchor marker is missing.
+ *  fallbackValue may be a 0–255 number or a #rrggbb color string.
+ */
+export function normalizeAnchorExtras(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { fallbackValue: 0, requireAnchor: false };
+  }
+  let fallbackValue = 0;
+  if (typeof raw.fallbackValue === 'string') {
+    const hex = normalizeCustomHex(raw.fallbackValue);
+    fallbackValue = hex || 0;
+  } else {
+    const fv = Number(raw.fallbackValue);
+    fallbackValue = Number.isFinite(fv) ? Math.max(0, Math.min(255, Math.round(fv))) : 0;
+  }
+  return {
+    fallbackValue,
+    requireAnchor: !!raw.requireAnchor,
+  };
+}
+
 export function shortSegmentMapId() {
   return `sm${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`;
 }
@@ -643,6 +678,13 @@ function normalizeCustomHex(value) {
   return '';
 }
 
+export { normalizeCustomHex };
+
+/** True when fallbackValue is a #rrggbb color (vs numeric 0–255). */
+export function isFallbackColor(value) {
+  return !!normalizeCustomHex(value);
+}
+
 export function normalizePropOverride(raw, { color = false } = {}) {
   const mode = SEG_OVERRIDE_MODES.includes(raw?.mode) ? raw.mode : 'stored';
   const out = { mode };
@@ -968,6 +1010,8 @@ function normalizeColorBlendSource(raw, fallbackOffset = 0) {
       const src = ch && typeof ch === 'object' ? ch : {};
       return {
         offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fo,
+        anchor: normalizeAnchor(src.anchor),
+        ...normalizeAnchorExtras(src),
         bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : 0,
         bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : 8,
       };
@@ -989,6 +1033,8 @@ function normalizeColorBlendSource(raw, fallbackOffset = 0) {
   return {
     kind: 'palette',
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : fallbackOffset,
+    anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
     paletteMap: raw.paletteMap !== false,
@@ -1004,6 +1050,8 @@ function normalizeColorBlend(raw) {
     ? {
       mode: 'extract',
       offset: Number.isFinite(ratioRaw.offset) ? Math.max(0, Number(ratioRaw.offset)) : 0,
+      anchor: normalizeAnchor(ratioRaw.anchor),
+      ...normalizeAnchorExtras(ratioRaw),
       bitStart: Number.isFinite(ratioRaw.bitStart) ? Math.min(7, Math.max(0, Number(ratioRaw.bitStart))) : 0,
       bitCount: Number.isFinite(ratioRaw.bitCount) ? Math.min(32, Math.max(1, Number(ratioRaw.bitCount))) : 8,
     }
@@ -1028,6 +1076,8 @@ function normalizeChannelGroup(raw, fallbackOffset = 8) {
     const c = ch && typeof ch === 'object' ? ch : {};
     return {
       offset: Number.isFinite(c.offset) ? Math.max(0, Number(c.offset)) : fo,
+      anchor: normalizeAnchor(c.anchor),
+      ...normalizeAnchorExtras(c),
       bitStart: Number.isFinite(c.bitStart) ? Math.min(7, Math.max(0, Number(c.bitStart))) : 0,
       bitCount: Number.isFinite(c.bitCount) ? Math.min(32, Math.max(1, Number(c.bitCount))) : 8,
     };
@@ -1063,6 +1113,8 @@ export function normalizeColorSource(raw, index = 0) {
     name: name || d.name,
     kind: 'palette',
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+    anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
   };
@@ -1142,6 +1194,8 @@ export function normalizeExtract(raw) {
     name: typeof raw.name === 'string' ? raw.name : '',
     source,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+    anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
     bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 8,
     paletteMap,
@@ -1164,6 +1218,8 @@ export function normalizeExtract(raw) {
       const defaultBitCount = scaleIsDirect ? 8 : 6;
       return {
         offset: Number.isFinite(src.offset) ? Math.max(0, Number(src.offset)) : fallbackOffset,
+        anchor: normalizeAnchor(src.anchor),
+        ...normalizeAnchorExtras(src),
         bitStart: Number.isFinite(src.bitStart) ? Math.min(7, Math.max(0, Number(src.bitStart))) : defaultBitStart,
         bitCount: Number.isFinite(src.bitCount) ? Math.min(32, Math.max(1, Number(src.bitCount))) : defaultBitCount,
       };
@@ -1200,6 +1256,7 @@ export function normalizeConditionNode(raw) {
       return {
         type: 'byte',
         offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+        anchor: normalizeAnchor(raw.anchor),
         op,
         value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
         mask: Number.isFinite(raw.mask) ? Number(raw.mask) & 0xff : 0xff,
@@ -1210,6 +1267,7 @@ export function normalizeConditionNode(raw) {
       return {
         type: 'bits',
         offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+        anchor: normalizeAnchor(raw.anchor),
         bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
         bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 1,
         op,
@@ -1220,6 +1278,7 @@ export function normalizeConditionNode(raw) {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
       const normSide = (side) => ({
         offset: Number.isFinite(side?.offset) ? Math.max(0, Number(side.offset)) : 0,
+        anchor: normalizeAnchor(side?.anchor),
         bitStart: Number.isFinite(side?.bitStart) ? Math.min(7, Math.max(0, Number(side.bitStart))) : 0,
         bitCount: Number.isFinite(side?.bitCount) ? Math.min(32, Math.max(1, Number(side.bitCount))) : 8,
       });
@@ -1314,6 +1373,8 @@ export function normalizeRuleTiming(raw) {
   return {
     enabled: !!raw.enabled,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : d.offset,
+    anchor: normalizeAnchor(raw.anchor),
+    ...normalizeAnchorExtras(raw),
     cooldownSec: Number.isFinite(raw.cooldownSec) ? Math.max(0, Number(raw.cooldownSec)) : d.cooldownSec,
     cooldownResetMode: COOLDOWN_RESET_MODES.has(raw.cooldownResetMode) ? raw.cooldownResetMode : d.cooldownResetMode,
     timingModelId: typeof raw.timingModelId === 'string' ? raw.timingModelId : '',
@@ -1757,7 +1818,8 @@ export function presetWledForBoard(preset, segmentMaps) {
   const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
   const activeSegments = activeSegmentsFromPreset(preset, segmentMaps);
   if (activeSegments.length > 0) {
-    wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i));
+    const perSegment = activeSegments.length > 1;
+    wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i, perSegment));
   } else {
     wled.seg = [buildRecalledSegment({ id: 0 }, wled, always, m, 0)];
   }

@@ -11,8 +11,18 @@
  *   raw_captures: hex | opcode | first_seen_show | first_seen_ts | last_seen_ts |
  *                 times_seen | tested_in_wandlab | finding_id | best_rssi
  *   observations: observation_id | session_id | session_name | hex | opcode | tag |
- *                 board_ts | received_at | rssi | len | quality | func | label | note |
+ *                 board_ts | board_ts_date | board_ts_time |
+ *                 received_at | received_at_date | received_at_time |
+ *                 rssi | len | quality | func | label | note |
  *                 device_id | lat | lng | accuracy_m | gps_updated_at
+ *                 (board_ts / received_at = unix epoch ms; date = YYYY-MM-DD, time = HH:MM:SS — script timezone)
+ *   byte_tags: finding_id | created_at | opcode | hex | byte_tags | linked_rule_id |
+ *              generated_rule_id | notes
+ *              (byte_tags is comma-separated "idx:kind" pairs, e.g. "0:signature,5:anchor,9:color";
+ *               param entries are "idx:param:bitStart:bitCount:paramName";
+ *               rgb-mode color entries are "idx:color:rgb:role:groupId", e.g. "10:color:rgb:r:grp1";
+ *               palette-mode color entries are just "idx:color";
+ *               anchor markers are "idx:anchor")
  *
  * Optional: set SCRIPT_TOKEN and require body.token to match.
  */
@@ -30,35 +40,96 @@ function doGet() {
   })).setMimeType(ContentService.MimeType.JSON);
 }
 
+/** Split epoch-ms / ISO / Date into [YYYY-MM-DD, HH:MM:SS] in the script timezone. */
+function splitTsDateTime(raw) {
+  if (raw === '' || raw == null) return ['', ''];
+  var d = null;
+  if (Object.prototype.toString.call(raw) === '[object Date]') {
+    d = raw;
+  } else if (typeof raw === 'number' || (/^\d+$/).test(String(raw))) {
+    var n = Number(raw);
+    // seconds vs milliseconds
+    if (n > 0 && n < 1e12) n *= 1000;
+    d = new Date(n);
+  } else {
+    d = new Date(String(raw));
+  }
+  if (!d || isNaN(d.getTime())) return ['', ''];
+  var tz = Session.getScriptTimeZone();
+  return [
+    Utilities.formatDate(d, tz, 'yyyy-MM-dd'),
+    Utilities.formatDate(d, tz, 'HH:mm:ss'),
+  ];
+}
+
+/** Normalize to unix epoch milliseconds (empty string if unparseable). */
+function toUnixMs(raw) {
+  if (raw === '' || raw == null) return '';
+  if (Object.prototype.toString.call(raw) === '[object Date]') {
+    var t = raw.getTime();
+    return isNaN(t) ? '' : t;
+  }
+  if (typeof raw === 'number' || (/^\d+$/).test(String(raw))) {
+    var n = Number(raw);
+    if (!isFinite(n) || n <= 0) return '';
+    if (n < 1e12) n *= 1000;
+    return Math.round(n);
+  }
+  var d = new Date(String(raw));
+  if (isNaN(d.getTime())) return '';
+  return d.getTime();
+}
+
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
 function doPost(e) {
   const body = JSON.parse(e.postData.contents);
   if (SCRIPT_TOKEN && body.token !== SCRIPT_TOKEN) {
-    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: 'unauthorized' }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return jsonOut({ ok: false, error: 'unauthorized' });
+  }
+
+  const sheetName = body.sheet || '';
+  const rows = Array.isArray(body.rows) ? body.rows : [];
+  if (!sheetName) {
+    return jsonOut({ ok: false, error: 'missing body.sheet' });
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) {
+    return jsonOut({
+      ok: false,
+      error: 'No active spreadsheet — open Apps Script from the Sheet (Extensions → Apps Script), not a standalone project.',
+    });
+  }
 
-  if (body.sheet === 'findings') {
+  var wrote = null;
+  var rowCount = 0;
+
+  if (sheetName === 'findings') {
     const sheet = ss.getSheetByName('findings');
-    body.rows.forEach((r) => {
+    if (!sheet) return jsonOut({ ok: false, error: 'missing tab: findings' });
+    rows.forEach((r) => {
       sheet.appendRow([
         r.finding_id, r.created_at, r.updated_at, r.opcode, r.device_type,
         r.hex, r.total_time_s, r.fade_time_s, r.cycle_time_s, r.num_cycles,
         r.colors, r.layout, r.show, r.notes,
       ]);
     });
-    maybeBackfillFindingId(ss, body.rows);
-  }
-
-  if (body.sheet === 'raw_captures') {
+    maybeBackfillFindingId(ss, rows);
+    wrote = 'findings';
+    rowCount = rows.length;
+  } else if (sheetName === 'raw_captures') {
     const sheet = ss.getSheetByName('raw_captures');
+    if (!sheet) return jsonOut({ ok: false, error: 'missing tab: raw_captures' });
     const data = sheet.getDataRange().getValues();
     const hexCol = 0;
     const timesSeenCol = 5;
     const lastSeenCol = 4;
     const bestRssiCol = 8;
-    body.rows.forEach((r) => {
+    rows.forEach((r) => {
       const idx = data.findIndex((row, i) => i > 0 && row[hexCol] === r.hex);
       if (idx === -1) {
         const row = [
@@ -68,8 +139,8 @@ function doPost(e) {
         ];
         sheet.appendRow(row);
         data.push(row);
+        rowCount++;
       } else {
-        // idx is 0-based array index; sheet rows are 1-based → row = idx + 1
         const rowNum = idx + 1;
         const nextTimes = Number(data[idx][timesSeenCol] || 0) + Number(r.times_seen || 0);
         sheet.getRange(rowNum, timesSeenCol + 1).setValue(nextTimes);
@@ -83,24 +154,58 @@ function doPost(e) {
             data[idx][bestRssiCol] = r.best_rssi;
           }
         }
+        rowCount++;
       }
     });
-  }
-
-  if (body.sheet === 'observations') {
+    wrote = 'raw_captures';
+  } else if (sheetName === 'observations') {
     const sheet = ss.getSheetByName('observations');
-    body.rows.forEach((r) => {
+    if (!sheet) return jsonOut({ ok: false, error: 'missing tab: observations' });
+    rows.forEach((r) => {
+      const board = splitTsDateTime(r.board_ts);
+      const recv = splitTsDateTime(r.received_at);
       sheet.appendRow([
         r.observation_id, r.session_id, r.session_name, r.hex, r.opcode,
-        r.tag, r.board_ts, r.received_at, r.rssi, r.len, r.quality,
+        r.tag, toUnixMs(r.board_ts), board[0], board[1],
+        toUnixMs(r.received_at), recv[0], recv[1],
+        r.rssi, r.len, r.quality,
         r.func, r.label, r.note, r.device_id, r.lat, r.lng,
         r.accuracy_m, r.gps_updated_at,
       ]);
     });
+    wrote = 'observations';
+    rowCount = rows.length;
+  } else if (sheetName === 'byte_tags') {
+    var sheet = ss.getSheetByName('byte_tags');
+    if (!sheet) {
+      sheet = ss.insertSheet('byte_tags');
+      sheet.appendRow([
+        'finding_id', 'created_at', 'opcode', 'hex', 'byte_tags',
+        'linked_rule_id', 'generated_rule_id', 'notes',
+      ]);
+    }
+    rows.forEach((r) => {
+      sheet.appendRow([
+        r.finding_id, r.created_at, r.opcode, r.hex, r.byte_tags,
+        r.linked_rule_id, r.generated_rule_id, r.notes,
+      ]);
+    });
+    wrote = 'byte_tags';
+    rowCount = rows.length;
+  } else {
+    return jsonOut({
+      ok: false,
+      error: 'unknown sheet "' + sheetName + '" — redeploy Apps Script from docs/wand-lab-sheets-apps-script.js as a New version',
+    });
   }
 
-  return ContentService.createTextOutput(JSON.stringify({ ok: true, wrote: body.sheet || null }))
-    .setMimeType(ContentService.MimeType.JSON);
+  return jsonOut({
+    ok: true,
+    wrote: wrote,
+    rows: rowCount,
+    spreadsheetId: ss.getId(),
+    spreadsheetName: ss.getName(),
+  });
 }
 
 /** Link findings → raw_captures when hex already exists. */

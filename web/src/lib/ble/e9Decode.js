@@ -42,12 +42,20 @@ export function opcodeToHex(op) {
   return Number(op).toString(16).toUpperCase().padStart(4, '0');
 }
 
-/** Derive display opcode string from a hex packet (optional CID prefix OK). */
+/**
+ * Display opcode from a hex packet (optional 8301 CID OK).
+ * Strips 8301, then reads E9 (incl. E1/E2 wrap), CD##, or CF##.
+ * e.g. 8301cd07… → CD07, 8301e200e905… → E905.
+ */
 export function deriveOpcodeFromHex(hex) {
-  const bytes = hexToBytes(hex);
-  const payload = disneyPayload(bytes);
-  const op = extractE9Opcode(payload);
-  return op != null ? opcodeToHex(op) : '';
+  const payload = disneyPayload(hexToBytes(hex));
+  if (payload.length < 2) return '';
+  const e9 = extractE9Opcode(payload);
+  if (e9 != null) return opcodeToHex(e9);
+  if (payload[0] === 0xcd || payload[0] === 0xcf) {
+    return opcodeToHex((payload[0] << 8) | payload[1]);
+  }
+  return '';
 }
 
 /**
@@ -121,12 +129,23 @@ function previewChannelGroupRgb(channelGroup, payloadBytes) {
   const scale = channelGroup.scale || 'bitReplicate6to8';
   const one = (key) => {
     const ch = channelGroup[key] || {};
-    const raw = extractBits(
-      payloadBytes,
-      Number(ch.offset ?? 0),
-      Number(ch.bitStart ?? (scale === 'direct8' ? 0 : 1)),
-      Number(ch.bitCount ?? (scale === 'direct8' ? 8 : 6)),
-    );
+    const offset = resolveOffsetOrAnchor(payloadBytes, ch, 0);
+    if (offset < 0) {
+      const fb = tryFallbackColor(ch);
+      if (fb) {
+        if (key === 'r') return fb[0];
+        if (key === 'g') return fb[1];
+        return fb[2];
+      }
+    }
+    const raw = offset < 0
+      ? fallbackValueOrZero(ch)
+      : extractBits(
+        payloadBytes,
+        offset,
+        Number(ch.bitStart ?? (scale === 'direct8' ? 0 : 1)),
+        Number(ch.bitCount ?? (scale === 'direct8' ? 8 : 6)),
+      );
     if (scale === 'bitReplicate6to8') return scale6To8(raw);
     return raw & 0xff;
   };
@@ -141,12 +160,19 @@ function previewColorSource(srcObj, payloadBytes, colors) {
   if (srcObj.kind === 'rgb' || srcObj.channelGroup) {
     return previewChannelGroupRgb(srcObj.channelGroup, payloadBytes);
   }
-  const raw = extractBits(
-    payloadBytes,
-    Number(srcObj.offset ?? 0),
-    Number(srcObj.bitStart ?? 0),
-    Number(srcObj.bitCount ?? 8),
-  );
+  const offset = resolveOffsetOrAnchor(payloadBytes, srcObj, 0);
+  if (offset < 0) {
+    const fb = tryFallbackColor(srcObj);
+    if (fb) return fb;
+  }
+  const raw = offset < 0
+    ? fallbackValueOrZero(srcObj)
+    : extractBits(
+      payloadBytes,
+      offset,
+      Number(srcObj.bitStart ?? 0),
+      Number(srcObj.bitCount ?? 8),
+    );
   if (srcObj.kind === 'palette' || srcObj.paletteMap !== false) {
     const pal = raw & 0x1f;
     return hexToRgb(Array.isArray(colors) ? colors[pal] : null) || [0, 0, 0];
@@ -157,13 +183,16 @@ function previewColorSource(srcObj, payloadBytes, colors) {
 function previewBlendRatio(ratioObj, payloadBytes) {
   if (!ratioObj || typeof ratioObj !== 'object') return 0.5;
   if (ratioObj.mode === 'extract') {
+    const offset = resolveOffsetOrAnchor(payloadBytes, ratioObj, 0);
     const bitCount = Number(ratioObj.bitCount ?? 8);
-    const raw = extractBits(
-      payloadBytes,
-      Number(ratioObj.offset ?? 0),
-      Number(ratioObj.bitStart ?? 0),
-      bitCount,
-    );
+    const raw = offset < 0
+      ? fallbackValueOrZero(ratioObj)
+      : extractBits(
+        payloadBytes,
+        offset,
+        Number(ratioObj.bitStart ?? 0),
+        bitCount,
+      );
     const maxVal = bitCount >= 32 ? 0xffffffff : (1 << bitCount) - 1;
     return maxVal > 0 ? raw / maxVal : 0.5;
   }
@@ -268,6 +297,113 @@ export function matchHexPrefix(payload, hex) {
 }
 
 /**
+ * Mirrors firmware resolveAnchorOffset(). Returns -1 if not found.
+ * @param {number[]} payloadBytes
+ * @param {object} anchor
+ */
+export function resolveAnchorOffset(payloadBytes, anchor) {
+  if (!anchor || !payloadBytes) return -1;
+  const hex = String(anchor.byte || '').replace(/[^0-9a-fA-F]/g, '');
+  if (hex.length < 2) return -1;
+  const target = parseInt(hex.slice(0, 2), 16) & 0xff;
+
+  const occurrence = Math.max(1, Number(anchor.occurrence ?? 1));
+  const start = Math.min(Math.max(0, Number(anchor.searchFrom ?? 0)), payloadBytes.length);
+  const searchLen = Number(anchor.searchLen ?? 0);
+  const end = searchLen > 0 ? Math.min(payloadBytes.length, start + searchLen) : payloadBytes.length;
+
+  let count = 0;
+  for (let i = start; i < end; i++) {
+    if ((payloadBytes[i] & 0xff) === target) {
+      count++;
+      if (count === occurrence) {
+        const result = i + Number(anchor.deltaBytes ?? 0);
+        if (result < 0 || result >= payloadBytes.length) return -1;
+        return result;
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * Mirrors firmware resolveOffsetOrAnchor(). Returns -1 if an anchor is present but
+ * not found; otherwise returns node.offset ?? fallbackOffset.
+ * @param {number[]} payloadBytes
+ * @param {object} node
+ * @param {number} fallbackOffset
+ */
+export function resolveOffsetOrAnchor(payloadBytes, node, fallbackOffset) {
+  if (node?.anchor) {
+    return resolveAnchorOffset(payloadBytes, node.anchor);
+  }
+  return Number(node?.offset ?? fallbackOffset);
+}
+
+export function fallbackValueOrZero(node) {
+  if (isFallbackColorValue(node?.fallbackValue)) return 0;
+  const n = Number(node?.fallbackValue);
+  return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.round(n))) : 0;
+}
+
+function isFallbackColorValue(value) {
+  return typeof value === 'string' && /^#?[0-9a-fA-F]{6}$/.test(value.trim());
+}
+
+function tryFallbackColor(node) {
+  if (!isFallbackColorValue(node?.fallbackValue)) return null;
+  return hexToRgb(node.fallbackValue.startsWith('#') ? node.fallbackValue : `#${node.fallbackValue}`);
+}
+
+function nodeRequiresUnresolvedAnchor(payloadBytes, node) {
+  if (!node?.requireAnchor || !node?.anchor) return false;
+  return resolveAnchorOffset(payloadBytes, node.anchor) < 0;
+}
+
+function channelGroupRequiresUnresolvedAnchor(payloadBytes, channelGroup) {
+  if (!channelGroup || typeof channelGroup !== 'object') return false;
+  return ['r', 'g', 'b'].some((key) => nodeRequiresUnresolvedAnchor(payloadBytes, channelGroup[key]));
+}
+
+/** Mirrors firmware ruleRequiredAnchorsOk — false when a requireAnchor marker is missing. */
+export function ruleRequiredAnchorsOk(rule, payloadBytes) {
+  if (!rule) return true;
+  const colorSources = Array.isArray(rule.colorSources) ? rule.colorSources : [];
+  for (const src of colorSources) {
+    if (nodeRequiresUnresolvedAnchor(payloadBytes, src)) return false;
+    if (channelGroupRequiresUnresolvedAnchor(payloadBytes, src?.channelGroup)) return false;
+  }
+  const extracts = Array.isArray(rule.extract) ? rule.extract : [];
+  for (const ex of extracts) {
+    if (nodeRequiresUnresolvedAnchor(payloadBytes, ex)) return false;
+    if (channelGroupRequiresUnresolvedAnchor(payloadBytes, ex?.channelGroup)) return false;
+    const blend = ex?.colorBlend;
+    if (blend && typeof blend === 'object') {
+      if (nodeRequiresUnresolvedAnchor(payloadBytes, blend.a)) return false;
+      if (nodeRequiresUnresolvedAnchor(payloadBytes, blend.b)) return false;
+      if (channelGroupRequiresUnresolvedAnchor(payloadBytes, blend.a?.channelGroup)) return false;
+      if (channelGroupRequiresUnresolvedAnchor(payloadBytes, blend.b?.channelGroup)) return false;
+      if (blend.ratio?.mode === 'extract' && nodeRequiresUnresolvedAnchor(payloadBytes, blend.ratio)) {
+        return false;
+      }
+    }
+  }
+  if (rule.timing?.enabled && nodeRequiresUnresolvedAnchor(payloadBytes, rule.timing)) return false;
+  return true;
+}
+
+/** Display label for an offset or anchor-relative node (extract / leaf / channel). */
+export function formatOffsetOrAnchorLabel(node) {
+  if (node?.anchor) {
+    const a = node.anchor;
+    const delta = Number(a.deltaBytes ?? 0);
+    const deltaStr = delta ? (delta > 0 ? `+${delta}` : String(delta)) : '';
+    return `anchor 0x${a.byte}×${a.occurrence ?? 1}${deltaStr}`;
+  }
+  return `off ${node?.offset ?? 0}`;
+}
+
+/**
  * @param {number[]} payloadBytes
  * @param {object} leaf
  */
@@ -281,7 +417,8 @@ export function evaluateLeaf(payloadBytes, leaf) {
     return compareOp(payloadBytes.length, leaf.op || 'eq', Number(leaf.value ?? 0));
   }
   if (type === 'byte') {
-    const offset = Number(leaf.offset ?? 0);
+    const offset = resolveOffsetOrAnchor(payloadBytes, leaf, 0);
+    if (offset < 0) return false;
     const op = leaf.op || 'eq';
     if (op === 'maskEq') {
       if (offset >= payloadBytes.length) return false;
@@ -293,7 +430,8 @@ export function evaluateLeaf(payloadBytes, leaf) {
     return compareOp(v, op, Number(leaf.value ?? 0));
   }
   if (type === 'bits') {
-    const offset = Number(leaf.offset ?? 0);
+    const offset = resolveOffsetOrAnchor(payloadBytes, leaf, 0);
+    if (offset < 0) return false;
     const bitStart = Number(leaf.bitStart ?? 0);
     const bitCount = Number(leaf.bitCount ?? 1);
     const v = extractBits(payloadBytes, offset, bitStart, bitCount);
@@ -302,8 +440,11 @@ export function evaluateLeaf(payloadBytes, leaf) {
   if (type === 'byteCompare') {
     const left = leaf.left || {};
     const right = leaf.right || {};
-    const lv = extractBits(payloadBytes, Number(left.offset ?? 0), Number(left.bitStart ?? 0), Number(left.bitCount ?? 8));
-    const rv = extractBits(payloadBytes, Number(right.offset ?? 0), Number(right.bitStart ?? 0), Number(right.bitCount ?? 8));
+    const leftOff = resolveOffsetOrAnchor(payloadBytes, left, 0);
+    const rightOff = resolveOffsetOrAnchor(payloadBytes, right, 0);
+    if (leftOff < 0 || rightOff < 0) return false;
+    const lv = extractBits(payloadBytes, leftOff, Number(left.bitStart ?? 0), Number(left.bitCount ?? 8));
+    const rv = extractBits(payloadBytes, rightOff, Number(right.bitStart ?? 0), Number(right.bitCount ?? 8));
     return compareOp(lv, leaf.op || 'eq', rv);
   }
   return false;
@@ -353,7 +494,9 @@ export function findMatchingRule(payloadBytes, rules) {
     return a.index - b.index;
   });
   for (const { rule } of indexed) {
-    if (rule.match && evaluateConditionGroup(payloadBytes, rule.match)) return rule;
+    if (!rule.match || !evaluateConditionGroup(payloadBytes, rule.match)) continue;
+    if (!ruleRequiredAnchorsOk(rule, payloadBytes)) continue;
+    return rule;
   }
   return null;
 }
@@ -610,9 +753,11 @@ export function resolveTimingDerivedValue(rule, payloadBytes, timingModels = [],
   const model = timing.timingModelId
     ? (Array.isArray(timingModels) ? timingModels.find((m) => m.id === timing.timingModelId) : null) || null
     : null;
-  const offset = Number(timing.offset ?? 5);
   const bytes = Array.isArray(payloadBytes) ? payloadBytes : [];
-  const byte = offset < bytes.length ? bytes[offset] : 0;
+  const offset = resolveOffsetOrAnchor(bytes, timing, 5);
+  const byte = offset < 0
+    ? fallbackValueOrZero(timing)
+    : (offset < bytes.length ? bytes[offset] : 0);
 
   if (source === 'timingFlashRate') {
     return resolveFlashRateHz(rule, payloadBytes, timingModels);
@@ -637,9 +782,11 @@ export function resolveFlashRateHz(rule, payloadBytes, timingModels = []) {
   const model = timing.timingModelId
     ? (Array.isArray(timingModels) ? timingModels.find((m) => m.id === timing.timingModelId) : null) || null
     : null;
-  const offset = Number(timing.offset ?? 5);
   const bytes = Array.isArray(payloadBytes) ? payloadBytes : [];
-  const byte = offset < bytes.length ? bytes[offset] : 0;
+  const offset = resolveOffsetOrAnchor(bytes, timing, 5);
+  const byte = offset < 0
+    ? fallbackValueOrZero(timing)
+    : (offset < bytes.length ? bytes[offset] : 0);
   const { scaler, extended } = decodeTimingByte(byte);
   const se = model?.strobeEffect;
   let hz = Number.isFinite(se?.flashRateNormalHz) ? Number(se.flashRateNormalHz) : 2;
@@ -651,7 +798,7 @@ export function resolveFlashRateHz(rule, payloadBytes, timingModels = []) {
   return hz;
 }
 
-function previewNamedColorSources(colorSources, payloadBytes, colors) {
+export function previewNamedColorSources(colorSources, payloadBytes, colors) {
   const map = {};
   (colorSources || []).forEach((src) => {
     const name = typeof src?.name === 'string' ? src.name.trim() : '';
@@ -663,6 +810,9 @@ function previewNamedColorSources(colorSources, payloadBytes, colors) {
     } else {
       map[name] = previewColorSource({
         offset: src.offset,
+        anchor: src.anchor,
+        fallbackValue: src.fallbackValue,
+        requireAnchor: src.requireAnchor,
         bitStart: src.bitStart,
         bitCount: src.bitCount,
         paletteMap: true,
@@ -670,6 +820,12 @@ function previewNamedColorSources(colorSources, payloadBytes, colors) {
     }
   });
   return map;
+}
+
+/** Named color sources as a list for coverage-preview UI. */
+export function previewColorSourcesList(colorSources, payloadBytes, colors) {
+  const map = previewNamedColorSources(colorSources, payloadBytes, colors);
+  return Object.entries(map).map(([name, rgb]) => ({ name, rgb }));
 }
 
 /**
@@ -748,17 +904,36 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
       mapped = sumWeight;
       raw = Math.round(sumWeight * 10) / 10;
     } else {
-      const offset = Number(ex?.offset ?? 0);
+      const offset = resolveOffsetOrAnchor(payloadBytes, ex, 0);
       const bitStart = Number(ex?.bitStart ?? 0);
       const bitCount = Number(ex?.bitCount ?? 8);
-      raw = extractBits(payloadBytes, offset, bitStart, bitCount);
-      mapped = raw;
-      if (paletteMap) {
-        paletteIndex = raw & 0x1f;
-        mapped = paletteIndex;
-        rgb = hexToRgb(Array.isArray(colors) ? colors[paletteIndex] : null);
-      } else if (ex?.curve && typeof ex.curve === 'object') {
-        mapped = applyCurve(raw, ex.curve);
+      if (offset < 0) {
+        const fb = tryFallbackColor(ex);
+        if (fb) {
+          rgb = fb;
+          raw = (fb[0] << 16) | (fb[1] << 8) | fb[2];
+          mapped = 0;
+        } else {
+          raw = fallbackValueOrZero(ex);
+          mapped = raw;
+          if (paletteMap) {
+            paletteIndex = raw & 0x1f;
+            mapped = paletteIndex;
+            rgb = hexToRgb(Array.isArray(colors) ? colors[paletteIndex] : null);
+          } else if (ex?.curve && typeof ex.curve === 'object') {
+            mapped = applyCurve(raw, ex.curve);
+          }
+        }
+      } else {
+        raw = extractBits(payloadBytes, offset, bitStart, bitCount);
+        mapped = raw;
+        if (paletteMap) {
+          paletteIndex = raw & 0x1f;
+          mapped = paletteIndex;
+          rgb = hexToRgb(Array.isArray(colors) ? colors[paletteIndex] : null);
+        } else if (ex?.curve && typeof ex.curve === 'object') {
+          mapped = applyCurve(raw, ex.curve);
+        }
       }
     }
 
@@ -809,14 +984,20 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
       timingModels: opts.timingModels,
     })
     : [];
+  const colorSources = extractRule
+    ? previewColorSourcesList(extractRule.colorSources || [], bytes, opts.colors)
+    : [];
   let timing = null;
-  if (extractRule?.timing?.enabled && bytes.length > Number(extractRule.timing.offset ?? 0)) {
-    const offset = Number(extractRule.timing.offset ?? 0);
+  if (extractRule?.timing?.enabled) {
+    const offset = resolveOffsetOrAnchor(bytes, extractRule.timing, 5);
+    const timingByte = offset < 0
+      ? fallbackValueOrZero(extractRule.timing)
+      : (offset < bytes.length ? bytes[offset] : 0);
     const timingModels = Array.isArray(opts.timingModels) ? opts.timingModels : [];
     const model = extractRule.timing.timingModelId
       ? timingModels.find((m) => m.id === extractRule.timing.timingModelId) || null
       : null;
-    timing = computeTimingLifecycle(bytes[offset], extractRule.timing.cooldownSec ?? 2, model);
+    timing = computeTimingLifecycle(timingByte, extractRule.timing.cooldownSec ?? 2, model);
   }
   return {
     hex,
@@ -829,6 +1010,7 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
         ? [{ rule: first, index: (rules || []).indexOf(first) }]
         : [],
     extracts,
+    colorSources,
     timing,
     segmentMap,
   };

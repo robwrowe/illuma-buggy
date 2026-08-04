@@ -27,7 +27,9 @@ import { deriveOpcodeFromHex } from '../../lib/ble/e9Decode';
 import { DEFAULT_DATA, generateId } from '../../lib/utils';
 import { WAND_LAB_SECTIONS } from '../../lib/routes';
 import { EMPTY_FINDING_FORM, formAfterLog } from '../../lib/sheets/wandLabFindings';
-import { postFinding } from '../../lib/sheets/wandLabSheetsClient';
+import { postLogEntryToSheets, serializeByteTags } from '../../lib/sheets/wandLabSheetsClient';
+import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
+import { EMPTY_ANALYZER_SESSION, WandLabAnalyzerTab } from './WandLabAnalyzerTab';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
 import { WandLabLogPanel } from './WandLabLogPanel';
 import { WandLabPacketSequence } from './WandLabPacketSequence';
@@ -77,6 +79,7 @@ export function WandLabTab({ data, update }) {
   }, [section, navigate]);
 
   const lab = data.wandLab || DEFAULT_DATA.wandLab;
+  const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const [presetKey, setPresetKey] = useState('rainbow');
   const [bytes, setBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
   const [origBytes, setOrigBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
@@ -97,6 +100,8 @@ export function WandLabTab({ data, update }) {
   const [editingLogId, setEditingLogId] = useState(null);
   const [sweepIndices, setSweepIndices] = useState([]);
   const [sweepLivePayload, setSweepLivePayload] = useState(null);
+  const [analyzerImportSeed, setAnalyzerImportSeed] = useState(null);
+  const [analyzerSession, setAnalyzerSession] = useState(() => ({ ...EMPTY_ANALYZER_SESSION }));
 
   const palOpts = mbPaletteOptions();
 
@@ -214,6 +219,16 @@ export function WandLabTab({ data, update }) {
     }
   };
 
+  const generateRuleFromAnalyzer = (draftRule) => {
+    update({
+      mbMapping: normalizeMbMapping({
+        ...mb,
+        rules: [...(mb.rules || []), draftRule],
+      }),
+    });
+    setStatus(`Created draft rule "${draftRule.name}" — open Settings → Rules to finish it`);
+  };
+
   const sendMbCommand = async () => {
     const b = buildMbCommandBytes();
     setByteArray(b, `mb:${mbCmd}`);
@@ -267,7 +282,7 @@ export function WandLabTab({ data, update }) {
 
     // New findings → Sheets; edits stay local (typo fix). Desk tool: manual retry only.
     if (!isEdit) {
-      postFinding(entry).catch((err) => {
+      postLogEntryToSheets(entry).catch((err) => {
         console.error('Sheets write failed, will retry:', err);
         update({
           wandLab: {
@@ -279,11 +294,60 @@ export function WandLabTab({ data, update }) {
     }
   };
 
+  /** Analyzer → local log + Sheets `byte_tags` tab. */
+  const addByteTagLogEntry = (finding) => {
+    const hex = (finding.hex || '').toUpperCase();
+    const createdAt = finding.createdAt || Date.now();
+    const entry = {
+      id: finding.id || generateId(),
+      ts: createdAt,
+      createdAt,
+      kind: 'byte_tags',
+      sheetsTarget: 'byte_tags',
+      presetKey: 'analyzer',
+      bytes: hex,
+      hex,
+      origBytes: hex,
+      opcode: finding.opcode || deriveOpcodeFromHex(hex) || '',
+      notes: finding.notes || '',
+      note: finding.notes || '',
+      byteTags: finding.byteTags || [],
+      byteTagsSerialized: serializeByteTags(finding.byteTags),
+      linkedRuleId: finding.linkedRuleId || '',
+      generatedRuleId: finding.generatedRuleId || '',
+      deviceType: findingForm.deviceType || 'unknown',
+      show: findingForm.show || 'Other / bench test',
+      synced: true,
+    };
+    const log = [entry, ...(lab.log || [])];
+    update({ wandLab: { ...lab, log } });
+    setStatus(`Logged analyzer finding (${entry.byteTagsSerialized || 'no tags'})…`);
+
+    postLogEntryToSheets(entry)
+      .then((res) => {
+        const where = res?.spreadsheetName
+          ? ` → "${res.spreadsheetName}"`
+          : '';
+        setStatus(`Sheets: wrote ${res?.wrote || 'byte_tags'} (${res?.rows ?? '?'} row(s))${where}`);
+      })
+      .catch((err) => {
+        console.error('byte_tags Sheets write failed:', err);
+        const msg = err?.message || 'Sheets write failed';
+        setStatus(msg);
+        update({
+          wandLab: {
+            ...lab,
+            log: log.map((e) => (e.id === entry.id ? { ...e, synced: false } : e)),
+          },
+        });
+      });
+  };
+
   const retryPendingSheets = async () => {
     const pending = (lab.log || []).filter((e) => e.synced === false);
     for (const entry of pending) {
       try {
-        await postFinding(entry);
+        await postLogEntryToSheets(entry);
         const current = data.wandLab || lab;
         update({
           wandLab: {
@@ -293,13 +357,42 @@ export function WandLabTab({ data, update }) {
             ),
           },
         });
+        setStatus(`Sheets retry ok: ${entry.kind || 'finding'} ${entry.id.slice(0, 8)}…`);
       } catch (err) {
         console.error('Sheets retry failed:', err);
+        setStatus(err?.message || 'Sheets retry failed');
       }
     }
   };
 
   const loadLogEntry = (e) => {
+    if (e.kind === 'byte_tags') {
+      setLabTab('analyze');
+      setAnalyzerImportSeed({
+        key: `${e.id}-${Date.now()}`,
+        strip8301: false,
+        packets: [{
+          id: e.id,
+          hex: e.hex || e.bytes || '',
+          bytes: parseHexToBytes(e.hex || e.bytes || ''),
+          byteTagsSerialized: e.byteTagsSerialized || serializeByteTags(e.byteTags || []),
+          tags: e.byteTags || undefined,
+          opcode: e.opcode || '',
+          notes: e.notes || e.note || '',
+          findingId: e.id,
+          linkedRuleId: e.linkedRuleId || '',
+        }],
+      });
+      setFindingForm({
+        ...EMPTY_FINDING_FORM,
+        deviceType: e.deviceType || 'unknown',
+        show: e.show || 'Other / bench test',
+        notes: e.notes || e.note || '',
+        opcodeOverride: e.opcode || '',
+      });
+      setEditingLogId(null);
+      return;
+    }
     if ((e.kind === 'sequence' || e.packets?.length > 1) && e.packets?.length) {
       setSequencePackets(e.packets.map((p) => ({
         id: generateId(),
@@ -357,7 +450,9 @@ export function WandLabTab({ data, update }) {
     || e.tag === logFilter
     || e.deviceType === logFilter
     || e.show === logFilter
-    || e.opcode === logFilter,
+    || e.opcode === logFilter
+    || e.kind === logFilter
+    || (e.byteTagsSerialized || '').includes(logFilter),
   );
 
   const currentLogHex = bytesToHex(sweepLivePayload ?? bytes);
@@ -622,6 +717,22 @@ export function WandLabTab({ data, update }) {
                 onStatus={setStatus}
                 onLoadToEditor={loadFromSequence}
                 onSequenceComplete={(payload) => addLogEntry(payload)}
+              />
+            </Tabs.Panel>
+
+            <Tabs.Panel value="analyze" pt="md">
+              <WandLabAnalyzerTab
+                simIp={lab.simIp}
+                onStatus={setStatus}
+                onSendPacket={sendBytes}
+                onLoadToByteEditor={(arr) => { setByteArray(arr, 'analyzer'); setLabTab('bytes'); }}
+                onLogFinding={addByteTagLogEntry}
+                rules={mb.rules}
+                onGenerateRule={generateRuleFromAnalyzer}
+                importSeed={analyzerImportSeed}
+                onImportSeedConsumed={() => setAnalyzerImportSeed(null)}
+                session={analyzerSession}
+                onSessionChange={setAnalyzerSession}
               />
             </Tabs.Panel>
           </Tabs>

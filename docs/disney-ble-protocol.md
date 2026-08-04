@@ -181,12 +181,12 @@ Adafruit only **recognizes** casts by the 6-byte signature; rolling bytes change
 
 ### Override priority (StrollerController)
 
-1. Starlight Wand (`BLE_STARLIGHT`)  
-2. MagicBand+ (`BLE_MAGIC`)  
+1. BLE Effect (`BLE_EFFECT`) — MagicBand+ and Starlight Wand share one override source; same-priority arbitration uses per-rule exclusivity flags  
+2. Show Mode  
 3. Manual preset apply  
 4. Zone / GPS preset  
 
-Each BLE source has `enabled` + `timeout_ms` (0 = never auto-clear). App: Settings → Starlight Wand / MagicBand+.
+Each device type still has independent `enabled` + `timeout_ms` (0 = never auto-clear). App: Settings → Starlight Wand / MagicBand+.
 
 ### WLED mapping (100-LED strip)
 

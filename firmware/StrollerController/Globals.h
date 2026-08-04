@@ -58,8 +58,9 @@ extern bool          bleScanLogEnabled;
 /** When true, Disney BLE Data packets skip rule match/apply (zones/manual still work). */
 extern bool          rulesPaused;
 
-extern unsigned long swEventTimestamp;
 extern unsigned long mbEventTimestamp;
+/** True when the last BLE_EFFECT match was a wand packet (selects flat idle timeout). */
+extern bool          lastMatchedRuleWasWand;
 extern unsigned long swDebugLastNotify;
 extern uint8_t       lastLogBytes[48];
 extern size_t        lastLogLen;

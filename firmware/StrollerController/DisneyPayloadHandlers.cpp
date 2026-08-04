@@ -31,7 +31,7 @@ bool mbEffectIsRepeatAdvert(const uint8_t* payload, size_t plen) {
   size_t n = plen < sizeof(lastMbEffectPayload) ? plen : sizeof(lastMbEffectPayload);
   if (n != lastMbEffectLen) return false;
   if (memcmp(payload, lastMbEffectPayload, n) != 0) return false;
-  return currentOverride == BLE_MAGIC;
+  return currentOverride == BLE_EFFECT;
 }
 
 void rememberMbEffect(const uint8_t* payload, size_t plen) {
@@ -59,14 +59,11 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
 
   if (!payload || plen == 0) return;
 
-  // Hard lockout: ignore wand packets entirely while MagicBand+ holds override.
-  if (looksLikeWandPayload(payload, plen) && currentOverride == BLE_MAGIC) return;
-
   // Wand cast dedupe
   if (looksLikeWandPayload(payload, plen)) {
     if (wandCastIsDuplicateAdvert(payload, plen)) {
-      if (starlightEnabled && currentOverride == BLE_STARLIGHT) {
-        touchOverrideIdleTimer(BLE_STARLIGHT);
+      if (starlightEnabled && currentOverride == BLE_EFFECT && lastMatchedRuleWasWand) {
+        touchOverrideIdleTimer(BLE_EFFECT);
       }
       return;
     }
@@ -86,12 +83,12 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
       int matchIdx = findMatchingRule(payload, plen, rules);
       if (matchIdx >= 0) {
         if (onTimedRuleRepeatMatch(rules[matchIdx].as<JsonObject>(), payload, plen)) {
-          touchOverrideIdleTimer(BLE_MAGIC);
+          touchOverrideIdleTimer(BLE_EFFECT);
         }
         return;
       }
     }
-    if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
+    if (magicBandEnabled) touchOverrideIdleTimer(BLE_EFFECT);
     return;
   }
 
@@ -106,10 +103,10 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
 
   if (mbDeferToApp && bleConnected && magicBandEnabled && plen >= 3 &&
       payload[2] == 0xE9) {
-    if (!canTakeOverride(BLE_MAGIC)) return;
+    if (!canTakeOverride(BLE_EFFECT)) return;
     rememberMbEffect(payload, plen);
     notifyMbE9ToApp(payload, plen);
-    touchOverrideIdleTimer(BLE_MAGIC);
+    touchOverrideIdleTimer(BLE_EFFECT);
     Serial.println("[MB+] defer to app");
     return;
   }
@@ -137,7 +134,7 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
                  mbActiveRuleId, rule["id"] | "", rule["name"] | "");
         sdRuleLoggerWrite("suppressed", detail);
       }
-      if (magicBandEnabled) touchOverrideIdleTimer(BLE_MAGIC);
+      if (magicBandEnabled) touchOverrideIdleTimer(BLE_EFFECT);
       return;
     }
     Serial.printf("[Rule] match idx=%d id=%s name=%s\n",
@@ -151,7 +148,7 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     applyMatchedRule(rule, payload, plen);
     // Only dedupe after a successful apply (setOverride). Failed/hung applies must be
     // eligible to retry on the next advert.
-    if (currentOverride == BLE_MAGIC || currentOverride == BLE_STARLIGHT) {
+    if (currentOverride == BLE_EFFECT) {
       rememberMbEffect(payload, plen);
     }
     return;
@@ -173,14 +170,14 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
 
   if (bleDefaultPresetId.length() > 0) {
     bool wand = looksLikeWandPayload(payload, plen);
-    OverrideSource src = wand ? BLE_STARLIGHT : BLE_MAGIC;
     if (wand && !starlightEnabled) return;
     if (!wand && !magicBandEnabled) return;
-    if (!canTakeOverride(src)) return;
+    if (!canTakeOverride(BLE_EFFECT)) return;
+    lastMatchedRuleWasWand = wand;
     saveWledStateForOverride();
     if (applyPreset(bleDefaultPresetId)) {
-      setOverride(src);
-      touchOverrideIdleTimer(src);
+      setOverride(BLE_EFFECT);
+      touchOverrideIdleTimer(BLE_EFFECT);
       rememberMbEffect(payload, plen);
       Serial.printf("[Rule] defaultPresetId=%s\n", bleDefaultPresetId.c_str());
     }
