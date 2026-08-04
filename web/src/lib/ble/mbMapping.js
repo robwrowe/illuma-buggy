@@ -55,14 +55,23 @@ export function normalizeAnchor(raw) {
   };
 }
 
-/** Normalize optional fallback / require flags used when an anchor marker is missing. */
+/** Normalize optional fallback / require flags used when an anchor marker is missing.
+ *  fallbackValue may be a 0–255 number or a #rrggbb color string.
+ */
 export function normalizeAnchorExtras(raw) {
   if (!raw || typeof raw !== 'object') {
     return { fallbackValue: 0, requireAnchor: false };
   }
-  const fv = Number(raw.fallbackValue);
+  let fallbackValue = 0;
+  if (typeof raw.fallbackValue === 'string') {
+    const hex = normalizeCustomHex(raw.fallbackValue);
+    fallbackValue = hex || 0;
+  } else {
+    const fv = Number(raw.fallbackValue);
+    fallbackValue = Number.isFinite(fv) ? Math.max(0, Math.min(255, Math.round(fv))) : 0;
+  }
   return {
-    fallbackValue: Number.isFinite(fv) ? Math.max(0, Math.min(255, Math.round(fv))) : 0,
+    fallbackValue,
     requireAnchor: !!raw.requireAnchor,
   };
 }
@@ -667,6 +676,13 @@ function normalizeCustomHex(value) {
     return `#${raw.replace(/^#/, '').toLowerCase()}`;
   }
   return '';
+}
+
+export { normalizeCustomHex };
+
+/** True when fallbackValue is a #rrggbb color (vs numeric 0–255). */
+export function isFallbackColor(value) {
+  return !!normalizeCustomHex(value);
 }
 
 export function normalizePropOverride(raw, { color = false } = {}) {

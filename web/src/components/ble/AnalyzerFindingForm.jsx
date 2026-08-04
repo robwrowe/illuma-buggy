@@ -19,11 +19,14 @@ export function AnalyzerFindingForm({
   onCancel,
   onSubmit,
   onGenerateRule,
+  initialOpcode = '',
+  initialNotes = '',
+  initialLinkedRuleId = '',
 }) {
-  const [opcode, setOpcode] = useState('');
-  const [notes, setNotes] = useState('');
-  const [mode, setMode] = useState('none');
-  const [linkedRuleId, setLinkedRuleId] = useState('');
+  const [opcode, setOpcode] = useState(initialOpcode);
+  const [notes, setNotes] = useState(initialNotes);
+  const [mode, setMode] = useState(initialLinkedRuleId ? 'link' : 'none');
+  const [linkedRuleId, setLinkedRuleId] = useState(initialLinkedRuleId);
   const [ruleName, setRuleName] = useState('');
 
   const byteTags = useMemo(

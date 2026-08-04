@@ -212,7 +212,29 @@ static bool ruleRequiredAnchorsOk(const JsonObject& rule, const uint8_t* payload
 }
 
 static uint32_t fallbackValueOrZero(const JsonObject& node) {
-  return (uint32_t)(node["fallbackValue"] | 0);
+  if (node.isNull()) return 0;
+  JsonVariant v = node["fallbackValue"];
+  if (v.isNull()) return 0;
+  // Color strings are handled by tryFallbackColor — numeric path returns 0 for them.
+  if (v.is<const char*>()) {
+    const char* s = v.as<const char*>();
+    if (s && s[0] == '#') return 0;
+    // Allow numeric strings
+    return (uint32_t)atoi(s);
+  }
+  return (uint32_t)(v | 0);
+}
+
+/** If fallbackValue is #rrggbb, parse into r/g/b and return true. */
+static bool tryFallbackColor(const JsonObject& node, uint8_t& r, uint8_t& g, uint8_t& b) {
+  r = g = b = 0;
+  if (node.isNull()) return false;
+  JsonVariant v = node["fallbackValue"];
+  if (!v.is<const char*>()) return false;
+  const char* s = v.as<const char*>();
+  if (!s || s[0] != '#') return false;
+  parseHexColor(s, r, g, b);
+  return true;
 }
 
 static bool matchHexPrefix(const uint8_t* payload, size_t plen, const char* hex) {
@@ -648,6 +670,12 @@ static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t
       int offsetResolved = resolveOffsetOrAnchor(payload, plen, ch, 0);
       uint32_t chRaw;
       if (offsetResolved < 0) {
+        uint8_t fr = 0, fg = 0, fb = 0;
+        if (tryFallbackColor(ch, fr, fg, fb)) {
+          if (key[0] == 'r') return fr;
+          if (key[0] == 'g') return fg;
+          return fb;
+        }
         chRaw = fallbackValueOrZero(ch);
       } else {
         uint8_t offset = (uint8_t)offsetResolved;
@@ -670,6 +698,10 @@ static void resolveColorSource(JsonObject srcObj, const uint8_t* payload, size_t
   int offsetResolved = resolveOffsetOrAnchor(payload, plen, srcObj, 0);
   uint32_t raw;
   if (offsetResolved < 0) {
+    if (tryFallbackColor(srcObj, r, g, b)) {
+      // Authored constant color — same as kind:"fixed" (no BLE RGB calibration).
+      return;
+    }
     raw = fallbackValueOrZero(srcObj);
   } else {
     uint8_t offset = (uint8_t)offsetResolved;
@@ -1725,6 +1757,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       JsonObject colorBlend = ex["colorBlend"].as<JsonObject>();
       bool hasColorBlend = !hasFixedColor && !colorBlend.isNull();
       bool hasColorSourceBlend = (strcmp(source, "colorSourceBlend") == 0);
+      bool usedColorFallback = false;
+      uint8_t r = 0, g = 0, b = 0;
 
       if (isTimingDerivedSource(source)) {
         derivedValue = resolveTimingDerivedValue(rule, payload, plen, source);
@@ -1734,18 +1768,24 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
         uint8_t bitStart = (uint8_t)(ex["bitStart"] | 0);
         uint8_t bitCount = (uint8_t)(ex["bitCount"] | 8);
         if (offsetResolved < 0) {
-          raw = fallbackValueOrZero(ex);
+          if (tryFallbackColor(ex, r, g, b)) {
+            usedColorFallback = true;
+          } else {
+            raw = fallbackValueOrZero(ex);
+          }
         } else {
           raw = extractBits(payload, plen, (uint8_t)offsetResolved, bitStart, bitCount);
         }
       }
 
-      uint8_t r = 0, g = 0, b = 0;
       float mapped = (derivedValue >= 0.0f) ? derivedValue : (float)raw;
       if (hasFixedColor) {
         parseHexColor(ex["value"] | "#000000", r, g, b);
         mapped = 0.0f;
         Serial.printf("[Rule] fixedColor rgb=%u,%u,%u\n", r, g, b);
+      } else if (usedColorFallback) {
+        mapped = 0.0f;
+        Serial.printf("[Rule] extract color fallback rgb=%u,%u,%u\n", r, g, b);
       } else if (hasChannelGroup) {
         auto extractChannel = [&](const char* key, bool* flashOut) -> uint8_t {
           JsonObject ch = channelGroup[key].as<JsonObject>();
@@ -1757,6 +1797,12 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
           uint32_t chRaw;
           if (offsetResolved < 0) {
             if (flashOut) *flashOut = false;
+            uint8_t fr = 0, fg = 0, fb = 0;
+            if (tryFallbackColor(ch, fr, fg, fb)) {
+              if (key[0] == 'r') return fr;
+              if (key[0] == 'g') return fg;
+              return fb;
+            }
             chRaw = fallbackValueOrZero(ch);
           } else {
             uint8_t offset = (uint8_t)offsetResolved;

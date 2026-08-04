@@ -29,7 +29,7 @@ import { WAND_LAB_SECTIONS } from '../../lib/routes';
 import { EMPTY_FINDING_FORM, formAfterLog } from '../../lib/sheets/wandLabFindings';
 import { postLogEntryToSheets, serializeByteTags } from '../../lib/sheets/wandLabSheetsClient';
 import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
-import { WandLabAnalyzerTab } from './WandLabAnalyzerTab';
+import { EMPTY_ANALYZER_SESSION, WandLabAnalyzerTab } from './WandLabAnalyzerTab';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
 import { WandLabLogPanel } from './WandLabLogPanel';
 import { WandLabPacketSequence } from './WandLabPacketSequence';
@@ -100,6 +100,8 @@ export function WandLabTab({ data, update }) {
   const [editingLogId, setEditingLogId] = useState(null);
   const [sweepIndices, setSweepIndices] = useState([]);
   const [sweepLivePayload, setSweepLivePayload] = useState(null);
+  const [analyzerImportSeed, setAnalyzerImportSeed] = useState(null);
+  const [analyzerSession, setAnalyzerSession] = useState(() => ({ ...EMPTY_ANALYZER_SESSION }));
 
   const palOpts = mbPaletteOptions();
 
@@ -365,11 +367,22 @@ export function WandLabTab({ data, update }) {
 
   const loadLogEntry = (e) => {
     if (e.kind === 'byte_tags') {
-      const arr = parseHexToBytes(e.hex || e.bytes || '');
-      if (arr.length) {
-        setByteArray(arr, 'analyzer');
-        setLabTab('analyze');
-      }
+      setLabTab('analyze');
+      setAnalyzerImportSeed({
+        key: `${e.id}-${Date.now()}`,
+        strip8301: false,
+        packets: [{
+          id: e.id,
+          hex: e.hex || e.bytes || '',
+          bytes: parseHexToBytes(e.hex || e.bytes || ''),
+          byteTagsSerialized: e.byteTagsSerialized || serializeByteTags(e.byteTags || []),
+          tags: e.byteTags || undefined,
+          opcode: e.opcode || '',
+          notes: e.notes || e.note || '',
+          findingId: e.id,
+          linkedRuleId: e.linkedRuleId || '',
+        }],
+      });
       setFindingForm({
         ...EMPTY_FINDING_FORM,
         deviceType: e.deviceType || 'unknown',
@@ -378,7 +391,6 @@ export function WandLabTab({ data, update }) {
         opcodeOverride: e.opcode || '',
       });
       setEditingLogId(null);
-      setStatus(`Loaded analyzer packet (${(e.byteTagsSerialized || '').split(',').filter(Boolean).length} tags)`);
       return;
     }
     if ((e.kind === 'sequence' || e.packets?.length > 1) && e.packets?.length) {
@@ -717,6 +729,10 @@ export function WandLabTab({ data, update }) {
                 onLogFinding={addByteTagLogEntry}
                 rules={mb.rules}
                 onGenerateRule={generateRuleFromAnalyzer}
+                importSeed={analyzerImportSeed}
+                onImportSeedConsumed={() => setAnalyzerImportSeed(null)}
+                session={analyzerSession}
+                onSessionChange={setAnalyzerSession}
               />
             </Tabs.Panel>
           </Tabs>

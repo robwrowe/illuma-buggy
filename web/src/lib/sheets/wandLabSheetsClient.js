@@ -27,6 +27,55 @@ export function serializeByteTags(byteTags) {
 }
 
 /**
+ * Inverse of serializeByteTags.
+ * @param {string} serialized
+ * @param {number} [minLength=0]  pad array to at least this length
+ * @returns {(null|{ kind: string, detail: object })[]}
+ */
+export function deserializeByteTags(serialized, minLength = 0) {
+  const tags = Array.from({ length: Math.max(0, minLength) }, () => null);
+  const raw = String(serialized || '').trim();
+  if (!raw) return tags;
+
+  raw.split(',').map((s) => s.trim()).filter(Boolean).forEach((part) => {
+    const bits = part.split(':');
+    const index = parseInt(bits[0], 10);
+    if (!Number.isFinite(index) || index < 0) return;
+    while (tags.length <= index) tags.push(null);
+    const kind = bits[1];
+    if (!kind) return;
+    if (kind === 'param') {
+      tags[index] = {
+        kind: 'param',
+        detail: {
+          bitStart: Number(bits[2]) || 0,
+          bitCount: Number(bits[3]) || 8,
+          paramName: bits.slice(4).join(':') || '',
+        },
+      };
+      return;
+    }
+    if (kind === 'color' && bits[2] === 'rgb') {
+      tags[index] = {
+        kind: 'color',
+        detail: {
+          mode: 'rgb',
+          channelRole: bits[3] || 'r',
+          groupId: bits[4] || 'grp1',
+        },
+      };
+      return;
+    }
+    if (kind === 'color') {
+      tags[index] = { kind: 'color', detail: { mode: 'palette', channelRole: '', groupId: '' } };
+      return;
+    }
+    tags[index] = { kind, detail: {} };
+  });
+  return tags;
+}
+
+/**
  * POST JSON to Apps Script as text/plain (CORS-simple — no OPTIONS preflight).
  * Apps Script doPost reads e.postData.contents either way.
  *

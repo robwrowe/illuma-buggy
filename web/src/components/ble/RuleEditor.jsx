@@ -53,6 +53,8 @@ import {
   isFixedColorSource,
   isTimingDerivedSource,
   normalizeAnchor,
+  normalizeCustomHex,
+  isFallbackColor,
   normalizeColorSource,
   normalizeColorSources,
   normalizeConditionNode,
@@ -237,6 +239,7 @@ function HexByteInput({ value, onChange, placeholder = '0x00' }) {
  * absolute offset and marker-anchor mode. `node` must have `.offset` and optionally `.anchor`.
  * `onPatch(partialNode)` merges into the parent node (same convention as `set()` callers).
  * When `showAnchorExtras` is true (default), anchor mode also exposes fallbackValue + requireAnchor.
+ * `allowColorFallback` lets fallbackValue be either 0–255 or a #rrggbb color.
  */
 function OffsetOrAnchorField({
   node,
@@ -244,9 +247,12 @@ function OffsetOrAnchorField({
   label = 'Offset',
   disabled = false,
   showAnchorExtras = true,
+  allowColorFallback = true,
 }) {
   const mode = node?.anchor ? 'anchor' : 'offset';
   const anchor = node?.anchor || { byte: '0F', occurrence: 1, searchFrom: 0, searchLen: 0, deltaBytes: 0 };
+  const fallbackIsColor = allowColorFallback && isFallbackColor(node?.fallbackValue);
+  const fallbackMode = fallbackIsColor ? 'color' : 'number';
 
   const setMode = (next) => {
     if (next === 'offset') {
@@ -254,12 +260,22 @@ function OffsetOrAnchorField({
     } else {
       onPatch({
         anchor: normalizeAnchor(anchor) || anchor,
-        fallbackValue: Number.isFinite(node?.fallbackValue) ? node.fallbackValue : 0,
+        fallbackValue: fallbackIsColor
+          ? (normalizeCustomHex(node?.fallbackValue) || '#000000')
+          : (Number.isFinite(Number(node?.fallbackValue)) ? Number(node.fallbackValue) : 0),
         requireAnchor: !!node?.requireAnchor,
       });
     }
   };
   const patchAnchor = (partial) => onPatch({ anchor: normalizeAnchor({ ...anchor, ...partial }) });
+
+  const setFallbackMode = (next) => {
+    if (next === 'color') {
+      onPatch({ fallbackValue: normalizeCustomHex(node?.fallbackValue) || '#000000' });
+    } else {
+      onPatch({ fallbackValue: 0 });
+    }
+  };
 
   return (
     <Stack gap={4}>
@@ -314,18 +330,42 @@ function OffsetOrAnchorField({
           </SimpleGrid>
           {showAnchorExtras && (
             <Stack gap={4}>
-              <Field label="Fallback value (if marker missing)" style={{ marginBottom: 0 }}>
+              <Group gap={6} wrap="nowrap" align="flex-end">
+                <Text size="xs" c="dimmed" style={{ flex: 1 }}>Fallback if marker missing</Text>
+                {allowColorFallback && (
+                  <SegmentedControl
+                    size="xs"
+                    value={fallbackMode}
+                    onChange={setFallbackMode}
+                    disabled={disabled}
+                    data={[
+                      { value: 'number', label: 'Number' },
+                      { value: 'color', label: 'Color' },
+                    ]}
+                  />
+                )}
+              </Group>
+              {fallbackMode === 'color' ? (
+                <ColorInput
+                  size="xs"
+                  format="hex"
+                  value={normalizeCustomHex(node?.fallbackValue) || '#000000'}
+                  onChange={(v) => onPatch({ fallbackValue: normalizeCustomHex(v) || '#000000' })}
+                  disabled={disabled}
+                  swatches={['#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff']}
+                />
+              ) : (
                 <NumberInput
                   size="xs"
                   min={0}
                   max={255}
-                  value={node?.fallbackValue ?? 0}
+                  value={Number.isFinite(Number(node?.fallbackValue)) ? Number(node.fallbackValue) : 0}
                   onChange={(v) => onPatch({
                     fallbackValue: Math.max(0, Math.min(255, parseInt(v, 10) || 0)),
                   })}
                   disabled={disabled}
                 />
-              </Field>
+              )}
               <Checkbox
                 size="xs"
                 label="Fail rule match if marker not found"
@@ -2160,6 +2200,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
               <Stack gap="xs">
                 <OffsetOrAnchorField
                   node={colorBlend.ratio}
+                  allowColorFallback={false}
                   onPatch={(p) =>
                     set({
                       colorBlend: {
@@ -2662,6 +2703,7 @@ function RuleCard({
                 label="Byte offset"
                 node={timing}
                 disabled={!timing.enabled}
+                allowColorFallback={false}
                 onPatch={(p) =>
                   onChange({
                     ...rule,

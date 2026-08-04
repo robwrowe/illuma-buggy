@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -15,12 +15,18 @@ import {
 } from '@mantine/core';
 import {
   BYTE_TAG_KINDS,
+  buildAnalyzerStateFromPackets,
   columnConstancy,
   createEmptyColorDetail,
   createEmptyParamDetail,
+  deserializeByteTags,
   effectiveTag,
+  looksLikeByteTagsSheetPaste,
   parseAnalyzerInput,
+  parseByteTagsSheetPaste,
 } from '../../lib/ble/byteAnalyzer';
+import { hexToBytes, bytesToHex } from '../../lib/ble/e9Decode';
+import { hasCompanyIdPrefix, stripCompanyId } from '../../lib/ble/wandSimClient';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { AnalyzerFindingForm } from './AnalyzerFindingForm';
@@ -66,10 +72,14 @@ function ParamDetailPopover({
   return (
     <Popover.Dropdown>
       <Stack gap={6} p={4} miw={220}>
-        <Text size="xs" fw={600}>{anchorLabel}</Text>
+        <Text size="xs" fw={600}>
+          {anchorLabel}
+        </Text>
         {knownNames.length > 0 && (
           <Stack gap={4}>
-            <Text size="xs" c="dimmed">Reuse name</Text>
+            <Text size="xs" c="dimmed">
+              Reuse name
+            </Text>
             <Group gap={4}>
               {knownNames.map((n) => (
                 <Button
@@ -153,9 +163,7 @@ function RgbChannelPopover({
   anchorLabel,
 }) {
   const [channelRole, setChannelRole] = useState(initialDetail?.channelRole || 'r');
-  const [groupId, setGroupId] = useState(
-    initialDetail?.groupId || nextGroupId(existingGroupIds),
-  );
+  const [groupId, setGroupId] = useState(initialDetail?.groupId || nextGroupId(existingGroupIds));
 
   if (!opened) return null;
 
@@ -167,7 +175,9 @@ function RgbChannelPopover({
   return (
     <Popover.Dropdown>
       <Stack gap={6} p={4} miw={220}>
-        <Text size="xs" fw={600}>{anchorLabel}</Text>
+        <Text size="xs" fw={600}>
+          {anchorLabel}
+        </Text>
         <SegmentedControl
           size="xs"
           value={channelRole}
@@ -248,11 +258,22 @@ function AnalyzerRow({
   onSend,
   onEdit,
   onLog,
+  onRemove,
   tagKindMeta,
 }) {
+  const [hovered, setHovered] = useState(false);
+  const hoverHandlers = {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  };
+  const rowBg = hovered
+    ? 'color-mix(in srgb, var(--mantine-color-blue-filled) 14%, transparent)'
+    : undefined;
+
   return (
     <>
       <Box
+        {...hoverHandlers}
         style={{
           fontSize: 10,
           fontFamily: 'monospace',
@@ -261,6 +282,9 @@ function AnalyzerRow({
           gap: 2,
           justifyContent: 'center',
           paddingRight: 4,
+          paddingLeft: 2,
+          borderRadius: 4,
+          background: rowBg,
         }}
       >
         <Group gap={4} wrap="nowrap">
@@ -273,18 +297,27 @@ function AnalyzerRow({
           <Button size="compact-xs" variant="light" onClick={onLog}>
             Log
           </Button>
+          <Button
+            size="compact-xs"
+            color="red"
+            variant="subtle"
+            onClick={onRemove}
+            title="Remove row"
+          >
+            ✕
+          </Button>
         </Group>
       </Box>
       {Array.from({ length: maxLen }).map((_, i) => {
         const tag = effectiveTag(i, row.id, columnTags, cellTags);
         const meta = tag ? tagKindMeta(tag.kind) : null;
         const byte = i < row.bytes.length ? row.bytes[i] : null;
-        const popoverOpen =
-          detailPopover?.rowId === row.id && detailPopover?.index === i;
+        const popoverOpen = detailPopover?.rowId === row.id && detailPopover?.index === i;
         return (
           <Popover key={i} opened={popoverOpen} withArrow position="bottom">
             <Popover.Target>
               <Box
+                {...hoverHandlers}
                 onClick={() => byte != null && onCellClick(i)}
                 style={{
                   cursor: byte != null ? 'pointer' : 'default',
@@ -294,10 +327,12 @@ function AnalyzerRow({
                   padding: '4px 0',
                   borderRadius: 4,
                   opacity: byte == null ? 0.3 : 1,
-                  background: meta
-                    ? `var(--mantine-color-${meta.color}-light)`
-                    : 'var(--surface2)',
-                  border: '1px solid var(--border)',
+                  background:
+                    rowBg ||
+                    (meta ? `var(--mantine-color-${meta.color}-light)` : 'var(--surface2)'),
+                  border: hovered
+                    ? '1px solid var(--mantine-color-blue-4)'
+                    : '1px solid var(--border)',
                 }}
               >
                 {byte != null ? (byte & 0xff).toString(16).padStart(2, '0').toUpperCase() : '··'}
@@ -331,30 +366,126 @@ function AnalyzerRow({
   );
 }
 
+export const EMPTY_ANALYZER_SESSION = {
+  pasteText: '',
+  rows: [],
+  strip8301: true,
+  columnTags: {},
+  cellTags: {},
+  activeTag: 'signature',
+  colorMode: 'palette',
+  importNote: '',
+};
+
 export function WandLabAnalyzerTab({
   onSendPacket,
   onLoadToByteEditor,
   onLogFinding,
   rules,
   onGenerateRule,
+  importSeed = null,
+  onImportSeedConsumed,
+  onStatus,
+  session = EMPTY_ANALYZER_SESSION,
+  onSessionChange,
 }) {
-  const [pasteText, setPasteText] = useState('');
-  const [rows, setRows] = useState([]);
-  const [strip8301, setStrip8301] = useState(true);
-  const [columnTags, setColumnTags] = useState({});
-  const [cellTags, setCellTags] = useState({});
-  const [activeTag, setActiveTag] = useState('signature');
-  const [colorMode, setColorMode] = useState('palette');
+  const pasteText = session.pasteText ?? '';
+  const rows = session.rows ?? [];
+  const strip8301 = session.strip8301 !== false;
+  const columnTags = session.columnTags ?? {};
+  const cellTags = session.cellTags ?? {};
+  const activeTag = session.activeTag || 'signature';
+  const colorMode = session.colorMode || 'palette';
+  const importNote = session.importNote || '';
+
+  const patchSession = (partial) => {
+    onSessionChange?.({ ...EMPTY_ANALYZER_SESSION, ...session, ...partial });
+  };
+
+  // Ephemeral UI only — not cached across tab switches
   const [detailPopover, setDetailPopover] = useState(null);
   const [loggingRowId, setLoggingRowId] = useState(null);
+  const [newRowHex, setNewRowHex] = useState('');
+  const [newRowMsg, setNewRowMsg] = useState('');
 
-  const parseInput = () => {
-    setRows(parseAnalyzerInput(pasteText, { strip8301 }));
-    setColumnTags({});
-    setCellTags({});
+  const applyPacketState = (packets, note = '') => {
+    const state = buildAnalyzerStateFromPackets(packets);
+    patchSession({
+      rows: state.rows,
+      columnTags: state.columnTags,
+      cellTags: state.cellTags,
+      importNote: note,
+    });
     setDetailPopover(null);
     setLoggingRowId(null);
   };
+
+  const parseInput = () => {
+    if (looksLikeByteTagsSheetPaste(pasteText)) {
+      const result = parseByteTagsSheetPaste(pasteText, { strip8301 });
+      if (!result.ok) {
+        onStatus?.(result.message);
+        patchSession({ importNote: result.message });
+        return;
+      }
+      applyPacketState(result.packets, result.message);
+      onStatus?.(result.message);
+      return;
+    }
+    patchSession({
+      rows: parseAnalyzerInput(pasteText, { strip8301 }),
+      columnTags: {},
+      cellTags: {},
+      importNote: '',
+    });
+    setDetailPopover(null);
+    setLoggingRowId(null);
+  };
+
+  useEffect(() => {
+    if (!importSeed?.key || !Array.isArray(importSeed.packets) || !importSeed.packets.length)
+      return;
+    const strip = importSeed.strip8301 ?? true;
+    const packets = importSeed.packets
+      .map((p, i) => {
+        let bytes = Array.isArray(p.bytes) && p.bytes.length ? p.bytes : null;
+        if (!bytes) {
+          let hex = String(p.hex || p.raw || '').replace(/[^0-9a-fA-F]/g, '');
+          if (strip && hasCompanyIdPrefix(hex)) hex = stripCompanyId(hex);
+          bytes = hexToBytes(hex);
+        }
+        const tags =
+          Array.isArray(p.tags) && p.tags.length
+            ? p.tags
+            : deserializeByteTags(p.byteTagsSerialized || '', bytes.length);
+        return {
+          id: p.id || `seed-${importSeed.key}-${i}`,
+          raw: p.hex || p.raw || '',
+          bytes,
+          tags,
+          opcode: p.opcode || '',
+          notes: p.notes || '',
+          findingId: p.findingId || '',
+          linkedRuleId: p.linkedRuleId || '',
+          byteTagsSerialized: p.byteTagsSerialized || '',
+        };
+      })
+      .filter((p) => p.bytes.length > 0);
+
+    if (!packets.length) {
+      onStatus?.('Could not load analyzer packets (empty hex)');
+      onImportSeedConsumed?.();
+      return;
+    }
+    applyPacketState(
+      packets,
+      `Loaded ${packets.length} tagged packet${packets.length === 1 ? '' : 's'} for editing`,
+    );
+    onStatus?.(
+      `Loaded ${packets.length} tagged packet${packets.length === 1 ? '' : 's'} into analyzer`,
+    );
+    onImportSeedConsumed?.();
+  }, [importSeed?.key]);
 
   const maxLen = useMemo(() => rows.reduce((m, r) => Math.max(m, r.bytes.length), 0), [rows]);
   const constancy = useMemo(() => columnConstancy(rows), [rows]);
@@ -384,20 +515,91 @@ export function WandLabAnalyzerTab({
 
   const applyTag = (rowId, index, entry) => {
     if (rowId == null) {
-      setColumnTags((prev) => {
-        const next = { ...prev };
-        if (entry == null) delete next[index];
-        else next[index] = entry;
-        return next;
-      });
+      const next = { ...columnTags };
+      if (entry == null) delete next[index];
+      else next[index] = entry;
+      patchSession({ columnTags: next });
     } else {
-      setCellTags((prev) => {
-        const rowMap = { ...(prev[rowId] || {}) };
-        if (entry == null) delete rowMap[index];
-        else rowMap[index] = entry;
-        return { ...prev, [rowId]: rowMap };
-      });
+      const rowMap = { ...(cellTags[rowId] || {}) };
+      if (entry == null) delete rowMap[index];
+      else rowMap[index] = entry;
+      patchSession({ cellTags: { ...cellTags, [rowId]: rowMap } });
     }
+  };
+
+  const removeRow = (rowId) => {
+    const nextRows = rows.filter((r) => r.id !== rowId);
+    const nextCellTags = { ...cellTags };
+    delete nextCellTags[rowId];
+    patchSession({ rows: nextRows, cellTags: nextCellTags });
+    if (loggingRowId === rowId) setLoggingRowId(null);
+    if (detailPopover?.rowId === rowId) setDetailPopover(null);
+  };
+
+  /** Append packet(s) from the new-row hex field (one hex line per row). Empty → blank zeros. */
+  const addRow = () => {
+    const text = newRowHex.trim();
+    if (!text) {
+      const len = maxLen || rows[0]?.bytes?.length || 16;
+      const bytes = Array.from({ length: len }, () => 0);
+      const id = `row-add-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      patchSession({
+        rows: [
+          ...rows,
+          {
+            id,
+            raw: bytesToHex(bytes),
+            bytes,
+            opcode: '',
+            notes: '',
+            findingId: '',
+            linkedRuleId: '',
+          },
+        ],
+      });
+      setNewRowMsg(`Added blank ${len}-byte row`);
+      return;
+    }
+
+    if (looksLikeByteTagsSheetPaste(text)) {
+      const result = parseByteTagsSheetPaste(text, { strip8301 });
+      if (!result.ok) {
+        setNewRowMsg(result.message);
+        onStatus?.(result.message);
+        return;
+      }
+      const state = buildAnalyzerStateFromPackets(result.packets);
+      // Merge tags: keep existing column tags; attach imported cell tags under new ids
+      const mergedCellTags = { ...cellTags, ...state.cellTags };
+      const mergedColumnTags = { ...columnTags };
+      Object.entries(state.columnTags).forEach(([idx, tag]) => {
+        if (mergedColumnTags[idx] == null) mergedColumnTags[idx] = tag;
+      });
+      patchSession({
+        rows: [...rows, ...state.rows],
+        cellTags: mergedCellTags,
+        columnTags: mergedColumnTags,
+      });
+      setNewRowHex('');
+      setNewRowMsg(result.message);
+      onStatus?.(result.message);
+      return;
+    }
+
+    const parsed = parseAnalyzerInput(text, { strip8301 });
+    if (!parsed.length) {
+      const msg = 'No valid hex in paste — expect even-length hex (optional 8301)';
+      setNewRowMsg(msg);
+      onStatus?.(msg);
+      return;
+    }
+    patchSession({ rows: [...rows, ...parsed] });
+    setNewRowHex('');
+    setNewRowMsg(
+      parsed.length === 1
+        ? `Added ${parsed[0].bytes.length}-byte row`
+        : `Added ${parsed.length} rows`,
+    );
   };
 
   /** Clear the assignment that paints this cell (cell override, else column default). */
@@ -460,36 +662,86 @@ export function WandLabAnalyzerTab({
   return (
     <Stack gap="md">
       <Text size="xs" c="dimmed">
-        Paste one packet (hex) per line. Click a column header to tag that byte position across
-        every row; click an individual cell to override just that packet. Click an assigned cell
-        again to clear it.
+        Paste bare hex (one packet per line), or paste rows from the Sheets{' '}
+        <Text span ff="monospace">
+          byte_tags
+        </Text>{' '}
+        tab (with header) to reload tags for editing. Click a column header to tag across every row;
+        click a cell to override one packet. Click an assigned cell again to clear it.
       </Text>
 
       <Textarea
         autosize
         minRows={3}
         maxRows={8}
-        placeholder={'8301E90C0F19...\n8301E90C0F2A...'}
+        placeholder={
+          'Hex only:\n8301E90C0F19...\n\nOr Sheets byte_tags paste:\nfinding_id\tcreated_at\topcode\thex\tbyte_tags\t...'
+        }
         value={pasteText}
-        onChange={(e) => setPasteText(e.target.value)}
+        onChange={(e) => patchSession({ pasteText: e.target.value })}
         styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
       />
       <Group gap="xs" align="center" wrap="wrap">
         <Checkbox
           label="Strip 8301 for payload bytes"
           checked={strip8301}
-          onChange={(e) => setStrip8301(e.currentTarget.checked)}
+          onChange={(e) => patchSession({ strip8301: e.currentTarget.checked })}
         />
         <Button size="xs" onClick={parseInput}>
-          Parse {pasteText.split('\n').filter((l) => l.trim()).length || ''} lines
+          {looksLikeByteTagsSheetPaste(pasteText) ? 'Import sheet rows' : 'Parse'}{' '}
+          {pasteText.split('\n').filter((l) => l.trim()).length || ''} lines
         </Button>
         {rows.length > 0 && (
-          <Text size="xs" c="dimmed">
-            {rows.length} packets, max {maxLen} bytes
-            {strip8301 ? ' (8301 stripped)' : ''}
-          </Text>
+          <>
+            <Text size="xs" c="dimmed">
+              {rows.length} packets, max {maxLen} bytes
+              {strip8301 ? ' (8301 stripped)' : ''}
+            </Text>
+            <Button
+              size="xs"
+              variant="default"
+              onClick={() => {
+                patchSession({ ...EMPTY_ANALYZER_SESSION, strip8301 });
+                setDetailPopover(null);
+                setLoggingRowId(null);
+                setNewRowHex('');
+                setNewRowMsg('');
+              }}
+            >
+              Clear session
+            </Button>
+          </>
         )}
       </Group>
+      {importNote ? (
+        <Text size="xs" c="teal">
+          {importNote}
+        </Text>
+      ) : null}
+
+      <Group gap="xs" align="flex-end" wrap="wrap">
+        <TextInput
+          size="xs"
+          label="Add row from hex"
+          placeholder="Paste hex (one packet per line) — empty adds blank zeros"
+          value={newRowHex}
+          onChange={(e) => { setNewRowHex(e.target.value); setNewRowMsg(''); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              addRow();
+            }
+          }}
+          style={{ flex: 1, minWidth: 220 }}
+          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+        />
+        <Button size="xs" onClick={addRow}>
+          {newRowHex.trim() ? 'Add pasted row(s)' : 'Add blank row'}
+        </Button>
+      </Group>
+      {newRowMsg ? (
+        <Text size="xs" c="dimmed">{newRowMsg}</Text>
+      ) : null}
 
       <Group gap={6} align="center" wrap="wrap">
         <Text size="xs" c="dimmed" fw={600}>
@@ -501,7 +753,7 @@ export function WandLabAnalyzerTab({
             size="compact-xs"
             variant={activeTag === k.id ? 'filled' : 'outline'}
             color={k.color}
-            onClick={() => setActiveTag(k.id)}
+            onClick={() => patchSession({ activeTag: k.id })}
           >
             {k.label}
           </Button>
@@ -510,7 +762,7 @@ export function WandLabAnalyzerTab({
           <SegmentedControl
             size="xs"
             value={colorMode}
-            onChange={setColorMode}
+            onChange={(v) => patchSession({ colorMode: v })}
             data={[
               { value: 'palette', label: 'Palette' },
               { value: 'rgb', label: 'RGB' },
@@ -524,9 +776,9 @@ export function WandLabAnalyzerTab({
           <Box
             style={{
               display: 'grid',
-              gridTemplateColumns: `120px repeat(${maxLen}, 34px)`,
+              gridTemplateColumns: `10.5rem repeat(${maxLen}, 34px)`,
               gap: 2,
-              minWidth: 120 + maxLen * 36,
+              minWidth: 168 + maxLen * 36,
             }}
           >
             <Box />
@@ -605,6 +857,7 @@ export function WandLabAnalyzerTab({
                 onSend={() => onSendPacket?.(row.bytes)}
                 onEdit={() => onLoadToByteEditor?.(row.bytes)}
                 onLog={() => setLoggingRowId(row.id)}
+                onRemove={() => removeRow(row.id)}
                 tagKindMeta={tagKindMeta}
               />
             ))}
@@ -618,6 +871,9 @@ export function WandLabAnalyzerTab({
           columnTags={columnTags}
           cellTags={cellTags[loggingRowId]}
           rules={rules}
+          initialOpcode={loggingRow.opcode || ''}
+          initialNotes={loggingRow.notes || ''}
+          initialLinkedRuleId={loggingRow.linkedRuleId || ''}
           onCancel={() => setLoggingRowId(null)}
           onSubmit={(entry) => {
             onLogFinding?.(entry);

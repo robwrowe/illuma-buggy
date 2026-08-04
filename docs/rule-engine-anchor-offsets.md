@@ -11,6 +11,45 @@ offset correction is therefore unreliable.
 optionally within a search window) and then apply a signed delta. The same rule then works
 whether or not the prefix is present.
 
+## How to use (authoring)
+
+### 1. Find a stable marker
+
+In Wand Lab → **Analyze**, paste several captures of the same effect (with and without
+`8301` if you have both). Tag:
+
+- **Anchor** on the marker byte (e.g. a repeated `0x0F` layout selector)
+- **Color** / **Param** / **Timing** on the bytes you care about *relative to* that marker
+
+Prefer a byte whose **value and occurrence** stay the same across variants, even when
+absolute indices shift.
+
+### 2. Wire the rule (Rules editor)
+
+On any extract, color channel, palette color source, blend-ratio extract, or timing byte:
+
+1. Switch **Fixed → Anchor**
+2. Set **Marker byte** (hex), **Occurrence** (1 = first match), optional search window
+3. Set **Δ bytes after match** — `0` = the marker itself, `+1` = next byte, `-1` = previous, etc.
+4. Optional:
+   - **Fallback** if the marker is missing — **Number** (0–255 raw / palette index / channel) or **Color** (`#rrggbb` for color extracts/sources; on an RGB channel, the matching R/G/B component is used)
+   - **Fail rule match if marker not found** (`requireAnchor`) — skip this rule instead of using the fallback
+
+Conditions (byte / bits) can also use Anchor mode; a missing marker makes the condition
+false (no separate fallback UI).
+
+### 3. Generate from Analyze
+
+If you tagged **Anchor** plus colors/params, **Generate new rule** from a Log finding emits
+`anchor` + `deltaBytes` on those extracts (nearest preceding anchor tag). Review in Rules
+before pushing to the board.
+
+### 4. Verify
+
+Use Rules coverage / packet preview with both prefixed and stripped hex. Confirm colors and
+params still resolve. If the marker is sometimes absent, choose fallback vs `requireAnchor`
+deliberately.
+
 ## Schema
 
 Every place a rule currently accepts `"offset": N` may also carry an optional `anchor`:
@@ -31,8 +70,8 @@ Every place a rule currently accepts `"offset": N` may also carry an optional `a
   },
   // Optional — extracts / color channels / blend ratio / timing only
   // (not condition leaves; those already fail the condition when the marker is missing):
-  "fallbackValue": 0,   // raw extract value when marker not found (default 0)
-  "requireAnchor": false // if true, skip this rule entirely when marker not found
+  "fallbackValue": 0,        // number 0–255, OR "#rrggbb" color string
+  "requireAnchor": false     // if true, skip this rule entirely when marker not found
 }
 ```
 
@@ -45,9 +84,10 @@ range), firmware and the web preview treat that as “value unavailable”:
 | Call site | Default not-found behavior | With `requireAnchor: true` |
 |-----------|----------------------------|----------------------------|
 | Condition leaves | condition → `false` | n/a (extras not used) |
-| Extracts / color channels | value → `fallbackValue` (default `0`) | rule skipped (no match) |
-| Blend ratio extract | ratio from `fallbackValue` / bitCount max | rule skipped |
-| Timing byte | derived from `fallbackValue` | rule skipped |
+| Palette / color extract | number → raw/palette index; `#rrggbb` → that RGB | rule skipped |
+| RGB channel | number → channel value; `#rrggbb` → that channel’s component | rule skipped |
+| Blend ratio extract | ratio from numeric `fallbackValue` / bitCount max | rule skipped |
+| Timing byte | derived from numeric `fallbackValue` | rule skipped |
 
 ## Worked example
 
@@ -58,12 +98,14 @@ New config:
 
 ```jsonc
 {
-  "anchor": { "byte": "0F", "occurrence": 2, "deltaBytes": 1 }
+  "anchor": { "byte": "0F", "occurrence": 2, "deltaBytes": 1 },
+  "fallbackValue": "#000000",
+  "requireAnchor": false
 }
 ```
 
-This finds the 2nd `0x0F` (a zone-layout selector constant in this family) and reads the
-byte immediately after it, regardless of prefix presence.
+This finds the 2nd `0x0F` and reads the byte immediately after it. If that marker is
+missing, the channel falls back to black (or skip the rule if `requireAnchor` is true).
 
 ## Hypothesis status of marker values
 

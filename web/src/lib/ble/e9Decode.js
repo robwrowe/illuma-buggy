@@ -130,6 +130,14 @@ function previewChannelGroupRgb(channelGroup, payloadBytes) {
   const one = (key) => {
     const ch = channelGroup[key] || {};
     const offset = resolveOffsetOrAnchor(payloadBytes, ch, 0);
+    if (offset < 0) {
+      const fb = tryFallbackColor(ch);
+      if (fb) {
+        if (key === 'r') return fb[0];
+        if (key === 'g') return fb[1];
+        return fb[2];
+      }
+    }
     const raw = offset < 0
       ? fallbackValueOrZero(ch)
       : extractBits(
@@ -153,6 +161,10 @@ function previewColorSource(srcObj, payloadBytes, colors) {
     return previewChannelGroupRgb(srcObj.channelGroup, payloadBytes);
   }
   const offset = resolveOffsetOrAnchor(payloadBytes, srcObj, 0);
+  if (offset < 0) {
+    const fb = tryFallbackColor(srcObj);
+    if (fb) return fb;
+  }
   const raw = offset < 0
     ? fallbackValueOrZero(srcObj)
     : extractBits(
@@ -329,8 +341,18 @@ export function resolveOffsetOrAnchor(payloadBytes, node, fallbackOffset) {
 }
 
 export function fallbackValueOrZero(node) {
+  if (isFallbackColorValue(node?.fallbackValue)) return 0;
   const n = Number(node?.fallbackValue);
   return Number.isFinite(n) ? Math.max(0, Math.min(255, Math.round(n))) : 0;
+}
+
+function isFallbackColorValue(value) {
+  return typeof value === 'string' && /^#?[0-9a-fA-F]{6}$/.test(value.trim());
+}
+
+function tryFallbackColor(node) {
+  if (!isFallbackColorValue(node?.fallbackValue)) return null;
+  return hexToRgb(node.fallbackValue.startsWith('#') ? node.fallbackValue : `#${node.fallbackValue}`);
 }
 
 function nodeRequiresUnresolvedAnchor(payloadBytes, node) {
@@ -885,16 +907,33 @@ export function previewExtracts(payloadBytes, extracts, colors, segmentMap = nul
       const offset = resolveOffsetOrAnchor(payloadBytes, ex, 0);
       const bitStart = Number(ex?.bitStart ?? 0);
       const bitCount = Number(ex?.bitCount ?? 8);
-      raw = offset < 0
-        ? fallbackValueOrZero(ex)
-        : extractBits(payloadBytes, offset, bitStart, bitCount);
-      mapped = raw;
-      if (paletteMap) {
-        paletteIndex = raw & 0x1f;
-        mapped = paletteIndex;
-        rgb = hexToRgb(Array.isArray(colors) ? colors[paletteIndex] : null);
-      } else if (ex?.curve && typeof ex.curve === 'object') {
-        mapped = applyCurve(raw, ex.curve);
+      if (offset < 0) {
+        const fb = tryFallbackColor(ex);
+        if (fb) {
+          rgb = fb;
+          raw = (fb[0] << 16) | (fb[1] << 8) | fb[2];
+          mapped = 0;
+        } else {
+          raw = fallbackValueOrZero(ex);
+          mapped = raw;
+          if (paletteMap) {
+            paletteIndex = raw & 0x1f;
+            mapped = paletteIndex;
+            rgb = hexToRgb(Array.isArray(colors) ? colors[paletteIndex] : null);
+          } else if (ex?.curve && typeof ex.curve === 'object') {
+            mapped = applyCurve(raw, ex.curve);
+          }
+        }
+      } else {
+        raw = extractBits(payloadBytes, offset, bitStart, bitCount);
+        mapped = raw;
+        if (paletteMap) {
+          paletteIndex = raw & 0x1f;
+          mapped = paletteIndex;
+          rgb = hexToRgb(Array.isArray(colors) ? colors[paletteIndex] : null);
+        } else if (ex?.curve && typeof ex.curve === 'object') {
+          mapped = applyCurve(raw, ex.curve);
+        }
       }
     }
 
