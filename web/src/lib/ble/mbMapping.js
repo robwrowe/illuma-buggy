@@ -1984,6 +1984,7 @@ export function presetWledForBoard(preset, segmentMaps) {
   const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
   const overrides = normalizeSegmentOverrides(preset?.segmentOverrides);
   const lib = preset?.colorLibrary || [];
+  const sourceIsGlobal = preset?.segmentSourceMode === 'global';
   const wled = { on: true, ...JSON.parse(JSON.stringify(g)) };
   delete wled.seg; // segments come from map + overrides, not a stale global.seg copy
   delete wled.colorRefs;
@@ -1991,10 +1992,10 @@ export function presetWledForBoard(preset, segmentMaps) {
   if (activeSegments.length > 0) {
     wled.seg = activeSegments.map((seg, i) => {
       const localId = seg.mapLocalId || seg.id;
-      return buildRecalledSegment(seg, g, always, m, i, overrides[localId], lib);
+      return buildRecalledSegment(seg, g, always, m, i, overrides[localId], lib, sourceIsGlobal);
     });
   } else {
-    wled.seg = [buildRecalledSegment({ id: 0 }, g, always, m, 0, undefined, lib)];
+    wled.seg = [buildRecalledSegment({ id: 0 }, g, always, m, 0, undefined, lib, sourceIsGlobal)];
   }
   // Always set ledmap (mirrors firmware) so preview/sync match applyPreset even at 0.
   wled.ledmap = resolvePresetLedmap(preset, segmentMaps);

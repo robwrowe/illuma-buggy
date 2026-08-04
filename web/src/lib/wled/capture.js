@@ -277,7 +277,7 @@ export function pickSegOrWled(seg, wled, key, perSegment = false) {
   return seg ? seg[key] : undefined;
 }
 
-export function buildRecalledSegment(seg, global, should, m, index, overrideEntry, colorLibrary) {
+export function buildRecalledSegment(seg, global, should, m, index, overrideEntry, colorLibrary, sourceIsGlobal = false) {
   const out = { id: Number(seg?.id ?? index) };
   if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
     out.start = Number(seg.start);
@@ -286,17 +286,24 @@ export function buildRecalledSegment(seg, global, should, m, index, overrideEntr
       if (seg[k] !== undefined && seg[k] !== null) out[k] = seg[k];
     });
   }
+  // In 'global' source mode, every segment implicitly uses the preset's global
+  // look unless a segmentOverrides entry explicitly says otherwise — mirrors how
+  // BLE rules replicate {"mode":"default"} onto every segment for 'global' mode.
+  const effectiveFxEntry = overrideEntry?.fx ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+  const effectivePalEntry = overrideEntry?.pal ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+
   if (should('effect', m.effect)) {
-    const fx = resolveSegProp(seg, global, overrideEntry?.fx, 'fx', 0);
+    const fx = resolveSegProp(seg, global, effectiveFxEntry, 'fx', 0);
     if (fx !== undefined && fx !== null) out.fx = fx;
   }
   if (should('palette', m.palette)) {
-    const pal = resolveSegProp(seg, global, overrideEntry?.pal, 'pal', 0);
+    const pal = resolveSegProp(seg, global, effectivePalEntry, 'pal', 0);
     if (pal !== undefined && pal !== null) out.pal = pal;
   }
   if (should('parameters', m.parameters)) {
     ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach((k) => {
-      const v = resolveSegProp(seg, global, overrideEntry?.[k], k, undefined);
+      const entry = overrideEntry?.[k] ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+      const v = resolveSegProp(seg, global, entry, k, undefined);
       if (v !== undefined && v !== null) out[k] = v;
     });
   }
@@ -315,8 +322,12 @@ export function buildRecalledSegment(seg, global, should, m, index, overrideEntr
         // stored — segment's own authored color wins over the global look
         return seg?.col?.[i] || global?.col?.[i] || [0, 0, 0];
       });
+    } else if (sourceIsGlobal) {
+      // 'global' source mode with no explicit color override → every slot behaves
+      // as "default" → always use the preset's global look, ignore segment-map colors.
+      if (global?.col) out.col = global.col.map((c) => (Array.isArray(c) ? [...c] : c));
     } else if (seg?.col) {
-      // No override entries at all → "stored" for every slot → segment's own color wins.
+      // 'perSegment' mode, no override entries → "stored" for every slot → segment's own color wins.
       out.col = Array.isArray(seg.col[0]) ? seg.col.map((c) => [...c]) : [...seg.col];
     } else if (global?.col) {
       out.col = global.col.map((c) => (Array.isArray(c) ? [...c] : c));

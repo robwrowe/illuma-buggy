@@ -283,6 +283,7 @@ export function buildRecallPayload(preset, recall, segmentMaps) {
   const m = preset.memory || DEFAULT_PRESET_MEMORY;
   const overrides = normalizeSegmentOverrides(preset.segmentOverrides);
   const lib = preset.colorLibrary || [];
+  const sourceIsGlobal = preset.segmentSourceMode === 'global';
   const payload = { on: true, ledmap: resolvePresetLedmap(preset, segmentMaps) };
 
   const should = (prop, memVal) => {
@@ -297,12 +298,12 @@ export function buildRecallPayload(preset, recall, segmentMaps) {
   if (recallLayout) {
     payload.seg = activeSegments.map((seg, i) => {
       const localId = seg.mapLocalId || seg.id;
-      return buildRecalledSegment(seg, g, should, m, i, overrides[localId], lib);
+      return buildRecalledSegment(seg, g, should, m, i, overrides[localId], lib, sourceIsGlobal);
     });
   } else {
     const base = activeSegments.find(isActiveSegment) || activeSegments[0] || { id: 0 };
     const localId = base.mapLocalId || base.id;
-    payload.seg = [buildRecalledSegment(base, g, should, m, 0, overrides[localId], lib)];
+    payload.seg = [buildRecalledSegment(base, g, should, m, 0, overrides[localId], lib, sourceIsGlobal)];
   }
 
   return payload;

@@ -343,6 +343,7 @@ export function buildRecalledSegment(
   index: number,
   overrideEntry?: PresetSegmentOverride,
   colorLibrary: PresetColorSwatch[] = [],
+  sourceIsGlobal = false,
 ): WledSegmentDef {
   const out: WledSegmentDef = { id: Number(seg?.id ?? index), start: 0, stop: 0 };
   if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
@@ -357,17 +358,24 @@ export function buildRecalledSegment(
     delete (out as { start?: number }).start;
     delete (out as { stop?: number }).stop;
   }
+  // In 'global' source mode, every segment implicitly uses the preset's global
+  // look unless a segmentOverrides entry explicitly says otherwise — mirrors how
+  // BLE rules replicate {"mode":"default"} onto every segment for 'global' mode.
+  const effectiveFxEntry = overrideEntry?.fx ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+  const effectivePalEntry = overrideEntry?.pal ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+
   if (should('effect', m.effect)) {
-    const fx = resolveSegProp(seg, wled, overrideEntry?.fx, 'fx', 0);
+    const fx = resolveSegProp(seg, wled, effectiveFxEntry, 'fx', 0);
     if (fx !== undefined && fx !== null) out.fx = fx as number;
   }
   if (should('palette', m.palette)) {
-    const pal = resolveSegProp(seg, wled, overrideEntry?.pal, 'pal', 0);
+    const pal = resolveSegProp(seg, wled, effectivePalEntry, 'pal', 0);
     if (pal !== undefined && pal !== null) out.pal = pal as number;
   }
   if (should('parameters', m.parameters)) {
     (['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'] as const).forEach(k => {
-      const v = resolveSegProp(seg, wled, overrideEntry?.[k], k, undefined);
+      const entry = overrideEntry?.[k] ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+      const v = resolveSegProp(seg, wled, entry, k, undefined);
       if (v !== undefined && v !== null) (out as unknown as Record<string, unknown>)[k] = v;
     });
   }
@@ -388,8 +396,12 @@ export function buildRecalledSegment(
         // stored — segment's own authored color wins over the global look
         return (seg?.col?.[i] as number[]) || wled.col?.[i] || [0, 0, 0];
       });
+    } else if (sourceIsGlobal) {
+      // 'global' source mode with no explicit color override → every slot behaves
+      // as "default" → always use the preset's global look, ignore segment-map colors.
+      if (wled.col) out.col = wled.col.map(c => [...c]);
     } else if (seg?.col) {
-      // No override entries at all → "stored" for every slot → segment's own color wins.
+      // 'perSegment' mode, no override entries → "stored" for every slot → segment's own color wins.
       out.col = Array.isArray(seg.col[0]) ? seg.col.map(c => [...c]) : (seg.col as number[][]);
     } else if (wled.col) {
       out.col = wled.col.map(c => [...c]);
@@ -479,6 +491,7 @@ export function buildRecalledSegmentsFromPreset(
     customSegmentMap?: PresetCustomSegmentMap | null;
     segmentLayoutId?: string;
     segmentOverrides?: Record<string, PresetSegmentOverride>;
+    segmentSourceMode?: 'global' | 'perSegment';
     colorLibrary?: PresetColorSwatch[];
     colorRefs?: PresetColorRefEntry[];
     memory?: MemoryLike;
@@ -498,10 +511,13 @@ export function buildRecalledSegmentsFromPreset(
     if (r === 'never') return false;
     return memVal;
   };
+  const sourceIsGlobal = preset.segmentSourceMode === 'global';
   const active = activeSegmentsFromPreset(preset, sharedMaps, layouts).filter(isActiveSegment);
   if (should('segments', m.segments) && active.length > 0) {
     return active.map((seg, i) =>
-      buildRecalledSegment(seg, w, should, m, i, overrides[overrideKeyForSeg(seg)], colorLibrary),
+      buildRecalledSegment(
+        seg, w, should, m, i, overrides[overrideKeyForSeg(seg)], colorLibrary, sourceIsGlobal,
+      ),
     );
   }
   const base = active[0] || { id: 0, start: 0, stop: STRIP_LED_COUNT };
@@ -513,6 +529,7 @@ export function buildRecalledSegmentsFromPreset(
     0,
     overrides[overrideKeyForSeg(base)],
     colorLibrary,
+    sourceIsGlobal,
   );
   if (!isActiveSegment(seg)) {
     seg.start = 0;
