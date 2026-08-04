@@ -551,16 +551,19 @@ bool buildWledFromPresetDoc(JsonDocument& presetDoc, JsonDocument& outWledDoc) {
   }
 
   // Map id set but not resolvable (missing shared/custom map), or map-less.
+  // Copy JsonObject → out doc (cannot deserializeJson from a JsonObject — it's not a stream).
   if (mapId[0] && !haveSegMap) {
     if (global.isNull()) return false;
-    if (deserializeJson(outWledDoc, global) != DeserializationError::Ok) return false;
+    outWledDoc.clear();
+    outWledDoc.set(global);
     outWledDoc["ledmap"] = presetLedmap.is<int>() ? presetLedmap.as<int>() : 0;
     return true;
   }
 
   // Map-less: global / legacy wled is the flat capture path (§3.3).
   if (global.isNull()) return false;
-  if (deserializeJson(outWledDoc, global) != DeserializationError::Ok) return false;
+  outWledDoc.clear();
+  outWledDoc.set(global);
   outWledDoc["ledmap"] = presetLedmap.is<int>() ? presetLedmap.as<int>() : 0;
   return true;
 }

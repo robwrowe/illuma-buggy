@@ -11,10 +11,14 @@ const LABELS: Record<RecallValue, string> = { always: 'Always', never: 'Never', 
 export default function PresetsConfigScreen() {
   const { colors } = useTheme();
   const s = moreStyles(colors);
-  const { overrideKillOnZone, setOverrideKillOnZone, recallState, setRecallState, saveToStorage } = useAppStore();
+  const { overrideKillOnZone, setOverrideKillOnZone, presetApplyMode, setPresetApplyMode, recallState, setRecallState, saveToStorage } = useAppStore();
   const updateOverride = (value: boolean) => {
     setOverrideKillOnZone(value);
     void bleService.sendOverrideMode(value);
+    saveToStorage();
+  };
+  const updateApplyMode = (value: 'legacy' | 'board') => {
+    setPresetApplyMode(value);
     saveToStorage();
   };
   const updateRecall = (key: keyof RecallState, value: RecallValue) => {
@@ -33,6 +37,30 @@ export default function PresetsConfigScreen() {
           </View>
           <Switch value={overrideKillOnZone} onValueChange={updateOverride} trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" />
         </View>
+      </View>
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Preset Apply Routing</Text>
+        <Text style={s.sectionHint}>
+          Experimental. Board mode uses preset_apply for manual applies when the preset is synced;
+          zone triggers always resolve on the phone.
+        </Text>
+        {(['legacy', 'board'] as const).map(mode => (
+          <TouchableOpacity
+            key={mode}
+            style={[s.row, presetApplyMode === mode && { borderColor: colors.primary }]}
+            onPress={() => updateApplyMode(mode)}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={s.rowLabel}>{mode === 'legacy' ? 'Legacy (phone resolves)' : 'Board (preset_apply)'}</Text>
+              <Text style={s.rowHint}>
+                {mode === 'legacy'
+                  ? 'Most tested — phone builds WLED JSON and sends wled_raw.'
+                  : 'Faster to stay current for manual applies; auto-falls back if unsynced.'}
+              </Text>
+            </View>
+            {presetApplyMode === mode ? <Text style={{ color: colors.primary }}>✓</Text> : null}
+          </TouchableOpacity>
+        ))}
       </View>
       <View style={s.section}>
         <Text style={s.sectionTitle}>Recall State</Text>

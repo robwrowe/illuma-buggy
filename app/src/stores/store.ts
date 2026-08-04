@@ -5,8 +5,23 @@
 
 import { normalizeTags } from '../utils/tags';
 import { KNOWN_TRANSITION_STYLES } from '../utils/transitionStyles';
+import type {
+  PresetColorRefEntry,
+  PresetColorSwatch,
+  PresetCustomSegmentMap,
+  PresetOverrideEntry,
+  PresetSegmentOverride,
+} from '../utils/segmentLayouts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
+
+export type {
+  PresetColorRefEntry,
+  PresetColorSwatch,
+  PresetCustomSegmentMap,
+  PresetOverrideEntry,
+  PresetSegmentOverride,
+};
 
 // ─────────────────────────────────────────────
 // Types
@@ -105,14 +120,26 @@ export interface PresetMemory {
   segments:   boolean;
 }
 
+export type PresetApplyMode = 'legacy' | 'board';
+
 export interface Preset {
   id:        string;
   name:      string;
   wled:      PresetWled;
   memory:    PresetMemory;
   tags?:     string[];
-  /** Saved segment layout library item (used when recall includes segments). */
+  /** Saved segment layout library item (legacy — used when segmentMapId is absent). */
   segmentLayoutId?: string;
+  /** Shared map id, or '__custom__' for preset-local customSegmentMap. */
+  segmentMapId?: string;
+  segmentOverrides?: Record<string, PresetSegmentOverride>;
+  segmentSourceMode?: 'global' | 'perSegment';
+  /** null = inherit from segment map; 0–9 = explicit override. */
+  ledmap?: number | null;
+  colorLibrary?: PresetColorSwatch[];
+  customSegmentMap?: PresetCustomSegmentMap | null;
+  /** Global effect colors as swatch/custom refs (resolved to wled.col at apply time). */
+  colorRefs?: PresetColorRefEntry[];
   createdAt: number;
 }
 
@@ -203,7 +230,7 @@ import {
 } from '../utils/locationRuntimeBridge';
 import {
   CustomSegmentLayout, normalizeSegmentLayout, buildRecalledSegmentsFromPreset,
-  finalizeWledSegmentPayload,
+  finalizeWledSegmentPayload, asSharedSegmentMaps, resolvePresetLedmap,
 } from '../utils/segmentLayouts';
 import { normalizeZonePolygon } from '../utils/utils';
 import {
@@ -311,6 +338,9 @@ interface AppState {
   // Settings
   overrideKillOnZone:    boolean;
   setOverrideKillOnZone: (val: boolean) => void;
+  /** Experimental: 'legacy' phone-resolves wled_raw; 'board' uses preset_apply when synced. */
+  presetApplyMode:       PresetApplyMode;
+  setPresetApplyMode:    (val: PresetApplyMode) => void;
   starlightEnabled:      boolean;
   setStarlightEnabled:   (val: boolean) => void;
   starlightTimeoutSec:   number;
@@ -466,38 +496,172 @@ const DEFAULT_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: false, segments: false,
 };
 
-/** Normalize preset from board sync or legacy imports (firmware stores id/name/wled only). */
-export function normalizePreset(p: Partial<Preset> & { id: string; name: string }): Preset {
-  const rawWled = (p.wled ?? { on: true }) as PresetWled & {
+function normalizeColorRefEntry(raw: unknown): PresetColorRefEntry | PresetOverrideEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (o.mode === 'swatch' && typeof o.swatchId === 'string' && o.swatchId) {
+    return { mode: 'swatch', swatchId: o.swatchId };
+  }
+  if (o.mode === 'custom' || o.mode === 'stored' || o.mode === 'default') {
+    const out: PresetOverrideEntry = { mode: o.mode };
+    if (o.value !== undefined) out.value = o.value as string | number | boolean;
+    if (typeof o.swatchId === 'string') out.swatchId = o.swatchId;
+    return out;
+  }
+  if (typeof o.value === 'string' && /^#?[0-9a-fA-F]{6}$/.test(o.value.trim())) {
+    const hex = `#${o.value.trim().replace(/^#/, '').toLowerCase()}`;
+    return { mode: 'custom', value: hex };
+  }
+  return null;
+}
+
+function normalizeColorRefs(raw: unknown, col?: number[][]): PresetColorRefEntry[] {
+  if (Array.isArray(raw) && raw.length) {
+    return raw
+      .map(normalizeColorRefEntry)
+      .filter((c): c is PresetColorRefEntry => !!c && (c.mode === 'swatch' || c.mode === 'custom'))
+      .map(c => (c.mode === 'swatch'
+        ? { mode: 'swatch' as const, swatchId: c.swatchId }
+        : { mode: 'custom' as const, value: String(c.value || '') }));
+  }
+  if (!Array.isArray(col) || !col.length) return [];
+  const rows = typeof col[0] === 'number' ? [col as unknown as number[]] : col;
+  return rows
+    .filter(rgb => Array.isArray(rgb) && rgb.length >= 3)
+    .map(rgb => ({
+      mode: 'custom' as const,
+      value: `#${[rgb[0], rgb[1], rgb[2]]
+        .map(x => Math.max(0, Math.min(255, Math.round(Number(x) || 0))).toString(16).padStart(2, '0'))
+        .join('')}`,
+    }));
+}
+
+function normalizeSegmentOverridesForPreset(
+  raw: unknown,
+): Record<string, PresetSegmentOverride> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, PresetSegmentOverride> = {};
+  Object.entries(raw as Record<string, unknown>).forEach(([segId, ov]) => {
+    if (!segId || segId === '_meta' || !ov || typeof ov !== 'object') return;
+    const src = ov as Record<string, unknown>;
+    const n: PresetSegmentOverride = {};
+    (['fx', 'pal', 'sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3', 'blend'] as const).forEach((k) => {
+      const entry = normalizeColorRefEntry(src[k]);
+      if (entry && (entry.mode === 'stored' || entry.mode === 'default' || entry.mode === 'custom')) {
+        n[k] = entry as PresetOverrideEntry;
+      }
+    });
+    if (Array.isArray(src.colors)) {
+      n.colors = [0, 1, 2].map((i) => {
+        const entry = normalizeColorRefEntry(src.colors![i]);
+        return (entry as PresetOverrideEntry) || { mode: 'stored' as const };
+      });
+    }
+    out[segId] = n;
+  });
+  return out;
+}
+
+function normalizeCustomSegmentMap(raw: unknown): PresetCustomSegmentMap | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const ledmapN = Number(o.ledmap);
+  return {
+    id: typeof o.id === 'string' && o.id ? o.id : 'custom',
+    name: typeof o.name === 'string' && o.name.trim() ? o.name.trim() : '(custom to this preset)',
+    ledmap: Number.isFinite(ledmapN) ? Math.max(0, Math.min(9, Math.round(ledmapN))) : 0,
+    segments: Array.isArray(o.segments) ? o.segments : [],
+  };
+}
+
+function normalizeColorLibrary(raw: unknown): PresetColorSwatch[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c): c is Record<string, unknown> => !!c && typeof c === 'object')
+    .filter(c => typeof c.id === 'string' && typeof c.hex === 'string')
+    .map(c => ({
+      id: c.id as string,
+      name: typeof c.name === 'string' ? c.name : '',
+      hex: (c.hex as string).startsWith('#') ? (c.hex as string) : `#${c.hex}`,
+    }));
+}
+
+/** Normalize preset from board sync or legacy/web imports (accepts `global` alias for `wled`). */
+export function normalizePreset(
+  p: Partial<Preset> & { id: string; name: string; global?: PresetWled },
+): Preset {
+  const rawLook = ((p as { global?: PresetWled }).global ?? p.wled ?? { on: true }) as PresetWled & {
     pd?: unknown;
     transition?: unknown;
+    colorRefs?: unknown;
   };
   // Drop dead/unconfirmed `pd` and legacy raw WLED `transition` tenths field —
   // app authors use transitionMs / transitionStyle instead.
-  const { pd: _pd, transition: _legacyTransition, ...wledRest } = rawWled;
+  const { pd: _pd, transition: _legacyTransition, colorRefs: rawColorRefs, ...wledRest } = rawLook;
 
-  const transitionMs = Number.isFinite(rawWled.transitionMs)
-    ? Number(rawWled.transitionMs)
-    : (rawWled.transitionMs === null ? null : undefined);
+  const transitionMs = Number.isFinite(rawLook.transitionMs)
+    ? Number(rawLook.transitionMs)
+    : (rawLook.transitionMs === null ? null : undefined);
   const transitionStyle = (
-    typeof rawWled.transitionStyle === 'string'
-    && KNOWN_TRANSITION_STYLES.has(rawWled.transitionStyle)
+    typeof rawLook.transitionStyle === 'string'
+    && KNOWN_TRANSITION_STYLES.has(rawLook.transitionStyle)
   )
-    ? rawWled.transitionStyle
-    : (rawWled.transitionStyle === null ? null : undefined);
+    ? rawLook.transitionStyle
+    : (rawLook.transitionStyle === null ? null : undefined);
+
+  let segmentMapId = typeof p.segmentMapId === 'string' ? p.segmentMapId : undefined;
+  let customSegmentMap = normalizeCustomSegmentMap(p.customSegmentMap);
+  const colorRefs = normalizeColorRefs(
+    p.colorRefs ?? rawColorRefs,
+    Array.isArray(wledRest.col) ? wledRest.col as number[][] : undefined,
+  );
+  const wled: PresetWled = {
+    ...wledRest,
+    on: wledRest.on ?? true,
+    ...(transitionMs !== undefined ? { transitionMs } : {}),
+    ...(transitionStyle !== undefined ? { transitionStyle } : {}),
+  };
+  // Prefer colorRefs for editing; keep raw col only when no refs (legacy).
+  if (colorRefs.length) delete wled.col;
+
+  // Legacy inline wled.seg → custom map (same as web).
+  const inlineSegs = Array.isArray(wled.seg) ? wled.seg : [];
+  if (!segmentMapId && inlineSegs.length > 0) {
+    segmentMapId = '__custom__';
+    customSegmentMap = {
+      id: 'custom',
+      name: '(custom to this preset)',
+      ledmap: 0,
+      segments: inlineSegs,
+    };
+    delete wled.seg;
+  } else if (segmentMapId === '__custom__' && !customSegmentMap) {
+    customSegmentMap = {
+      id: 'custom',
+      name: '(custom to this preset)',
+      ledmap: 0,
+      segments: [],
+    };
+  }
 
   return {
     id:        p.id,
     name:      p.name,
-    wled: {
-      ...wledRest,
-      on: wledRest.on ?? true,
-      ...(transitionMs !== undefined ? { transitionMs } : {}),
-      ...(transitionStyle !== undefined ? { transitionStyle } : {}),
-    },
+    wled,
     memory:    p.memory ?? DEFAULT_PRESET_MEMORY,
     tags:      normalizeTags(p.tags),
     segmentLayoutId: p.segmentLayoutId,
+    segmentMapId,
+    segmentOverrides: normalizeSegmentOverridesForPreset(p.segmentOverrides),
+    segmentSourceMode: (p.segmentSourceMode === 'global' || p.segmentSourceMode === 'perSegment')
+      ? p.segmentSourceMode
+      : 'global',
+    ledmap: Number.isInteger(p.ledmap)
+      ? Math.max(0, Math.min(9, p.ledmap as number))
+      : null,
+    colorLibrary: normalizeColorLibrary(p.colorLibrary),
+    customSegmentMap,
+    colorRefs,
     createdAt: p.createdAt ?? Date.now(),
   };
 }
@@ -578,6 +742,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   deviceStatus:        null,
   overrideDetail:      null,
   overrideKillOnZone:  false,
+  presetApplyMode:     'legacy' as PresetApplyMode,
   starlightEnabled:    true,
   starlightTimeoutSec: 15,
   magicBandEnabled:    true,
@@ -751,6 +916,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setDeviceStatus:       (deviceStatus) => set({ deviceStatus }),
   setOverrideDetail:     (overrideDetail) => set({ overrideDetail }),
   setOverrideKillOnZone: (val)          => set({ overrideKillOnZone: val }),
+  setPresetApplyMode:    (val)          => set({ presetApplyMode: val }),
   setStarlightEnabled:   (val)          => set({ starlightEnabled: val }),
   setStarlightTimeoutSec:(val)          => set({ starlightTimeoutSec: val }),
   setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
@@ -954,6 +1120,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadFromStorage: async () => {
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','colorCalibration','overrideKillOnZone',
+                    'presetApplyMode',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandTimeoutSec','rulesPaused','logMarkerSnippets','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
@@ -990,6 +1157,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         brightnessConfig:   d.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
         colorCalibration:   normalizeColorCalibration(d.colorCalibration),
         overrideKillOnZone: d.overrideKillOnZone ?? false,
+        presetApplyMode:    (d.presetApplyMode === 'board' ? 'board' : 'legacy') as PresetApplyMode,
         starlightEnabled:   d.starlightEnabled   ?? true,
         starlightTimeoutSec:d.starlightTimeoutSec ?? 15,
         magicBandEnabled:   d.magicBandEnabled   ?? true,
@@ -1051,6 +1219,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['brightnessConfig',   JSON.stringify(s.brightnessConfig)],
         ['colorCalibration',   JSON.stringify(s.colorCalibration)],
         ['overrideKillOnZone', JSON.stringify(s.overrideKillOnZone)],
+        ['presetApplyMode', JSON.stringify(s.presetApplyMode)],
         ['starlightEnabled',   JSON.stringify(s.starlightEnabled)],
         ['starlightTimeoutSec',JSON.stringify(s.starlightTimeoutSec)],
         ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
@@ -1176,6 +1345,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       brightnessConfig: s.brightnessConfig, recallState: s.recallState,
       colorCalibration: s.colorCalibration,
       overrideKillOnZone: s.overrideKillOnZone,
+      presetApplyMode:    s.presetApplyMode,
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
       magicBandEnabled:   s.magicBandEnabled,
       rulesPaused:        s.rulesPaused,
@@ -1206,6 +1376,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       colorCalibration:   normalizeColorCalibration(m.colorCalibration),
       recallState:        m.recallState        ?? DEFAULT_RECALL,
       overrideKillOnZone: m.overrideKillOnZone ?? false,
+      presetApplyMode:    (m.presetApplyMode === 'board' ? 'board' : 'legacy') as PresetApplyMode,
       starlightEnabled:   m.starlightEnabled   ?? true,
       starlightTimeoutSec:m.starlightTimeoutSec ?? 15,
       magicBandEnabled:   m.magicBandEnabled   ?? true,
@@ -1255,11 +1426,22 @@ export function buildRecallPayload(
   layouts?: CustomSegmentLayout[],
 ): object {
   if (!recall) recall = DEFAULT_RECALL_FALLBACK;
-  const layoutList = layouts ?? useAppStore.getState().customSegmentLayouts;
-  return finalizeWledSegmentPayload({
-    on: true,
-    seg: buildRecalledSegmentsFromPreset(preset, recall, layoutList, DEFAULT_PRESET_MEMORY),
-  });
+  const state = useAppStore.getState();
+  const layoutList = layouts ?? state.customSegmentLayouts;
+  const sharedMaps = asSharedSegmentMaps(state.mbMapping?.segmentMaps);
+  return {
+    ...finalizeWledSegmentPayload({
+      on: true,
+      seg: buildRecalledSegmentsFromPreset(
+        preset as Parameters<typeof buildRecalledSegmentsFromPreset>[0],
+        recall,
+        sharedMaps,
+        layoutList,
+        DEFAULT_PRESET_MEMORY,
+      ),
+    }),
+    ledmap: resolvePresetLedmap(preset, sharedMaps),
+  };
 }
 
 // ─────────────────────────────────────────────

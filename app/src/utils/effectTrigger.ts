@@ -4,6 +4,7 @@
 
 import { useAppStore } from '../stores/store';
 import { presetWledForBoard } from './bleBoardSync';
+import { asSharedSegmentMaps } from './segmentLayouts';
 import { enqueuePendingBle } from './locationRuntimeBridge';
 
 type BleMsg = Record<string, unknown>;
@@ -54,7 +55,12 @@ export async function triggerZonePresetEffect(
     console.warn('[Effect] TRIGGER zone_preset — preset missing', { presetId, zoneName, reason });
     return false;
   }
-  const payload = presetWledForBoard(preset, s.customSegmentLayouts, s.recallState);
+  const payload = presetWledForBoard(
+    preset,
+    asSharedSegmentMaps(s.mbMapping?.segmentMaps),
+    s.customSegmentLayouts,
+    s.recallState,
+  );
   console.log('[Effect] TRIGGER zone_preset', {
     zone: zoneName,
     preset: preset.name,
@@ -88,7 +94,12 @@ export async function triggerFadeToBlackEffect(
       console.warn('[Effect] FTB preset missing in app', { presetId, reason });
       return false;
     }
-    const payload = presetWledForBoard(preset, s.customSegmentLayouts, s.recallState);
+    const payload = presetWledForBoard(
+    preset,
+    asSharedSegmentMaps(s.mbMapping?.segmentMaps),
+    s.customSegmentLayouts,
+    s.recallState,
+  );
     // WLED's "transition" field is in deciseconds (tenths of a second), not ms —
     // the wled_raw firmware path forwards this JSON verbatim (no ms→decisecond
     // conversion like injectWledTransition does), so we must convert here or the
