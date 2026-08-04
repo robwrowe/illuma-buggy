@@ -1,5 +1,5 @@
 import { BLE_SEND_DELAY_MS, webBleBoard } from './ble/chunking';
-import { compactMbPayloadForBle, normalizeMbMapping, presetWledForBoard } from './ble/mbMapping';
+import { compactMbPayloadForBle, normalizeMbMapping, normalizePreset } from './ble/mbMapping';
 import { DEFAULT_DATA, normalizeColorCalibration } from './utils';
 
 export const BOARD_SYNC_LS_KEY = 'illuma-buggy-board-sync';
@@ -31,7 +31,6 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
   const opts = { ...DEFAULT_BOARD_SYNC_OPTIONS, ...options };
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
   const presets = data.presets || [];
-  const segmentMaps = normalizeMbMapping(data.mbMapping).segmentMaps || [];
   const mb = normalizeMbMapping(data.mbMapping);
   const sent = [];
 
@@ -108,12 +107,11 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
     for (let i = 0; i < presets.length; i++) {
       const p = presets[i];
       onProgress?.(`Saving preset ${i + 1}/${presets.length}: ${p.name}`);
+      const normalized = normalizePreset(p);
+      // Send the full new-shape preset; firmware stores it whole and resolves at apply time.
       await webBleBoard.send({
         type: 'preset_save',
-        id: p.id,
-        name: p.name,
-        wled: presetWledForBoard(p, segmentMaps),
-        ...(p.segmentMapId ? { segmentMapId: p.segmentMapId } : {}),
+        ...normalized,
       });
       await delay(BLE_SEND_DELAY_MS + 30);
     }

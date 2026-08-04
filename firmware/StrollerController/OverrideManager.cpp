@@ -2,10 +2,12 @@
 #include "Globals.h"
 #include "WledClient.h"
 #include "PresetStore.h"
+#include "SegmentResolve.h"
 #include "MbEffects.h"
 #include "BlePeripheral.h"
 #include "DisneyPayloadHandlers.h"
 #include "MbRuleEngine.h"
+#include "Config.h"
 
 void touchOverrideIdleTimer(OverrideSource src) {
   if (src == BLE_EFFECT) mbEventTimestamp = millis();
@@ -220,16 +222,7 @@ bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, i
   DynamicJsonDocument doc(12288);
   if (deserializeJson(doc, preset)) return false;
   DynamicJsonDocument wledDoc(WLED_RESTORE_JSON_CAP);
-  if (deserializeJson(wledDoc, doc["wled"]) != DeserializationError::Ok) return false;
-
-  // Same precedence as applyPreset(): segment-map ledmap wins; default 0.
-  int ledmapId = 0;
-  const char* mapId = doc["segmentMapId"] | "";
-  if (mapId[0]) {
-    JsonObject segMap = findSegmentMapById(mapId);
-    if (!segMap.isNull()) ledmapId = (int)(segMap["ledmap"] | 0);
-  }
-  wledDoc["ledmap"] = ledmapId;
+  if (!buildWledFromPresetDoc(doc, wledDoc)) return false;
 
   String wledJson;
   serializeJson(wledDoc, wledJson);
@@ -268,13 +261,16 @@ void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
 
   String preset = getPreset(presetId);
   if (preset.length() == 0) return;
-  DynamicJsonDocument doc(2048);
+  DynamicJsonDocument doc(12288);
   if (deserializeJson(doc, preset)) return;
+  DynamicJsonDocument wledDoc(WLED_RESTORE_JSON_CAP);
+  if (!buildWledFromPresetDoc(doc, wledDoc)) return;
   String wledJson;
-  serializeJson(doc["wled"], wledJson);
+  serializeJson(wledDoc, wledJson);
+  if (wledJson.length() == 0) return;
   setCurrentPreset(presetId);
   sendToWLED(injectWledTransition(prepareWledRestorePayload(wledJson), fadeMs));
-  if (wledJson.length() > 0) liveWledState = wledJson;
+  liveWledState = wledJson;
 }
 
 const char* showTypeStatusStr() {

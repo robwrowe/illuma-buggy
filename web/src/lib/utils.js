@@ -1,4 +1,5 @@
-import { activeSegmentsFromPreset, buildRecalledSegment, isActiveSegment } from './wled/capture';
+import { activeSegmentsFromPreset, buildRecalledSegment, isActiveSegment, resolvePresetLedmap } from './wled/capture';
+import { normalizeSegmentOverrides } from './ble/mbMapping';
 
 export function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -252,11 +253,14 @@ export function focusMapOnPolygon(mapRef, polygon, padding = 56) {
 }
 
 export function presetSelectOptions(presets) {
-  return (presets || []).map(p => ({
-    value: p.id,
-    label: p.wledSlot != null ? `${p.name} (WLED #${p.wledSlot})` : p.name,
-    searchText: `${p.name} ${p.wledSlot ?? ''} ${p.wled?.fxName || ''} ${p.wled?.palName || ''}`,
-  }));
+  return (presets || []).map(p => {
+    const g = p.global || p.wled || {};
+    return {
+      value: p.id,
+      label: p.wledSlot != null ? `${p.name} (WLED #${p.wledSlot})` : p.name,
+      searchText: `${p.name} ${p.wledSlot ?? ''} ${g.fxName || ''} ${g.palName || ''}`,
+    };
+  });
 }
 
 export function showModePresetOptions(presets, includeBlack = false) {
@@ -274,9 +278,10 @@ export const DEFAULT_PRESET_MEMORY = { effect: true, palette: true, parameters: 
 
 export function buildRecallPayload(preset, recall, segmentMaps) {
   const r = recall || DEFAULT_DATA.recallState;
-  const w = preset.wled || { on: true };
+  const g = preset.global || preset.wled || { on: true };
   const m = preset.memory || DEFAULT_PRESET_MEMORY;
-  const payload = { on: true };
+  const overrides = normalizeSegmentOverrides(preset.segmentOverrides);
+  const payload = { on: true, ledmap: resolvePresetLedmap(preset, segmentMaps) };
 
   const should = (prop, memVal) => {
     if (r[prop] === 'always') return true;
@@ -288,11 +293,14 @@ export function buildRecallPayload(preset, recall, segmentMaps) {
   const recallLayout = should('segments', m.segments) && activeSegments.length > 0;
 
   if (recallLayout) {
-    const perSegment = activeSegments.length > 1;
-    payload.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, w, should, m, i, perSegment));
+    payload.seg = activeSegments.map((seg, i) => {
+      const localId = seg.mapLocalId || seg.id;
+      return buildRecalledSegment(seg, g, should, m, i, overrides[localId]);
+    });
   } else {
     const base = activeSegments.find(isActiveSegment) || activeSegments[0] || { id: 0 };
-    payload.seg = [buildRecalledSegment(base, w, should, m, 0)];
+    const localId = base.mapLocalId || base.id;
+    payload.seg = [buildRecalledSegment(base, g, should, m, 0, overrides[localId])];
   }
 
   return payload;

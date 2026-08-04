@@ -2,19 +2,19 @@
 #include "Globals.h"
 #include "WledClient.h"
 #include "OverrideManager.h"
-#include "MbRuleEngine.h"
+#include "SegmentResolve.h"
 #include "Config.h"
 
-void savePreset(const String& id, const String& name, const String& wledJson,
-                const String& segmentMapId) {
+static const size_t PRESET_NVS_WARN_BYTES = 3800;
+
+void savePreset(const String& id, const String& presetJson) {
+  if (presetJson.length() > PRESET_NVS_WARN_BYTES) {
+    Serial.printf("[Preset] WARNING: %s is %u bytes, close to NVS limit\n",
+                  id.c_str(), (unsigned)presetJson.length());
+  }
   prefs.begin("presets", false);
   String key = "p_" + id;
-  String val = "{\"id\":\"" + id + "\",\"name\":\"" + name + "\"";
-  if (segmentMapId.length() > 0) {
-    val += ",\"segmentMapId\":\"" + segmentMapId + "\"";
-  }
-  val += ",\"wled\":" + wledJson + "}";
-  prefs.putString(key.c_str(), val);
+  prefs.putString(key.c_str(), presetJson);
   String index = prefs.getString("index", "");
   if (index.indexOf(id) == -1) {
     if (index.length() > 0) index += ",";
@@ -22,7 +22,7 @@ void savePreset(const String& id, const String& name, const String& wledJson,
     prefs.putString("index", index);
   }
   prefs.end();
-  if (id == currentPresetId) currentPresetName = name;
+  if (id == currentPresetId) currentPresetName = getPresetName(id);
 }
 
 String getPreset(const String& id) {
@@ -37,7 +37,7 @@ String getPresetName(const String& id) {
   String raw = getPreset(id);
   if (raw.length() == 0) return id;
 
-  // First top-level "name":"…" (preset name comes before the large "wled" object).
+  // First top-level "name":"…" (preset name comes before the large look object).
   int from = 0;
   while (from < (int)raw.length()) {
     int key = raw.indexOf("\"name\"", from);
@@ -148,18 +148,10 @@ bool applyPreset(const String& id) {
     return false;
   }
   DynamicJsonDocument wledDoc(WLED_RESTORE_JSON_CAP);
-  if (deserializeJson(wledDoc, doc["wled"]) != DeserializationError::Ok) return false;
-
-  // Inherit device-global ledmap from the linked segment map (same lookup as rules).
-  // Always set explicitly — omitting leaves WLED on whatever ledmap was previously active.
-  // Segment map wins over any ledmap baked into the preset's stored wled blob.
-  int ledmapId = 0;
-  const char* mapId = doc["segmentMapId"] | "";
-  if (mapId[0]) {
-    JsonObject segMap = findSegmentMapById(mapId);
-    if (!segMap.isNull()) ledmapId = (int)(segMap["ledmap"] | 0);
+  if (!buildWledFromPresetDoc(doc, wledDoc)) {
+    Serial.printf("[Preset] Resolve failed for %s\n", id.c_str());
+    return false;
   }
-  wledDoc["ledmap"] = ledmapId;
 
   String wledJson;
   serializeJson(wledDoc, wledJson);
