@@ -3296,6 +3296,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           selectedRule.enabled !== false &&
           selectedRule.match &&
           previewPacketAgainstRules(bytes, [selectedRule]).matched;
+        const reportedUnmatched = matched && !!selectedRule.reportAsUnmatched;
         const extracts = matched
           ? previewExtracts(bytes, selectedRule.extract || [], colors, mapFor(selectedRule), {
               rule: selectedRule,
@@ -3320,6 +3321,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           rowIdx,
           hex: bytesToHex(bytes),
           matched,
+          reportedUnmatched,
           ruleId: matched ? selectedRule.id : null,
           ruleName: matched ? selectedRule.name : null,
           priority: matched ? selectedRule.priority : null,
@@ -3337,14 +3339,16 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           timingModels,
         });
         const extractRule = selectedRule || prev.matchedRule;
+        const topRule = prev.matchingRules[0]?.rule;
         return {
           rowIdx,
           hex: prev.hex,
           matched: prev.matchingRules.length > 0,
-          ruleId: prev.matchingRules[0]?.rule?.id || null,
+          reportedUnmatched: prev.matchingRules.length > 0 && !!topRule?.reportAsUnmatched,
+          ruleId: topRule?.id || null,
           ruleName: prev.matchingRules.map((m) => m.rule.name).join(', ') || null,
           ruleNames: prev.matchingRules.map((m) => m.rule.name),
-          priority: prev.matchingRules[0]?.rule?.priority ?? null,
+          priority: topRule?.priority ?? null,
           extracts: extractRule
             ? previewExtracts(bytes, extractRule.extract || [], colors, mapFor(extractRule), {
                 rule: extractRule,
@@ -3358,6 +3362,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
         };
       }
       const first = findMatchingRule(bytes, rules);
+      const reportedUnmatched = !!first && !!first.reportAsUnmatched;
       const extracts = first
         ? previewExtracts(bytes, first.extract || [], colors, mapFor(first), {
             rule: first,
@@ -3382,6 +3387,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
         rowIdx,
         hex: bytesToHex(bytes),
         matched: !!first,
+        reportedUnmatched,
         ruleId: first?.id || null,
         ruleName: first?.name || null,
         priority: first?.priority ?? null,
@@ -3392,14 +3398,19 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
     });
     setPackets(results);
     setCopyStatus('');
-    const hits = results.filter((r) => r.matched).length;
-    const misses = results.length - hits;
+    const hits = results.filter((r) => r.matched && !r.reportedUnmatched).length;
+    const reported = results.filter((r) => r.reportedUnmatched).length;
+    const misses = results.length - hits - reported;
     setStatus(
-      `${results.length} packet${results.length === 1 ? '' : 's'} — ${hits} matched, ${misses} unmatched`,
+      `${results.length} packet${results.length === 1 ? '' : 's'} — ${hits} matched, ` +
+        `${reported} reported unmatched, ${misses} unmatched`,
     );
   };
 
-  const unmatchedPackets = useMemo(() => packets.filter((p) => !p.matched), [packets]);
+  const unmatchedPackets = useMemo(
+    () => packets.filter((p) => !p.matched || p.reportedUnmatched),
+    [packets],
+  );
 
   const visiblePackets = unmatchedOnly ? unmatchedPackets : packets;
 
@@ -3532,7 +3543,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th w={40}>#</Table.Th>
-                  <Table.Th w={90}>Status</Table.Th>
+                  <Table.Th w={130}>Status</Table.Th>
                   <Table.Th w={70}>Pri</Table.Th>
                   <Table.Th>Rule</Table.Th>
                   <Table.Th>Hex (payload)</Table.Th>
@@ -3546,7 +3557,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                   <Table.Tr
                     key={p.rowIdx}
                     style={
-                      !p.matched
+                      !p.matched || p.reportedUnmatched
                         ? {
                             background:
                               'color-mix(in srgb, var(--mantine-color-orange-filled) 10%, transparent)',
@@ -3560,8 +3571,15 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                       </Text>
                     </Table.Td>
                     <Table.Td>
-                      <Badge size="xs" color={p.matched ? 'green' : 'orange'}>
-                        {p.matched ? 'match' : 'no rule'}
+                      <Badge
+                        size="xs"
+                        color={!p.matched ? 'orange' : p.reportedUnmatched ? 'yellow' : 'green'}
+                      >
+                        {!p.matched
+                          ? 'no rule'
+                          : p.reportedUnmatched
+                            ? 'reported unmatched'
+                            : 'match'}
                       </Badge>
                     </Table.Td>
                     <Table.Td>

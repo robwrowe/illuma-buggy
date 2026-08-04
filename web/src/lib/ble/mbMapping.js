@@ -1818,7 +1818,8 @@ export function presetWledForBoard(preset, segmentMaps) {
   const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
   const activeSegments = activeSegmentsFromPreset(preset, segmentMaps);
   if (activeSegments.length > 0) {
-    wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i));
+    const perSegment = activeSegments.length > 1;
+    wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i, perSegment));
   } else {
     wled.seg = [buildRecalledSegment({ id: 0 }, wled, always, m, 0)];
   }

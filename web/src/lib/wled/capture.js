@@ -195,12 +195,13 @@ export function activeSegmentsFromPreset(preset, segmentMaps) {
   return merged.filter(isActiveSegment);
 }
 
-export function pickSegOrWled(seg, wled, key) {
+export function pickSegOrWled(seg, wled, key, perSegment = false) {
+  if (perSegment && seg && seg[key] !== undefined && seg[key] !== null) return seg[key];
   if (wled && wled[key] !== undefined && wled[key] !== null) return wled[key];
   return seg ? seg[key] : undefined;
 }
 
-export function buildRecalledSegment(seg, wled, should, m, index) {
+export function buildRecalledSegment(seg, wled, should, m, index, perSegment = false) {
   const out = { id: Number(seg?.id ?? index) };
   if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
     out.start = Number(seg.start);
@@ -210,21 +211,21 @@ export function buildRecalledSegment(seg, wled, should, m, index) {
     });
   }
   if (should('effect', m.effect)) {
-    const fx = pickSegOrWled(seg, wled, 'fx');
+    const fx = pickSegOrWled(seg, wled, 'fx', perSegment);
     if (fx !== undefined && fx !== null) out.fx = fx;
   }
   if (should('palette', m.palette)) {
-    const pal = pickSegOrWled(seg, wled, 'pal');
+    const pal = pickSegOrWled(seg, wled, 'pal', perSegment);
     if (pal !== undefined && pal !== null) out.pal = pal;
   }
   if (should('parameters', m.parameters)) {
     ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
-      const v = pickSegOrWled(seg, wled, k);
+      const v = pickSegOrWled(seg, wled, k, perSegment);
       if (v !== undefined && v !== null) out[k] = v;
     });
   }
   if (should('color', m.color)) {
-    const col = pickSegOrWled(seg, wled, 'col');
+    const col = pickSegOrWled(seg, wled, 'col', perSegment);
     if (col !== undefined && col !== null) {
       out.col = Array.isArray(col[0]) ? col.map(c => [...c]) : col;
     }
