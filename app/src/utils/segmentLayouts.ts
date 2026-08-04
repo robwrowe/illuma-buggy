@@ -137,8 +137,17 @@ type WledLike = {
   col?: number[][];
 };
 
-/** Preset wins; segment-map value is fallback when preset field is null/undefined. */
-function pickSegOrWled(seg: Partial<WledSegmentDef> | undefined, wled: WledLike, key: keyof WledSegmentDef): unknown {
+/**
+ * Single-segment: preset-level wled wins (override stale/default seg values).
+ * Multi-segment (`perSegment`): each segment's own value wins first.
+ */
+function pickSegOrWled(
+  seg: Partial<WledSegmentDef> | undefined,
+  wled: WledLike,
+  key: keyof WledSegmentDef,
+  perSegment = false,
+): unknown {
+  if (perSegment && seg && seg[key] !== undefined && seg[key] !== null) return seg[key];
   const fromWled = wled[key as keyof WledLike];
   if (fromWled !== undefined && fromWled !== null) return fromWled;
   return seg ? seg[key] : undefined;
@@ -150,6 +159,7 @@ export function buildRecalledSegment(
   should: (prop: RecallProp, memVal: boolean) => boolean,
   m: MemoryLike,
   index: number,
+  perSegment = false,
 ): WledSegmentDef {
   const out: WledSegmentDef = { id: Number(seg?.id ?? index), start: 0, stop: 0 };
   if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
@@ -163,21 +173,21 @@ export function buildRecalledSegment(
     delete (out as { stop?: number }).stop;
   }
   if (should('effect', m.effect)) {
-    const fx = pickSegOrWled(seg, wled, 'fx');
+    const fx = pickSegOrWled(seg, wled, 'fx', perSegment);
     if (fx !== undefined && fx !== null) out.fx = fx as number;
   }
   if (should('palette', m.palette)) {
-    const pal = pickSegOrWled(seg, wled, 'pal');
+    const pal = pickSegOrWled(seg, wled, 'pal', perSegment);
     if (pal !== undefined && pal !== null) out.pal = pal as number;
   }
   if (should('parameters', m.parameters)) {
     (['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'] as const).forEach(k => {
-      const v = pickSegOrWled(seg, wled, k);
+      const v = pickSegOrWled(seg, wled, k, perSegment);
       if (v !== undefined && v !== null) (out as Record<string, unknown>)[k] = v;
     });
   }
   if (should('color', m.color)) {
-    const col = pickSegOrWled(seg, wled, 'col');
+    const col = pickSegOrWled(seg, wled, 'col', perSegment);
     if (col !== undefined && col !== null) {
       const c = col as number[][];
       out.col = Array.isArray(c[0]) ? c.map(row => [...row]) : c;
@@ -226,7 +236,8 @@ export function buildRecalledSegmentsFromPreset(
   };
   const active = activeSegmentsFromPreset(preset, layouts).filter(isActiveSegment);
   if (should('segments', m.segments) && active.length > 0) {
-    return active.map((seg, i) => buildRecalledSegment(seg, w, should, m, i));
+    const perSegment = active.length > 1;
+    return active.map((seg, i) => buildRecalledSegment(seg, w, should, m, i, perSegment));
   }
   const base = active[0] || { id: 0, start: 0, stop: STRIP_LED_COUNT };
   const seg = buildRecalledSegment(base, w, should, m, 0);
