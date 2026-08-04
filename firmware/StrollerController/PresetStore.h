@@ -1,8 +1,9 @@
 #pragma once
 
 #include <Arduino.h>
-void savePreset(const String& id, const String& name, const String& wledJson,
-                const String& segmentMapId = "");
+/** Store a full preset JSON object (already serialized). Prefer this over
+ *  hand-assembling nested fields — segmentOverrides is a nested object. */
+void savePreset(const String& id, const String& presetJson);
 String getPreset(const String& id);
 /** Top-level "name" from NVS preset JSON; falls back to id. */
 String getPresetName(const String& id);

@@ -2,6 +2,7 @@ import {
   migrateLegacySegmentLayouts,
   migrateWandLabDefaults,
   normalizeMbMapping,
+  normalizePreset,
   withSegRefDefaults,
 } from './ble/mbMapping';
 import { normalizeTags } from './tags';
@@ -27,14 +28,17 @@ export function loadAppData(stored) {
     .filter(c => c?.id && normalizeHex(c.hex))
     .map(c => ({ id: c.id, name: c.name || c.hex, hex: normalizeHex(c.hex), tags: normalizeTags(c.tags) }));
   merged.presets = (merged.presets || []).map((p) => {
-    const next = { ...p, tags: normalizeTags(p.tags) };
-    if (!next.segmentLayoutId) return next;
-    const { segmentLayoutId, ...rest } = next;
-    return {
-      ...rest,
-      segmentMapId: idMap[segmentLayoutId] ?? next.segmentMapId,
-    };
-  });
+    const next = normalizePreset({
+      ...p,
+      tags: normalizeTags(p.tags),
+      ...(p.segmentLayoutId
+        ? { segmentMapId: idMap[p.segmentLayoutId] ?? p.segmentMapId }
+        : {}),
+    });
+    if (!next) return null;
+    const { segmentLayoutId: _drop, ...rest } = next;
+    return rest;
+  }).filter(Boolean);
   merged.customPalettes = [];
   merged.paletteSets = [];
   merged.zones = (merged.zones || []).map(normalizeZoneRecord);

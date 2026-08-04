@@ -47,10 +47,16 @@ void handleBLECommand(const String& msg) {
   // ── Preset management ──
   if (type == "preset_save") {
     String id = doc["id"].as<String>();
-    String name = doc["name"].as<String>();
-    String wled; serializeJson(doc["wled"], wled);
-    String segmentMapId = doc["segmentMapId"] | "";
-    savePreset(id, name, wled, segmentMapId);
+    if (id.length() == 0) {
+      bleNotify("{\"type\":\"ack\",\"action\":\"preset_save\",\"ok\":false,\"reason\":\"missing_id\"}");
+      return;
+    }
+    // Store the full preset object (minus transport "type"). Accepts new-shape
+    // global/segmentOverrides and legacy wled blobs from older app builds.
+    doc.remove("type");
+    String presetJson;
+    serializeJson(doc, presetJson);
+    savePreset(id, presetJson);
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_save\",\"id\":\"" + id + "\"}");
   }
   else if (type == "preset_apply") {

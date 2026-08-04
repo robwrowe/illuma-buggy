@@ -752,6 +752,38 @@ export function normalizeSegmentSourceMode(raw) {
   return 'perSegment';
 }
 
+const DEFAULT_PRESET_GLOBAL = {
+  on: true, fx: undefined, fxName: '', pal: undefined, palName: '',
+  sx: 128, ix: 128, c1: 128, c2: 128, c3: 16, o1: false, o2: false, o3: false,
+};
+
+const DEFAULT_PRESET_MEMORY = {
+  effect: true, palette: true, parameters: true, color: false, segments: false,
+};
+
+/** Normalize a preset to the global + segmentOverrides shape (accepts legacy `wled`). */
+export function normalizePreset(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const global = raw.global || raw.wled || {};
+  const id = (typeof raw.id === 'string' && raw.id)
+    ? raw.id
+    : `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const sourceMode = (raw.segmentSourceMode === 'global' || raw.segmentSourceMode === 'perSegment')
+    ? normalizeSegmentSourceMode(raw.segmentSourceMode)
+    : 'global';
+  return {
+    id,
+    name: typeof raw.name === 'string' ? raw.name : '',
+    tags: Array.isArray(raw.tags) ? raw.tags : [],
+    createdAt: raw.createdAt || Date.now(),
+    global: { ...DEFAULT_PRESET_GLOBAL, ...global },
+    segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
+    segmentOverrides: normalizeSegmentOverrides(raw.segmentOverrides),
+    segmentSourceMode: sourceMode,
+    memory: { ...DEFAULT_PRESET_MEMORY, ...(raw.memory || {}) },
+  };
+}
+
 /** Template used by the global sources editor (first segment, or empty defaults). */
 export function getGlobalSegmentOverrideTemplate(segments, overrides) {
   const list = Array.isArray(segments) ? segments : [];
@@ -1725,6 +1757,8 @@ export function segmentMapSegmentToWledDef(seg) {
   if (stop <= start) return null;
   const out = {
     id: Number.isFinite(seg.wledSegId) ? Number(seg.wledSegId) : Number(seg.id ?? 0),
+    // Preserve map-local string id for segmentOverrides lookup (distinct from WLED seg id).
+    ...(typeof seg.id === 'string' && seg.id ? { mapLocalId: seg.id } : {}),
     start,
     stop,
     grp: seg.grp ?? 1,
@@ -1813,19 +1847,25 @@ export function migrateLegacySegmentLayouts(data) {
 }
 
 export function presetWledForBoard(preset, segmentMaps) {
-  const wled = JSON.parse(JSON.stringify(preset.wled || { on: true }));
+  // Resolve with the same semantics firmware buildWledFromPresetDoc uses so
+  // "Test on strip" / legacy callers match applyPreset().
+  const g = preset?.global || preset?.wled || { on: true };
   const always = () => true;
   const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
+  const overrides = normalizeSegmentOverrides(preset?.segmentOverrides);
+  const wled = { on: true, ...JSON.parse(JSON.stringify(g)) };
+  delete wled.seg; // segments come from map + overrides, not a stale global.seg copy
   const activeSegments = activeSegmentsFromPreset(preset, segmentMaps);
   if (activeSegments.length > 0) {
-    const perSegment = activeSegments.length > 1;
-    wled.seg = activeSegments.map((seg, i) => buildRecalledSegment(seg, wled, always, m, i, perSegment));
+    wled.seg = activeSegments.map((seg, i) => {
+      const localId = seg.mapLocalId || seg.id;
+      return buildRecalledSegment(seg, g, always, m, i, overrides[localId]);
+    });
   } else {
-    wled.seg = [buildRecalledSegment({ id: 0 }, wled, always, m, 0)];
+    wled.seg = [buildRecalledSegment({ id: 0 }, g, always, m, 0)];
   }
-  // Device-global ledmap from the linked segment map (0/absent = omit; WLED keeps last map).
   const linked = preset?.segmentMapId
-    ? (segmentMaps || []).find((m) => m.id === preset.segmentMapId)
+    ? (segmentMaps || []).find((sm) => sm.id === preset.segmentMapId)
     : undefined;
   const ledmapId = Number(linked?.ledmap);
   if (Number.isFinite(ledmapId) && ledmapId > 0) wled.ledmap = ledmapId;

@@ -1,6 +1,10 @@
 import { finalizeWledSegmentPayload } from '../ble/chunking';
 import { FIVE_CORNER_IDS, FIVE_CORNER_RGB, STRIP_LED_COUNT } from '../ble/mbConstants';
-import { presetWledForBoard, segmentMapSegmentToWledDef, withSegRefDefaults } from '../ble/mbMapping';
+import {
+  presetWledForBoard,
+  segmentMapSegmentToWledDef,
+  withSegRefDefaults,
+} from '../ble/mbMapping';
 
 export function segRefToPreview(ref, col) {
   const fx = (ref.fx ?? -1) >= 0 ? ref.fx : 0;
@@ -183,25 +187,46 @@ export function mergeSegmentsById(base, incoming) {
 }
 
 export function activeSegmentsFromPreset(preset, segmentMaps) {
-  const w = preset?.wled || {};
-  const linked = preset?.segmentMapId
-    ? (segmentMaps || []).find(m => m.id === preset.segmentMapId)
-    : undefined;
-  const fromMap = linked?.segments
-    ?.map(s => normalizeSegmentDef(segmentMapSegmentToWledDef(s) || s))
-    .filter(Boolean) || [];
-  const fromPreset = (w.seg || []).map(s => normalizeSegmentDef(s)).filter(Boolean);
-  const merged = mergeSegmentsById(fromMap, fromPreset);
-  return merged.filter(isActiveSegment);
+  if (preset?.segmentMapId) {
+    const linked = (segmentMaps || []).find(m => m.id === preset.segmentMapId);
+    return (linked?.segments || [])
+      .map(s => normalizeSegmentDef(segmentMapSegmentToWledDef(s) || s))
+      .filter(Boolean)
+      .filter(isActiveSegment);
+  }
+  const fromPreset = (preset?.global?.seg || preset?.wled?.seg || [])
+    .map(s => normalizeSegmentDef(s))
+    .filter(Boolean);
+  return fromPreset.filter(isActiveSegment);
 }
 
+/** Resolve one property for one segment using rule/preset override semantics.
+ *  stored  → segment-map def's own value (or global if absent)
+ *  default → the global look
+ *  custom  → the override's own value
+ *  (no override entry for this prop) → same as 'stored'
+ */
+export function resolveSegProp(seg, global, overrideEntry, key, fallback) {
+  const mode = overrideEntry?.mode || 'stored';
+  if (mode === 'custom' && overrideEntry.value !== undefined) return overrideEntry.value;
+  if (mode === 'default') return global?.[key] ?? fallback;
+  // stored
+  return seg?.[key] ?? global?.[key] ?? fallback;
+}
+
+export function hexToRgbTriple(hex) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+}
+
+/** @deprecated Prefer resolveSegProp — kept for any lingering callers. */
 export function pickSegOrWled(seg, wled, key, perSegment = false) {
   if (perSegment && seg && seg[key] !== undefined && seg[key] !== null) return seg[key];
   if (wled && wled[key] !== undefined && wled[key] !== null) return wled[key];
   return seg ? seg[key] : undefined;
 }
 
-export function buildRecalledSegment(seg, wled, should, m, index, perSegment = false) {
+export function buildRecalledSegment(seg, global, should, m, index, overrideEntry) {
   const out = { id: Number(seg?.id ?? index) };
   if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
     out.start = Number(seg.start);
@@ -211,23 +236,31 @@ export function buildRecalledSegment(seg, wled, should, m, index, perSegment = f
     });
   }
   if (should('effect', m.effect)) {
-    const fx = pickSegOrWled(seg, wled, 'fx', perSegment);
+    const fx = resolveSegProp(seg, global, overrideEntry?.fx, 'fx', 0);
     if (fx !== undefined && fx !== null) out.fx = fx;
   }
   if (should('palette', m.palette)) {
-    const pal = pickSegOrWled(seg, wled, 'pal', perSegment);
+    const pal = resolveSegProp(seg, global, overrideEntry?.pal, 'pal', 0);
     if (pal !== undefined && pal !== null) out.pal = pal;
   }
   if (should('parameters', m.parameters)) {
     ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
-      const v = pickSegOrWled(seg, wled, k, perSegment);
+      const v = resolveSegProp(seg, global, overrideEntry?.[k], k, undefined);
       if (v !== undefined && v !== null) out[k] = v;
     });
   }
   if (should('color', m.color)) {
-    const col = pickSegOrWled(seg, wled, 'col', perSegment);
-    if (col !== undefined && col !== null) {
-      out.col = Array.isArray(col[0]) ? col.map(c => [...c]) : col;
+    if (overrideEntry?.colors?.some(c => c?.mode === 'custom' || c?.mode === 'default')) {
+      out.col = [0, 1, 2].map((i) => {
+        const c = overrideEntry.colors?.[i];
+        if (c?.mode === 'custom' && c.value) return hexToRgbTriple(c.value);
+        if (c?.mode === 'default') return global?.col?.[i] || [0, 0, 0];
+        return seg?.col?.[i] || global?.col?.[i] || [0, 0, 0];
+      });
+    } else if (global?.col) {
+      out.col = global.col.map(c => (Array.isArray(c) ? [...c] : c));
+    } else if (seg?.col) {
+      out.col = Array.isArray(seg.col[0]) ? seg.col.map(c => [...c]) : [...seg.col];
     }
   }
   return out;
@@ -237,47 +270,55 @@ export function applyWledStateCapture(preset, state, catalog, opts, updateMemory
   const rawSegs = parseWledStateSegments(state);
   const primary = rawSegs[0];
   if (!primary) throw new Error('No active segments in WLED state');
-  const wled = { ...preset.wled };
+  const global = { ...(preset.global || preset.wled || {}) };
   const memory = { ...preset.memory };
   let segmentMapId = preset.segmentMapId;
   const capturedSegs = rawSegs.map(seg => captureSegmentFromRaw(seg, opts)).filter(Boolean);
 
   if (opts.effect) {
     if (primary.fx === undefined) throw new Error('Segment 0 has no effect (fx) to import');
-    wled.fx = primary.fx;
-    wled.fxName = (catalog.effects || []).find(e => e.id === primary.fx)?.name || wled.fxName || `Effect ${primary.fx}`;
+    global.fx = primary.fx;
+    global.fxName = (catalog.effects || []).find(e => e.id === primary.fx)?.name || global.fxName || `Effect ${primary.fx}`;
     if (updateMemory) memory.effect = true;
   }
   if (opts.palette) {
     if (primary.pal === undefined) throw new Error('Segment 0 has no palette (pal) to import');
-    wled.pal = primary.pal;
-    wled.palName = resolvePaletteName(primary.pal, catalog.palettes);
+    global.pal = primary.pal;
+    global.palName = resolvePaletteName(primary.pal, catalog.palettes);
     if (updateMemory) memory.palette = true;
   }
   if (opts.parameters) {
     ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
-      if (primary[k] !== undefined && primary[k] !== null) wled[k] = primary[k];
+      if (primary[k] !== undefined && primary[k] !== null) global[k] = primary[k];
     });
     if (updateMemory) memory.parameters = true;
   }
   if (opts.color) {
     if (primary.col !== undefined && primary.col !== null) {
-      wled.col = Array.isArray(primary.col[0]) ? primary.col.map(c => [...c]) : [...primary.col];
+      global.col = Array.isArray(primary.col[0]) ? primary.col.map(c => [...c]) : [...primary.col];
       if (updateMemory) memory.color = true;
     } else {
-      delete wled.col;
+      delete global.col;
       if (updateMemory) memory.color = false;
     }
   }
   if (capturedSegs.length && (opts.effect || opts.palette || opts.parameters || opts.color || opts.segments)) {
-    wled.seg = capturedSegs.filter(seg => !opts.segments || isActiveSegment(seg));
+    // Map-less escape hatch only — clear segmentMapId so global.seg is authoritative.
+    global.seg = capturedSegs.filter(seg => !opts.segments || isActiveSegment(seg));
     segmentMapId = undefined;
   }
   if (opts.segments && capturedSegs.length > 0) {
     if (updateMemory) memory.segments = capturedSegs.some(isActiveSegment);
   }
 
-  return { ...preset, wled, memory, segmentMapId };
+  return {
+    ...preset,
+    global,
+    memory,
+    segmentMapId,
+    segmentOverrides: segmentMapId ? (preset.segmentOverrides || {}) : {},
+    segmentSourceMode: preset.segmentSourceMode || 'global',
+  };
 }
 
 export function formatWledSegLabel(seg) {

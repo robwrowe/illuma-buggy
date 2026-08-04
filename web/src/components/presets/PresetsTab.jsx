@@ -25,8 +25,9 @@ import { TagEditor } from '../shared/TagEditor';
 import { TagFilterBar } from '../shared/TagFilterBar';
 import { AppButton } from '../shared/styles';
 import { SegmentMapEditor } from '../ble/SegmentMapEditor';
+import { SegmentOverrideTable } from '../ble/SegmentOverrideTable';
 import { testPresetOnWled } from '../../lib/ble/chunking';
-import { normalizeMbMapping, segmentMapSegmentToWledDef } from '../../lib/ble/mbMapping';
+import { normalizeMbMapping, normalizePreset, segmentMapSegmentToWledDef } from '../../lib/ble/mbMapping';
 import { duplicateTaggedName, itemMatchesTagFilter } from '../../lib/tags';
 import { MAX_EFFECT_COLORS, buildPaletteSelectOptions, generateId, hexListToWledCol, paletteSelectValue, saveColorToLibrary, wledColToHexList } from '../../lib/utils';
 import { DEFAULT_WLED_CAPTURE_OPTS, applyWledStateCapture, fetchWledFullStateFromIp, formatSegLabel, summarizeLayout, wledCaptureLabels } from '../../lib/wled/capture';
@@ -81,7 +82,10 @@ export function PresetsTab({ data, update }) {
 
   const blank = () => ({
     id: generateId(), name: '', createdAt: Date.now(), tags: [],
-    wled: { on: true, fx: undefined, fxName: '', pal: undefined, palName: '', sx: 128, ix: 128, c1: 128, c2: 128, c3: 16, o1: false, o2: false, o3: false },
+    global: { on: true, fx: undefined, fxName: '', pal: undefined, palName: '', sx: 128, ix: 128, c1: 128, c2: 128, c3: 16, o1: false, o2: false, o3: false },
+    segmentMapId: '',
+    segmentOverrides: {},
+    segmentSourceMode: 'global',
     memory: { effect: true, palette: true, parameters: true, color: false, segments: false },
   });
 
@@ -92,7 +96,8 @@ export function PresetsTab({ data, update }) {
       name: duplicateTaggedName(p.name),
       tags: [...(p.tags || [])],
       createdAt: Date.now(),
-      wled: JSON.parse(JSON.stringify(p.wled)),
+      global: JSON.parse(JSON.stringify(p.global)),
+      segmentOverrides: JSON.parse(JSON.stringify(p.segmentOverrides || {})),
       memory: { ...p.memory },
     };
     update({ presets: [...data.presets, copy] });
@@ -103,11 +108,17 @@ export function PresetsTab({ data, update }) {
 
   const save = () => {
     if (!sel.name.trim()) return alert('Enter a name');
-    update({ presets: isNew ? [...data.presets, sel] : data.presets.map(p => p.id === sel.id ? sel : p) });
+    const normalized = normalizePreset(sel);
+    if (!normalized) return alert('Invalid preset');
+    update({
+      presets: isNew
+        ? [...data.presets, normalized]
+        : data.presets.map(p => (p.id === sel.id ? normalized : p)),
+    });
     setSel(null);
   };
   const del = id => { if (confirm('Delete this preset?')) { update({ presets: data.presets.filter(p => p.id !== id) }); setSel(null); } };
-  const w = (k, v) => setSel(s => ({ ...s, wled: { ...s.wled, [k]: v } }));
+  const w = (k, v) => setSel(s => ({ ...s, global: { ...s.global, [k]: v } }));
   const m = (k, v) => setSel(s => ({ ...s, memory: { ...s.memory, [k]: v } }));
 
   const connectWled = async () => {
@@ -126,7 +137,7 @@ export function PresetsTab({ data, update }) {
   };
 
   const paletteKnown = sel && (
-    wledPalettes.some(p => p.id === sel.wled.pal)
+    wledPalettes.some(p => p.id === sel.global.pal)
   );
   const sortedEffects = useMemo(
     () => [...wledEffects].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
@@ -140,8 +151,8 @@ export function PresetsTab({ data, update }) {
     );
   }, [sortedEffects, effectFilter]);
   const paletteOptions = useMemo(
-    () => buildPaletteSelectOptions(wledPalettes, sel?.wled, paletteKnown),
-    [wledPalettes, sel?.wled, paletteKnown],
+    () => buildPaletteSelectOptions(wledPalettes, sel?.global, paletteKnown),
+    [wledPalettes, sel?.global, paletteKnown],
   );
 
   const testPreset = async (preset) => {
@@ -166,24 +177,24 @@ export function PresetsTab({ data, update }) {
 
   const applyPalettePick = (v) => {
     if (!v) {
-      setSel(s => ({ ...s, wled: { ...s.wled, pal: undefined, palName: '' } }));
+      setSel(s => ({ ...s, global: { ...s.global, pal: undefined, palName: '' } }));
       return;
     }
     if (v.startsWith('wled:')) {
       const id = parseInt(v.slice(5), 10);
       const pal = wledPalettes.find(p => p.id === id);
-      setSel(s => ({ ...s, wled: { ...s.wled, pal: id, palName: pal?.name || s.wled.palName } }));
+      setSel(s => ({ ...s, global: { ...s.global, pal: id, palName: pal?.name || s.global.palName } }));
     }
   };
 
   const savedColors = data.savedColors || [];
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
-  const effectHexes = sel ? wledColToHexList(sel.wled.col) : [];
+  const effectHexes = sel ? wledColToHexList(sel.global.col) : [];
   const setEffectHexes = (hexes) => {
     const col = hexListToWledCol(hexes);
     setSel(s => ({
       ...s,
-      wled: { ...s.wled, col },
+      global: { ...s.global, col },
       memory: { ...s.memory, color: hexes.length > 0 ? true : s.memory.color },
     }));
   };
@@ -228,7 +239,13 @@ export function PresetsTab({ data, update }) {
   };
 
   const selectPreset = (p) => {
-    setSel({ ...p, wled: { ...p.wled }, memory: { ...p.memory } });
+    const normalized = normalizePreset(p) || p;
+    setSel({
+      ...normalized,
+      global: { ...normalized.global },
+      segmentOverrides: { ...(normalized.segmentOverrides || {}) },
+      memory: { ...normalized.memory },
+    });
     setIsNew(false);
     setPtab('effect');
     setPresetTestStatus('idle');
@@ -311,7 +328,7 @@ export function PresetsTab({ data, update }) {
                   <Text fw={600} size="sm">{p.name}</Text>
                   <TagChipRow tags={p.tags} />
                   <Text size="xs" c="dimmed">
-                    {p.wled.fxName || '—'} · {p.wled.palName || '—'}
+                    {p.global?.fxName || '—'} · {p.global?.palName || '—'}
                     {p.segmentMapId && (() => {
                       const map = segmentMaps.find(m => m.id === p.segmentMapId);
                       return map ? ` · ${map.name}` : ' · map';
@@ -408,12 +425,12 @@ export function PresetsTab({ data, update }) {
             {/* Effect tab */}
             {ptab === 'effect' && (
               <Stack gap="sm" maw={520}>
-                {sel.wled.fx != null && sel.wled.fx !== '' && (
+                {sel.global.fx != null && sel.global.fx !== '' && (
                   <Paper p="sm" radius="md" bg="var(--primary-dim)" style={{ border: '1px solid var(--border)' }}>
                     <Text size="xs" c="dimmed" mb={2}>Selected</Text>
                     <Text size="sm" fw={600}>
-                      {sel.wled.fxName || 'Unnamed effect'}
-                      <Text component="span" fw={400} c="dimmed" ml={6}>#{sel.wled.fx}</Text>
+                      {sel.global.fxName || 'Unnamed effect'}
+                      <Text component="span" fw={400} c="dimmed" ml={6}>#{sel.global.fx}</Text>
                     </Text>
                   </Paper>
                 )}
@@ -433,13 +450,13 @@ export function PresetsTab({ data, update }) {
                       {filteredEffects.map(eff => (
                         <Box
                           key={eff.id}
-                          onClick={() => setSel(s => ({ ...s, wled: { ...s.wled, fx: eff.id, fxName: eff.name } }))}
+                          onClick={() => setSel(s => ({ ...s, global: { ...s.global, fx: eff.id, fxName: eff.name } }))}
                           p="sm"
                           style={{
                             cursor: 'pointer',
                             borderBottom: '1px solid var(--border)',
-                            background: sel.wled.fx === eff.id ? 'var(--primary-dim)' : 'transparent',
-                            color: sel.wled.fx === eff.id ? 'var(--primary)' : 'var(--text)',
+                            background: sel.global.fx === eff.id ? 'var(--primary-dim)' : 'transparent',
+                            color: sel.global.fx === eff.id ? 'var(--primary)' : 'var(--text)',
                           }}
                         >
                           <Text size="sm" component="span">{eff.name}</Text>
@@ -447,12 +464,12 @@ export function PresetsTab({ data, update }) {
                         </Box>
                       ))}
                     </ScrollArea.Autosize>
-                    {sel.wled.fx != null && sel.wled.fx !== '' && (
+                    {sel.global.fx != null && sel.global.fx !== '' && (
                       <AppButton
                         type="button"
                         variant="default"
                         size="compact-sm"
-                        onClick={() => setSel(s => ({ ...s, wled: { ...s.wled, fx: undefined, fxName: '' } }))}
+                        onClick={() => setSel(s => ({ ...s, global: { ...s.global, fx: undefined, fxName: '' } }))}
                         style={{ alignSelf: 'flex-start' }}
                       >
                         Clear selection
@@ -471,14 +488,14 @@ export function PresetsTab({ data, update }) {
                   <Stack gap="sm" mt="sm">
                     <Field label="Effect name">
                       <TextInput
-                        value={sel.wled.fxName || ''}
+                        value={sel.global.fxName || ''}
                         onChange={e => w('fxName', e.target.value)}
                         placeholder="e.g. Rainbow"
                       />
                     </Field>
                     <Field label="Effect ID">
                       <NumberInput
-                        value={sel.wled.fx ?? ''}
+                        value={sel.global.fx ?? ''}
                         onChange={v => w('fx', v === '' || v == null ? undefined : parseInt(String(v), 10))}
                         placeholder="0"
                         hideControls
@@ -493,13 +510,13 @@ export function PresetsTab({ data, update }) {
             {ptab === 'palette' && (
               <Stack gap="sm" maw={520}>
                 <Field label="Color palette">
-                  <SearchableSelect value={paletteSelectValue(sel.wled)} onChange={applyPalettePick}
+                  <SearchableSelect value={paletteSelectValue(sel.global)} onChange={applyPalettePick}
                     placeholder="— Select palette —" maxListHeight={320}
                     options={paletteOptions} />
                 </Field>
-                {sel.wled.pal != null && sel.wled.pal !== '' && (
+                {sel.global.pal != null && sel.global.pal !== '' && (
                   <Text size="sm" c="dimmed">
-                    {sel.wled.palName || 'Unnamed palette'} · ID {sel.wled.pal}
+                    {sel.global.palName || 'Unnamed palette'} · ID {sel.global.pal}
                   </Text>
                 )}
                 {wledPalettes.length === 0 && (
@@ -514,14 +531,14 @@ export function PresetsTab({ data, update }) {
                   <Stack gap="sm" mt="sm">
                     <Field label="Palette name">
                       <TextInput
-                        value={sel.wled.palName || ''}
+                        value={sel.global.palName || ''}
                         onChange={e => w('palName', e.target.value)}
                         placeholder="e.g. Rainbow"
                       />
                     </Field>
                     <Field label="Palette ID">
                       <NumberInput
-                        value={sel.wled.pal ?? ''}
+                        value={sel.global.pal ?? ''}
                         onChange={v => w('pal', v === '' || v == null ? undefined : parseInt(String(v), 10))}
                         placeholder="0"
                         hideControls
@@ -591,12 +608,13 @@ export function PresetsTab({ data, update }) {
               </Stack>
             )}
 
-            {/* Segments tab — link shared segment map */}
+            {/* Segments tab — link shared segment map + per-segment overrides */}
             {ptab === 'segments' && (
-              <Stack gap="sm" maw={520}>
+              <Stack gap="sm" maw={720}>
                 <Text size="sm" c="dimmed">
                   Linked map applies when recall includes segments (Settings → Recall State).
                   Edit maps here or in Settings → Segment Maps — both edit the same store.
+                  With a map linked, per-segment sources mirror BLE Data rules (stored / default / custom).
                 </Text>
                 <AppButton
                   type="button"
@@ -607,7 +625,7 @@ export function PresetsTab({ data, update }) {
                 >
                   Edit segment maps…
                 </AppButton>
-                {sel.wled.seg?.length > 0 && !sel.segmentMapId && (
+                {sel.global.seg?.length > 0 && !sel.segmentMapId && (
                   <Paper p="sm" radius="md" bg="var(--primary-dim)" style={{ border: '1px solid var(--primary)' }}>
                     <Group gap="sm" mb={6} wrap="nowrap">
                       <Text size="sm" fw={600} style={{ flex: 1 }}>Inline layout (imported)</Text>
@@ -615,16 +633,16 @@ export function PresetsTab({ data, update }) {
                         type="button"
                         variant="danger"
                         size="compact-xs"
-                        onClick={() => setSel(s => ({ ...s, wled: { ...s.wled, seg: undefined }, memory: { ...s.memory, segments: false } }))}
+                        onClick={() => setSel(s => ({ ...s, global: { ...s.global, seg: undefined }, memory: { ...s.memory, segments: false } }))}
                       >
                         Clear
                       </AppButton>
                     </Group>
-                    <SegmentBar segments={sel.wled.seg} />
+                    <SegmentBar segments={sel.global.seg} />
                     <Text size="xs" c="dimmed" mt={4} ff="monospace">
-                      {sel.wled.seg.map(s => {
-                        const fxPart = s.fx != null ? `fx:${s.fx}` : `fx:${sel.wled.fx ?? '-'}`;
-                        const palPart = s.pal != null ? `pal:${s.pal}` : `pal:${sel.wled.pal ?? '-'}`;
+                      {sel.global.seg.map(s => {
+                        const fxPart = s.fx != null ? `fx:${s.fx}` : `fx:${sel.global.fx ?? '-'}`;
+                        const palPart = s.pal != null ? `pal:${s.pal}` : `pal:${sel.global.pal ?? '-'}`;
                         return `${formatSegLabel(s)} · ${fxPart} · ${palPart}`;
                       }).join(' · ')}
                     </Text>
@@ -633,13 +651,20 @@ export function PresetsTab({ data, update }) {
                 <Paper
                   p="sm"
                   radius="md"
-                  bg={!sel.segmentMapId && !sel.wled.seg?.length ? 'var(--primary-dim)' : 'var(--surface2)'}
+                  bg={!sel.segmentMapId && !sel.global.seg?.length ? 'var(--primary-dim)' : 'var(--surface2)'}
                   style={{ border: '1px solid var(--border)', cursor: 'pointer' }}
-                  onClick={() => setSel(s => ({ ...s, segmentMapId: undefined, wled: { ...s.wled, seg: undefined }, memory: { ...s.memory, segments: false } }))}
+                  onClick={() => setSel(s => ({
+                    ...s,
+                    segmentMapId: '',
+                    segmentOverrides: {},
+                    segmentSourceMode: 'global',
+                    global: { ...s.global, seg: undefined },
+                    memory: { ...s.memory, segments: false },
+                  }))}
                 >
                   <Group gap="sm" wrap="nowrap">
                     <Text size="sm" style={{ flex: 1 }}>None (single segment only)</Text>
-                    {!sel.segmentMapId && !sel.wled.seg?.length && (
+                    {!sel.segmentMapId && !sel.global.seg?.length && (
                       <Text c="var(--primary)">✓</Text>
                     )}
                   </Group>
@@ -657,8 +682,12 @@ export function PresetsTab({ data, update }) {
                       bg={sel.segmentMapId === map.id ? 'var(--primary-dim)' : 'var(--surface2)'}
                       style={{ border: '1px solid var(--border)', cursor: 'pointer' }}
                       onClick={() => setSel(s => ({
-                        ...s, segmentMapId: map.id, memory: { ...s.memory, segments: true },
-                        wled: { ...s.wled, seg: undefined },
+                        ...s,
+                        segmentMapId: map.id,
+                        memory: { ...s.memory, segments: true },
+                        segmentOverrides: {},
+                        segmentSourceMode: 'global',
+                        global: { ...s.global, seg: undefined },
                       }))}
                     >
                       <Group gap="sm" mb={6} wrap="nowrap">
@@ -672,7 +701,18 @@ export function PresetsTab({ data, update }) {
                     </Paper>
                   );
                 })}
-                {(sel.segmentMapId || sel.wled.seg?.length > 0) && (
+                {sel.segmentMapId && (
+                  <SegmentOverrideTable
+                    segments={segmentMaps.find(m => m.id === sel.segmentMapId)?.segments || []}
+                    segmentOverrides={sel.segmentOverrides || {}}
+                    segmentSourceMode={sel.segmentSourceMode || 'global'}
+                    extracts={[]}
+                    effectOptions={wledEffects}
+                    paletteOptions={wledPalettes}
+                    onChange={(patch) => setSel(s => ({ ...s, ...patch }))}
+                  />
+                )}
+                {(sel.segmentMapId || sel.global.seg?.length > 0) && (
                   <Field label="Remember segments at recall">
                     <Checkbox
                       checked={sel.memory.segments}
@@ -687,11 +727,11 @@ export function PresetsTab({ data, update }) {
             {ptab === 'params' && (
               <SimpleGrid cols={2} spacing="md">
                 {[{ k: 'sx', label: 'Speed', max: 255 }, { k: 'ix', label: 'Intensity', max: 255 }, { k: 'c1', label: 'Custom 1', max: 255 }, { k: 'c2', label: 'Custom 2', max: 255 }, { k: 'c3', label: 'Custom 3', max: 31 }].map(({ k, label, max }) => (
-                  <Field key={k} label={`${label}: ${sel.wled[k] ?? 128}`}>
+                  <Field key={k} label={`${label}: ${sel.global[k] ?? 128}`}>
                     <Slider
                       min={0}
                       max={max}
-                      value={sel.wled[k] ?? 128}
+                      value={sel.global[k] ?? 128}
                       onChange={v => w(k, v)}
                       size="xs"
                     />
@@ -700,7 +740,7 @@ export function PresetsTab({ data, update }) {
                 {[{ k: 'o1', label: 'Option 1' }, { k: 'o2', label: 'Option 2' }, { k: 'o3', label: 'Option 3' }].map(({ k, label }) => (
                   <Field key={k} label={label}>
                     <Checkbox
-                      checked={sel.wled[k] || false}
+                      checked={sel.global[k] || false}
                       onChange={e => w(k, e.target.checked)}
                     />
                   </Field>
