@@ -780,6 +780,10 @@ export function normalizePreset(raw) {
     segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
     segmentOverrides: normalizeSegmentOverrides(raw.segmentOverrides),
     segmentSourceMode: sourceMode,
+    // null/absent = inherit from segment map; 0–9 = explicit override (0 ≠ unset).
+    ledmap: Number.isInteger(raw.ledmap)
+      ? Math.max(0, Math.min(9, raw.ledmap))
+      : null,
     memory: { ...DEFAULT_PRESET_MEMORY, ...(raw.memory || {}) },
   };
 }
@@ -1846,6 +1850,19 @@ export function migrateLegacySegmentLayouts(data) {
   };
 }
 
+/**
+ * Resolve the ledmap a preset will send: preset override wins, else the
+ * linked segment map's own ledmap, else 0. Mirrors buildWledFromPresetDoc().
+ */
+export function resolvePresetLedmap(preset, segmentMaps) {
+  if (Number.isInteger(preset?.ledmap)) return Math.max(0, Math.min(9, preset.ledmap));
+  const linked = preset?.segmentMapId
+    ? (segmentMaps || []).find((m) => m.id === preset.segmentMapId)
+    : undefined;
+  const fromMap = Number(linked?.ledmap);
+  return Number.isFinite(fromMap) ? Math.max(0, Math.min(9, Math.round(fromMap))) : 0;
+}
+
 export function presetWledForBoard(preset, segmentMaps) {
   // Resolve with the same semantics firmware buildWledFromPresetDoc uses so
   // "Test on strip" / legacy callers match applyPreset().
@@ -1864,12 +1881,8 @@ export function presetWledForBoard(preset, segmentMaps) {
   } else {
     wled.seg = [buildRecalledSegment({ id: 0 }, g, always, m, 0)];
   }
-  const linked = preset?.segmentMapId
-    ? (segmentMaps || []).find((sm) => sm.id === preset.segmentMapId)
-    : undefined;
-  const ledmapId = Number(linked?.ledmap);
-  if (Number.isFinite(ledmapId) && ledmapId > 0) wled.ledmap = ledmapId;
-  else delete wled.ledmap;
+  // Always set ledmap (mirrors firmware) so preview/sync match applyPreset even at 0.
+  wled.ledmap = resolvePresetLedmap(preset, segmentMaps);
   return wled;
 }
 

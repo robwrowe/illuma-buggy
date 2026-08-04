@@ -1,4 +1,4 @@
-import { activeSegmentsFromPreset, buildRecalledSegment, isActiveSegment } from './wled/capture';
+import { activeSegmentsFromPreset, buildRecalledSegment, isActiveSegment, resolvePresetLedmap } from './wled/capture';
 import { normalizeSegmentOverrides } from './ble/mbMapping';
 
 export function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -281,7 +281,7 @@ export function buildRecallPayload(preset, recall, segmentMaps) {
   const g = preset.global || preset.wled || { on: true };
   const m = preset.memory || DEFAULT_PRESET_MEMORY;
   const overrides = normalizeSegmentOverrides(preset.segmentOverrides);
-  const payload = { on: true };
+  const payload = { on: true, ledmap: resolvePresetLedmap(preset, segmentMaps) };
 
   const should = (prop, memVal) => {
     if (r[prop] === 'always') return true;

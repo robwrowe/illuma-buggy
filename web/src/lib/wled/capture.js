@@ -2,9 +2,12 @@ import { finalizeWledSegmentPayload } from '../ble/chunking';
 import { FIVE_CORNER_IDS, FIVE_CORNER_RGB, STRIP_LED_COUNT } from '../ble/mbConstants';
 import {
   presetWledForBoard,
+  resolvePresetLedmap,
   segmentMapSegmentToWledDef,
   withSegRefDefaults,
 } from '../ble/mbMapping';
+
+export { resolvePresetLedmap };
 
 export function segRefToPreview(ref, col) {
   const fx = (ref.fx ?? -1) >= 0 ? ref.fx : 0;
@@ -394,5 +397,9 @@ export function buildPresetLayoutPayload(preset, segmentMaps) {
   if (!preset) return null;
   const wled = presetWledForBoard(preset, segmentMaps);
   if (!wled.seg?.length) return null;
-  return { on: true, seg: wled.seg.map(s => ({ ...s })) };
+  return {
+    on: true,
+    ledmap: resolvePresetLedmap(preset, segmentMaps),
+    seg: wled.seg.map(s => ({ ...s })),
+  };
 }

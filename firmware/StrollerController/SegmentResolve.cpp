@@ -471,6 +471,8 @@ bool buildWledFromPresetDoc(JsonDocument& presetDoc, JsonDocument& outWledDoc) {
   JsonObject global = presetDoc["global"].as<JsonObject>();
   if (global.isNull()) global = presetDoc["wled"].as<JsonObject>();  // legacy fallback
   const char* mapId = presetDoc["segmentMapId"] | "";
+  // Preset-level override: integer wins; null/absent → inherit from segment map (or 0).
+  JsonVariant presetLedmap = presetDoc["ledmap"];
 
   if (mapId[0]) {
     JsonObject segMap = findSegmentMapById(mapId);
@@ -478,7 +480,7 @@ bool buildWledFromPresetDoc(JsonDocument& presetDoc, JsonDocument& outWledDoc) {
       // Map missing from board cache — fall through to flat blob if present.
       if (global.isNull()) return false;
       if (deserializeJson(outWledDoc, global) != DeserializationError::Ok) return false;
-      outWledDoc["ledmap"] = 0;
+      outWledDoc["ledmap"] = presetLedmap.is<int>() ? presetLedmap.as<int>() : 0;
       return true;
     }
     JsonObject wled = outWledDoc.to<JsonObject>();
@@ -487,13 +489,15 @@ bool buildWledFromPresetDoc(JsonDocument& presetDoc, JsonDocument& outWledDoc) {
     if (!segmentOverrides.isNull()) {
       applySegmentOverridesOntoWled(wled, segMap, global, !global.isNull(), segmentOverrides);
     }
-    wled["ledmap"] = (int)(segMap["ledmap"] | 0);
+    wled["ledmap"] = presetLedmap.is<int>()
+      ? presetLedmap.as<int>()
+      : (int)(segMap["ledmap"] | 0);
     return true;
   }
 
   // Map-less: global / legacy wled is the flat capture path (§3.3).
   if (global.isNull()) return false;
   if (deserializeJson(outWledDoc, global) != DeserializationError::Ok) return false;
-  outWledDoc["ledmap"] = 0;
+  outWledDoc["ledmap"] = presetLedmap.is<int>() ? presetLedmap.as<int>() : 0;
   return true;
 }
