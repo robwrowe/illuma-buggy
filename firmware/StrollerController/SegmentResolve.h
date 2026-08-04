@@ -21,9 +21,15 @@ void applyPresetVariables(JsonObject segObj, JsonObject presetVariables);
 
 /** Seed `wled["seg"]` from a segment map, filling gaps with `globalLook`.
  *  globalLook is either a rule's `effect` object or a preset's `global` object —
- *  both share field names (fx, pal, sx, ix, c1-c3, o1-o3, col). */
+ *  both share field names (fx, pal, sx, ix, c1-c3, o1-o3, col).
+ *  When sourceIsGlobal is true, every property always seeds from globalLook —
+ *  the map def's own fx/pal/colors are ignored (mirrors rule/preset
+ *  segmentSourceMode:"global", which replicates {"mode":"default"} onto every
+ *  segment — see app/src/utils/segmentLayouts.ts buildRecalledSegment's
+ *  sourceIsGlobal parameter). */
 void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
-                            JsonObject globalLook, bool hasGlobalLook);
+                            JsonObject globalLook, bool hasGlobalLook,
+                            bool sourceIsGlobal = false);
 
 /** Apply per-segment overrides (rule.segmentOverrides or preset.segmentOverrides —
  *  identical shape) onto WLED segs already seeded by seedWledFromSegmentMap().

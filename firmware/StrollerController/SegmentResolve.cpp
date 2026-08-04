@@ -170,7 +170,8 @@ static void copyGlobalColOntoSeg(JsonObject seg, JsonObject globalLook) {
 }
 
 void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
-                            JsonObject globalLook, bool hasGlobalLook) {
+                            JsonObject globalLook, bool hasGlobalLook,
+                            bool sourceIsGlobal) {
   wled["on"] = true;
   JsonArray segs = wled.createNestedArray("seg");
   JsonArray defs = segMap["segments"].as<JsonArray>();
@@ -199,26 +200,27 @@ void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
       if (def.containsKey("bm")) seg["bm"] = def["bm"] | 0;
       else seg["bm"] = blendModeToBm(blend);
     }
-    int fx = def["fx"] | -1;
+    int fx = sourceIsGlobal ? -1 : (def["fx"] | -1);
     seg["fx"] = fx >= 0 ? fx : fallbackFx;
-    if (def.containsKey("sx")) seg["sx"] = def["sx"];
+    bool useDefFields = !sourceIsGlobal;
+    if (useDefFields && def.containsKey("sx")) seg["sx"] = def["sx"];
     else if (hasGlobalLook && globalLook.containsKey("sx")) seg["sx"] = globalLook["sx"];
-    if (def.containsKey("ix")) seg["ix"] = def["ix"];
+    if (useDefFields && def.containsKey("ix")) seg["ix"] = def["ix"];
     else if (hasGlobalLook && globalLook.containsKey("ix")) seg["ix"] = globalLook["ix"];
     // Preset global also carries c1-c3 / o1-o3; rule.effect typically does not.
-    if (def.containsKey("c1")) seg["c1"] = def["c1"];
+    if (useDefFields && def.containsKey("c1")) seg["c1"] = def["c1"];
     else if (hasGlobalLook && globalLook.containsKey("c1")) seg["c1"] = globalLook["c1"];
-    if (def.containsKey("c2")) seg["c2"] = def["c2"];
+    if (useDefFields && def.containsKey("c2")) seg["c2"] = def["c2"];
     else if (hasGlobalLook && globalLook.containsKey("c2")) seg["c2"] = globalLook["c2"];
-    if (def.containsKey("c3")) seg["c3"] = def["c3"];
+    if (useDefFields && def.containsKey("c3")) seg["c3"] = def["c3"];
     else if (hasGlobalLook && globalLook.containsKey("c3")) seg["c3"] = globalLook["c3"];
-    if (def.containsKey("o1")) seg["o1"] = def["o1"];
+    if (useDefFields && def.containsKey("o1")) seg["o1"] = def["o1"];
     else if (hasGlobalLook && globalLook.containsKey("o1")) seg["o1"] = globalLook["o1"];
-    if (def.containsKey("o2")) seg["o2"] = def["o2"];
+    if (useDefFields && def.containsKey("o2")) seg["o2"] = def["o2"];
     else if (hasGlobalLook && globalLook.containsKey("o2")) seg["o2"] = globalLook["o2"];
-    if (def.containsKey("o3")) seg["o3"] = def["o3"];
+    if (useDefFields && def.containsKey("o3")) seg["o3"] = def["o3"];
     else if (hasGlobalLook && globalLook.containsKey("o3")) seg["o3"] = globalLook["o3"];
-    int pal = def["pal"] | -1;
+    int pal = sourceIsGlobal ? -1 : (def["pal"] | -1);
     bool palSet = false;
     if (pal >= 0) {
       seg["pal"] = pal;
@@ -228,7 +230,7 @@ void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
       if (rpal >= 0) { seg["pal"] = rpal; palSet = true; }
     }
 
-    JsonArray colors = def["colors"].as<JsonArray>();
+    JsonArray colors = sourceIsGlobal ? JsonArray() : def["colors"].as<JsonArray>();
     bool colorsApplied = false;
     if (!colors.isNull()) {
       for (int i = 0; i < 3 && i < (int)colors.size(); i++) {
@@ -538,7 +540,9 @@ bool buildWledFromPresetDoc(JsonDocument& presetDoc, JsonDocument& outWledDoc) {
 
   if (haveSegMap) {
     JsonObject wled = outWledDoc.to<JsonObject>();
-    seedWledFromSegmentMap(wled, segMap, global, !global.isNull());
+    const char* sourceMode = presetDoc["segmentSourceMode"] | "global";
+    bool sourceIsGlobal = strcmp(sourceMode, "perSegment") != 0;  // default "global" if absent/invalid
+    seedWledFromSegmentMap(wled, segMap, global, !global.isNull(), sourceIsGlobal);
     JsonObject segmentOverrides = presetDoc["segmentOverrides"].as<JsonObject>();
     if (!segmentOverrides.isNull()) {
       applySegmentOverridesOntoWled(
