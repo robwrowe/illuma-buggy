@@ -233,6 +233,8 @@ import {
   finalizeWledSegmentPayload, asSharedSegmentMaps, resolvePresetLedmap,
 } from '../utils/segmentLayouts';
 import { normalizeZonePolygon } from '../utils/utils';
+import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
+import { loadBoardSyncMeta, saveBoardSyncMeta } from '../utils/boardSyncState';
 import {
   DEFAULT_SHOW_SETTINGS,
   normalizeShowBinding,
@@ -1206,6 +1208,21 @@ export const useAppStore = create<AppState>((set, get) => ({
         ftbPresetId:        d.ftbPresetId        ?? '',
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
       });
+
+      // One-time: presets saved to board NVS via the old legacy-fallback shape (wled-keyed,
+      // no top-level fx/pal/col) silently break board-resolved preset_apply. Force every
+      // preset to re-sync once so ensurePresetOnBoard re-sends the new-shape doc.
+      // Clear both in-memory and persisted synced ids — otherwise connectBootstrap's
+      // restoreBoardPresetSyncCache would re-poison the cache from board sync meta.
+      const MIGRATION_KEY = 'migratedBoardPresetLegacyFallback_v1';
+      if (!(await AsyncStorage.getItem(MIGRATION_KEY))) {
+        clearBoardPresetSyncCache();
+        const meta = await loadBoardSyncMeta();
+        if (meta) {
+          await saveBoardSyncMeta({ ...meta, syncedPresetIds: [] });
+        }
+        await AsyncStorage.setItem(MIGRATION_KEY, '1');
+      }
     } catch (e) { console.error('[Store] Load error:', e); }
   },
 

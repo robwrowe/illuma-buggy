@@ -103,20 +103,30 @@ export async function ensurePresetOnBoard(
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
   if (!force && isPresetSynced(preset.id)) return true;
-  const maps = sharedMaps ?? sharedMapsFromStore();
   const ackWait = waitForBleAck('preset_save', preset.id);
-  // Prefer full new-shape doc so board-side buildWledFromPresetDoc can resolve overrides.
-  const sent = await bleService.send({
+  // New-shape doc only — board-side buildWledFromPresetDoc resolves fx/pal/col/etc. from
+  // `global`, which this shape always provides. The old `wled`-keyed legacy shape (built
+  // from presetWledForBoard(), fully pre-resolved into seg[] with no top-level fx/pal/col)
+  // is NOT a safe fallback here: buildWledFromPresetDoc treats a present `wled` key as a
+  // valid globalLook object, but it has none of the flat fields seedWledFromSegmentMap
+  // reads, so the board silently produces a preset with no fx/pal/color at all. Retry the
+  // same payload instead of falling back to an incompatible shape.
+  let sent = await bleService.send({
     type: 'preset_save',
     ...presetDocForBoardSave(preset),
   });
   if (!sent) {
-    const legacySent = await bleService.sendPresetSave(
-      preset.id,
-      preset.name,
-      presetWledForBoard(preset, maps, layouts, recall),
-    );
-    if (!legacySent) return false;
+    // One retry — BLE send failures here are almost always transient (GATT busy, momentary
+    // congestion during chunked transfer), not a hard incompatibility with this preset.
+    await delay(250);
+    sent = await bleService.send({
+      type: 'preset_save',
+      ...presetDocForBoardSave(preset),
+    });
+  }
+  if (!sent) {
+    console.warn('[BoardSync] preset_save failed after retry — not marking synced', preset.id);
+    return false;
   }
   const ok = await ackWait;
   if (ok) markPresetSynced(preset.id);
