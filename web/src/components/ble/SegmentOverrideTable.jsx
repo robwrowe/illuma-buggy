@@ -11,6 +11,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { SearchableSelect } from '../shared/SearchableSelect';
+import { SwatchColorPicker } from '../shared/SwatchColorPicker';
 import { AppButton } from '../shared/styles';
 import {
   applySegmentOverrideToAll,
@@ -91,9 +92,12 @@ function PropCell({
   storedSeg,
   effectOptions,
   paletteOptions,
+  colorLibrary,
+  onSaveToLibrary,
   onChange,
 }) {
   const mode = extracted ? 'extract' : entry?.mode || 'stored';
+  const displayMode = mode === 'swatch' ? 'custom' : mode;
   const fxOpts = (effectOptions || []).map((e) => ({
     value: String(e.id),
     label: e.name,
@@ -147,6 +151,12 @@ function PropCell({
     }
   };
 
+  const swatchValue = (() => {
+    if (mode === 'swatch') return { mode: 'swatch', swatchId: entry.swatchId };
+    if (mode === 'custom') return { mode: 'custom', value: entry?.value || '#ffffff' };
+    return null;
+  })();
+
   return (
     <Stack gap={4}>
       <Text size="xs" fw={600} c="dimmed">
@@ -155,12 +165,12 @@ function PropCell({
       <SegmentedControl
         size="xs"
         fullWidth
-        value={mode === 'extract' ? 'stored' : mode}
+        value={displayMode === 'extract' ? 'stored' : displayMode}
         onChange={setMode}
         data={MODE_OPTS}
         styles={{ root: { flexWrap: 'wrap' }, label: { fontSize: 10, paddingInline: 4 } }}
       />
-      {mode === 'custom' && propKey === 'fx' && (
+      {displayMode === 'custom' && propKey === 'fx' && (
         <SearchableSelect
           value={entry?.value !== undefined && entry.value !== null ? String(entry.value) : ''}
           onChange={(v) => onChange({ mode: 'custom', value: v === '' ? 0 : parseInt(v, 10) })}
@@ -169,7 +179,7 @@ function PropCell({
           allowEmpty
         />
       )}
-      {mode === 'custom' && propKey === 'pal' && (
+      {displayMode === 'custom' && propKey === 'pal' && (
         <SearchableSelect
           value={entry?.value !== undefined && entry.value !== null ? String(entry.value) : ''}
           onChange={(v) => onChange({ mode: 'custom', value: v === '' ? 0 : parseInt(v, 10) })}
@@ -178,7 +188,7 @@ function PropCell({
           allowEmpty
         />
       )}
-      {mode === 'custom' && (propKey === 'sx' || propKey === 'ix') && (
+      {displayMode === 'custom' && (propKey === 'sx' || propKey === 'ix') && (
         <Slider
           min={0}
           max={255}
@@ -187,7 +197,7 @@ function PropCell({
           onChange={(v) => onChange({ mode: 'custom', value: v })}
         />
       )}
-      {mode === 'custom' && SEG_OVERRIDE_CUSTOM_NUM[propKey] && (
+      {displayMode === 'custom' && SEG_OVERRIDE_CUSTOM_NUM[propKey] && (
         <Stack gap={2}>
           <Slider
             min={SEG_OVERRIDE_CUSTOM_NUM[propKey].min}
@@ -204,7 +214,7 @@ function PropCell({
           </Text>
         </Stack>
       )}
-      {mode === 'custom' && SEG_OVERRIDE_CUSTOM_BOOL[propKey] && (
+      {displayMode === 'custom' && SEG_OVERRIDE_CUSTOM_BOOL[propKey] && (
         <Checkbox
           size="xs"
           label={entry?.value ? 'on' : 'off'}
@@ -212,7 +222,7 @@ function PropCell({
           onChange={(e) => onChange({ mode: 'custom', value: e.target.checked })}
         />
       )}
-      {mode === 'custom' && propKey === 'blend' && (
+      {displayMode === 'custom' && propKey === 'blend' && (
         <SearchableSelect
           value={entry?.value || 'top'}
           onChange={(blend) => onChange({ mode: 'custom', value: blend })}
@@ -220,7 +230,23 @@ function PropCell({
           allowEmpty={false}
         />
       )}
-      {mode === 'custom' && colorSlot !== undefined && (
+      {displayMode === 'custom' && colorSlot !== undefined && colorLibrary != null && (
+        <SwatchColorPicker
+          value={swatchValue}
+          colorLibrary={colorLibrary}
+          onSaveToLibrary={onSaveToLibrary}
+          onChange={(ref) => {
+            if (!ref) {
+              onChange({ mode: 'custom', value: '' });
+            } else if (ref.mode === 'swatch') {
+              onChange({ mode: 'swatch', swatchId: ref.swatchId });
+            } else {
+              onChange({ mode: 'custom', value: ref.value });
+            }
+          }}
+        />
+      )}
+      {displayMode === 'custom' && colorSlot !== undefined && colorLibrary == null && (
         <Group gap={4} wrap="nowrap">
           <div
             style={{
@@ -280,7 +306,16 @@ function PropCell({
   );
 }
 
-function SegmentOverrideRow({ seg, ov, driven, effectOptions, paletteOptions, onChangeOv }) {
+function SegmentOverrideRow({
+  seg,
+  ov,
+  driven,
+  effectOptions,
+  paletteOptions,
+  colorLibrary,
+  onSaveToLibrary,
+  onChangeOv,
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Paper p="xs" withBorder bg="var(--bg)">
@@ -319,6 +354,8 @@ function SegmentOverrideRow({ seg, ov, driven, effectOptions, paletteOptions, on
                 storedSeg={seg}
                 effectOptions={effectOptions}
                 paletteOptions={paletteOptions}
+                colorLibrary={colorLibrary}
+                onSaveToLibrary={onSaveToLibrary}
                 onChange={(nextEntry) => {
                   if (extracted) return;
                   onChangeOv(setPropEntry(ov, col.key, nextEntry));
@@ -344,6 +381,8 @@ export function SegmentOverrideTable({
   extracts = [],
   effectOptions = [],
   paletteOptions = [],
+  colorLibrary,
+  onSaveToLibrary,
   onChange,
   headerActions = null,
 }) {
@@ -444,6 +483,8 @@ export function SegmentOverrideTable({
                       storedSeg={storedHint}
                       effectOptions={effectOptions}
                       paletteOptions={paletteOptions}
+                      colorLibrary={colorLibrary}
+                      onSaveToLibrary={onSaveToLibrary}
                       onChange={(nextEntry) => {
                         if (extracted) return;
                         emit({
@@ -519,6 +560,8 @@ export function SegmentOverrideTable({
                       driven={driven}
                       effectOptions={effectOptions}
                       paletteOptions={paletteOptions}
+                      colorLibrary={colorLibrary}
+                      onSaveToLibrary={onSaveToLibrary}
                       onChangeOv={(nextOv) => setSegOverride(seg.id, nextOv)}
                     />
                   );

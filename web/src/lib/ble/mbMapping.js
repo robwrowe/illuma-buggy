@@ -1,5 +1,5 @@
 import { DEFAULT_MB_WLED_COLORS, MB_SEG_KEYS, MB_SEGMENT_META, defaultRandomPaletteIndices, normalizeRandomPool, normalizeBlendModeId, bmToBlendModeId, blendModeIdToBm } from './mbConstants';
-import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange } from '../wled/capture';
+import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange, withResolvedGlobalCol } from '../wled/capture';
 
 const BYTE_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
 const CMP_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte']);
@@ -623,8 +623,9 @@ export function createEmptyRuleEffect() {
   return { enabled: false, fx: -1, pal: -1, sx: 128, ix: 128 };
 }
 
-/** Per-property source modes for rule.segmentOverrides. */
-export const SEG_OVERRIDE_MODES = ['default', 'stored', 'custom', 'extract'];
+/** Per-property source modes for rule.segmentOverrides.
+ *  'swatch' is color-slot only (preset color library reference). */
+export const SEG_OVERRIDE_MODES = ['default', 'stored', 'custom', 'extract', 'swatch'];
 export const SEG_OVERRIDE_PROPS = [
   'fx', 'pal', 'sx', 'ix', 'blend',
   'c1', 'c2', 'c3', 'o1', 'o2', 'o3',
@@ -688,6 +689,14 @@ export function isFallbackColor(value) {
 export function normalizePropOverride(raw, { color = false } = {}) {
   const mode = SEG_OVERRIDE_MODES.includes(raw?.mode) ? raw.mode : 'stored';
   const out = { mode };
+  if (mode === 'swatch') {
+    if (color && typeof raw?.swatchId === 'string' && raw.swatchId) {
+      out.swatchId = raw.swatchId;
+      return out;
+    }
+    // Invalid swatch without id → fall back to stored.
+    return { mode: 'stored' };
+  }
   if (mode !== 'custom') return out;
   if (color) {
     const hex = normalizeCustomHex(raw?.value);
@@ -755,11 +764,74 @@ export function normalizeSegmentSourceMode(raw) {
 const DEFAULT_PRESET_GLOBAL = {
   on: true, fx: undefined, fxName: '', pal: undefined, palName: '',
   sx: 128, ix: 128, c1: 128, c2: 128, c3: 16, o1: false, o2: false, o3: false,
+  colorRefs: [],
 };
 
 const DEFAULT_PRESET_MEMORY = {
   effect: true, palette: true, parameters: true, color: false, segments: false,
 };
+
+const CUSTOM_SEGMENT_MAP_ID = '__custom__';
+
+function rgbTripletToHexLocal(rgb) {
+  if (!Array.isArray(rgb) || rgb.length < 3) return '#000000';
+  return `#${[rgb[0], rgb[1], rgb[2]]
+    .map((x) => Math.max(0, Math.min(255, Math.round(Number(x) || 0))).toString(16).padStart(2, '0'))
+    .join('')}`;
+}
+
+function normalizeColorRefEntry(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.mode === 'swatch' && typeof raw.swatchId === 'string' && raw.swatchId) {
+    return { mode: 'swatch', swatchId: raw.swatchId };
+  }
+  if (typeof raw.value === 'string' && /^#?[0-9a-fA-F]{6}$/.test(raw.value.trim())) {
+    const hex = `#${raw.value.trim().replace(/^#/, '').toLowerCase()}`;
+    return { mode: 'custom', value: hex };
+  }
+  return null;
+}
+
+/** Prefer colorRefs; migrate legacy global.col → custom refs. */
+function normalizePresetColorRefs(global) {
+  if (Array.isArray(global?.colorRefs) && global.colorRefs.length) {
+    return global.colorRefs.map(normalizeColorRefEntry).filter(Boolean);
+  }
+  if (Array.isArray(global?.colorRefs) && global.colorRefs.length === 0 && !global?.col) {
+    return [];
+  }
+  const col = global?.col;
+  if (!Array.isArray(col) || !col.length) return Array.isArray(global?.colorRefs) ? [] : [];
+  const rows = typeof col[0] === 'number' ? [col] : col;
+  return rows
+    .filter((rgb) => Array.isArray(rgb) && rgb.length >= 3)
+    .map((rgb) => ({ mode: 'custom', value: rgbTripletToHexLocal(rgb) }));
+}
+
+function normalizeColorLibrary(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((c) => c && typeof c.id === 'string' && typeof c.hex === 'string')
+    .map((c) => ({
+      id: c.id,
+      name: typeof c.name === 'string' ? c.name : '',
+      hex: c.hex.startsWith('#') ? c.hex : `#${c.hex}`,
+    }));
+}
+
+/** Build a preset-local custom segment map from WLED-shaped segs (e.g. Import from WLED). */
+export function customSegmentMapFromWledSegs(segs, overrides = {}) {
+  const list = (Array.isArray(segs) ? segs : [])
+    .map((s) => wledSegmentToSegmentMapSegment(s))
+    .filter((s) => Number(s.stop) > Number(s.start));
+  return normalizeSegmentMap({
+    id: 'custom',
+    name: '(custom to this preset)',
+    ledmap: 0,
+    segments: list.length ? list : undefined,
+    ...overrides,
+  });
+}
 
 /** Normalize a preset to the global + segmentOverrides shape (accepts legacy `wled`). */
 export function normalizePreset(raw) {
@@ -771,13 +843,47 @@ export function normalizePreset(raw) {
   const sourceMode = (raw.segmentSourceMode === 'global' || raw.segmentSourceMode === 'perSegment')
     ? normalizeSegmentSourceMode(raw.segmentSourceMode)
     : 'global';
+  const colorRefs = normalizePresetColorRefs(global);
+  const mergedGlobal = { ...DEFAULT_PRESET_GLOBAL, ...global, colorRefs };
+  // Editing uses colorRefs; WLED col is resolved at the payload boundary.
+  delete mergedGlobal.col;
+
+  let segmentMapId = typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '';
+  let customSegmentMap = null;
+  if (raw.customSegmentMap && typeof raw.customSegmentMap === 'object') {
+    customSegmentMap = normalizeSegmentMap({
+      ...raw.customSegmentMap,
+      id: 'custom',
+      name: (typeof raw.customSegmentMap.name === 'string' && raw.customSegmentMap.name.trim())
+        ? raw.customSegmentMap.name.trim()
+        : '(custom to this preset)',
+    });
+  } else if (segmentMapId === CUSTOM_SEGMENT_MAP_ID) {
+    customSegmentMap = normalizeSegmentMap({
+      id: 'custom',
+      name: '(custom to this preset)',
+    });
+  }
+
+  // Legacy inline global.seg (Import from WLED) → same as custom-to-this-preset map.
+  const inlineSegs = Array.isArray(mergedGlobal.seg) ? mergedGlobal.seg : [];
+  if (!segmentMapId && inlineSegs.length > 0) {
+    segmentMapId = CUSTOM_SEGMENT_MAP_ID;
+    customSegmentMap = customSegmentMapFromWledSegs(inlineSegs);
+    delete mergedGlobal.seg;
+  } else if (segmentMapId === CUSTOM_SEGMENT_MAP_ID && customSegmentMap) {
+    delete mergedGlobal.seg;
+  }
+
   return {
     id,
     name: typeof raw.name === 'string' ? raw.name : '',
     tags: Array.isArray(raw.tags) ? raw.tags : [],
     createdAt: raw.createdAt || Date.now(),
-    global: { ...DEFAULT_PRESET_GLOBAL, ...global },
-    segmentMapId: typeof raw.segmentMapId === 'string' ? raw.segmentMapId : '',
+    global: mergedGlobal,
+    segmentMapId,
+    customSegmentMap,
+    colorLibrary: normalizeColorLibrary(raw.colorLibrary),
     segmentOverrides: normalizeSegmentOverrides(raw.segmentOverrides),
     segmentSourceMode: sourceMode,
     // null/absent = inherit from segment map; 0–9 = explicit override (0 ≠ unset).
@@ -1856,6 +1962,12 @@ export function migrateLegacySegmentLayouts(data) {
  */
 export function resolvePresetLedmap(preset, segmentMaps) {
   if (Number.isInteger(preset?.ledmap)) return Math.max(0, Math.min(9, preset.ledmap));
+  if (preset?.segmentMapId === CUSTOM_SEGMENT_MAP_ID && preset?.customSegmentMap) {
+    const fromCustom = Number(preset.customSegmentMap.ledmap);
+    return Number.isFinite(fromCustom)
+      ? Math.max(0, Math.min(9, Math.round(fromCustom)))
+      : 0;
+  }
   const linked = preset?.segmentMapId
     ? (segmentMaps || []).find((m) => m.id === preset.segmentMapId)
     : undefined;
@@ -1866,20 +1978,23 @@ export function resolvePresetLedmap(preset, segmentMaps) {
 export function presetWledForBoard(preset, segmentMaps) {
   // Resolve with the same semantics firmware buildWledFromPresetDoc uses so
   // "Test on strip" / legacy callers match applyPreset().
-  const g = preset?.global || preset?.wled || { on: true };
+  const rawG = preset?.global || preset?.wled || { on: true };
+  const g = withResolvedGlobalCol(rawG, preset?.colorLibrary);
   const always = () => true;
   const m = { effect: true, palette: true, parameters: true, color: true, segments: true };
   const overrides = normalizeSegmentOverrides(preset?.segmentOverrides);
+  const lib = preset?.colorLibrary || [];
   const wled = { on: true, ...JSON.parse(JSON.stringify(g)) };
   delete wled.seg; // segments come from map + overrides, not a stale global.seg copy
+  delete wled.colorRefs;
   const activeSegments = activeSegmentsFromPreset(preset, segmentMaps);
   if (activeSegments.length > 0) {
     wled.seg = activeSegments.map((seg, i) => {
       const localId = seg.mapLocalId || seg.id;
-      return buildRecalledSegment(seg, g, always, m, i, overrides[localId]);
+      return buildRecalledSegment(seg, g, always, m, i, overrides[localId], lib);
     });
   } else {
-    wled.seg = [buildRecalledSegment({ id: 0 }, g, always, m, 0)];
+    wled.seg = [buildRecalledSegment({ id: 0 }, g, always, m, 0, undefined, lib)];
   }
   // Always set ledmap (mirrors firmware) so preview/sync match applyPreset even at 0.
   wled.ledmap = resolvePresetLedmap(preset, segmentMaps);

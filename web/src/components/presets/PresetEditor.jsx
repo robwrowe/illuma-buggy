@@ -1,12 +1,10 @@
 import { Group, Paper, ScrollArea, Stack, Tabs, Text, TextInput } from '@mantine/core';
-import { TagEditor } from '../shared/TagEditor';
 import { AppButton } from '../shared/styles';
 import { PRESET_SUB_TABS } from './presetModel';
 import { PresetColorsTab } from './tabs/PresetColorsTab';
 import { PresetEffectTab } from './tabs/PresetEffectTab';
-import { PresetMemoryTab } from './tabs/PresetMemoryTab';
-import { PresetPaletteTab } from './tabs/PresetPaletteTab';
-import { PresetParamsTab } from './tabs/PresetParamsTab';
+import { PresetMapsTab } from './tabs/PresetMapsTab';
+import { PresetMiscTab } from './tabs/PresetMiscTab';
 import { PresetSegmentsTab } from './tabs/PresetSegmentsTab';
 
 export function PresetEditor({
@@ -18,6 +16,7 @@ export function PresetEditor({
   setGlobal,
   setMemory,
   wledIp,
+  onWledIpChange,
   wledEffects,
   wledPalettes,
   effectFilter,
@@ -26,8 +25,6 @@ export function PresetEditor({
   paletteOptions,
   onApplyPalettePick,
   segmentMaps,
-  savedColors,
-  onSaveColor,
   zones,
   presetTestStatus,
   presetTestErr,
@@ -90,8 +87,6 @@ export function PresetEditor({
           <Text size="sm" c="green">Preset sent to WLED at {wledIp.trim()}.</Text>
         )}
 
-        <TagEditor tags={sel.tags || []} onChange={(tags) => setSel({ ...sel, tags })} />
-
         <Tabs value={ptab} onChange={onPtabChange}>
           <Tabs.List>
             {PRESET_SUB_TABS.map((t) => (
@@ -107,28 +102,26 @@ export function PresetEditor({
             sel={sel}
             setSel={setSel}
             setGlobal={setGlobal}
+            setMemory={setMemory}
             wledEffects={wledEffects}
+            wledPalettes={wledPalettes}
             effectFilter={effectFilter}
             onEffectFilterChange={onEffectFilterChange}
             filteredEffects={filteredEffects}
-          />
-        )}
-        {ptab === 'palette' && (
-          <PresetPaletteTab
-            sel={sel}
-            setGlobal={setGlobal}
-            wledPalettes={wledPalettes}
             paletteOptions={paletteOptions}
             onApplyPalettePick={onApplyPalettePick}
           />
         )}
-        {ptab === 'colors' && (
-          <PresetColorsTab
+        {ptab === 'maps' && (
+          <PresetMapsTab
             sel={sel}
             setSel={setSel}
-            setMemory={setMemory}
-            savedColors={savedColors}
-            onSaveColor={onSaveColor}
+            segmentMaps={segmentMaps}
+            wledEffects={wledEffects}
+            wledPalettes={wledPalettes}
+            wledIp={wledIp}
+            onWledIpChange={onWledIpChange}
+            onOpenMapEditor={onOpenMapEditor}
           />
         )}
         {ptab === 'segments' && (
@@ -139,14 +132,18 @@ export function PresetEditor({
             segmentMaps={segmentMaps}
             wledEffects={wledEffects}
             wledPalettes={wledPalettes}
-            onOpenMapEditor={onOpenMapEditor}
           />
         )}
-        {ptab === 'params' && (
-          <PresetParamsTab sel={sel} setGlobal={setGlobal} />
+        {ptab === 'colors' && (
+          <PresetColorsTab sel={sel} setSel={setSel} />
         )}
-        {ptab === 'memory' && (
-          <PresetMemoryTab sel={sel} setMemory={setMemory} zones={zones} />
+        {ptab === 'misc' && (
+          <PresetMiscTab
+            sel={sel}
+            setSel={setSel}
+            setMemory={setMemory}
+            zones={zones}
+          />
         )}
       </Stack>
     </ScrollArea>

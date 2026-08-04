@@ -134,11 +134,14 @@ export function PresetListPanel({
                 <TagChipRow tags={p.tags} />
                 <Text size="xs" c="dimmed">
                   {p.global?.fxName || '—'} · {p.global?.palName || '—'}
-                  {p.segmentMapId &&
-                    (() => {
-                      const map = segmentMaps.find((m) => m.id === p.segmentMapId);
-                      return map ? ` · ${map.name}` : ' · map';
-                    })()}
+                  {p.segmentMapId === '__custom__'
+                    ? ' · custom map'
+                    : p.segmentMapId
+                      ? (() => {
+                          const map = segmentMaps.find((m) => m.id === p.segmentMapId);
+                          return map ? ` · ${map.name}` : ' · map';
+                        })()
+                      : ''}
                 </Text>
               </Stack>
               <ActionIcon

@@ -1235,8 +1235,9 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
       }
     }
     // custom/default overrides beat map (and preset geometry); extracts still win later.
+    JsonArray emptyLib;
     applySegmentOverridesOntoWled(
-      wled.as<JsonObject>(), segMap, ruleEffect, ruleEffectEnabled, segmentOverrides);
+      wled.as<JsonObject>(), segMap, ruleEffect, ruleEffectEnabled, segmentOverrides, emptyLib);
   }
 
   if (!haveWled) {

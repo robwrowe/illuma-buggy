@@ -5,6 +5,10 @@
 /** Parse #RRGGBB into r/g/b. No-op (zeros) on invalid input. */
 void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b);
 
+/** Resolve a color ref ({mode:custom,value} | {mode:swatch,swatchId}) to a hex string
+ *  using the preset's colorLibrary. Returns false if unresolved. */
+bool resolveColorRefHex(JsonObject ref, JsonArray colorLibrary, String& outHex);
+
 /** WLED v16 seg.bm from Illuma blend id (legacy "normal" → Top). */
 uint8_t blendModeToBm(const char* blend);
 
@@ -22,13 +26,15 @@ void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
                             JsonObject globalLook, bool hasGlobalLook);
 
 /** Apply per-segment overrides (rule.segmentOverrides or preset.segmentOverrides —
- *  identical shape) onto WLED segs already seeded by seedWledFromSegmentMap(). */
+ *  identical shape) onto WLED segs already seeded by seedWledFromSegmentMap().
+ *  colorLibrary is optional (presets only); pass a null/empty array for rules. */
 void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
                                    JsonObject globalLook, bool hasGlobalLook,
-                                   JsonObject segmentOverrides);
+                                   JsonObject segmentOverrides,
+                                   JsonArray colorLibrary);
 
 /** Resolve a stored preset JSON document into a WLED apply payload.
- *  Handles map-linked presets (global + segmentMapId + segmentOverrides)
- *  and map-less presets (global.seg / legacy wled blob — see preset override spec §3.3).
+ *  Handles map-linked presets (global + segmentMapId + segmentOverrides),
+ *  custom inline maps (segmentMapId == "__custom__"), and map-less presets.
  *  Accepts legacy top-level "wled" as a fallback for "global". */
 bool buildWledFromPresetDoc(JsonDocument& presetDoc, JsonDocument& outWledDoc);

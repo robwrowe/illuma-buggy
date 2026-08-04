@@ -19,6 +19,49 @@ void parseHexColor(const char* hex, uint8_t& r, uint8_t& g, uint8_t& b) {
   b = (uint8_t)((nib(hex[5]) << 4) | nib(hex[6]));
 }
 
+bool resolveColorRefHex(JsonObject ref, JsonArray colorLibrary, String& outHex) {
+  outHex = "";
+  if (ref.isNull()) return false;
+  const char* mode = ref["mode"] | "stored";
+  if (strcmp(mode, "custom") == 0) {
+    outHex = ref["value"] | "";
+    return outHex.length() > 0;
+  }
+  if (strcmp(mode, "swatch") == 0) {
+    const char* swatchId = ref["swatchId"] | "";
+    if (!swatchId[0] || colorLibrary.isNull()) return false;
+    for (JsonObject entry : colorLibrary) {
+      if (strcmp(entry["id"] | "", swatchId) == 0) {
+        outHex = entry["hex"] | "";
+        return outHex.length() > 0;
+      }
+    }
+  }
+  return false;
+}
+
+/** Materialize global.colorRefs → global.col so seed/overrides see RGB triples. */
+static void materializeGlobalColorRefs(JsonObject global, JsonArray colorLibrary) {
+  if (global.isNull()) return;
+  JsonArray refs = global["colorRefs"].as<JsonArray>();
+  if (refs.isNull() || refs.size() == 0) return;
+  JsonArray col = global.createNestedArray("col");
+  for (JsonVariant v : refs) {
+    if (!v.is<JsonObject>()) {
+      JsonArray rgb = col.createNestedArray();
+      rgb.add(0); rgb.add(0); rgb.add(0);
+      continue;
+    }
+    String hex;
+    uint8_t r = 0, g = 0, b = 0;
+    if (resolveColorRefHex(v.as<JsonObject>(), colorLibrary, hex)) {
+      parseHexColor(hex.c_str(), r, g, b);
+    }
+    JsonArray rgb = col.createNestedArray();
+    rgb.add(r); rgb.add(g); rgb.add(b);
+  }
+}
+
 uint8_t blendModeToBm(const char* blend) {
   if (!blend || !blend[0]) return 0;
   if (strcmp(blend, "top") == 0 || strcmp(blend, "normal") == 0) return 0;
@@ -232,7 +275,8 @@ void seedWledFromSegmentMap(JsonObject wled, JsonObject segMap,
 
 void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
                                    JsonObject globalLook, bool hasGlobalLook,
-                                   JsonObject segmentOverrides) {
+                                   JsonObject segmentOverrides,
+                                   JsonArray colorLibrary) {
   if (segmentOverrides.isNull() || segMap.isNull()) return;
   JsonArray defs = segMap["segments"].as<JsonArray>();
   if (defs.isNull()) return;
@@ -432,17 +476,22 @@ void applySegmentOverridesOntoWled(JsonObject wled, JsonObject segMap,
         if (!ovColors[idx].is<JsonObject>()) continue;
         JsonObject cOv = ovColors[idx].as<JsonObject>();
         int slot;
+        String hexStr;
         const char* hex = nullptr;
         if (cOv.containsKey("v")) {
           // Compact wire: { i, v }
           slot = cOv.containsKey("i") ? (cOv["i"] | 0) : (int)idx;
           hex = cOv["v"] | "";
         } else {
-          // Verbose editor: [{mode,value}, ...] by array index
+          // Verbose editor: [{mode,value|swatchId}, ...] by array index
           const char* cmode = cOv["mode"] | "stored";
-          if (strcmp(cmode, "custom") == 0) {
+          if (strcmp(cmode, "custom") == 0 || strcmp(cmode, "swatch") == 0) {
             slot = (int)idx;
-            hex = cOv["value"] | "";
+            if (resolveColorRefHex(cOv, colorLibrary, hexStr)) {
+              hex = hexStr.c_str();
+            } else if (strcmp(cmode, "custom") == 0) {
+              hex = cOv["value"] | "";
+            }
           } else if (strcmp(cmode, "default") == 0 && hasGlobalLook && globalLook.containsKey("col")) {
             JsonArray gcol = globalLook["col"].as<JsonArray>();
             if (!gcol.isNull() && (int)idx < (int)gcol.size()) {
@@ -471,27 +520,41 @@ bool buildWledFromPresetDoc(JsonDocument& presetDoc, JsonDocument& outWledDoc) {
   JsonObject global = presetDoc["global"].as<JsonObject>();
   if (global.isNull()) global = presetDoc["wled"].as<JsonObject>();  // legacy fallback
   const char* mapId = presetDoc["segmentMapId"] | "";
-  // Preset-level override: integer wins; null/absent → inherit from segment map (or 0).
   JsonVariant presetLedmap = presetDoc["ledmap"];
+  JsonArray colorLibrary = presetDoc["colorLibrary"].as<JsonArray>();
 
-  if (mapId[0]) {
-    JsonObject segMap = findSegmentMapById(mapId);
-    if (segMap.isNull()) {
-      // Map missing from board cache — fall through to flat blob if present.
-      if (global.isNull()) return false;
-      if (deserializeJson(outWledDoc, global) != DeserializationError::Ok) return false;
-      outWledDoc["ledmap"] = presetLedmap.is<int>() ? presetLedmap.as<int>() : 0;
-      return true;
-    }
+  // Resolve colorRefs → col before seeding so segment defaults see RGB.
+  if (!global.isNull()) materializeGlobalColorRefs(global, colorLibrary);
+
+  JsonObject segMap;
+  bool haveSegMap = false;
+  if (strcmp(mapId, "__custom__") == 0) {
+    segMap = presetDoc["customSegmentMap"].as<JsonObject>();
+    haveSegMap = !segMap.isNull();
+  } else if (mapId[0]) {
+    segMap = findSegmentMapById(mapId);
+    haveSegMap = !segMap.isNull();
+  }
+
+  if (haveSegMap) {
     JsonObject wled = outWledDoc.to<JsonObject>();
     seedWledFromSegmentMap(wled, segMap, global, !global.isNull());
     JsonObject segmentOverrides = presetDoc["segmentOverrides"].as<JsonObject>();
     if (!segmentOverrides.isNull()) {
-      applySegmentOverridesOntoWled(wled, segMap, global, !global.isNull(), segmentOverrides);
+      applySegmentOverridesOntoWled(
+        wled, segMap, global, !global.isNull(), segmentOverrides, colorLibrary);
     }
     wled["ledmap"] = presetLedmap.is<int>()
       ? presetLedmap.as<int>()
       : (int)(segMap["ledmap"] | 0);
+    return true;
+  }
+
+  // Map id set but not resolvable (missing shared/custom map), or map-less.
+  if (mapId[0] && !haveSegMap) {
+    if (global.isNull()) return false;
+    if (deserializeJson(outWledDoc, global) != DeserializationError::Ok) return false;
+    outWledDoc["ledmap"] = presetLedmap.is<int>() ? presetLedmap.as<int>() : 0;
     return true;
   }
 

@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { Box, Stack, Text } from '@mantine/core';
 import { normalizePreset } from '../../lib/ble/mbMapping';
 import { duplicateTaggedName, itemMatchesTagFilter } from '../../lib/tags';
-import { saveColorToLibrary } from '../../lib/utils';
 import {
   DEFAULT_WLED_CAPTURE_OPTS,
   applyWledStateCapture,
@@ -176,8 +175,6 @@ export function PresetsTab({ data, update }) {
           paletteOptions={wled.paletteOptions}
           onApplyPalettePick={applyPalettePick}
           segmentMaps={segmentMaps}
-          savedColors={data.savedColors || []}
-          onSaveColor={(hex) => saveColorToLibrary(data, update, hex)}
           zones={data.zones}
           presetTestStatus={wled.presetTestStatus}
           presetTestErr={wled.presetTestErr}
@@ -192,6 +189,7 @@ export function PresetsTab({ data, update }) {
           onCancel={() => setSel(null)}
           onSave={save}
           onOpenMapEditor={() => setShowMapEditor(true)}
+          onWledIpChange={wled.setWledIp}
         />
       ) : (
         <Stack flex={1} align="center" justify="center">
