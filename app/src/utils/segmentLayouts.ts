@@ -385,12 +385,14 @@ export function buildRecalledSegment(
             : ((seg?.col?.[i] as number[]) || wled.col?.[i] || [0, 0, 0]);
         }
         if (c?.mode === 'default') return wled.col?.[i] || [0, 0, 0];
+        // stored — segment's own authored color wins over the global look
         return (seg?.col?.[i] as number[]) || wled.col?.[i] || [0, 0, 0];
       });
+    } else if (seg?.col) {
+      // No override entries at all → "stored" for every slot → segment's own color wins.
+      out.col = Array.isArray(seg.col[0]) ? seg.col.map(c => [...c]) : (seg.col as number[][]);
     } else if (wled.col) {
       out.col = wled.col.map(c => [...c]);
-    } else if (seg?.col) {
-      out.col = Array.isArray(seg.col[0]) ? seg.col.map(c => [...c]) : (seg.col as number[][]);
     }
   }
   if (!isActiveSegment(out)) {

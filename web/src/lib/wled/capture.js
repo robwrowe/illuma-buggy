@@ -309,15 +309,17 @@ export function buildRecalledSegment(seg, global, should, m, index, overrideEntr
         const c = overrideEntry.colors?.[i];
         if (c?.mode === 'swatch' || (c?.mode === 'custom' && c.value)) {
           const hex = resolveColorRef(c, colorLibrary);
-          return hex ? hexToRgbTriple(hex) : (global?.col?.[i] || [0, 0, 0]);
+          return hex ? hexToRgbTriple(hex) : (seg?.col?.[i] || global?.col?.[i] || [0, 0, 0]);
         }
         if (c?.mode === 'default') return global?.col?.[i] || [0, 0, 0];
+        // stored — segment's own authored color wins over the global look
         return seg?.col?.[i] || global?.col?.[i] || [0, 0, 0];
       });
+    } else if (seg?.col) {
+      // No override entries at all → "stored" for every slot → segment's own color wins.
+      out.col = Array.isArray(seg.col[0]) ? seg.col.map((c) => [...c]) : [...seg.col];
     } else if (global?.col) {
       out.col = global.col.map((c) => (Array.isArray(c) ? [...c] : c));
-    } else if (seg?.col) {
-      out.col = Array.isArray(seg.col[0]) ? seg.col.map((c) => [...c]) : [...seg.col];
     }
   }
   return out;
