@@ -1,7 +1,13 @@
-import { segmentMapSegmentToWledDef } from '../../lib/ble/mbMapping';
+import {
+  normalizeSegmentMap,
+  segmentMapSegmentToWledDef,
+} from '../../lib/ble/mbMapping';
 import { generateId } from '../../lib/utils';
 
-export const PRESET_SUB_TABS = ['effect', 'palette', 'colors', 'segments', 'params', 'memory'];
+export const PRESET_SUB_TABS = ['effect', 'maps', 'segments', 'colors', 'misc'];
+
+/** Sentinel segmentMapId for a map stored inline on the preset. */
+export const CUSTOM_SEGMENT_MAP_ID = '__custom__';
 
 /** Same 0–9 ledmap slots as SegmentMapEditor / WLED ledmap.json–ledmap9.json. */
 export const PRESET_LEDMAP_OPTS = [
@@ -16,6 +22,14 @@ export const PRESET_LEDMAP_OPTS = [
   { value: '8', label: 'Map 8 (ledmap8.json)', searchText: '8 ledmap8.json' },
   { value: '9', label: 'Map 9 (ledmap9.json)', searchText: '9 ledmap9.json' },
 ];
+
+export function blankCustomSegmentMap() {
+  return normalizeSegmentMap({
+    id: 'custom',
+    name: '(custom to this preset)',
+    ledmap: 0,
+  });
+}
 
 export function blankPreset() {
   return {
@@ -37,8 +51,11 @@ export function blankPreset() {
       o1: false,
       o2: false,
       o3: false,
+      colorRefs: [],
     },
     segmentMapId: '',
+    customSegmentMap: null,
+    colorLibrary: [],
     segmentOverrides: {},
     segmentSourceMode: 'global',
     ledmap: null,
@@ -53,11 +70,23 @@ export function blankPreset() {
 }
 
 export function segmentMapPreview(map) {
+  if (!map) return { id: '', name: '', segments: [] };
   return {
     id: map.id,
     name: map.name,
     segments: (map.segments || []).map((s) => segmentMapSegmentToWledDef(s)).filter(Boolean),
   };
+}
+
+/** Resolve the active segment map for a preset (shared or inline custom). */
+export function resolvePresetSegmentMap(preset, segmentMaps) {
+  if (preset?.segmentMapId === CUSTOM_SEGMENT_MAP_ID && preset?.customSegmentMap) {
+    return preset.customSegmentMap;
+  }
+  if (preset?.segmentMapId) {
+    return (segmentMaps || []).find((m) => m.id === preset.segmentMapId) || null;
+  }
+  return null;
 }
 
 export function duplicatePresetRecord(p, name) {
@@ -69,6 +98,10 @@ export function duplicatePresetRecord(p, name) {
     createdAt: Date.now(),
     global: JSON.parse(JSON.stringify(p.global || {})),
     segmentOverrides: JSON.parse(JSON.stringify(p.segmentOverrides || {})),
+    colorLibrary: JSON.parse(JSON.stringify(p.colorLibrary || [])),
+    customSegmentMap: p.customSegmentMap
+      ? JSON.parse(JSON.stringify(p.customSegmentMap))
+      : null,
     memory: { ...(p.memory || {}) },
   };
 }

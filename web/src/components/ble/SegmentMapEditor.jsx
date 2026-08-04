@@ -441,6 +441,7 @@ export function SegmentMapEditor({
   paletteOptions = [],
   onChange,
   onPresetsChange,
+  singleMapMode = false,
 }) {
   const mapping = normalizeMbMapping(mb);
   const maps = mapping.segmentMaps || [];
@@ -568,61 +569,68 @@ export function SegmentMapEditor({
   return (
     <RuleClipProvider>
       <Stack gap="md">
-        <Text size="xs" c="dimmed" lh={1.5}>
-          Shareable segment maps referenced by rules and presets via{' '}
-          <code style={{ fontFamily: 'monospace' }}>segmentMapId</code>. Mask assignment links a
-          segment to MB region extracts; <strong>ignore</strong> excludes it from mask fan-out.
-          Leave segment Effect blank (<code style={{ fontFamily: 'monospace' }}>fx: -1</code>) to
-          use the rule&apos;s effect.
-        </Text>
-
-        <Group gap="xs" wrap="wrap">
-          <AppButton size="compact-sm" variant="primary" onClick={addMap}>
-            Add map
-          </AppButton>
-          <Text size="xs" c="dimmed">
-            {maps.length} map{maps.length === 1 ? '' : 's'}
-          </Text>
-        </Group>
-
-        {maps.length === 0 ? (
-          <Paper p="sm" withBorder>
-            <Text size="sm" c="dimmed">
-              No segment maps yet. Create one, then select it from a rule.
+        {!singleMapMode && (
+          <>
+            <Text size="xs" c="dimmed" lh={1.5}>
+              Shareable segment maps referenced by rules and presets via{' '}
+              <code style={{ fontFamily: 'monospace' }}>segmentMapId</code>. Mask assignment links a
+              segment to MB region extracts; <strong>ignore</strong> excludes it from mask fan-out.
+              Leave segment Effect blank (<code style={{ fontFamily: 'monospace' }}>fx: -1</code>) to
+              use the rule&apos;s effect.
             </Text>
-          </Paper>
-        ) : (
-          <Group gap={6} wrap="wrap">
-            {maps.map((m) => (
-              <AppButton
-                key={m.id}
-                size="compact-sm"
-                variant={m.id === selected?.id ? 'primary' : 'light'}
-                onClick={() => setSelectedId(m.id)}
-              >
-                {m.name || m.id}
+
+            <Group gap="xs" wrap="wrap">
+              <AppButton size="compact-sm" variant="primary" onClick={addMap}>
+                Add map
               </AppButton>
-            ))}
-          </Group>
+              <Text size="xs" c="dimmed">
+                {maps.length} map{maps.length === 1 ? '' : 's'}
+              </Text>
+            </Group>
+
+            {maps.length === 0 ? (
+              <Paper p="sm" withBorder>
+                <Text size="sm" c="dimmed">
+                  No segment maps yet. Create one, then select it from a rule.
+                </Text>
+              </Paper>
+            ) : (
+              <Group gap={6} wrap="wrap">
+                {maps.map((m) => (
+                  <AppButton
+                    key={m.id}
+                    size="compact-sm"
+                    variant={m.id === selected?.id ? 'primary' : 'light'}
+                    onClick={() => setSelectedId(m.id)}
+                  >
+                    {m.name || m.id}
+                  </AppButton>
+                ))}
+              </Group>
+            )}
+          </>
         )}
 
         {selected && (
           <AppCard>
-            <SectionHead>Edit map</SectionHead>
+            <SectionHead>{singleMapMode ? 'Custom map' : 'Edit map'}</SectionHead>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mb="sm">
               <Field label="Name">
                 <TextInput
                   value={selected.name || ''}
                   onChange={(e) => updateMap(selected.id, { name: e.target.value })}
+                  disabled={singleMapMode}
                 />
               </Field>
-              <Field label="Id">
-                <TextInput
-                  value={selected.id}
-                  disabled
-                  styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
-                />
-              </Field>
+              {!singleMapMode && (
+                <Field label="Id">
+                  <TextInput
+                    value={selected.id}
+                    disabled
+                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                  />
+                </Field>
+              )}
               <Field label="LED map">
                 <SearchableSelect
                   value={String(selected.ledmap ?? 0)}
@@ -635,18 +643,21 @@ export function SegmentMapEditor({
             <Text size="xs" c="dimmed" mb="sm" lh={1.45}>
               WLED device-global pixel remap (
               <code style={{ fontFamily: 'monospace' }}>ledmap.json</code> /
-              <code style={{ fontFamily: 'monospace' }}>ledmap1–9.json</code>). Rules and presets
-              that reference this map inherit the selection. Files must already exist on the
-              GLEDOPTO — selecting a map only sends the index.
+              <code style={{ fontFamily: 'monospace' }}>ledmap1–9.json</code>).
+              {singleMapMode
+                ? ' The preset LED map override (Maps tab) can still override this.'
+                : ' Rules and presets that reference this map inherit the selection. Files must already exist on the GLEDOPTO — selecting a map only sends the index.'}
             </Text>
-            <Group gap="xs" mb="md" wrap="wrap">
-              <AppButton size="compact-xs" variant="default" onClick={() => duplicateMap(selected)}>
-                Duplicate
-              </AppButton>
-              <AppButton size="compact-xs" variant="danger" onClick={() => deleteMap(selected.id)}>
-                Delete map
-              </AppButton>
-            </Group>
+            {!singleMapMode && (
+              <Group gap="xs" mb="md" wrap="wrap">
+                <AppButton size="compact-xs" variant="default" onClick={() => duplicateMap(selected)}>
+                  Duplicate
+                </AppButton>
+                <AppButton size="compact-xs" variant="danger" onClick={() => deleteMap(selected.id)}>
+                  Delete map
+                </AppButton>
+              </Group>
+            )}
 
             <SectionHead>Segments</SectionHead>
             <SegmentListActions

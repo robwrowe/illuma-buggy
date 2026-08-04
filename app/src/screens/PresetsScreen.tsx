@@ -17,7 +17,8 @@ import { useBLE } from '../hooks/useBLE';
 import { useBoardSync } from '../hooks/useBoardSync';
 import { useAppStore, Preset, PresetWled } from '../stores/store';
 import { bleService } from '../services/BLEService';
-import { applyPresetToBoard } from '../utils/bleBoardSync';
+import { applyPresetRouted } from '../utils/bleBoardSync';
+import { asSharedSegmentMaps } from '../utils/segmentLayouts';
 import { formatSyncStatusLabel } from '../utils/boardSyncState';
 import { useTheme } from '../utils/theme';
 import { transitionStyleLabel } from '../utils/transitionStyles';
@@ -83,8 +84,14 @@ export default function PresetsScreen() {
       );
       return;
     }
-    const { recallState, customSegmentLayouts: layouts } = useAppStore.getState();
-    const ok = await applyPresetToBoard(preset, recallState, layouts);
+    const { recallState, customSegmentLayouts: layouts, mbMapping, presetApplyMode } = useAppStore.getState();
+    const ok = await applyPresetRouted(
+      preset,
+      recallState,
+      asSharedSegmentMaps(mbMapping?.segmentMaps),
+      layouts,
+      presetApplyMode,
+    );
     if (!ok) {
       Alert.alert(
         'Apply failed',

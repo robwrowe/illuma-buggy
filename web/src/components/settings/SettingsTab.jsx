@@ -334,6 +334,30 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
                   onChange={(e) => update({ overrideKillOnZone: e.target.checked })}
                 />
               </Field>
+              <Field label="Preset apply routing (experimental)">
+                <SearchableSelect
+                  value={data.presetApplyMode === 'board' ? 'board' : 'legacy'}
+                  allowEmpty={false}
+                  onChange={(v) => update({ presetApplyMode: v === 'board' ? 'board' : 'legacy' })}
+                  options={[
+                    {
+                      value: 'legacy',
+                      label: 'Legacy (phone resolves)',
+                      searchText: 'legacy phone resolves wled_raw',
+                    },
+                    {
+                      value: 'board',
+                      label: 'Board (preset_apply)',
+                      searchText: 'board preset_apply resolves',
+                    },
+                  ]}
+                />
+                <Text size="xs" c="dimmed" mt={4}>
+                  Board mode sends the preset id for firmware to resolve (manual applies only).
+                  Falls back to phone resolve if the board is not synced. Zone/GPS triggers always
+                  resolve on the phone.
+                </Text>
+              </Field>
             </>
           )}
 

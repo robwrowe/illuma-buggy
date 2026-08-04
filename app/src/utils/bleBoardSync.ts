@@ -5,10 +5,16 @@
 import { AppState } from 'react-native';
 import { bleService } from '../services/BLEService';
 import type { BLEMessage } from '../services/BLEService';
-import type { Preset, RecallState, PresetMemory } from '../stores/store';
-import { buildRecallPayload } from '../stores/store';
-import type { CustomSegmentLayout, WledSegmentDef } from './segmentLayouts';
-import { buildRecalledSegmentsFromPreset, finalizeWledSegmentPayload, parseWledStateSegments } from './segmentLayouts';
+import type { Preset, PresetApplyMode, RecallState, PresetMemory } from '../stores/store';
+import { useAppStore } from '../stores/store';
+import type { CustomSegmentLayout, SharedSegmentMap, WledSegmentDef } from './segmentLayouts';
+import {
+  asSharedSegmentMaps,
+  buildRecalledSegmentsFromPreset,
+  finalizeWledSegmentPayload,
+  parseWledStateSegments,
+  resolvePresetLedmap,
+} from './segmentLayouts';
 import { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } from './bleChunking';
 import { isPresetSynced, markPresetSynced } from './blePresetCache';
 import type { MbMappingConfig } from './mbConfig';
@@ -64,22 +70,64 @@ function shouldTrustSendOnAck(opts?: ApplyPresetOptions): boolean {
   return AppState.currentState !== 'active';
 }
 
+function sharedMapsFromStore(mbMapping?: MbMappingConfig): SharedSegmentMap[] {
+  return asSharedSegmentMaps(mbMapping?.segmentMaps ?? useAppStore.getState().mbMapping?.segmentMaps);
+}
+
+/** Full preset document for NVS (mirrors web board sync — board resolves at apply time). */
+export function presetDocForBoardSave(preset: Preset): object {
+  const global: Record<string, unknown> = { ...(preset.wled ?? { on: true }) };
+  if (preset.colorRefs?.length) global.colorRefs = preset.colorRefs;
+  return {
+    id: preset.id,
+    name: preset.name,
+    global,
+    memory: preset.memory,
+    tags: preset.tags || [],
+    segmentMapId: preset.segmentMapId || '',
+    segmentOverrides: preset.segmentOverrides || {},
+    segmentSourceMode: preset.segmentSourceMode || 'global',
+    ledmap: preset.ledmap ?? null,
+    colorLibrary: preset.colorLibrary || [],
+    customSegmentMap: preset.customSegmentMap || null,
+  };
+}
+
 /** Save preset to board NVS once per session (zones / preset_apply need it). */
 export async function ensurePresetOnBoard(
   preset: Preset,
   recall: RecallState,
   layouts: CustomSegmentLayout[],
   force = false,
+  sharedMaps?: SharedSegmentMap[],
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
   if (!force && isPresetSynced(preset.id)) return true;
   const ackWait = waitForBleAck('preset_save', preset.id);
-  const sent = await bleService.sendPresetSave(
-    preset.id,
-    preset.name,
-    presetWledForBoard(preset, layouts, recall),
-  );
-  if (!sent) return false;
+  // New-shape doc only — board-side buildWledFromPresetDoc resolves fx/pal/col/etc. from
+  // `global`, which this shape always provides. The old `wled`-keyed legacy shape (built
+  // from presetWledForBoard(), fully pre-resolved into seg[] with no top-level fx/pal/col)
+  // is NOT a safe fallback here: buildWledFromPresetDoc treats a present `wled` key as a
+  // valid globalLook object, but it has none of the flat fields seedWledFromSegmentMap
+  // reads, so the board silently produces a preset with no fx/pal/color at all. Retry the
+  // same payload instead of falling back to an incompatible shape.
+  let sent = await bleService.send({
+    type: 'preset_save',
+    ...presetDocForBoardSave(preset),
+  });
+  if (!sent) {
+    // One retry — BLE send failures here are almost always transient (GATT busy, momentary
+    // congestion during chunked transfer), not a hard incompatibility with this preset.
+    await delay(250);
+    sent = await bleService.send({
+      type: 'preset_save',
+      ...presetDocForBoardSave(preset),
+    });
+  }
+  if (!sent) {
+    console.warn('[BoardSync] preset_save failed after retry — not marking synced', preset.id);
+    return false;
+  }
   const ok = await ackWait;
   if (ok) markPresetSynced(preset.id);
   return ok;
@@ -93,11 +141,12 @@ export async function ensureMappingPresetsOnBoard(
   layouts: CustomSegmentLayout[],
   force = false,
 ): Promise<boolean> {
+  const maps = asSharedSegmentMaps(mbMapping.segmentMaps);
   let allOk = true;
   for (const id of collectMappingPresetIds(mbMapping)) {
     const preset = presets.find(p => p.id === id);
     if (preset) {
-      const ok = await ensurePresetOnBoard(preset, recall, layouts, force);
+      const ok = await ensurePresetOnBoard(preset, recall, layouts, force, maps);
       if (!ok) allOk = false;
     }
   }
@@ -111,7 +160,9 @@ export async function applyZonePreset(
   layouts: CustomSegmentLayout[],
   opts?: ApplyPresetOptions,
 ): Promise<boolean> {
-  return applyPresetToBoard(preset, recall, layouts, opts);
+  const maps = sharedMapsFromStore();
+  const mode = useAppStore.getState().presetApplyMode;
+  return applyPresetRouted(preset, recall, maps, layouts, mode, opts);
 }
 
 /** @deprecated use applyZonePreset — kept for call-site compat */
@@ -119,26 +170,71 @@ export const triggerZonePreset = applyZonePreset;
 
 export function presetWledForBoard(
   preset: Preset,
+  sharedMaps: SharedSegmentMap[],
   layouts: CustomSegmentLayout[],
   recall: RecallState = BOARD_RECALL,
 ): object {
-  const w = preset.wled ?? {};
+  const w = (preset.wled ?? { on: true }) as Preset['wled'];
   const base = finalizeWledSegmentPayload({
     on: w.on ?? true,
-    seg: buildRecalledSegmentsFromPreset(preset, recall, layouts, BOARD_PRESET_MEMORY),
+    seg: buildRecalledSegmentsFromPreset(
+      preset as Parameters<typeof buildRecalledSegmentsFromPreset>[0],
+      recall,
+      sharedMaps,
+      layouts,
+      BOARD_PRESET_MEMORY,
+    ),
   });
-  const out: Record<string, unknown> = { ...base };
+  const out: Record<string, unknown> = {
+    ...base,
+    ledmap: resolvePresetLedmap(preset, sharedMaps),
+  };
 
-  // transitionMs → WLED `transition` (100ms units). Omitted when unset → WLED default.
   if (Number.isFinite(w.transitionMs)) {
     out.transition = Math.max(0, Math.round((w.transitionMs as number) / 100));
   }
-  // transitionStyle → WLED `bs` (numeric). Omitted when unset → no style override.
   if (w.transitionStyle && TRANSITION_STYLE_TO_BS[w.transitionStyle] !== undefined) {
     out.bs = TRANSITION_STYLE_TO_BS[w.transitionStyle];
   }
 
   return out;
+}
+
+/**
+ * Route preset apply via board `preset_apply` when enabled and safe; otherwise
+ * fall back to phone-resolved `wled_raw` (legacy).
+ */
+export async function applyPresetRouted(
+  preset: Preset,
+  recall: RecallState,
+  sharedMaps: SharedSegmentMap[],
+  layouts: CustomSegmentLayout[],
+  presetApplyMode: PresetApplyMode,
+  opts?: ApplyPresetOptions,
+): Promise<boolean> {
+  const canUseBoardRoute =
+    presetApplyMode === 'board' &&
+    !shouldTrustSendOnAck(opts) &&
+    bleService.isSessionReady() &&
+    isPresetSynced(preset.id);
+
+  if (canUseBoardRoute) {
+    console.log('[Apply] routing via preset_apply (board-resolve)', preset.id);
+    const ackWait = waitForBleAck('preset_apply', preset.id, 20_000);
+    const sent = await bleService.sendPresetApply(preset.id);
+    if (sent) {
+      const ok = await ackWait;
+      if (ok) {
+        console.log('[Apply] preset_apply ack ok');
+        return true;
+      }
+      console.warn('[Apply] preset_apply ack failed/timeout — falling back to wled_raw');
+    } else {
+      console.warn('[Apply] preset_apply send failed — falling back to wled_raw');
+    }
+  }
+
+  return applyPresetToBoard(preset, recall, sharedMaps, layouts, opts);
 }
 
 let catalogRefreshInFlight: Promise<void> | null = null;
@@ -169,6 +265,7 @@ export { BLE_MAX_WRITE_BYTES, BLE_CHUNK_INTER_MS, splitCommandForBleChunks } fro
 export async function applyPresetToBoard(
   preset: Preset,
   recall: RecallState,
+  sharedMaps: SharedSegmentMap[],
   layouts: CustomSegmentLayout[],
   opts?: ApplyPresetOptions,
 ): Promise<boolean> {
@@ -180,7 +277,7 @@ export async function applyPresetToBoard(
     console.warn('[Apply] blocked — session not ready (board still syncing?)');
     return false;
   }
-  const payload = presetWledForBoard(preset, layouts, recall);
+  const payload = presetWledForBoard(preset, sharedMaps, layouts, recall);
   const segCount = Array.isArray((payload as { seg?: unknown[] }).seg)
     ? (payload as { seg: unknown[] }).seg.length
     : 0;
@@ -197,7 +294,7 @@ export async function applyPresetToBoard(
     return true;
   }
 
-  void ensurePresetOnBoard(preset, recall, layouts).catch((e) =>
+  void ensurePresetOnBoard(preset, recall, layouts, false, sharedMaps).catch((e) =>
     console.warn('[Apply] background preset_save failed:', e),
   );
 
@@ -222,11 +319,12 @@ export async function syncPresetsToBoard(
   recall: RecallState,
   onProgress?: (index: number, total: number) => void,
 ): Promise<void> {
+  const maps = sharedMapsFromStore();
   for (let i = 0; i < presets.length; i++) {
     if (!bleService.isConnected()) return;
     const p = presets[i];
     if (!isPresetSynced(p.id)) {
-      const ok = await ensurePresetOnBoard(p, recall, layouts);
+      const ok = await ensurePresetOnBoard(p, recall, layouts, false, maps);
       if (!ok) {
         console.warn('[BoardSync] preset_save failed for', p.id);
       }

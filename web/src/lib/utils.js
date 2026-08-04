@@ -1,4 +1,4 @@
-import { activeSegmentsFromPreset, buildRecalledSegment, isActiveSegment, resolvePresetLedmap } from './wled/capture';
+import { activeSegmentsFromPreset, buildRecalledSegment, isActiveSegment, resolvePresetLedmap, withResolvedGlobalCol } from './wled/capture';
 import { normalizeSegmentOverrides } from './ble/mbMapping';
 
 export function generateId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -195,7 +195,7 @@ export const DEFAULT_DATA = {
   brightnessConfig: { daytime: 200, nighttime: 80, indoor: 120, transitionMinutes: 30, solarThresholdDeg: 6 },
   colorCalibration: createEmptyColorCalibration(),
   recallState: { effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never' },
-  overrideKillOnZone: false, bleEffectTransitionMs: 700,
+  overrideKillOnZone: false, presetApplyMode: 'legacy', bleEffectTransitionMs: 700,
   starlightEnabled: true, starlightTimeoutSec: 15,
   magicBandEnabled: true, magicBandTimeoutSec: 15,
   customPalettes: [], paletteSets: [], savedColors: [],
@@ -278,9 +278,12 @@ export const DEFAULT_PRESET_MEMORY = { effect: true, palette: true, parameters: 
 
 export function buildRecallPayload(preset, recall, segmentMaps) {
   const r = recall || DEFAULT_DATA.recallState;
-  const g = preset.global || preset.wled || { on: true };
+  const rawG = preset.global || preset.wled || { on: true };
+  const g = withResolvedGlobalCol(rawG, preset.colorLibrary);
   const m = preset.memory || DEFAULT_PRESET_MEMORY;
   const overrides = normalizeSegmentOverrides(preset.segmentOverrides);
+  const lib = preset.colorLibrary || [];
+  const sourceIsGlobal = preset.segmentSourceMode === 'global';
   const payload = { on: true, ledmap: resolvePresetLedmap(preset, segmentMaps) };
 
   const should = (prop, memVal) => {
@@ -295,12 +298,12 @@ export function buildRecallPayload(preset, recall, segmentMaps) {
   if (recallLayout) {
     payload.seg = activeSegments.map((seg, i) => {
       const localId = seg.mapLocalId || seg.id;
-      return buildRecalledSegment(seg, g, should, m, i, overrides[localId]);
+      return buildRecalledSegment(seg, g, should, m, i, overrides[localId], lib, sourceIsGlobal);
     });
   } else {
     const base = activeSegments.find(isActiveSegment) || activeSegments[0] || { id: 0 };
     const localId = base.mapLocalId || base.id;
-    payload.seg = [buildRecalledSegment(base, g, should, m, 0, overrides[localId])];
+    payload.seg = [buildRecalledSegment(base, g, should, m, 0, overrides[localId], lib, sourceIsGlobal)];
   }
 
   return payload;

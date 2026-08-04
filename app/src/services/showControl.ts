@@ -4,9 +4,11 @@
  */
 
 import { bleService } from './BLEService';
-import { applyPresetToBoard } from '../utils/bleBoardSync';
+import { applyPresetRouted } from '../utils/bleBoardSync';
 import type { Preset, RecallState } from '../stores/store';
+import { useAppStore } from '../stores/store';
 import type { CustomSegmentLayout } from '../utils/segmentLayouts';
+import { asSharedSegmentMaps } from '../utils/segmentLayouts';
 import type { ParkShowBinding, ShowKind } from '../utils/showBindings';
 import { applyShowLiveBrightnessIfNeeded, restoreShowBrightnessIfNeeded } from '../utils/showBrightness';
 
@@ -53,7 +55,13 @@ export async function runShowPhase(
   const preset = presets.find(p => p.id === presetId);
   if (!preset) return false;
 
-  const ok = await applyPresetToBoard(preset, recall, layouts);
+  const ok = await applyPresetRouted(
+    preset,
+    recall,
+    asSharedSegmentMaps(useAppStore.getState().mbMapping?.segmentMaps),
+    layouts,
+    useAppStore.getState().presetApplyMode,
+  );
   if (ok) {
     await bleService.sendShowModeEnter(binding.kind, firmwarePhase(binding.kind, phase));
   }

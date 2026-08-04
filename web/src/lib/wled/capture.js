@@ -1,6 +1,7 @@
 import { finalizeWledSegmentPayload } from '../ble/chunking';
 import { FIVE_CORNER_IDS, FIVE_CORNER_RGB, STRIP_LED_COUNT } from '../ble/mbConstants';
 import {
+  customSegmentMapFromWledSegs,
   presetWledForBoard,
   resolvePresetLedmap,
   segmentMapSegmentToWledDef,
@@ -190,27 +191,74 @@ export function mergeSegmentsById(base, incoming) {
 }
 
 export function activeSegmentsFromPreset(preset, segmentMaps) {
+  if (preset?.segmentMapId === '__custom__' && preset?.customSegmentMap) {
+    return (preset.customSegmentMap.segments || [])
+      .map((s) => normalizeSegmentDef(segmentMapSegmentToWledDef(s) || s))
+      .filter(Boolean)
+      .filter(isActiveSegment);
+  }
   if (preset?.segmentMapId) {
-    const linked = (segmentMaps || []).find(m => m.id === preset.segmentMapId);
+    const linked = (segmentMaps || []).find((m) => m.id === preset.segmentMapId);
     return (linked?.segments || [])
-      .map(s => normalizeSegmentDef(segmentMapSegmentToWledDef(s) || s))
+      .map((s) => normalizeSegmentDef(segmentMapSegmentToWledDef(s) || s))
       .filter(Boolean)
       .filter(isActiveSegment);
   }
   const fromPreset = (preset?.global?.seg || preset?.wled?.seg || [])
-    .map(s => normalizeSegmentDef(s))
+    .map((s) => normalizeSegmentDef(s))
     .filter(Boolean);
   return fromPreset.filter(isActiveSegment);
+}
+
+/** Resolve a {mode, swatchId?, value?} color ref to a hex string. */
+export function resolveColorRef(ref, colorLibrary) {
+  if (!ref) return null;
+  if (ref.mode === 'custom' && ref.value) return ref.value;
+  if (ref.mode === 'swatch' && ref.swatchId) {
+    const swatch = (colorLibrary || []).find((c) => c.id === ref.swatchId);
+    return swatch?.hex || null;
+  }
+  return null;
+}
+
+/** Flatten global.colorRefs (or legacy global.col) to a WLED RGB col array. */
+export function resolveGlobalCol(global, colorLibrary) {
+  const refs = global?.colorRefs;
+  if (Array.isArray(refs) && refs.length) {
+    return refs.map((ref) => hexToRgbTriple(resolveColorRef(ref, colorLibrary) || '#000000'));
+  }
+  if (global?.col) {
+    if (typeof global.col[0] === 'number') return [[...global.col]];
+    return global.col.map((c) => (Array.isArray(c) ? [...c] : c));
+  }
+  return undefined;
+}
+
+/** Return a global look object with `col` resolved for WLED payloads. */
+export function withResolvedGlobalCol(global, colorLibrary) {
+  const g = global || {};
+  const col = resolveGlobalCol(g, colorLibrary);
+  if (!col) {
+    const { colorRefs, ...rest } = g;
+    return rest;
+  }
+  const { colorRefs, ...rest } = g;
+  return { ...rest, col };
 }
 
 /** Resolve one property for one segment using rule/preset override semantics.
  *  stored  → segment-map def's own value (or global if absent)
  *  default → the global look
  *  custom  → the override's own value
+ *  swatch  → look up swatchId in colorLibrary (color slots only)
  *  (no override entry for this prop) → same as 'stored'
  */
-export function resolveSegProp(seg, global, overrideEntry, key, fallback) {
+export function resolveSegProp(seg, global, overrideEntry, key, fallback, colorLibrary) {
   const mode = overrideEntry?.mode || 'stored';
+  if (mode === 'swatch') {
+    const hex = resolveColorRef(overrideEntry, colorLibrary);
+    return hex != null ? hex : fallback;
+  }
   if (mode === 'custom' && overrideEntry.value !== undefined) return overrideEntry.value;
   if (mode === 'default') return global?.[key] ?? fallback;
   // stored
@@ -229,41 +277,60 @@ export function pickSegOrWled(seg, wled, key, perSegment = false) {
   return seg ? seg[key] : undefined;
 }
 
-export function buildRecalledSegment(seg, global, should, m, index, overrideEntry) {
+export function buildRecalledSegment(seg, global, should, m, index, overrideEntry, colorLibrary, sourceIsGlobal = false) {
   const out = { id: Number(seg?.id ?? index) };
   if (should('segments', m.segments) && seg && isActiveSegment(seg)) {
     out.start = Number(seg.start);
     out.stop = Number(seg.stop);
-    ['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'].forEach(k => {
+    ['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'].forEach((k) => {
       if (seg[k] !== undefined && seg[k] !== null) out[k] = seg[k];
     });
   }
+  // In 'global' source mode, every segment implicitly uses the preset's global
+  // look unless a segmentOverrides entry explicitly says otherwise — mirrors how
+  // BLE rules replicate {"mode":"default"} onto every segment for 'global' mode.
+  const effectiveFxEntry = overrideEntry?.fx ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+  const effectivePalEntry = overrideEntry?.pal ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+
   if (should('effect', m.effect)) {
-    const fx = resolveSegProp(seg, global, overrideEntry?.fx, 'fx', 0);
+    const fx = resolveSegProp(seg, global, effectiveFxEntry, 'fx', 0);
     if (fx !== undefined && fx !== null) out.fx = fx;
   }
   if (should('palette', m.palette)) {
-    const pal = resolveSegProp(seg, global, overrideEntry?.pal, 'pal', 0);
+    const pal = resolveSegProp(seg, global, effectivePalEntry, 'pal', 0);
     if (pal !== undefined && pal !== null) out.pal = pal;
   }
   if (should('parameters', m.parameters)) {
-    ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach(k => {
-      const v = resolveSegProp(seg, global, overrideEntry?.[k], k, undefined);
+    ['sx', 'ix', 'c1', 'c2', 'c3', 'o1', 'o2', 'o3'].forEach((k) => {
+      const entry = overrideEntry?.[k] ?? (sourceIsGlobal ? { mode: 'default' } : undefined);
+      const v = resolveSegProp(seg, global, entry, k, undefined);
       if (v !== undefined && v !== null) out[k] = v;
     });
   }
   if (should('color', m.color)) {
-    if (overrideEntry?.colors?.some(c => c?.mode === 'custom' || c?.mode === 'default')) {
+    const hasColorOverride = overrideEntry?.colors?.some(
+      (c) => c?.mode === 'custom' || c?.mode === 'default' || c?.mode === 'swatch',
+    );
+    if (hasColorOverride) {
       out.col = [0, 1, 2].map((i) => {
         const c = overrideEntry.colors?.[i];
-        if (c?.mode === 'custom' && c.value) return hexToRgbTriple(c.value);
+        if (c?.mode === 'swatch' || (c?.mode === 'custom' && c.value)) {
+          const hex = resolveColorRef(c, colorLibrary);
+          return hex ? hexToRgbTriple(hex) : (seg?.col?.[i] || global?.col?.[i] || [0, 0, 0]);
+        }
         if (c?.mode === 'default') return global?.col?.[i] || [0, 0, 0];
+        // stored — segment's own authored color wins over the global look
         return seg?.col?.[i] || global?.col?.[i] || [0, 0, 0];
       });
-    } else if (global?.col) {
-      out.col = global.col.map(c => (Array.isArray(c) ? [...c] : c));
+    } else if (sourceIsGlobal) {
+      // 'global' source mode with no explicit color override → every slot behaves
+      // as "default" → always use the preset's global look, ignore segment-map colors.
+      if (global?.col) out.col = global.col.map((c) => (Array.isArray(c) ? [...c] : c));
     } else if (seg?.col) {
-      out.col = Array.isArray(seg.col[0]) ? seg.col.map(c => [...c]) : [...seg.col];
+      // 'perSegment' mode, no override entries → "stored" for every slot → segment's own color wins.
+      out.col = Array.isArray(seg.col[0]) ? seg.col.map((c) => [...c]) : [...seg.col];
+    } else if (global?.col) {
+      out.col = global.col.map((c) => (Array.isArray(c) ? [...c] : c));
     }
   }
   return out;
@@ -298,17 +365,44 @@ export function applyWledStateCapture(preset, state, catalog, opts, updateMemory
   }
   if (opts.color) {
     if (primary.col !== undefined && primary.col !== null) {
-      global.col = Array.isArray(primary.col[0]) ? primary.col.map(c => [...c]) : [...primary.col];
+      const col = Array.isArray(primary.col[0]) ? primary.col.map((c) => [...c]) : [...primary.col];
+      global.col = col;
+      const rows = typeof col[0] === 'number' ? [col] : col;
+      global.colorRefs = rows
+        .filter((rgb) => Array.isArray(rgb) && rgb.length >= 3)
+        .map((rgb) => ({
+          mode: 'custom',
+          value: `#${[rgb[0], rgb[1], rgb[2]]
+            .map((x) => Math.max(0, Math.min(255, Math.round(Number(x) || 0))).toString(16).padStart(2, '0'))
+            .join('')}`,
+        }));
       if (updateMemory) memory.color = true;
     } else {
       delete global.col;
+      global.colorRefs = [];
       if (updateMemory) memory.color = false;
     }
   }
   if (capturedSegs.length && (opts.effect || opts.palette || opts.parameters || opts.color || opts.segments)) {
-    // Map-less escape hatch only — clear segmentMapId so global.seg is authoritative.
-    global.seg = capturedSegs.filter(seg => !opts.segments || isActiveSegment(seg));
-    segmentMapId = undefined;
+    // Import geometry as a preset-local custom map (same as Maps → Custom).
+    // Keep global.seg cleared so segmentMapId + customSegmentMap are authoritative.
+    delete global.seg;
+    const customSegmentMap = customSegmentMapFromWledSegs(
+      capturedSegs.filter((seg) => !opts.segments || isActiveSegment(seg)),
+    );
+    segmentMapId = '__custom__';
+    if (opts.segments && capturedSegs.length > 0) {
+      if (updateMemory) memory.segments = capturedSegs.some(isActiveSegment);
+    }
+    return {
+      ...preset,
+      global,
+      memory,
+      segmentMapId,
+      customSegmentMap,
+      segmentOverrides: {},
+      segmentSourceMode: preset.segmentSourceMode || 'global',
+    };
   }
   if (opts.segments && capturedSegs.length > 0) {
     if (updateMemory) memory.segments = capturedSegs.some(isActiveSegment);
