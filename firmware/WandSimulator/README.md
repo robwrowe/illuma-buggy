@@ -35,8 +35,11 @@ Software mitigations in this sketch: BLE lazy-init, 80 MHz during radio bring-up
 ## Testing MagicBands (two bands)
 
 MagicBands only react when they receive a valid `8301…` advertisement. The
-simulator **re-broadcasts every 200 ms** for several seconds so bands have
-multiple chances to decode the packet.
+simulator holds **one continuous BLE advertisement** live for the command's
+full duration (a few seconds — see the hold-time table in
+[API.md](API.md#post-send)), rather than stopping and restarting it
+repeatedly — an earlier stop/start-every-200ms approach caused bands to miss
+packets and was replaced.
 
 | Command               | Packet      | Effect on band                                    |
 | --------------------- | ----------- | ------------------------------------------------- |
