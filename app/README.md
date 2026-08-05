@@ -41,16 +41,30 @@ src/
     BLEService.ts       — BLE connection, send/receive, auto-reconnect
   hooks/
     useBLE.ts           — React hook wrapping BLEService
+    useBoardSync.ts     — bootstrap/sync status for UI
     useZoneManager.ts   — GPS polling, zone evaluation, brightness
   stores/
     store.ts            — Zustand global state (presets, zones, config)
   screens/
-    HomeScreen.tsx      — Connection status, brightness, event feed
-    PresetsScreen.tsx   — Preset list, apply, create, delete
-    ZonesScreen.tsx     — Map drawing, preset zones, indoor zones
-    SettingsScreen.tsx  — Override mode, brightness config, solar params
+    HomeScreen.tsx        — Connection status, brightness, zones, shows, BLE Data events
+    RulesScreen.tsx       — Pause-all + per-rule enable/sort
+    BleCaptureScreen.tsx  — Disney BLE capture sessions
+    PresetsScreen.tsx     — Preset list, apply, create, delete
+    PalettesScreen.tsx    — Custom palettes + palette sets
+    LibraryScreen.tsx     — WLED effect/palette browser
+    ZonesScreen.tsx       — Map drawing, preset zones, indoor zones
+    ShowsScreen.tsx       — Park shows (parade / fireworks bindings)
+    SettingsScreen.tsx    — Override mode, brightness config, solar params
+    MbMappingSections.tsx — MagicBand+/Starlight segment mapping UI
+    more/                 — General, Presets config, Brightness, BLE Data, Logic Board, Diagnostics
+  navigation/
+    MoreNavigator.tsx    — "More" tab stack navigator
+  tasks/                 — background task definitions (e.g. location)
   utils/
-    utils.ts            — Solar math, point-in-polygon, zone evaluation
+    theme.ts             — dark/light/system theme, color tokens
+    connectBootstrap.ts  — staged BLE connect + quick reconnect
+    boardSyncState.ts    — sync fingerprint, status, AsyncStorage meta
+    utils.ts             — Solar math, point-in-polygon, zone evaluation
 ```
 
 ## BLE Protocol
