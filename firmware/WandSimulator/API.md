@@ -91,11 +91,22 @@ Body is JSON, exactly one of:
 Response: `{"ok":true}` for `line`, `{"ok":true,"bytes":N}` for `hex`.
 `{"ok":false}` on a missing/empty body or unparseable hex (400).
 
-**This call blocks for the duration of the broadcast — typically ~4 seconds**
-(the firmware holds the BLE advertisement live for that long before
-responding, matching how MagicBand+/wands actually pick up packets). Give
-your HTTP client a timeout comfortably above that, and don't treat a slow
-response as an error.
+**This call blocks for the duration of the broadcast — budget for up to ~5
+seconds, not a fixed 4.** The firmware holds the BLE advertisement live
+before responding, matching how MagicBand+/wands actually pick up packets,
+but the hold time is command-dependent:
+
+| Path | Hold time |
+|---|---|
+| `{"hex": "..."}` | 4000 ms |
+| `line` → `mb ...` (single/dual/rgb/five/rainbow) | ~4600 ms (600 ms wake ping + 4000 ms hold) |
+| `line` → `cast <color>` / `legacy <color>` | 3000 ms |
+| `line` → `ping` / `idle` | 5000 ms |
+| `line` → `sw fx <name>` | 4000 ms (+800 ms ping first for presets with `pingFirst`) |
+| `line` → `sw combo <color> <fx>` | wand cast (3000 ms) + 400 ms + the fx's own hold |
+
+Give your HTTP client a timeout comfortably above the worst case (~5.5s), and
+don't treat a slow response as an error.
 
 ### `POST /show`
 
@@ -185,11 +196,12 @@ aliases `cyan purple blue pink yellow lime orange red green white` also work.
 
 - Treat `/send` and `/show` as the only two ways to get bytes on air; `/show`
   is the one to reach for whenever you have more than one packet queued —
-  don't loop `/send` calls yourself, since each one blocks ~4s and you'll
-  fight the radio's own hold/release timing doing it manually.
+  don't loop `/send` calls yourself, since each one blocks for several
+  seconds (see the hold-time table above) and you'll fight the radio's own
+  hold/release timing doing it manually.
 - There's no way to read back "what's currently advertising" beyond
   `/status`'s show-progress fields — if you need to confirm a single `/send`
-  actually went out, the ~4s blocking response *is* your confirmation.
+  actually went out, its blocking response *is* your confirmation.
 - If a capture file only has a handful of distinct packets repeated over a
   long capture window (typical for MB+ idle beacons), don't naively replay
   every row — dedupe first or you'll send a "show" that's mostly the same
