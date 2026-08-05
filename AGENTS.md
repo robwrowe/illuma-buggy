@@ -1,10 +1,14 @@
 # Illuma Buggy — Agent Reference
 
-A Disney park stroller LED system. An ESP32-S3 logic board runs custom firmware that
-bridges BLE (app ↔ board) and WiFi (board ↔ WLED LED controller). A React Native/Expo
-app controls everything. A single-file web tool runs locally for park config.
+A Disney park stroller LED system. A classic ESP32 **scanner board** passively observes
+MagicBand+ / Starlight Wand BLE advertising packets and forwards decoded events over a
+wired UART link to an ESP32-S3 **logic board**, which runs the rule engine, bridges BLE
+(app ↔ board) and WiFi (board ↔ WLED LED controller). A React Native/Expo app (Android-first)
+controls everything in the field; a Vite/React/Mantine web tool is used for desk authoring.
 
-**Protocol docs:** [docs/README.md](docs/README.md) · [docs/disney-ble-protocol.md](docs/disney-ble-protocol.md)
+**Protocol docs:** [docs/README.md](docs/README.md) · [docs/disney-ble-protocol.md](docs/disney-ble-protocol.md) · [docs/pcb-final-build-spec.md](docs/pcb-final-build-spec.md) (authoritative dual-board build spec)
+
+> Opcode/BLE decoding docs under `docs/` are being updated separately — treat those as a work in progress independent of this file.
 
 ---
 
@@ -13,41 +17,70 @@ app controls everything. A single-file web tool runs locally for park config.
 ```
 illuma-buggy/
 ├── firmware/
-│   └── StrollerController/
-│       └── StrollerController.ino   ← single-file Arduino sketch (v2.1)
-├── app/                             ← React Native / Expo (Android target)
-│   ├── App.tsx                      ← root: navigation, BLE message routing
-│   ├── index.js                     ← registerRootComponent entry
-│   ├── app.config.js                ← dynamic Expo config (reads EAS secrets)
-│   ├── build.sh                     ← EAS cloud build script
+│   ├── StrollerController/          ← ESP32-S3 logic board (Arduino/C++, modular .h split)
+│   │   ├── StrollerController.ino   ← entry point; requires Board = "ESP32S3 Dev Module"
+│   │   ├── UartLink.h                ← receives forwarded scanner events
+│   │   ├── MbRuleEngine.h            ← rule matching/priority/exclusivity
+│   │   ├── BlePeripheral.h / BleCommandHandler.h  ← app ↔ board BLE protocol
+│   │   ├── RuntimeFields.h           ← set_field/list_fields runtime tuning
+│   │   ├── StatusDisplay.h           ← OLED status (SSD1306, I2C)
+│   │   ├── SdRuleLogger.h            ← SD logging of parsed events + rule decisions
+│   │   ├── PROTOCOL.md               ← app ↔ board BLE message spec
+│   │   └── build_opt.h               ← board-specific compile defines
+│   ├── BleScannerNode/               ← classic ESP32 scanner board (Arduino/C++)
+│   │   ├── BleScannerNode.ino        ← entry point; requires Board = "ESP32 Dev Module"
+│   │   ├── DisneyBleScan.h / DisneyBleFilter.h / MbPacketDecode.h  ← passive scan + decode
+│   │   ├── ScannerPayloadTransport.h ← UART forwarding to logic board
+│   │   ├── ScannerStatusDisplay.h    ← OLED status
+│   │   ├── SdRawLogger.h             ← SD logging of raw observed packets
+│   │   └── build_opt.h
+│   └── WandSimulator/                ← ESP32 bench broadcaster for Disney BLE packets (testing)
+│       ├── WandSimulator.ino
+│       └── API.md                    ← HTTP + Serial contract for bench/replay clients
+├── app/                               ← React Native / Expo (Android target)
+│   ├── App.tsx                        ← root: navigation, BLE message routing
+│   ├── index.js                       ← registerRootComponent entry
+│   ├── app.config.js                  ← dynamic Expo config (reads EAS secrets)
+│   ├── build.sh / build-apk.sh        ← EAS cloud build scripts
 │   └── src/
 │       ├── services/
-│       │   └── BLEService.ts        ← BLE singleton (connect/send/receive/chunk)
+│       │   └── BLEService.ts          ← BLE singleton (connect/send/receive/chunk)
 │       ├── hooks/
-│       │   ├── useBLE.ts            ← React hook wrapping BLEService
-│       │   ├── useBoardSync.ts      ← bootstrap/sync status for UI
-│       │   └── useZoneManager.ts    ← GPS watcher → zone triggers → brightness
+│       │   ├── useBLE.ts              ← React hook wrapping BLEService
+│       │   ├── useBoardSync.ts        ← bootstrap/sync status for UI
+│       │   └── useZoneManager.ts      ← GPS watcher → zone triggers → brightness
 │       ├── stores/
-│       │   └── store.ts             ← Zustand store + AsyncStorage persistence
+│       │   └── store.ts               ← Zustand store + AsyncStorage persistence
 │       ├── screens/
-│       │   ├── HomeScreen.tsx       ← connection, brightness, zones, shows, BLE Data events
-│       │   ├── RulesScreen.tsx      ← pause-all + per-rule enable/sort
-│       │   ├── BleCaptureScreen.tsx ← Disney BLE capture sessions
-│       │   ├── PresetsScreen.tsx    ← preset list + apply (A–Z)
-│       │   ├── ZonesScreen.tsx      ← map zone drawing (via More stack)
-│       │   ├── ShowsScreen.tsx      ← park shows
-│       │   └── more/                ← General, Presets config, Brightness, BLE Data, Logic Board, Diagnostics
+│       │   ├── HomeScreen.tsx         ← connection, brightness, zones, shows, BLE Data events
+│       │   ├── RulesScreen.tsx        ← pause-all + per-rule enable/sort
+│       │   ├── BleCaptureScreen.tsx   ← Disney BLE capture sessions
+│       │   ├── PresetsScreen.tsx      ← preset list + apply
+│       │   ├── PalettesScreen.tsx     ← custom palettes + palette sets
+│       │   ├── LibraryScreen.tsx      ← WLED effect/palette browser
+│       │   ├── ZonesScreen.tsx        ← map zone drawing (via More stack)
+│       │   ├── ShowsScreen.tsx        ← park shows
+│       │   ├── SettingsScreen.tsx     ← override mode, brightness config, solar params
+│       │   ├── MbMappingSections.tsx  ← MagicBand+/Starlight segment mapping UI
+│       │   └── more/                  ← General, Presets config, Brightness, BLE Data, Logic Board, Diagnostics
 │       ├── navigation/
 │       │   └── MoreNavigator.tsx
+│       ├── tasks/                     ← background task definitions (e.g. location)
 │       └── utils/
-│           ├── theme.ts             ← dark/light/system theme, color tokens
-│           ├── connectBootstrap.ts  ← staged BLE connect + quick reconnect
-│           ├── boardSyncState.ts    ← sync fingerprint, status, AsyncStorage meta
-│           └── utils.ts             ← solar elevation, pointInPolygon, zone eval
-└── web/
-    ├── index.html                   ← single-file React web tool (Babel standalone)
-    ├── serve.sh                     ← `python3 -m http.server 3000` + auto-open
-    └── README.md
+│           ├── theme.ts               ← dark/light/system theme, color tokens
+│           ├── connectBootstrap.ts    ← staged BLE connect + quick reconnect
+│           ├── boardSyncState.ts      ← sync fingerprint, status, AsyncStorage meta
+│           └── utils.ts               ← solar elevation, pointInPolygon, zone eval
+├── web/                                ← Vite + React + Mantine desk config tool
+│   ├── index.html / src/               ← live app entry (see web/README.md)
+│   ├── index.legacy.html               ← pre-migration single-file Babel app, kept for reference only
+│   ├── serve.sh                        ← dev server helper
+│   └── README.md
+├── docs/                                ← protocol references, build specs, opcode documentation
+├── scripts/
+│   ├── embed_rules.py                  ← embeds rules JSON into firmware before flash
+│   └── migrate-config-test.mjs
+└── README.md
 ```
 
 ---
@@ -56,31 +89,47 @@ illuma-buggy/
 
 | Component | Details |
 |-----------|---------|
-| **Logic board** | ESP32-S3-DevKitC-1-N16R8 (16 MB flash / 8 MB PSRAM) |
-| **LED controller** | GLEDOPTO ESP32, stock WLED v16 ("Niji") firmware |
-| **LEDs** | 50× ALITOVE WS2811 IP68 pixel nodes, GRB, 5V |
+| **Logic board** | ESP32-S3-DevKitC-1-N16R8 (16 MB flash / 8 MB PSRAM), Arduino board = `ESP32S3 Dev Module` |
+| **Scanner board** | Classic ESP32 (ESP32-DevKitC-32 / ESP-32D / WROOM-32D), Arduino board = `ESP32 Dev Module` |
+| **Inter-board link** | Wired UART only — no wireless pairing. Scanner TX(17)→Logic RX(18), Logic TX(17)→Scanner RX(16), shared GND required. ESP-NOW has been fully removed; do not reintroduce it. |
+| **LED controller** | GLEDOPTO ESP32, stock WLED firmware |
+| **LEDs (production)** | 50× ALITOVE WS2811 IP68 pixel nodes, GRB, 5V |
+| **LEDs (test/alt)** | BTF-LIGHTING WS2812B strip, IP65 |
 | **WLED GPIO** | 16, GRB, 50 LEDs |
 | **GLEDOPTO relay** | GPIO 18 cuts LED output when WLED master power is `off` — always POST `{"on":true,"bri":255}` on session start |
+| **OLED (both boards, optional)** | 128×64 SSD1306 (or SSD1309) I2C, addr `0x3C` (try `0x3D`) |
+| **SD logging (both boards, optional)** | Scanner logs raw observed packets; logic board logs parsed events + rule-engine decisions |
+
+Full pin maps and build order: [`docs/pcb-final-build-spec.md`](docs/pcb-final-build-spec.md).
 
 ---
 
 ## Architecture
 
 ```
-Phone ←──BLE──→ Logic ESP32-S3 ←──WiFi STA──→ GLEDOPTO AP (StrollerNet / 4.3.2.1)
-                    ↑
-              BLE passive scan
-         (Starlight Wand + MagicBand+ 0x8301 packets)
-              [optional WandSimulator ESP32 for bench TX]
+MagicBand+ / Starlight Wand
+        │  BLE advertising (passive observe, no pairing)
+        ▼
+Scanner ESP32 (classic) ──UART (cross-wired, shared GND)──► Logic ESP32-S3
+                                                                  │
+                                                    BLE peripheral │ WiFi STA
+                                                    (app ↔ board)  ▼
+                                                          GLEDOPTO AP (StrollerNet / 4.3.2.1)
+                                                                  │
+                                                                  ▼
+                                                          WS2811 / WS2812B LEDs
 ```
 
-- Logic board joins `StrollerNet` as a WiFi station. IP is always `4.3.2.1` (GLEDOPTO is the AP).
-- App communicates with the logic board over BLE only — phone keeps mobile data for maps.
-- NimBLE 2.x handles BLE peripheral (app comms) and passive scanner (MagicBand+) simultaneously.
+- The scanner board runs NimBLE passive scan for Disney packets, decodes them, and forwards matched events to the logic board over UART only. There is no ESP-NOW fallback and no wireless link between the boards.
+- The logic board does **not** run its own local Disney BLE scan while the scanner UART link is alive — it only falls back to a "link lost" state, never to local scanning, to protect the phone BLE connection's radio time.
+- The logic board joins `StrollerNet` as a WiFi station. IP is always `4.3.2.1` (GLEDOPTO is the AP).
+- The app communicates with the logic board over BLE only — the phone keeps mobile data free for maps.
+- NimBLE 2.x on the logic board handles the BLE peripheral (app comms) role; the scanner board's NimBLE handles the passive scan role. These no longer run on the same chip.
+- `firmware/WandSimulator/` is an optional third ESP32 for bench-broadcasting Disney BLE packets, used for testing without physical bands/wands in hand.
 
 ---
 
-## BLE Protocol
+## BLE Protocol (app ↔ logic board)
 
 ### Identifiers
 
@@ -106,58 +155,11 @@ each chunk is itself a valid JSON object with `type`, `seq`, `last`, and `data` 
 
 `msg.data` is already unescaped by `JSON.parse` — do **not** unescape again.
 
-### App → Firmware commands
-
-| `type` | Payload fields | Description |
-|--------|---------------|-------------|
-| `status` | — | Request device status |
-| `preset_save` | `id`, `name`, `wled` (object) | Save preset to NVS |
-| `preset_apply` | `id` | Apply saved preset |
-| `preset_delete` | `id` | Delete from NVS |
-| `preset_list` | — | Request all presets (chunked response) |
-| `wled_get_effects` | — | Proxy GET `/json/eff` → chunked `wled_effects` |
-| `wled_get_palettes` | — | Proxy GET `/json/pal` → chunked `wled_palettes` |
-| `wled_get_fxdata` | — | Proxy GET `/json/fxdata` → chunked `wled_fxdata` |
-| `wled_get_state` | — | Proxy GET `/json/si` → chunked `wled_state` |
-| `wled_raw` | `wled` (object) | POST arbitrary JSON to WLED `/json/state` |
-| `brightness` | `value` (0–255) | Set WLED brightness |
-| `zone_trigger` | `preset_id` | Apply preset (zone-sourced, respects override) |
-| `override_clear` | — | Clear manual/BLE override, restore zone |
-| `override_mode` | `kill_on_zone` (bool) | Configure override behavior |
-| `sw_config` | `enabled` (bool), `timeout_ms` (int) | Starlight Wand listen config |
-| `mb_config` | `enabled` (bool), `timeout_ms` (int) | MagicBand+ listen config |
-| `rules_pause_config` | `paused` (bool) | Pause/resume BLE Data rule matching (NVS; does not clear active override) |
-| `scan_log_config` | `enabled` (bool) | Serial Disney scan hex logging |
-
-### Firmware → App messages
-
-| `type` | Fields | Description |
-|--------|--------|-------------|
-| `status` | `override`, `kill_on_zone`, `brightness`, `preset`, `wifi`, `sw_enabled`, `sw_timeout_ms`, `mb_enabled`, `mb_timeout_ms`, `rules_paused`, `mb_layout_active`, `mb_layout_count`, `preset_count`, `scan_log` | Device state |
-| `ack` | `action`, `id?`, `ok?` | Command acknowledgement |
-| `error` | `msg` | Firmware error |
-| `preset_list_raw` | assembled from `preset_chunk` chunks | JSON array of all presets |
-| `wled_effects_done` | assembled from `wled_effects` chunks | JSON array of effect names |
-| `wled_palettes_done` | assembled from `wled_palettes` chunks | JSON array of palette names |
-| `wled_fxdata_done` | assembled from `wled_fxdata` chunks | JSON array of metadata strings |
-| `wled_state_done` | assembled from `wled_state` chunks | WLED state+info JSON |
-| `ble_color` | `r`, `g`, `b` | MagicBand+ E9 color event (6-bit → 8-bit scaled) |
-| `ble_event` | `event` | MagicBand+ non-color event (flash, fireworks, timeout) |
-| `sw_color` | `palette`, `r`, `g`, `b` | Starlight Wand palette color event |
-| `sw_event` | `event` | Starlight Wand event (timeout, disabled, blocked, wifi_down) |
-| `sw_debug` | `reason`, `hex`, `len` | Rate-limited raw wand packet debug (shown on Home) |
-
-### Chunked type routing (BLEService.ts)
-
-```typescript
-const CHUNKED_TYPES = {
-  'preset_chunk':  'preset_list_raw',
-  'wled_effects':  'wled_effects_done',
-  'wled_palettes': 'wled_palettes_done',
-  'wled_fxdata':   'wled_fxdata_done',
-  'wled_state':    'wled_state_done',
-};
-```
+The full command/message reference (including runtime field editing via `set_field`/`list_fields`
+and rule toggling via `set_rule_enabled`/`list_rules`) lives in
+[`firmware/StrollerController/PROTOCOL.md`](firmware/StrollerController/PROTOCOL.md) — treat that
+file as the source of truth rather than duplicating the table here, since it changes independently
+of this doc.
 
 ---
 
@@ -276,12 +278,6 @@ import IconHome from '@tabler/icons-react-native/dist/esm/icons/IconHome';
 import { IconHome } from '@tabler/icons-react-native';
 ```
 
-Confirmed available icons: `IconHome`, `IconSparkles`, `IconMap`, `IconSettings`,
-`IconBook`, `IconBluetooth`, `IconBluetoothOff`, `IconBulb`, `IconBolt`, `IconFlame`,
-`IconX`, `IconRefresh`, `IconWifi`, `IconWifiOff`, `IconPlus`, `IconCheck`, `IconTrash`,
-`IconPencil`, `IconSun`, `IconMoon`, `IconDeviceDesktop`, `IconDownload`, `IconUpload`,
-`IconDroplet`, `IconMap`.
-
 To check if an icon exists:
 ```bash
 ls app/node_modules/@tabler/icons-react-native/dist/esm/icons/ | grep "^IconName\."
@@ -291,10 +287,14 @@ ls app/node_modules/@tabler/icons-react-native/dist/esm/icons/ | grep "^IconName
 
 ## Firmware architecture
 
-### Key globals
+Firmware is split across two boards, each a modular set of `.h` files sharing a symlinked
+`Config.h`, with board-specific behavior selected via `build_opt.h` defines
+(`ILLUMA_LOGIC_BOARD=1` / `ILLUMA_SCANNER_BOARD=1`).
+
+### Logic board (StrollerController) — key globals
 
 ```cpp
-// BLE
+// BLE (app link)
 NimBLECharacteristic* notifyChar;
 bool bleConnected;
 
@@ -307,20 +307,19 @@ unsigned long overrideTimestamp;
 bool starlightEnabled;
 unsigned long starlightTimeoutMs; // ms before auto-clear (0 = never)
 
-// MagicBand / BLE Data
+// MagicBand / BLE Data (events arrive via UartLink, not local scan)
 bool magicBandEnabled;
 bool rulesPaused;                 // pause rule match/apply (NVS); does not clear override
 unsigned long magicBandTimeoutMs;
 unsigned long mbEventTimestamp;   // shared BLE_EFFECT idle timer
 bool lastMatchedRuleWasWand;      // selects flat timeout (sw vs mb)
-unsigned long mbEventTimestamp;
 
 // WLED
 #define STRIP_LED_COUNT 100
 String savedWledState;            // saved before BLE override, restored after
 ```
 
-Protocol reference: `docs/disney-ble-protocol.md`, `docs/starlight-wand-codes.md`.
+Protocol reference: `docs/disney-ble-protocol.md`, `docs/starlight-wand-codes.md` (being updated separately).
 
 ### FreeRTOS queue (critical)
 
@@ -341,37 +340,47 @@ processPendingCommands();  // does actual HTTP work here
 
 **Never** use `String` in a FreeRTOS queue struct — the internal pointer becomes dangling after the stack copy.
 
-### Disney BLE packets (scanner)
+### Scanner board (BleScannerNode)
 
-Manufacturer data uses Disney CID **`8301`**. Payload parsing follows Adafruit `magicband_protocol.py` — see **`docs/disney-ble-protocol.md`**.
+Runs NimBLE passive scan for Disney manufacturer data (CID `8301`), filters and decodes
+matched packets, and forwards them to the logic board over UART (`ScannerPayloadTransport.h`).
+Also handles its own OLED status display and raw SD logging (`SdRawLogger.h`) — raw packets
+are logged at `onResult()` before any stripping, independent of what the logic board later
+does with the forwarded event.
 
-**MagicBand+ (E1/E2-wrapped E9):** function code at payload[2]<<8 | payload[3], e.g. `0xE905` single color, `0xE909` five-slot pattern, `0xE90C` show FX.
+Heartbeats keep the logic board's link-alive timer fresh when Disney BLE traffic is quiet;
+the logic board replies to heartbeats so the scanner's OLED can show link status when enabled.
 
-**Starlight Wand:**
-- **WAND-IDLE** — `0F 11 …` (19 bytes), not an effect
-- **WAND-CAST** — `CF 0B 00 C4 20 22` + 6 rolling + palette (13 bytes)
-- **WAND-CF9B** — legacy `CF 9B …`, palette in last byte
+### UART link (both boards)
 
-**CC03 ping** — wake / prime receiver before some commands.
+`UartLink.h` (logic) / `ScannerPayloadTransport.h` (scanner) implement the framing protocol
+over the wired cross-wired serial connection. `Serial1.begin()` on the logic side is gated
+appropriately for dual-board operation. See `docs/pcb-final-build-spec.md` for the current
+framing details and pin assignments.
 
-### WLED BLE override mapping (100-LED strip)
+### Rule engine
 
-Live Disney packets are applied via the **MB rule engine** (presets / rule `sx`/`grp` / fades). Global chase config was removed — do not reintroduce `mb_chase_config` or `five_point`.
+Live Disney packets (arriving over UART from the scanner) are applied via the **MB rule
+engine** — presets / rule `sx`/`grp` / fades, with per-rule enable/disable and first-match
+priority. Global chase config was removed — do not reintroduce `mb_chase_config` or `five_point`.
 
 `clearOverride()` restores saved WLED state + single segment `start:0 stop:100`.
 
 Rule flag `reportAsUnmatched`: on successful apply, also SD-log + notify `mb_unmatched` for Capture/Sheets.
 
-### Serial debug (USB @ 115200)
+Runtime tuning without reflashing: `RuntimeFields.h` (`set_field`/`list_fields`) and per-rule
+enable/disable (`set_rule_enabled`/`list_rules`) — see `firmware/StrollerController/PROTOCOL.md`.
+
+### Serial debug (USB @ 115200, either board)
 
 | Command | Purpose |
 |---------|---------|
 | `help` | Command list |
 | `sniff [sec]` | Log all manufacturer data |
-| `tx on` / `tx off` | Wand idle beacon TX (pairing tests) |
-| `tx cast <N>` | WAND-CAST palette N for 3s |
+| `tx on` / `tx off` | Wand idle beacon TX (pairing tests, WandSimulator) |
+| `tx cast <N>` | WAND-CAST palette N for 3s (WandSimulator) |
 
-Bench broadcaster: `firmware/WandSimulator/` — see `docs/starlight-wand-codes.md`.
+Bench broadcaster: `firmware/WandSimulator/` — see `docs/starlight-wand-codes.md` and `firmware/WandSimulator/API.md`.
 
 ### WLED JSON API endpoints used
 
@@ -388,30 +397,50 @@ WLED v16+ supports 100+ custom palettes (no 8-palette limit).
 
 ---
 
-## Web tool (web/index.html)
+## Web tool (web/)
 
-Single HTML file using React 18 UMD + Babel standalone (in-browser transpile).
-**Must be served via HTTP** — not `file://` (Maps API and CORS block it).
+Vite + React + Mantine app (migrated off the earlier single-file Babel monolith, which is
+kept only as `web/index.legacy.html` for reference — the live entry is `index.html` + `src/`).
 
 ```bash
-cd web && ./serve.sh   # starts python3 -m http.server 3000 + opens browser
+cd web
+npm install
+./serve.sh   # or: npm run dev
 ```
 
-### Critical Babel standalone rules
+Open http://localhost:5173/illuma-buggy/ (Vite uses `/illuma-buggy/` base path to match GitHub Pages).
 
-1. Arrow functions returning JSX **must** wrap in parens: `.map(x => (<JSX/>))` not `.map(x => <JSX/>)`
-2. No Unicode fullwidth chars (U+FF0B `＋`) in JSX — use ASCII `+`
-3. No `import`/`export` statements anywhere in the script
-4. All components defined as plain functions in one `<script type="text/babel">` block
-
-### localStorage keys
-
-```javascript
-'illuma-buggy-config'    // current working data (auto-saved on every change)
-'illuma-buggy-profiles'  // named profiles object: { "Magic Kingdom": {...data}, ... }
-'maps-api-key'           // Google Maps API key
-'wled-ip'                // last used WLED IP for direct connect
+```bash
+npm run build    # output in dist/
+npm run preview  # preview production build locally
 ```
+
+GitHub Actions (`.github/workflows/pages.yml`) builds and deploys `web/dist` on push to `main`
+when `web/**` changes. In the repo's GitHub Pages settings, the source must be set to
+**GitHub Actions** (not "Deploy from branch").
+
+### Google Maps API key
+
+On first launch you'll be prompted for a Google Maps API key (stored in browser `localStorage`
+as `maps-api-key`). Enable **Maps JavaScript API** and **Geocoding API** in
+[Google Cloud Console](https://console.cloud.google.com/google/maps-apis).
+
+### Features
+
+- **Map & Zones** — draw preset and indoor zones on satellite map
+- **Presets** — effect, palette, speed, recall memory
+- **Palettes** — custom color palettes
+- **Shows** — parade / fireworks bindings
+- **Brightness** — day/night/indoor solar settings
+- **Wand Lab** — WandSimulator testing: byte editor, `/show` burst & sweep, capture paste, quick firmware commands
+- **Settings** — BLE mapping, MB segments, recall state, export/import
+
+### Wand Lab / WandSimulator
+
+See `firmware/WandSimulator/API.md`. The web tool talks to `http://<sim-ip>/status`, `/send`, `/show`, and `/stop`.
+
+- **/send hex** — payload only (no `8301`); byte editor uses this convention
+- **/show** — full bytes including `8301`; burst, sweep, and capture replay use this
 
 ### Data format (shared between app and web tool)
 
@@ -447,30 +476,45 @@ cd web && ./serve.sh   # starts python3 -m http.server 3000 + opens browser
 cd app
 npm run build          # EAS cloud build (Android, development profile)
 npm run build:clean    # clean prebuild + EAS build
+npm run build:apk      # standalone APK build
 ```
 
 `app.config.js` reads `process.env.GOOGLE_MAPS_API_KEY` from EAS secret at build time.
-EAS project ID: `e7692aec-8fa3-4506-beb8-2885de76cbf8`
 Android package: `com.illumabuggy.app`
 
 New native dependencies require a full `build:clean` — Metro hot reload is not enough.
 
 ### Firmware
 
-Arduino IDE: Board = `ESP32S3 Dev Module`, OPI PSRAM, 240 MHz, UART0 port.
-Flash via USB. No OTA yet.
+Two separate Arduino sketches, flashed independently:
+
+- **Logic board** (`firmware/StrollerController/`): Board = `ESP32S3 Dev Module`, OPI PSRAM, 240 MHz.
+- **Scanner board** (`firmware/BleScannerNode/`): Board = `ESP32 Dev Module` (classic ESP32, not S3).
+
+Flash each via USB. No OTA yet.
+
+### Embedding rules
+
+`scripts/embed_rules.py` generates `firmware/StrollerController/EmbeddedRules.h` from
+`embedded_rules.json` — re-run before flashing the logic board if the rules payload changed.
+See `docs/rules-psram-runbook.md`.
 
 ---
 
 ## Known constraints & gotchas
 
-### BLE
+### BLE (app ↔ board)
 - Each firmware notification is a **complete JSON object** — always try `JSON.parse(incoming)` before appending to MTU buffer
 - Chunk `data` field is already JSON-unescaped by the outer `JSON.parse` — never unescape again
 - `bleService` is a singleton — subscribe in `useEffect`, always return the unsubscribe function
 - Firmware chunk size = 100 bytes data + ~55 byte JSON wrapper ≈ 155 bytes total (safely under 247 MTU)
-- **Connect flood** — inbound `preset_list` (49+ chunks) + `wled_get_fxdata` (93 chunks) during bootstrap can drop Android BLE; use quick reconnect + background sync (`connectBootstrap.ts`)
+- **Connect flood** — inbound `preset_list` (many chunks) + `wled_get_fxdata` (many chunks) during bootstrap can drop Android BLE; use quick reconnect + background sync (`connectBootstrap.ts`)
 - Gate user commands on `bleService.isSessionReady()`, not just `isConnected`
+
+### Scanner ↔ logic UART
+- Wired connection only — cross-wire TX/RX and share GND; USB ground alone is not sufficient
+- Logic board must not fall back to local BLE scanning when the UART link is silent — only a "link lost" status, to protect the phone BLE connection
+- Classic ESP32 (scanner) reserves GPIO 6–11 for internal flash — never use them for SD/SPI; VSPI on GPIO 5/18/23/19 instead
 
 ### React Native / Expo
 - `react-native-maps` `draggable` marker prop is unreliable on Android — use tap-to-select + tap-map-to-move pattern instead
@@ -491,17 +535,20 @@ Flash via USB. No OTA yet.
   e.g. `"!,!;;!;1;sx=24,pal=50"` = speed+intensity sliders, palette enabled, 1D, defaults sx=24 pal=50
 
 ### Web tool
-- Requires HTTP server — `./serve.sh` or `python3 -m http.server 3000`
+- Requires HTTP server — `./serve.sh` or `npm run dev`
 - Google Maps API key entered in-browser and stored in `localStorage`
-- WLED direct connect (Presets tab) requires Mac to be on `StrollerNet` or same LAN as WLED
+- WLED direct connect (Presets tab) requires the dev machine to be on `StrollerNet` or same LAN as WLED
 
 ---
 
 ## Pending / roadmap
 
-- [ ] WLED usermod — custom Starlight / MB chase effects (replace built-in Chase)
-- [ ] MagicBand+ in-park testing — additional E9 animation opcodes
+- [ ] Field-prove the UART transport across real park sessions before further architectural changes
+- [ ] Combined single-PCB build (both boards) — deferred until UART is field-proven
+- [ ] Per-park rule profiles (design decisions needed before implementation)
+- [ ] Google Sheets research log integration for Wand Lab captures
+- [ ] Park Mode BLE traffic minimization (further reduction beyond current implementation)
+- [ ] Remaining BLE opcode coverage — see opcode docs under `docs/` (being updated separately)
 - [ ] OTA firmware updates
 - [ ] "Find my stroller" (BLE out-of-range detection)
 - [ ] Park-specific zone profiles (import/export per-park JSON)
-- [ ] Physical build: ABS enclosure, cable glands, neutral-cure silicone weatherproofing
