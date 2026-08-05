@@ -2,7 +2,7 @@
 
 A custom LED lighting system for a theme park stroller — phone-controlled effects, GPS-triggered zone presets, and passive MagicBand+ / Starlight Wand event reactions, built on a two-board ESP32 system paired with a WLED-powered LED controller.
 
-This is a personal hobby project built for fun and to make theme park trips with young kids a little more magical.
+This is a personal hobby project built for fun and to make theme park trips with young kids a little more special.
 
 ## Overview
 
@@ -11,7 +11,7 @@ Illuma Buggy is a four-part system:
 1. **Scanner board** — a classic ESP32 running NimBLE that passively observes BLE advertising packets from MagicBand+ and Starlight Wand devices, decodes Disney's `E9`/`E4` packet format, and forwards matched events over a wired UART link.
 2. **Logic board** — an ESP32-S3 that receives scanner events over UART, runs the rule engine that maps them (and GPS zones, presets, and manual commands) to LED behavior, talks to the phone app over BLE, and drives the LED controller over WiFi.
 3. **LED Controller** — a GLEDOPTO ESP32 controller running [WLED](https://kno.wled.ge/), driving the physical LED strings over its own HTTP JSON API.
-4. **Companion Apps** — a React Native + Expo mobile app (Android-first, used for field configuration and live control) and a React/Mantine web tool (desk authoring for effects, palettes, rules, and GPS zones).
+4. **Companion Apps** — a React Native + Expo mobile app (Android-first, used for field configuration and live control) and a React/Mantine [web tool](https://robwrowe.github.io/illuma-buggy/) (desk authoring for effects, palettes, rules, and GPS zones).
 
 ## Architecture
 
