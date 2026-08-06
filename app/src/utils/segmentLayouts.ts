@@ -354,6 +354,15 @@ export function buildRecalledSegment(
         (out as unknown as Record<string, unknown>)[k] = seg[k];
       }
     });
+    // Blend lives in segmentOverrides as {mode,value} (string id or numeric bm).
+    // Map seeding only copies seg.bm — apply the override here (mirrors firmware).
+    const blendEntry = overrideEntry?.blend;
+    const blendMode = blendEntry?.mode ?? 'stored';
+    if (blendMode === 'custom' && blendEntry?.value !== undefined && blendEntry.value !== null) {
+      out.bm = blendModeToBm(blendEntry.value);
+    } else if (blendMode === 'default') {
+      out.bm = 0;
+    }
   } else {
     delete (out as { start?: number }).start;
     delete (out as { stop?: number }).stop;

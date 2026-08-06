@@ -1,5 +1,5 @@
 import { finalizeWledSegmentPayload } from '../ble/chunking';
-import { FIVE_CORNER_IDS, FIVE_CORNER_RGB, STRIP_LED_COUNT } from '../ble/mbConstants';
+import { blendModeIdToBm, FIVE_CORNER_IDS, FIVE_CORNER_RGB, STRIP_LED_COUNT } from '../ble/mbConstants';
 import {
   customSegmentMapFromWledSegs,
   presetWledForBoard,
@@ -87,6 +87,8 @@ export function normalizeSegmentDef(raw) {
   SEGMENT_LAYOUT_FIELDS.forEach(k => {
     if (raw[k] !== undefined && raw[k] !== null) seg[k] = raw[k];
   });
+  // Preserve map-local string id for segmentOverrides lookup (not a WLED field).
+  if (typeof raw.mapLocalId === 'string' && raw.mapLocalId) seg.mapLocalId = raw.mapLocalId;
   return seg;
 }
 
@@ -285,6 +287,17 @@ export function buildRecalledSegment(seg, global, should, m, index, overrideEntr
     ['of', 'grp', 'spc', 'bm', 'rev', 'mi', 'bri', 'on'].forEach((k) => {
       if (seg[k] !== undefined && seg[k] !== null) out[k] = seg[k];
     });
+    // Blend lives in segmentOverrides as {mode,value} (string id or numeric bm).
+    // Map seeding only copies seg.bm — apply the override here (mirrors firmware).
+    const blendEntry = overrideEntry?.blend;
+    const blendMode = blendEntry?.mode || 'stored';
+    if (blendMode === 'custom' && blendEntry.value !== undefined && blendEntry.value !== null) {
+      out.bm = typeof blendEntry.value === 'number'
+        ? Number(blendEntry.value)
+        : blendModeIdToBm(blendEntry.value);
+    } else if (blendMode === 'default') {
+      out.bm = 0;
+    }
   }
   // In 'global' source mode, every segment implicitly uses the preset's global
   // look unless a segmentOverrides entry explicitly says otherwise — mirrors how
