@@ -241,11 +241,10 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
     (void)server;
     (void)connInfo;
-    (void)reason;
     bleConnected = false;
     resetCmdChunkBuffer();
     drainBleCmdQueue();
-    Serial.println("[BLE] App disconnected — restarting advertising");
+    Serial.printf("[BLE] App disconnected (reason=0x%02x) — restarting advertising\n", reason);
     NimBLEDevice::startAdvertising();
   }
 };

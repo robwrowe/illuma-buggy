@@ -290,6 +290,9 @@ const char* showPhaseStatusStr() {
 }
 
 void pollLiveWledState() {
+  // Skip HTTP while a large BLE cmd is being reassembled — WiFi+BLE coexistence
+  // on ESP32-S3 commonly drops the phone link mid-push otherwise.
+  if (cmdChunkBuffer != nullptr) return;
   if (currentOverride != NONE) return;
   if (WiFi.status() != WL_CONNECTED) return;
   unsigned long now = millis();

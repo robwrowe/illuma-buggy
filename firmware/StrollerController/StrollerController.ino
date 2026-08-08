@@ -271,7 +271,9 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED) {
     unsigned long now = millis();
-    if (now - lastWifiRetry > WIFI_RETRY_MS) {
+    // Don't kick WiFi reconnect while assembling a large BLE push — radio churn
+    // here is a common cause of mid-chunk GATT disconnects.
+    if (cmdChunkBuffer == nullptr && now - lastWifiRetry > WIFI_RETRY_MS) {
       lastWifiRetry = now;
       Serial.println("[WiFi] Reconnecting...");
       connectToWLED();
