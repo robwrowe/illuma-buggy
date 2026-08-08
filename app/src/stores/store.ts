@@ -120,7 +120,7 @@ export interface PresetMemory {
   segments:   boolean;
 }
 
-export type PresetApplyMode = 'legacy' | 'board';
+export type PresetApplyMode = 'legacy' | 'board' | 'wledDirect';
 
 export interface Preset {
   id:        string;
@@ -340,9 +340,12 @@ interface AppState {
   // Settings
   overrideKillOnZone:    boolean;
   setOverrideKillOnZone: (val: boolean) => void;
-  /** Experimental: 'legacy' phone-resolves wled_raw; 'board' uses preset_apply when synced. */
+  /** Experimental: 'legacy' phone-resolves wled_raw; 'board' uses preset_apply when synced; 'wledDirect' phone→WLED HTTP for zone GPS. */
   presetApplyMode:       PresetApplyMode;
   setPresetApplyMode:    (val: PresetApplyMode) => void;
+  /** When true (default), zone GPS applies auto-use wledDirect if phone is on StrollerNet (unless mode is 'board'). */
+  autoWledDirect:        boolean;
+  setAutoWledDirect:     (val: boolean) => void;
   starlightEnabled:      boolean;
   setStarlightEnabled:   (val: boolean) => void;
   starlightTimeoutSec:   number;
@@ -745,6 +748,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   overrideDetail:      null,
   overrideKillOnZone:  false,
   presetApplyMode:     'legacy' as PresetApplyMode,
+  autoWledDirect:      true,
   starlightEnabled:    true,
   starlightTimeoutSec: 15,
   magicBandEnabled:    true,
@@ -919,6 +923,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setOverrideDetail:     (overrideDetail) => set({ overrideDetail }),
   setOverrideKillOnZone: (val)          => set({ overrideKillOnZone: val }),
   setPresetApplyMode:    (val)          => set({ presetApplyMode: val }),
+  setAutoWledDirect:     (val)          => set({ autoWledDirect: val }),
   setStarlightEnabled:   (val)          => set({ starlightEnabled: val }),
   setStarlightTimeoutSec:(val)          => set({ starlightTimeoutSec: val }),
   setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
@@ -1122,7 +1127,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadFromStorage: async () => {
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','colorCalibration','overrideKillOnZone',
-                    'presetApplyMode',
+                    'presetApplyMode','autoWledDirect',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandTimeoutSec','rulesPaused','logMarkerSnippets','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
@@ -1159,7 +1164,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         brightnessConfig:   d.brightnessConfig   ?? DEFAULT_BRIGHTNESS,
         colorCalibration:   normalizeColorCalibration(d.colorCalibration),
         overrideKillOnZone: d.overrideKillOnZone ?? false,
-        presetApplyMode:    (d.presetApplyMode === 'board' ? 'board' : 'legacy') as PresetApplyMode,
+        presetApplyMode:    (d.presetApplyMode === 'board' || d.presetApplyMode === 'wledDirect'
+          ? d.presetApplyMode : 'legacy') as PresetApplyMode,
+        autoWledDirect:     d.autoWledDirect ?? true,
         starlightEnabled:   d.starlightEnabled   ?? true,
         starlightTimeoutSec:d.starlightTimeoutSec ?? 15,
         magicBandEnabled:   d.magicBandEnabled   ?? true,
@@ -1237,6 +1244,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['colorCalibration',   JSON.stringify(s.colorCalibration)],
         ['overrideKillOnZone', JSON.stringify(s.overrideKillOnZone)],
         ['presetApplyMode', JSON.stringify(s.presetApplyMode)],
+        ['autoWledDirect', JSON.stringify(s.autoWledDirect)],
         ['starlightEnabled',   JSON.stringify(s.starlightEnabled)],
         ['starlightTimeoutSec',JSON.stringify(s.starlightTimeoutSec)],
         ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
@@ -1363,6 +1371,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       colorCalibration: s.colorCalibration,
       overrideKillOnZone: s.overrideKillOnZone,
       presetApplyMode:    s.presetApplyMode,
+      autoWledDirect:     s.autoWledDirect,
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
       magicBandEnabled:   s.magicBandEnabled,
       rulesPaused:        s.rulesPaused,
@@ -1393,7 +1402,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       colorCalibration:   normalizeColorCalibration(m.colorCalibration),
       recallState:        m.recallState        ?? DEFAULT_RECALL,
       overrideKillOnZone: m.overrideKillOnZone ?? false,
-      presetApplyMode:    (m.presetApplyMode === 'board' ? 'board' : 'legacy') as PresetApplyMode,
+      presetApplyMode:    (m.presetApplyMode === 'board' || m.presetApplyMode === 'wledDirect'
+        ? m.presetApplyMode : 'legacy') as PresetApplyMode,
+      autoWledDirect:     m.autoWledDirect ?? true,
       starlightEnabled:   m.starlightEnabled   ?? true,
       starlightTimeoutSec:m.starlightTimeoutSec ?? 15,
       magicBandEnabled:   m.magicBandEnabled   ?? true,

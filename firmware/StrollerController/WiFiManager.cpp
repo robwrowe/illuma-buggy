@@ -20,6 +20,7 @@ void connectToWLED(bool force) {
   delay(100);
   Serial.printf("[WiFi] Connecting to GLEDOPTO: %s\n", wledSsid.c_str());
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);  // Disable modem sleep — critical for BLE+WiFi coexistence on ESP32-S3
   WiFi.begin(wledSsid.c_str(), wledPass.c_str());
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
