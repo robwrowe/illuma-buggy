@@ -133,14 +133,25 @@ static int resolveAnchorOffset(const uint8_t* payload, size_t plen, const JsonOb
   return -1;
 }
 
+// True only for a real anchor object with a 2-char hex marker.
+// JSON null, missing key, or empty `{}` must NOT be treated as anchors — those
+// fall through to absolute `offset` (editor stores `"anchor": null` on fixed leaves).
+static bool isUsableAnchorObject(JsonVariantConst av, JsonObject& outAnchor) {
+  if (!av.is<JsonObject>()) return false;
+  outAnchor = av.as<JsonObject>();
+  if (outAnchor.isNull()) return false;
+  const char* byteHex = outAnchor["byte"] | "";
+  return byteHex && strlen(byteHex) >= 2;
+}
+
 // Resolves offset from either node["anchor"] (if present) or node["offset"] (fallback).
 // Returns -1 when an anchor is present but its marker isn't found — callers must treat
 // -1 as "value unavailable", NOT as offset 0. Use node["fallbackValue"] for extract
 // defaults; if node["requireAnchor"] is true, findMatchingRule skips the rule.
 static int resolveOffsetOrAnchor(const uint8_t* payload, size_t plen, const JsonObject& node,
                                  int fallbackOffset) {
-  JsonObject anchor = node["anchor"].as<JsonObject>();
-  if (!anchor.isNull()) {
+  JsonObject anchor;
+  if (isUsableAnchorObject(node["anchor"], anchor)) {
     return resolveAnchorOffset(payload, plen, anchor);
   }
   return node["offset"] | fallbackOffset;
@@ -150,8 +161,8 @@ static bool nodeRequiresUnresolvedAnchor(const uint8_t* payload, size_t plen,
                                          const JsonObject& node) {
   if (node.isNull()) return false;
   if (!(node["requireAnchor"] | false)) return false;
-  JsonObject anchor = node["anchor"].as<JsonObject>();
-  if (anchor.isNull()) return false;
+  JsonObject anchor;
+  if (!isUsableAnchorObject(node["anchor"], anchor)) return false;
   return resolveAnchorOffset(payload, plen, anchor) < 0;
 }
 
@@ -324,8 +335,10 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
 bool evaluateConditionGroup(const uint8_t* payload, size_t plen, const JsonObject& groupNode) {
   if (groupNode.isNull()) return false;
 
-  // Leaf nodes have "type"; groups have "mode" + "children"
-  if (groupNode.containsKey("type")) {
+  // Leaf nodes have a string "type"; groups have "mode" + "children".
+  // Do not use containsKey("type") — a JSON null type would force the leaf path
+  // and always fail (evaluateLeaf sees type="").
+  if (groupNode["type"].is<const char*>()) {
     return evaluateLeaf(payload, plen, groupNode);
   }
 
@@ -401,6 +414,30 @@ int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules
       continue;
     }
     return idxs[k];
+  }
+
+  // CD-family miss: dump payload + which cd-07 rules failed (rate-limited).
+  bool looksCd = plen >= 2 && (payload[0] == 0xCD || (plen >= 3 && payload[2] == 0xCD));
+  if (looksCd) {
+    static unsigned long lastCdMissMs = 0;
+    if ((long)(millis() - lastCdMissMs) > 2000) {
+      lastCdMissMs = millis();
+      Serial.printf("[RuleDbg] CD miss plen=%u hex=", (unsigned)plen);
+      size_t dumpN = plen < 16 ? plen : 16;
+      for (size_t i = 0; i < dumpN; i++) Serial.printf("%02X", payload[i]);
+      Serial.println();
+      for (int k = 0; k < n; k++) {
+        JsonObject rule = rules[idxs[k]].as<JsonObject>();
+        const char* name = rule["name"] | "";
+        if (strncmp(name, "cd-07", 5) != 0) continue;
+        JsonObject match = rule["match"].as<JsonObject>();
+        JsonArray kids = match["children"].as<JsonArray>();
+        bool ok = !match.isNull() && evaluateConditionGroup(payload, plen, match);
+        Serial.printf("[RuleDbg]   %s match=%d childCount=%u\n",
+                      name, ok ? 1 : 0,
+                      kids.isNull() ? 0u : (unsigned)kids.size());
+      }
+    }
   }
   return -1;
 }
@@ -1740,8 +1777,24 @@ bool applyMbRulesJson(JsonObject doc) {
                       cacheErr.c_str(), (unsigned)raw.length());
         logRulesHeap("after failed reparse (cache untouched)");
       } else {
+        // Replace only after scratch parsed. If deep-copy into gRulesDoc fails
+        // (PSRAM), fall back to deserializing `raw` directly into gRulesDoc.
         gRulesDoc.clear();
-        gRulesDoc.set(scratch.as<JsonVariantConst>());
+        bool setOk = gRulesDoc.set(scratch.as<JsonVariantConst>());
+        if (!setOk || gRulesDoc.overflowed()) {
+          Serial.printf("[Rules] cache set failed setOk=%d overflowed=%d — trying direct deserialize\n",
+                        setOk ? 1 : 0, gRulesDoc.overflowed() ? 1 : 0);
+          gRulesDoc.clear();
+          DeserializationError restoreErr =
+              deserializeJson(gRulesDoc, raw, DeserializationOption::NestingLimit(32));
+          if (restoreErr || gRulesDoc.overflowed()) {
+            cacheOk = false;
+            Serial.printf("[Rules] direct restore failed: %s overflowed=%d\n",
+                          restoreErr.c_str(), gRulesDoc.overflowed() ? 1 : 0);
+          } else {
+            Serial.println("[Rules] recovered via direct deserialize into gRulesDoc");
+          }
+        }
         logRulesHeap("after full replace");
       }
     }
