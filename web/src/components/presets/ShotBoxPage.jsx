@@ -3,7 +3,6 @@ import {
   Alert,
   Box,
   Group,
-  Modal,
   Paper,
   ScrollArea,
   SegmentedControl,
@@ -13,7 +12,6 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
 import { testPresetOnWled } from '../../lib/ble/chunking';
 import { findTriggerZone } from '../../lib/geo';
 import { itemMatchesTagFilter } from '../../lib/tags';
@@ -21,6 +19,26 @@ import { useGeoPosition } from '../../hooks/useGeoPosition';
 import { usePresetWled } from './usePresetWled';
 import { TagFilterBar } from '../shared/TagFilterBar';
 import { AppButton } from '../shared/styles';
+
+const shotBtnStyle = {
+  height: 76,
+  minHeight: 76,
+  padding: '6px 8px',
+  whiteSpace: 'normal',
+  lineHeight: 1.2,
+};
+
+const shotBtnStyles = {
+  label: {
+    whiteSpace: 'normal',
+    wordBreak: 'break-word',
+    overflowWrap: 'anywhere',
+    textAlign: 'center',
+    lineHeight: 1.2,
+    fontSize: 12,
+    fontWeight: 600,
+  },
+};
 
 /** Presets relevant to a zone: primary presetId first, then tag matches on zone/park name. */
 function presetsForZone(zone, presets, parks) {
@@ -38,6 +56,21 @@ function presetsForZone(zone, presets, parks) {
   });
 
   return { primary, tagged };
+}
+
+function ShotButton({ preset, variant = 'default', firingId, onFire }) {
+  return (
+    <AppButton
+      variant={variant}
+      size="md"
+      onClick={() => onFire(preset)}
+      disabled={firingId === preset.id}
+      style={shotBtnStyle}
+      styles={shotBtnStyles}
+    >
+      {firingId === preset.id ? '…' : preset.name}
+    </AppButton>
+  );
 }
 
 function ZonePresetGroup({
@@ -74,27 +107,10 @@ function ZonePresetGroup({
       {!collapsed && hasAny && (
         <SimpleGrid cols={{ base: 2, xs: 3, sm: 4, md: 5 }} spacing="sm">
           {primary && (
-            <AppButton
-              variant="primary"
-              size="xl"
-              onClick={() => onFire(primary)}
-              disabled={firingId === primary.id}
-              style={{ height: 84, whiteSpace: 'normal', lineHeight: 1.2 }}
-            >
-              {firingId === primary.id ? '…' : primary.name}
-            </AppButton>
+            <ShotButton preset={primary} variant="primary" firingId={firingId} onFire={onFire} />
           )}
           {tagged.map((p) => (
-            <AppButton
-              key={p.id}
-              variant="default"
-              size="xl"
-              onClick={() => onFire(p)}
-              disabled={firingId === p.id}
-              style={{ height: 84, whiteSpace: 'normal', lineHeight: 1.2 }}
-            >
-              {firingId === p.id ? '…' : p.name}
-            </AppButton>
+            <ShotButton key={p.id} preset={p} firingId={firingId} onFire={onFire} />
           ))}
         </SimpleGrid>
       )}
@@ -102,8 +118,7 @@ function ZonePresetGroup({
   );
 }
 
-export function ShotBoxModal({ open, onClose, data }) {
-  const isNarrow = useMediaQuery('(max-width: 48em)');
+export function ShotBoxPage({ data }) {
   const [mode, setMode] = useState('all'); // 'all' | 'near'
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState(null);
@@ -112,7 +127,7 @@ export function ShotBoxModal({ open, onClose, data }) {
   const [collapsedSections, setCollapsedSections] = useState({});
 
   const wled = usePresetWled(data, null);
-  const geo = useGeoPosition({ enabled: open && mode === 'near' });
+  const geo = useGeoPosition({ enabled: mode === 'near' });
 
   const presets = data.presets || [];
   const filteredPresets = useMemo(
@@ -169,13 +184,23 @@ export function ShotBoxModal({ open, onClose, data }) {
       : defaultCollapsed;
 
   return (
-    <Modal
-      opened={open}
-      onClose={onClose}
-      fullScreen={!!isNarrow}
-      size="xl"
-      title={
-        <Group gap="md" wrap="wrap">
+    <Box
+      h="100%"
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        minHeight: 0,
+        overflow: 'hidden',
+      }}
+    >
+      <Paper
+        p="sm"
+        radius={0}
+        bg="var(--surface)"
+        style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}
+      >
+        <Group justify="space-between" align="center" wrap="wrap" gap="sm">
           <Title order={4}>🎯 Shot Box</Title>
           <SegmentedControl
             size="xs"
@@ -187,14 +212,11 @@ export function ShotBoxModal({ open, onClose, data }) {
             ]}
           />
         </Group>
-      }
-      styles={{
-        body: { paddingTop: 8, height: isNarrow ? 'calc(100vh - 60px)' : undefined },
-      }}
-    >
-      <Stack gap="sm" style={{ height: isNarrow ? '100%' : '70vh', minHeight: 0 }}>
+      </Paper>
+
+      <Stack gap="sm" p="sm" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {wled.wledStatus !== 'connected' && (
-          <Paper p="xs" radius="md" bg="var(--surface2)" style={{ border: '1px solid var(--border)' }}>
+          <Paper p="xs" radius="md" bg="var(--surface2)" style={{ border: '1px solid var(--border)', flexShrink: 0 }}>
             <Stack gap={6}>
               <Text size="xs" c="dimmed">
                 WLED not connected — enter IP and tap Go to fire presets.
@@ -221,20 +243,22 @@ export function ShotBoxModal({ open, onClose, data }) {
         )}
 
         {fireError && (
-          <Alert color="red" variant="light" onClose={() => setFireError('')} withCloseButton>
+          <Alert color="red" variant="light" onClose={() => setFireError('')} withCloseButton style={{ flexShrink: 0 }}>
             {fireError}
           </Alert>
         )}
 
         {mode === 'all' && (
           <>
-            <TagFilterBar
-              items={presets}
-              search={search}
-              onSearchChange={setSearch}
-              activeTag={activeTag}
-              onActiveTagChange={setActiveTag}
-            />
+            <Box style={{ flexShrink: 0 }}>
+              <TagFilterBar
+                items={presets}
+                search={search}
+                onSearchChange={setSearch}
+                activeTag={activeTag}
+                onActiveTagChange={setActiveTag}
+              />
+            </Box>
             <ScrollArea style={{ flex: 1, minHeight: 0 }}>
               {filteredPresets.length === 0 ? (
                 <Text size="sm" c="dimmed" p="md">
@@ -243,16 +267,7 @@ export function ShotBoxModal({ open, onClose, data }) {
               ) : (
                 <SimpleGrid cols={{ base: 2, xs: 3, sm: 4, md: 5 }} spacing="sm" p={4}>
                   {filteredPresets.map((p) => (
-                    <AppButton
-                      key={p.id}
-                      variant="default"
-                      size="xl"
-                      onClick={() => fire(p)}
-                      disabled={firingId === p.id}
-                      style={{ height: 84, whiteSpace: 'normal', lineHeight: 1.2 }}
-                    >
-                      {firingId === p.id ? '…' : p.name}
-                    </AppButton>
+                    <ShotButton key={p.id} preset={p} firingId={firingId} onFire={fire} />
                   ))}
                 </SimpleGrid>
               )}
@@ -328,6 +343,6 @@ export function ShotBoxModal({ open, onClose, data }) {
           </ScrollArea>
         )}
       </Stack>
-    </Modal>
+    </Box>
   );
 }

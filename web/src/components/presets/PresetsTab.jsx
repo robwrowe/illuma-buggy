@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Stack, Text } from '@mantine/core';
+import { useNavigate } from 'react-router-dom';
 import { normalizePreset } from '../../lib/ble/mbMapping';
 import { duplicateTaggedName, itemMatchesTagFilter } from '../../lib/tags';
 import {
@@ -16,7 +17,8 @@ import { PresetMapEditorModal } from './PresetMapEditorModal';
 import { blankPreset, duplicatePresetRecord } from './presetModel';
 import { usePresetWled } from './usePresetWled';
 
-export function PresetsTab({ data, update, onOpenShotBox }) {
+export function PresetsTab({ data, update }) {
+  const navigate = useNavigate();
   const [sel, setSel] = useState(null);
   const [isNew, setIsNew] = useState(false);
   const [ptab, setPtab] = useState('effect');
@@ -160,7 +162,7 @@ export function PresetsTab({ data, update, onOpenShotBox }) {
             onSelect={selectPreset}
             onDuplicate={duplicatePreset}
             onTest={wled.testPreset}
-            onOpenShotBox={onOpenShotBox}
+            onOpenShotBox={() => navigate('/shotbox')}
           />
         }
         detail={

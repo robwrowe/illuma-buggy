@@ -23,7 +23,6 @@ export function HeaderTabs({
   importJSON,
   setShowBoardSync,
   profiles,
-  onOpenShotBox,
 }) {
   const [opened, { toggle, close }] = useDisclosure(false);
 
@@ -34,10 +33,7 @@ export function HeaderTabs({
 
   const openShotBox = () => {
     close();
-    if (location.pathname !== '/presets' && !location.pathname.startsWith('/presets/')) {
-      navigate('/presets');
-    }
-    onOpenShotBox?.();
+    navigate('/shotbox');
   };
 
   const headerActions = (
