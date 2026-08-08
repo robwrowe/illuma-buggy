@@ -99,7 +99,8 @@ export function WandLabQuickCommands({ simIp, onStatus, sending, setSending }) {
         <Button size="xs" variant="default" disabled={sending} onClick={() => runLine(`mbloop ${mbLoopColor}`)}>mbloop</Button>
         <Select
           size="xs"
-          w={100}
+          w="100%"
+          maw={120}
           data={MB_COLOR_SHORT.map((c) => ({ value: c, label: c }))}
           value={mbLoopColor}
           onChange={(v) => setMbLoopColor(v || 'red')}

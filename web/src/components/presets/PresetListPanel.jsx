@@ -22,16 +22,19 @@ export function PresetListPanel({
   onSelect,
   onDuplicate,
   onTest,
+  onOpenShotBox,
 }) {
   return (
     <Box
-      w={320}
+      w="100%"
+      h="100%"
       bg="var(--surface)"
       style={{
         borderRight: '1px solid var(--border)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        minWidth: 0,
       }}
     >
       <Group
@@ -40,13 +43,22 @@ export function PresetListPanel({
         px="sm"
         py="xs"
         style={{ borderBottom: '1px solid var(--border)' }}
+        wrap="wrap"
+        gap="xs"
       >
         <Text fw={700} size="sm">
           Presets ({presets.length})
         </Text>
-        <AppButton variant="primary" size="compact-xs" onClick={onNew}>
-          + New
-        </AppButton>
+        <Group gap={6} wrap="nowrap">
+          {onOpenShotBox && (
+            <AppButton variant="default" size="compact-xs" onClick={onOpenShotBox}>
+              🎯 Shot Box
+            </AppButton>
+          )}
+          <AppButton variant="primary" size="compact-xs" onClick={onNew}>
+            + New
+          </AppButton>
+        </Group>
       </Group>
 
       <Paper

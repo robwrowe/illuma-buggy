@@ -591,10 +591,10 @@ export function WandLabTab({ data, update }) {
                   </>
                 )}
                 <Group gap="xs" wrap="wrap">
-                  <Button variant="default" onClick={() => { loadMbCommand(); setLabTab('bytes'); }} style={{ flex: 1, minWidth: 120 }}>
+                  <Button variant="default" onClick={() => { loadMbCommand(); setLabTab('bytes'); }} style={{ flex: '1 1 140px' }}>
                     Load into editor
                   </Button>
-                  <Button onClick={sendMbCommand} loading={sending} style={{ flex: 1, minWidth: 120 }}>
+                  <Button onClick={sendMbCommand} loading={sending} style={{ flex: '1 1 140px' }}>
                     Send MB command
                   </Button>
                 </Group>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Box, Stack, Text } from '@mantine/core';
+import { Stack, Text } from '@mantine/core';
 import { normalizePreset } from '../../lib/ble/mbMapping';
 import { duplicateTaggedName, itemMatchesTagFilter } from '../../lib/tags';
 import {
@@ -8,6 +8,7 @@ import {
   fetchWledFullStateFromIp,
 } from '../../lib/wled/capture';
 import { fetchWledCatalog } from '../../lib/wled/catalog';
+import { MasterDetail } from '../shared/MasterDetail';
 import { PresetCaptureModal } from './PresetCaptureModal';
 import { PresetEditor } from './PresetEditor';
 import { PresetListPanel } from './PresetListPanel';
@@ -15,7 +16,7 @@ import { PresetMapEditorModal } from './PresetMapEditorModal';
 import { blankPreset, duplicatePresetRecord } from './presetModel';
 import { usePresetWled } from './usePresetWled';
 
-export function PresetsTab({ data, update }) {
+export function PresetsTab({ data, update, onOpenShotBox }) {
   const [sel, setSel] = useState(null);
   const [isNew, setIsNew] = useState(false);
   const [ptab, setPtab] = useState('effect');
@@ -135,67 +136,76 @@ export function PresetsTab({ data, update }) {
   };
 
   return (
-    <Box style={{ display: 'flex', height: '100%' }}>
-      <PresetListPanel
-        presets={data.presets}
-        filteredPresets={filteredPresets}
-        selectedId={sel?.id}
-        segmentMaps={segmentMaps}
-        search={search}
-        onSearchChange={setSearch}
-        activeTag={activeTag}
-        onActiveTagChange={setActiveTag}
-        wledIp={wled.wledIp}
-        onWledIpChange={wled.setWledIp}
-        wledStatus={wled.wledStatus}
-        wledEffectsCount={wled.wledEffects.length}
-        wledPalettesCount={wled.wledPalettes.length}
-        onConnectWled={wled.connectWled}
-        onNew={() => { setSel(blankPreset()); setIsNew(true); setPtab('effect'); }}
-        onSelect={selectPreset}
-        onDuplicate={duplicatePreset}
-        onTest={wled.testPreset}
+    <>
+      <MasterDetail
+        sidebarWidth={320}
+        showDetail={!!sel}
+        sidebar={
+          <PresetListPanel
+            presets={data.presets}
+            filteredPresets={filteredPresets}
+            selectedId={sel?.id}
+            segmentMaps={segmentMaps}
+            search={search}
+            onSearchChange={setSearch}
+            activeTag={activeTag}
+            onActiveTagChange={setActiveTag}
+            wledIp={wled.wledIp}
+            onWledIpChange={wled.setWledIp}
+            wledStatus={wled.wledStatus}
+            wledEffectsCount={wled.wledEffects.length}
+            wledPalettesCount={wled.wledPalettes.length}
+            onConnectWled={wled.connectWled}
+            onNew={() => { setSel(blankPreset()); setIsNew(true); setPtab('effect'); }}
+            onSelect={selectPreset}
+            onDuplicate={duplicatePreset}
+            onTest={wled.testPreset}
+            onOpenShotBox={onOpenShotBox}
+          />
+        }
+        detail={
+          sel ? (
+            <PresetEditor
+              sel={sel}
+              setSel={setSel}
+              isNew={isNew}
+              ptab={ptab}
+              onPtabChange={setPtab}
+              setGlobal={setGlobal}
+              setMemory={setMemory}
+              wledIp={wled.wledIp}
+              wledEffects={wled.wledEffects}
+              wledPalettes={wled.wledPalettes}
+              effectFilter={wled.effectFilter}
+              onEffectFilterChange={wled.setEffectFilter}
+              filteredEffects={wled.filteredEffects}
+              paletteOptions={wled.paletteOptions}
+              onApplyPalettePick={applyPalettePick}
+              segmentMaps={segmentMaps}
+              zones={data.zones}
+              presetTestStatus={wled.presetTestStatus}
+              presetTestErr={wled.presetTestErr}
+              onImportFromWled={() => {
+                setCaptureOpts({ ...DEFAULT_WLED_CAPTURE_OPTS });
+                setCaptureErr('');
+                setShowCapture(true);
+              }}
+              onTest={wled.testPreset}
+              onDelete={del}
+              onDuplicate={duplicatePreset}
+              onCancel={() => setSel(null)}
+              onBack={() => setSel(null)}
+              onSave={save}
+              onOpenMapEditor={() => setShowMapEditor(true)}
+              onWledIpChange={wled.setWledIp}
+            />
+          ) : (
+            <Stack h="100%" align="center" justify="center">
+              <Text size="sm" c="dimmed">Select a preset or tap + New</Text>
+            </Stack>
+          )
+        }
       />
-
-      {sel ? (
-        <PresetEditor
-          sel={sel}
-          setSel={setSel}
-          isNew={isNew}
-          ptab={ptab}
-          onPtabChange={setPtab}
-          setGlobal={setGlobal}
-          setMemory={setMemory}
-          wledIp={wled.wledIp}
-          wledEffects={wled.wledEffects}
-          wledPalettes={wled.wledPalettes}
-          effectFilter={wled.effectFilter}
-          onEffectFilterChange={wled.setEffectFilter}
-          filteredEffects={wled.filteredEffects}
-          paletteOptions={wled.paletteOptions}
-          onApplyPalettePick={applyPalettePick}
-          segmentMaps={segmentMaps}
-          zones={data.zones}
-          presetTestStatus={wled.presetTestStatus}
-          presetTestErr={wled.presetTestErr}
-          onImportFromWled={() => {
-            setCaptureOpts({ ...DEFAULT_WLED_CAPTURE_OPTS });
-            setCaptureErr('');
-            setShowCapture(true);
-          }}
-          onTest={wled.testPreset}
-          onDelete={del}
-          onDuplicate={duplicatePreset}
-          onCancel={() => setSel(null)}
-          onSave={save}
-          onOpenMapEditor={() => setShowMapEditor(true)}
-          onWledIpChange={wled.setWledIp}
-        />
-      ) : (
-        <Stack flex={1} align="center" justify="center">
-          <Text size="sm" c="dimmed">Select a preset or click + New</Text>
-        </Stack>
-      )}
 
       <PresetCaptureModal
         open={showCapture && !!sel}
@@ -229,6 +239,6 @@ export function PresetsTab({ data, update }) {
           }
         }}
       />
-    </Box>
+    </>
   );
 }

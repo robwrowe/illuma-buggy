@@ -11,6 +11,7 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { ParksPanel } from './ParksPanel';
 import { Field } from '../shared/Field';
 import { Modal, ModalBtns } from '../shared/Modal';
@@ -20,6 +21,7 @@ import { groupZonesByPark, parkSelectOptions } from '../../lib/map/themeParks';
 import { focusMapOnPolygon, generateId, normalizePolygon, presetSelectOptions } from '../../lib/utils';
 
 export function MapZonesTab({ data, update, mapsReady }) {
+  const isNarrow = useMediaQuery('(max-width: 48em)');
   const gmap = useRef(null);
   const mapDiv = useRef(null);
   const zonePoly = useRef([]);
@@ -423,16 +425,61 @@ export function MapZonesTab({ data, update, mapsReady }) {
     } catch (e) { setSearching(false); alert('Search failed'); }
   };
 
+  const sidebarWidth = editZone || editIndoor ? 280 : 240;
+
   return (
-    <Box style={{ display: 'flex', height: '100%' }}>
+    <Box
+      style={{
+        display: 'flex',
+        flexDirection: isNarrow ? 'column' : 'row',
+        height: '100%',
+        minWidth: 0,
+      }}
+    >
+      {/* Map — on narrow screens stacked above the sidebar so draw mode stays usable */}
+      <Box
+        style={{
+          flex: isNarrow ? undefined : 1,
+          height: isNarrow ? '45vh' : undefined,
+          flexShrink: isNarrow ? 0 : undefined,
+          minWidth: 0,
+          minHeight: 0,
+          position: 'relative',
+          order: isNarrow ? 1 : 2,
+        }}
+      >
+        <div ref={mapDiv} id="map-container" style={{ width: '100%', height: '100%' }} />
+        {!mapsReady && (
+          <Box
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'var(--surface)',
+            }}
+          >
+            <Text size="sm" c="dimmed" ta="center" px="md">
+              Loading Google Maps…
+            </Text>
+          </Box>
+        )}
+      </Box>
+
       {/* Sidebar */}
       <ScrollArea
-        h="100%"
+        h={isNarrow ? undefined : '100%'}
         style={{
-          width: editZone || editIndoor ? 280 : 240,
-          flexShrink: 0,
-          transition: 'width 0.15s ease',
-          borderRight: '1px solid var(--border)',
+          width: isNarrow ? '100%' : sidebarWidth,
+          flex: isNarrow ? 1 : undefined,
+          flexShrink: isNarrow ? 1 : 0,
+          minHeight: 0,
+          minWidth: 0,
+          order: isNarrow ? 2 : 1,
+          transition: isNarrow ? undefined : 'width 0.15s ease',
+          borderRight: isNarrow ? undefined : '1px solid var(--border)',
+          borderTop: isNarrow ? '1px solid var(--border)' : undefined,
         }}
       >
         <Stack gap="xs" p="sm" bg="var(--surface)" style={{ minHeight: '100%' }}>
@@ -671,27 +718,6 @@ export function MapZonesTab({ data, update, mapsReady }) {
         </Stack>
       </ScrollArea>
 
-      {/* Map */}
-      <Box style={{ flex: 1, position: 'relative' }}>
-        <div ref={mapDiv} id="map-container" style={{ width: '100%', height: '100%' }} />
-        {!mapsReady && (
-          <Box
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'var(--surface)',
-            }}
-          >
-            <Text size="sm" c="dimmed" ta="center" px="md">
-              Loading Google Maps…
-            </Text>
-          </Box>
-        )}
-      </Box>
-
       {/* Zone save form */}
       {showForm && (
         <Modal title={drawMode === 'preset' ? 'New Preset Zone' : 'New Indoor Zone'} onClose={() => setShowForm(false)}>
@@ -706,14 +732,15 @@ export function MapZonesTab({ data, update, mapsReady }) {
           {drawMode === 'preset' && (
             <Field label="Preset (optional)">
               <SearchableSelect value={formPreset} onChange={setFormPreset} placeholder="None — boundary only"
-                allowEmpty={true} maxListHeight={280} options={presetOptions} />
+                allowEmpty={true} maxListHeight={280} options={presetOptions} style={{ width: '100%' }} />
               <Text size="xs" c="dimmed" mt={6} lh={1.4}>
                 Leave empty for parade routes / show scoping only — no effect when you enter the zone.
               </Text>
             </Field>
           )}
           <Field label="Park (optional)">
-            <SearchableSelect value={formParkId} onChange={setFormParkId} placeholder="Ungrouped" allowEmpty={true} options={parkOptions} />
+            <SearchableSelect value={formParkId} onChange={setFormParkId} placeholder="Ungrouped" allowEmpty={true}
+              options={parkOptions} style={{ width: '100%' }} />
           </Field>
           <ModalBtns onCancel={() => setShowForm(false)} onSave={commitZone} />
         </Modal>

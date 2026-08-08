@@ -11,6 +11,7 @@ import { BrightnessTab } from './components/brightness/BrightnessTab';
 import { MapZonesTab } from './components/map/MapZonesTab';
 import { PalettesTab } from './components/palettes/PalettesTab';
 import { PresetsTab } from './components/presets/PresetsTab';
+import { ShotBoxModal } from './components/presets/ShotBoxModal';
 import { SettingsTab } from './components/settings/SettingsTab';
 import { ShowsTab } from './components/shows/ShowsTab';
 import { LS_KEY, LS_PROFILES, migrateConfig } from './lib/config';
@@ -39,6 +40,7 @@ export function App() {
   });
   const [profilesOpened, { open: openProfiles, close: closeProfiles }] = useDisclosure(false);
   const [showBoardSync, setShowBoardSync] = useState(false);
+  const [showShotBox, setShowShotBox] = useState(false);
   const [mapsKey, setMapsKey] = useLocalStorage({ key: 'maps-api-key', defaultValue: '' });
   const [sheetsEndpoint, setSheetsEndpoint] = useLocalStorage({
     key: 'wandlab-sheets-endpoint',
@@ -153,6 +155,7 @@ export function App() {
           importJSON={importJSON}
           setShowBoardSync={setShowBoardSync}
           profiles={profiles}
+          onOpenShotBox={() => setShowShotBox(true)}
         />
       </AppShell.Header>
 
@@ -164,7 +167,16 @@ export function App() {
               path="/map"
               element={<MapZonesTab data={data} update={update} mapsReady={mapsReady} />}
             />
-            <Route path="/presets" element={<PresetsTab data={data} update={update} />} />
+            <Route
+              path="/presets"
+              element={
+                <PresetsTab
+                  data={data}
+                  update={update}
+                  onOpenShotBox={() => setShowShotBox(true)}
+                />
+              }
+            />
             <Route path="/palettes" element={<PalettesTab data={data} update={update} />} />
             <Route path="/shows" element={<ShowsTab data={data} update={update} />} />
             <Route path="/brightness" element={<BrightnessTab data={data} update={update} />} />
@@ -185,6 +197,8 @@ export function App() {
           </Routes>
         </Box>
       </AppShell.Main>
+
+      <ShotBoxModal open={showShotBox} onClose={() => setShowShotBox(false)} data={data} />
 
       <Modal
         opened={keyModalOpened}
