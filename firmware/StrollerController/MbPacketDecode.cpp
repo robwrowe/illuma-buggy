@@ -179,13 +179,23 @@ ParsedDisneyPacket decodeDisneyPayload(const uint8_t* payload, size_t plen, unsi
     return pkt;  // wake ping
   }
 
-  if (plen >= 5 && (payload[0] == 0xE1 || payload[0] == 0xE2) && payload[2] == 0xE9) {
+  // Enveloped MB+/effect: [E0–E3] 00 [opcode_hi] [opcode_lo] …
+  // Route all enveloped opcodes through decodeE1E2 (default keeps raw + sets opcode).
+  if (plen >= 4 && isMbEnvelopeByte(payload[0]) && payload[1] == 0x00) {
     decodeE1E2(pkt, payload, plen);
     return pkt;
   }
 
   if (plen >= 2 && payload[0] == 0xE9) {
     // Bare show E9 — recognized family, not fully decoded here.
+    pkt.opcode = ((uint16_t)payload[0] << 8) | payload[1];
+    markUndecodable(pkt, payload, plen);
+    pkt.kind = DisneyPacketKind::E9_UNCLASSIFIED;
+    return pkt;
+  }
+
+  if (plen >= 2 && payload[0] == 0xCD) {
+    // Bare CD-family (e.g. CD07) — raw fallback for rule matching.
     pkt.opcode = ((uint16_t)payload[0] << 8) | payload[1];
     markUndecodable(pkt, payload, plen);
     pkt.kind = DisneyPacketKind::E9_UNCLASSIFIED;

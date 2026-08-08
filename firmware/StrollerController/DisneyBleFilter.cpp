@@ -13,12 +13,23 @@ void disneyPayload(const uint8_t* data, size_t len, const uint8_t*& payload, siz
 }
 
 bool isDisneyMfr(const uint8_t* data, size_t len) {
-  if (len >= 2 && data[0] == 0x83 && data[1] == 0x01) return true;
   const uint8_t* p;
   size_t pl;
   disneyPayload(data, len, p, pl);
-  return isWandCast(p, pl) || isLegacyCf9bCast(p, pl) || isWandIdleBeacon(p, pl)
-      || (pl >= 1 && (p[0] == 0xCC || p[0] == 0xE1 || p[0] == 0xE2 || p[0] == 0xE9));
+
+  if (isWandCast(p, pl) || isLegacyCf9bCast(p, pl) || isWandIdleBeacon(p, pl)) return true;
+  if (pl >= 1 && p[0] == 0xCC) return true;
+  // Enveloped MB+/effect frame: [E0–E3] 00 [opcode_hi] [opcode_lo] …
+  if (pl >= 4 && isMbEnvelopeByte(p[0]) && p[1] == 0x00) return true;
+
+  // Bare / remaining Disney payloads — only when manufacturer data carries Disney
+  // company ID 0x0183. Do not use a bare pl>=2 check on arbitrary manufacturer
+  // data (would accept every other vendor's adverts).
+  if (len >= 2 && data[0] == 0x83 && data[1] == 0x01 && pl >= 2) return true;
+
+  // Payload-only injects (no CID prefix), e.g. lab / UART: known bare opcode families.
+  if (pl >= 2 && (p[0] == 0xE9 || p[0] == 0xCD)) return true;
+  return false;
 }
 
 bool isWandCast(const uint8_t* payload, size_t plen) {
@@ -41,7 +52,7 @@ const char* classifyScanPacket(const uint8_t* data, size_t len) {
   if (isLegacyCf9bCast(p, pl)) return "WAND-CF9B";
   if (isWandIdleBeacon(p, pl)) return "WAND-IDLE";
   if (pl >= 2 && p[0] == 0xCC && p[1] == 0x03) return "PING";
-  if (pl >= 5 && (p[0] == 0xE1 || p[0] == 0xE2) && p[2] == 0xE9) return "MB+";
+  if (pl >= 4 && isMbEnvelopeByte(p[0]) && p[1] == 0x00) return "MB+";
   if (pl >= 2 && p[0] == 0xE9) return "SHOW";
   return "DISNEY";
 }
@@ -78,4 +89,3 @@ String mfrToHexFull(const uint8_t* data, size_t len, size_t maxLen) {
   if (len > maxLen) hex += "…";
   return hex;
 }
-
