@@ -71,8 +71,8 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
 
   return (
     <ScrollArea h="100%">
-      <Container size="md">
-        <Stack p="md" gap="xs" maw={960}>
+      <Container size="xl">
+        <Stack p="md" gap="xs">
           <Title order={3}>Settings</Title>
           <Text size="xs" c="dimmed" lh={1.6}>
             BLE Data packets are mapped with the <strong>Rules</strong> engine. Push rules + presets
