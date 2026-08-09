@@ -10,8 +10,10 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { ColorCell } from '../shared/ColorCell';
 import { Field } from '../shared/Field';
+import { MasterDetail } from '../shared/MasterDetail';
 import { TagChipRow } from '../shared/TagChipRow';
 import { TagEditor } from '../shared/TagEditor';
 import { TagFilterBar } from '../shared/TagFilterBar';
@@ -27,6 +29,7 @@ export function PalettesTab({ data, update }) {
   const [isNew, setIsNew] = useState(false);
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState(null);
+  const isNarrow = useMediaQuery('(max-width: 48em)');
   const saveColor = (hex) => saveColorToLibrary(data, update, hex);
 
   const listItems = ptab === 'colors' ? savedColors : [];
@@ -71,118 +74,153 @@ export function PalettesTab({ data, update }) {
     setActiveTag(null);
   };
 
-  return (
-    <Box style={{ display: 'flex', height: '100%' }}>
-      <Box
-        w={260}
-        bg="var(--surface)"
-        style={{ borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column' }}
-      >
-        <Tabs value={ptab} onChange={switchTab}>
-          <Tabs.List grow>
-            <Tabs.Tab value="colors">Colors ({savedColors.length})</Tabs.Tab>
-            <Tabs.Tab value="calibration">Calibration</Tabs.Tab>
-          </Tabs.List>
-        </Tabs>
-        {listItems.length > 0 && (
-          <TagFilterBar items={listItems} search={search} onSearchChange={setSearch}
-            activeTag={activeTag} onActiveTagChange={setActiveTag} />
+  const onBack = () => {
+    setEditSc(null);
+    if (ptab === 'calibration') switchTab('colors');
+  };
+
+  const showDetail = ptab === 'calibration' || !!editSc;
+
+  const sidebar = (
+    <Box
+      w="100%"
+      h="100%"
+      bg="var(--surface)"
+      style={{ borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}
+    >
+      <Tabs value={ptab} onChange={switchTab}>
+        <Tabs.List grow>
+          <Tabs.Tab value="colors">Colors ({savedColors.length})</Tabs.Tab>
+          <Tabs.Tab value="calibration">Calibration</Tabs.Tab>
+        </Tabs.List>
+      </Tabs>
+      {listItems.length > 0 && (
+        <TagFilterBar items={listItems} search={search} onSearchChange={setSearch}
+          activeTag={activeTag} onActiveTagChange={setActiveTag} />
+      )}
+      <ScrollArea style={{ flex: 1 }} p="sm">
+        {ptab === 'calibration' && (
+          <Text size="xs" c="dimmed" lh={1.5}>
+            Tune per-channel RGB curves for BLE-extracted colors. Push via Board sync.
+          </Text>
         )}
-        <ScrollArea style={{ flex: 1 }} p="sm">
-          {ptab === 'calibration' && (
-            <Text size="xs" c="dimmed" lh={1.5}>
-              Tune per-channel RGB curves for BLE-extracted colors. Push via Board sync.
-            </Text>
-          )}
-          {ptab === 'colors' && (
-            <Stack gap="sm">
-              <AppButton variant="primary" fullWidth size="compact-sm" onClick={() => { setEditSc(blankSavedColor()); setIsNew(true); }}>
-                + New Saved Color
-              </AppButton>
-              {savedColors.length === 0 && (
-                <Text size="xs" c="dimmed">No saved colors yet — save from any color picker or add one here.</Text>
-              )}
-              {savedColors.length > 0 && filteredList.length === 0 && (
-                <Text size="xs" c="dimmed">No matches</Text>
-              )}
-              {filteredList.map(c => (
-                <AppCard
-                  key={c.id}
-                  p="sm"
-                  style={{
-                    cursor: 'pointer',
-                    background: editSc?.id === c.id ? 'var(--primary-dim)' : 'var(--surface)',
-                  }}
-                  onClick={() => { setEditSc({ ...c }); setIsNew(false); }}
-                >
-                  <Group gap="sm" wrap="nowrap" align="flex-start">
-                    <Box
-                      w={28}
-                      h={28}
-                      style={{
-                        borderRadius: 6,
-                        background: c.hex,
-                        border: '1px solid var(--border)',
-                        flexShrink: 0,
-                      }}
-                    />
-                    <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                      <Text size="sm" fw={600}>{c.name}</Text>
-                      <TagChipRow tags={c.tags} />
-                      <Text size="xs" c="dimmed" ff="monospace">{c.hex}</Text>
-                    </Stack>
-                    <ActionIcon
-                      variant="default"
-                      size="sm"
-                      title="Duplicate"
-                      onClick={e => { e.stopPropagation(); duplicateSc(c); }}
-                    >
-                      ⧉
-                    </ActionIcon>
-                  </Group>
-                </AppCard>
-              ))}
-            </Stack>
-          )}
-        </ScrollArea>
-      </Box>
-
-      {ptab === 'calibration' && (
-        <ScrollArea style={{ flex: 1 }}>
-          <ColorCalibrationPanel data={data} update={update} />
-        </ScrollArea>
-      )}
-
-      {editSc && ptab === 'colors' && (
-        <ScrollArea style={{ flex: 1 }}>
-          <Stack p="lg" gap="sm">
-            <Group justify="space-between" align="center">
-              <Title order={4}>{isNew ? 'New Saved Color' : 'Edit Saved Color'}</Title>
-              <Group gap="xs">
-                {!isNew && (
-                  <AppButton variant="default" size="compact-sm" onClick={() => duplicateSc(editSc)}>Duplicate</AppButton>
-                )}
-                {!isNew && (
-                  <AppButton variant="danger" size="compact-sm" onClick={() => delSc(editSc.id)}>Delete</AppButton>
-                )}
-              </Group>
-            </Group>
-            <Field label="Name">
-              <TextInput
-                value={editSc.name}
-                onChange={e => setEditSc({ ...editSc, name: e.target.value })}
-                placeholder="e.g. Castle purple"
-                autoFocus
-              />
-            </Field>
-            <TagEditor tags={editSc.tags || []} onChange={tags => setEditSc({ ...editSc, tags })} />
-            <ColorCell color={editSc.hex} savedColors={savedColors}
-              onChange={hex => setEditSc({ ...editSc, hex })}
-              onSaveColor={saveColor} />
-            <AppButton variant="primary" mt="sm" onClick={saveSc}>Save Color</AppButton>
+        {ptab === 'colors' && (
+          <Stack gap="sm">
+            <AppButton variant="primary" fullWidth size="compact-sm" onClick={() => { setEditSc(blankSavedColor()); setIsNew(true); }}>
+              + New Saved Color
+            </AppButton>
+            {savedColors.length === 0 && (
+              <Text size="xs" c="dimmed">No saved colors yet — save from any color picker or add one here.</Text>
+            )}
+            {savedColors.length > 0 && filteredList.length === 0 && (
+              <Text size="xs" c="dimmed">No matches</Text>
+            )}
+            {filteredList.map(c => (
+              <AppCard
+                key={c.id}
+                p="sm"
+                style={{
+                  cursor: 'pointer',
+                  background: editSc?.id === c.id ? 'var(--primary-dim)' : 'var(--surface)',
+                }}
+                onClick={() => { setEditSc({ ...c }); setIsNew(false); }}
+              >
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Box
+                    w={28}
+                    h={28}
+                    style={{
+                      borderRadius: 6,
+                      background: c.hex,
+                      border: '1px solid var(--border)',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+                    <Text size="sm" fw={600}>{c.name}</Text>
+                    <TagChipRow tags={c.tags} />
+                    <Text size="xs" c="dimmed" ff="monospace">{c.hex}</Text>
+                  </Stack>
+                  <ActionIcon
+                    variant="default"
+                    size="sm"
+                    title="Duplicate"
+                    onClick={e => { e.stopPropagation(); duplicateSc(c); }}
+                  >
+                    ⧉
+                  </ActionIcon>
+                </Group>
+              </AppCard>
+            ))}
           </Stack>
-        </ScrollArea>
-      )}
+        )}
+      </ScrollArea>
     </Box>
+  );
+
+  let detail = (
+    <Stack h="100%" align="center" justify="center">
+      <Text size="sm" c="dimmed">Select a color or open Calibration</Text>
+    </Stack>
+  );
+
+  if (ptab === 'calibration') {
+    detail = (
+      <ScrollArea style={{ flex: 1, height: '100%', minWidth: 0 }}>
+        <Stack p="md" gap="sm">
+          {isNarrow && (
+            <AppButton variant="default" size="compact-sm" onClick={onBack} style={{ alignSelf: 'flex-start' }}>
+              ‹ Back to list
+            </AppButton>
+          )}
+          <ColorCalibrationPanel data={data} update={update} />
+        </Stack>
+      </ScrollArea>
+    );
+  } else if (editSc) {
+    detail = (
+      <ScrollArea style={{ flex: 1, height: '100%', minWidth: 0 }}>
+        <Stack p="lg" gap="sm">
+          {isNarrow && (
+            <AppButton variant="default" size="compact-sm" onClick={onBack} style={{ alignSelf: 'flex-start' }}>
+              ‹ Back to list
+            </AppButton>
+          )}
+          <Group justify="space-between" align="center" wrap="wrap">
+            <Title order={4}>{isNew ? 'New Saved Color' : 'Edit Saved Color'}</Title>
+            <Group gap="xs">
+              {!isNew && (
+                <AppButton variant="default" size="compact-sm" onClick={() => duplicateSc(editSc)}>Duplicate</AppButton>
+              )}
+              {!isNew && (
+                <AppButton variant="danger" size="compact-sm" onClick={() => delSc(editSc.id)}>Delete</AppButton>
+              )}
+            </Group>
+          </Group>
+          <Field label="Name">
+            <TextInput
+              value={editSc.name}
+              onChange={e => setEditSc({ ...editSc, name: e.target.value })}
+              placeholder="e.g. Castle purple"
+              autoFocus
+            />
+          </Field>
+          <TagEditor tags={editSc.tags || []} onChange={tags => setEditSc({ ...editSc, tags })} />
+          <ColorCell color={editSc.hex} savedColors={savedColors}
+            onChange={hex => setEditSc({ ...editSc, hex })}
+            onSaveColor={saveColor} />
+          <AppButton variant="primary" mt="sm" onClick={saveSc}>Save Color</AppButton>
+        </Stack>
+      </ScrollArea>
+    );
+  }
+
+  return (
+    <MasterDetail
+      sidebarWidth={260}
+      showDetail={showDetail}
+      sidebar={sidebar}
+      detail={detail}
+    />
   );
 }

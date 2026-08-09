@@ -1,4 +1,5 @@
 import {
+  Box,
   Burger,
   Button,
   Container,
@@ -7,6 +8,7 @@ import {
   FileButton,
   Group,
   ScrollArea,
+  Stack,
   Tabs,
   Title,
 } from '@mantine/core';
@@ -15,13 +17,45 @@ import classes from './HeaderTabs.module.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { APP_TABS, tabFromPathname } from '../../lib/routes';
 
-export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardSync, profiles }) {
+export function HeaderTabs({
+  openProfiles,
+  exportJSON,
+  importJSON,
+  setShowBoardSync,
+  profiles,
+}) {
   const [opened, { toggle, close }] = useDisclosure(false);
 
   const location = useLocation();
   const navigate = useNavigate();
   const tab = tabFromPathname(location.pathname);
   const isNarrow = useMediaQuery('(max-width: 48em)');
+
+  const openShotBox = () => {
+    close();
+    navigate('/shotbox');
+  };
+
+  const headerActions = (
+    <>
+      <Button size="xs" onClick={() => { close(); setShowBoardSync(true); }}>
+        📡 Board
+      </Button>
+      <Button size="xs" onClick={() => { close(); openProfiles(); }}>
+        🗂 {Object.keys(profiles).length > 0 ? `(${Object.keys(profiles).length})` : ''}
+      </Button>
+      <FileButton onChange={(f) => { close(); importJSON(f); }} accept=".json">
+        {(props) => (
+          <Button size="xs" {...props}>
+            📥 Import
+          </Button>
+        )}
+      </FileButton>
+      <Button size="xs" onClick={() => { close(); exportJSON(); }} color="lime">
+        📤 Export
+      </Button>
+    </>
+  );
 
   return (
     <div className={classes.header}>
@@ -34,28 +68,13 @@ export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardS
           <Burger
             opened={opened}
             onClick={toggle}
-            hiddenFrom="xs"
+            style={{ display: isNarrow ? 'block' : 'none' }}
             size="sm"
             aria-label="Toggle navigation"
           />
 
-          <Group visibleFrom="sm" gap="xs">
-            <Button size="xs" onClick={() => setShowBoardSync(true)}>
-              📡 Board
-            </Button>
-            <Button size="xs" onClick={openProfiles}>
-              🗂 {Object.keys(profiles).length > 0 ? `(${Object.keys(profiles).length})` : ''}
-            </Button>
-            <FileButton onChange={importJSON} accept=".json">
-              {(props) => (
-                <Button size="xs" {...props}>
-                  📥
-                </Button>
-              )}
-            </FileButton>
-            <Button size="xs" onClick={exportJSON} color="lime">
-              📤
-            </Button>
+          <Group gap="xs" style={{ display: isNarrow ? 'none' : 'flex' }}>
+            {headerActions}
           </Group>
         </Group>
       </Container>
@@ -63,7 +82,7 @@ export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardS
         <Tabs
           defaultValue="Home"
           variant="outline"
-          visibleFrom="sm"
+          style={{ display: isNarrow ? 'none' : 'block' }}
           value={tab}
           classNames={{
             root: classes.tabs,
@@ -87,24 +106,33 @@ export function HeaderTabs({ openProfiles, exportJSON, importJSON, setShowBoardS
         size="100%"
         padding="md"
         title="Navigation"
-        hiddenFrom="xs"
         zIndex={1000000}
       >
-        <ScrollArea h="calc(100vh - 80px" mx="-md">
+        <ScrollArea h="calc(100vh - 80px)" mx="-md">
           <Divider my="sm" />
-          {APP_TABS.map((tab) => (
+          <Box px="md" mb="sm">
+            <Button fullWidth variant="light" onClick={openShotBox}>
+              🎯 Shot Box
+            </Button>
+          </Box>
+          {APP_TABS.map((t) => (
             <a
               href="#"
-              key={tab}
+              key={t.path}
               className={classes.drawerLink}
               onClick={(event) => {
                 event.preventDefault();
-                navigate(tab.path);
+                navigate(t.path);
+                close();
               }}
             >
-              {tab}
+              {t.icon} {t.label}
             </a>
           ))}
+          <Divider my="sm" />
+          <Stack gap="xs" px="md" pb="md">
+            {headerActions}
+          </Stack>
         </ScrollArea>
       </Drawer>
     </div>

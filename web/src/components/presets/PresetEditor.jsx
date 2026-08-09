@@ -1,4 +1,5 @@
 import { Group, Paper, ScrollArea, Stack, Tabs, Text, TextInput } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { AppButton } from '../shared/styles';
 import { PRESET_SUB_TABS } from './presetModel';
 import { PresetColorsTab } from './tabs/PresetColorsTab';
@@ -35,20 +36,28 @@ export function PresetEditor({
   onCancel,
   onSave,
   onOpenMapEditor,
+  onBack,
 }) {
+  const isNarrow = useMediaQuery('(max-width: 48em)');
+
   return (
-    <ScrollArea style={{ flex: 1 }}>
+    <ScrollArea style={{ flex: 1, height: '100%', minWidth: 0 }}>
       <Stack p="lg" gap="sm">
-        <Group justify="space-between" align="center" wrap="nowrap">
+        {isNarrow && onBack && (
+          <AppButton variant="default" size="compact-sm" onClick={onBack} style={{ alignSelf: 'flex-start' }}>
+            ‹ Back to list
+          </AppButton>
+        )}
+        <Group justify="space-between" align="center" wrap="wrap">
           <TextInput
             value={sel.name}
             onChange={(e) => setSel({ ...sel, name: e.target.value })}
             placeholder="Preset name"
             size="md"
             fw={600}
-            style={{ flex: 1, marginRight: 12 }}
+            style={{ flex: 1, marginRight: 12, minWidth: 0 }}
           />
-          <Group gap="xs" wrap="nowrap">
+          <Group gap="xs" wrap="wrap">
             <AppButton
               type="button"
               variant="default"

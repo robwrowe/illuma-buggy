@@ -157,6 +157,7 @@ bool applyPreset(const String& id) {
   serializeJson(wledDoc, wledJson);
   if (wledJson.length() == 0) return false;
   String payload = preparePresetApplyPayload(wledJson);
+
   // Single atomic POST — separate disable pass causes black flash between zone presets.
   bool ok = sendToWLEDForBleSolid(payload);
   if (ok) {

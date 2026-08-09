@@ -1,4 +1,4 @@
-import { BLE_SEND_DELAY_MS, webBleBoard } from './ble/chunking';
+import { BLE_SEND_DELAY_MS, isGattDisconnectedError, webBleBoard } from './ble/chunking';
 import { compactMbPayloadForBle, normalizeMbMapping, normalizePreset } from './ble/mbMapping';
 import { DEFAULT_DATA, normalizeColorCalibration } from './utils';
 
@@ -53,6 +53,12 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
       });
     } catch (e) {
       const detail = e?.message || String(e);
+      if (isGattDisconnectedError(e)) {
+        throw new Error(
+          'BLE Data rules push failed: disconnected mid-push (likely MTU/radio contention). ' +
+          'Reconnect, then retry the full rules push — partial resume is not supported.',
+        );
+      }
       throw new Error(`BLE Data rules push failed: ${detail}`);
     }
     sent.push(`BLE Data rules (${(mb.rules || []).length})`);

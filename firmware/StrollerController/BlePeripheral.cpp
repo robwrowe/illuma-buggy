@@ -3,6 +3,13 @@
 #include "BleCommandHandler.h"
 #include "Config.h"
 #include <esp_heap_caps.h>
+// Peripheral-initiated ATT MTU exchange (Chrome Web Bluetooth never requests it).
+// NimBLE-Arduino 2.5.0 has no NimBLEServer::updateMTU(); use the core GATT API.
+#ifdef USING_NIMBLE_ARDUINO_HEADERS
+#include "nimble/nimble/host/include/host/ble_gatt.h"
+#else
+#include "host/ble_gatt.h"
+#endif
 
 void resetCmdChunkBuffer() {
   if (cmdChunkBuffer) {
@@ -236,16 +243,28 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     bleConnected = true;
     // Prefer wider interval + longer supervision for field radio contention.
     server->updateConnParams(connInfo.getConnHandle(), 24, 40, 0, 400);
-    Serial.printf("[BLE] App connected, MTU=%u\n", connInfo.getMTU());
+    // Web Bluetooth (Chrome) does not request a larger MTU on its own — the
+    // peripheral must initiate the exchange or the link stays at the 23-byte
+    // default, which turns every large chunk write into many link-layer
+    // fragments and risks a supervision-timeout disconnect under scan contention.
+    int rc = ble_gattc_exchange_mtu(connInfo.getConnHandle(), nullptr, nullptr);
+    if (rc != 0) {
+      Serial.printf("[BLE] App connected, MTU=%u (exchange request failed rc=%d)\n",
+                    connInfo.getMTU(), rc);
+    } else {
+      Serial.printf("[BLE] App connected, MTU=%u (requesting exchange)\n", connInfo.getMTU());
+    }
+  }
+  void onMTUChange(uint16_t MTU, NimBLEConnInfo& connInfo) override {
+    Serial.printf("[BLE] MTU negotiated: %u (conn=%u)\n", MTU, connInfo.getConnHandle());
   }
   void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
     (void)server;
-    (void)connInfo;
-    (void)reason;
+    Serial.printf("[BLE] App disconnected (reason=0x%02x, lastMTU=%u) — restarting advertising\n",
+                  reason, connInfo.getMTU());
     bleConnected = false;
     resetCmdChunkBuffer();
     drainBleCmdQueue();
-    Serial.println("[BLE] App disconnected — restarting advertising");
     NimBLEDevice::startAdvertising();
   }
 };

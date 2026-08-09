@@ -1395,35 +1395,43 @@ export function normalizeConditionNode(raw) {
     }
     if (type === 'byte') {
       const op = BYTE_OPS.has(raw.op) ? raw.op : 'eq';
-      return {
+      const node = {
         type: 'byte',
         offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
-        anchor: normalizeAnchor(raw.anchor),
         op,
         value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
         mask: Number.isFinite(raw.mask) ? Number(raw.mask) & 0xff : 0xff,
       };
+      const anchor = normalizeAnchor(raw.anchor);
+      if (anchor) node.anchor = anchor;
+      return node;
     }
     if (type === 'bits') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
-      return {
+      const node = {
         type: 'bits',
         offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
-        anchor: normalizeAnchor(raw.anchor),
         bitStart: Number.isFinite(raw.bitStart) ? Math.min(7, Math.max(0, Number(raw.bitStart))) : 0,
         bitCount: Number.isFinite(raw.bitCount) ? Math.min(32, Math.max(1, Number(raw.bitCount))) : 1,
         op,
         value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
       };
+      const anchor = normalizeAnchor(raw.anchor);
+      if (anchor) node.anchor = anchor;
+      return node;
     }
     if (type === 'byteCompare') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
-      const normSide = (side) => ({
-        offset: Number.isFinite(side?.offset) ? Math.max(0, Number(side.offset)) : 0,
-        anchor: normalizeAnchor(side?.anchor),
-        bitStart: Number.isFinite(side?.bitStart) ? Math.min(7, Math.max(0, Number(side.bitStart))) : 0,
-        bitCount: Number.isFinite(side?.bitCount) ? Math.min(32, Math.max(1, Number(side.bitCount))) : 8,
-      });
+      const normSide = (side) => {
+        const s = {
+          offset: Number.isFinite(side?.offset) ? Math.max(0, Number(side.offset)) : 0,
+          bitStart: Number.isFinite(side?.bitStart) ? Math.min(7, Math.max(0, Number(side.bitStart))) : 0,
+          bitCount: Number.isFinite(side?.bitCount) ? Math.min(32, Math.max(1, Number(side.bitCount))) : 8,
+        };
+        const anchor = normalizeAnchor(side?.anchor);
+        if (anchor) s.anchor = anchor;
+        return s;
+      };
       return {
         type: 'byteCompare',
         left: normSide(raw.left),
@@ -1512,10 +1520,11 @@ export function normalizeRuleTiming(raw) {
     const n = Number(raw.fadeOverrideMs);
     if (Number.isFinite(n) && n >= 0) fadeOverrideMs = n;
   }
+  const timingAnchor = normalizeAnchor(raw.anchor);
   return {
     enabled: !!raw.enabled,
     offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : d.offset,
-    anchor: normalizeAnchor(raw.anchor),
+    ...(timingAnchor ? { anchor: timingAnchor } : {}),
     ...normalizeAnchorExtras(raw),
     cooldownSec: Number.isFinite(raw.cooldownSec) ? Math.max(0, Number(raw.cooldownSec)) : d.cooldownSec,
     cooldownResetMode: COOLDOWN_RESET_MODES.has(raw.cooldownResetMode) ? raw.cooldownResetMode : d.cooldownResetMode,
@@ -1756,7 +1765,21 @@ export function compactRule(rule) {
   if (Array.isArray(rule.extract)) {
     next.extract = rule.extract.map(compactExtractEntry);
   }
-  return next;
+  // Drop JSON null anchors — firmware must use absolute offset; `"anchor":null`
+  // has historically been mis-read as an empty object on some ArduinoJson paths.
+  return stripNullAnchors(next);
+}
+
+/** Deep-delete `anchor: null` so BLE/NVS never stores a null anchor object. */
+function stripNullAnchors(value) {
+  if (Array.isArray(value)) return value.map(stripNullAnchors);
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (k === 'anchor' && v == null) continue;
+    out[k] = v != null && typeof v === 'object' ? stripNullAnchors(v) : v;
+  }
+  return out;
 }
 
 /**

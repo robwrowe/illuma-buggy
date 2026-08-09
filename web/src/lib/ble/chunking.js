@@ -43,9 +43,66 @@ export const BLE_NOTIFY_CHAR_UUID = '12345678-1234-1234-1234-123456789abe';
 
 export const BLE_SEND_DELAY_MS = 120;
 
-export const BLE_MAX_WRITE_BYTES = 512;
+// Conservative write size: safe under a negotiated 247-byte MTU (JSON envelope
+// overhead included), and far less likely to fragment into a supervision-timeout
+// disconnect when Chrome leaves ATT MTU at the 23-byte default.
+export const BLE_MAX_WRITE_BYTES = 180;
 
-export const BLE_CHUNK_INTER_MS = 25;
+export const BLE_CHUNK_INTER_MS = 60;
+
+export const BLE_CHUNK_WRITE_MAX_RETRIES = 3;
+
+export const BLE_CHUNK_WRITE_RETRY_BASE_MS = 60;
+
+export function isGattDisconnectedError(err) {
+  const msg = String(err?.message || err || '');
+  return /GATT Server is disconnected|Device is disconnected|gattserverdisconnected|reconnect first|disconnected mid-push/i.test(msg);
+}
+
+/**
+ * Retry a single GATT write with exponential backoff.
+ * Prefer write-without-response for bulk chunk floods: write-with-response waits for an
+ * ATT ACK that is delayed until the peripheral's onWrite callback returns, and a heavy
+ * JSON parse there (plus WiFi coexistence) commonly ends with the central dropping the
+ * link — which then surfaces as "GATT Server is disconnected" on the next write.
+ * Disconnect errors are not retried (reconnect first).
+ */
+async function writeWithRetry(
+  characteristic,
+  bytes,
+  {
+    maxRetries = BLE_CHUNK_WRITE_MAX_RETRIES,
+    withoutResponse = false,
+  } = {},
+) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (!characteristic?.service?.device?.gatt?.connected) {
+        throw new Error(
+          'GATT Server is disconnected. Cannot perform GATT operations. (Re)connect first with `device.gatt.connect`.',
+        );
+      }
+      if (withoutResponse && typeof characteristic.writeValueWithoutResponse === 'function') {
+        await characteristic.writeValueWithoutResponse(bytes);
+      } else {
+        await characteristic.writeValueWithResponse(bytes);
+      }
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (isGattDisconnectedError(e)) break;
+      if (attempt === maxRetries) break;
+      const backoff = BLE_CHUNK_WRITE_RETRY_BASE_MS * Math.pow(2, attempt);
+      console.warn(
+        `[BLE] chunk write failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${backoff}ms:`,
+        lastErr?.message || lastErr,
+      );
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
 
 export function splitCommandForBleChunks(jsonStr) {
   const pieces = [];
@@ -66,7 +123,11 @@ export function splitCommandForBleChunks(jsonStr) {
         hi = mid - 1;
       }
     }
-    if (best < 1) throw new Error('BLE command too large to chunk (single fragment exceeds 512 bytes)');
+    if (best < 1) {
+      throw new Error(
+        `BLE command too large to chunk (single fragment exceeds ${BLE_MAX_WRITE_BYTES} bytes)`,
+      );
+    }
     pieces.push(jsonStr.slice(offset, offset + best));
     offset += best;
   }
@@ -258,7 +319,7 @@ export class WebBleBoard {
   async _writeJson(jsonStr) {
     const fullBytes = new TextEncoder().encode(jsonStr);
     if (fullBytes.length <= BLE_MAX_WRITE_BYTES) {
-      await this.cmdChar.writeValueWithResponse(fullBytes);
+      await writeWithRetry(this.cmdChar, fullBytes);
       return 1;
     }
     const pieces = splitCommandForBleChunks(jsonStr);
@@ -267,6 +328,11 @@ export class WebBleBoard {
     this._chunkFailListeners.add(onFail);
     try {
       for (let seq = 0; seq < pieces.length; seq++) {
+        if (!this.device?.gatt?.connected || !this.cmdChar) {
+          throw new Error(
+            'GATT Server is disconnected mid-push (likely MTU/radio contention). Reconnect and retry the full push.',
+          );
+        }
         if (syncFailed) {
           const reason = syncFailed.reason
             || `expected ${syncFailed.expectedSeq}, got ${syncFailed.gotSeq}`;
@@ -281,7 +347,19 @@ export class WebBleBoard {
           data: pieces[seq],
         };
         const chunkBytes = new TextEncoder().encode(JSON.stringify(chunk));
-        await this.cmdChar.writeValueWithResponse(chunkBytes);
+        // Bulk fragments: WRITE_NR so the browser doesn't sit on ATT Write
+        // Responses while the peripheral's onWrite is still parsing JSON.
+        try {
+          await writeWithRetry(this.cmdChar, chunkBytes, { withoutResponse: true });
+        } catch (e) {
+          if (isGattDisconnectedError(e)) {
+            throw new Error(
+              `GATT Server is disconnected mid-push at chunk ${seq + 1}/${pieces.length} ` +
+              '(likely MTU/radio contention). Reconnect and retry the full push.',
+            );
+          }
+          throw e;
+        }
         if (seq < pieces.length - 1) {
           await new Promise(r => setTimeout(r, BLE_CHUNK_INTER_MS));
         } else {

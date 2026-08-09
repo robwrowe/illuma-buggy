@@ -373,6 +373,17 @@ function compactExtractTargets(targets: unknown): unknown[] | undefined {
   return out.length ? out : undefined;
 }
 
+function stripNullAnchors(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNullAnchors);
+  if (!value || typeof value !== 'object') return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (k === 'anchor' && v == null) continue;
+    out[k] = v != null && typeof v === 'object' ? stripNullAnchors(v) : v;
+  }
+  return out;
+}
+
 function compactRule(rule: unknown): unknown {
   if (!rule || typeof rule !== 'object') return rule;
   const r = rule as Record<string, unknown>;
@@ -389,7 +400,7 @@ function compactRule(rule: unknown): unknown {
       return targets ? { ...rest, targets } : { ...rest };
     });
   }
-  return next;
+  return stripNullAnchors(next);
 }
 
 /**

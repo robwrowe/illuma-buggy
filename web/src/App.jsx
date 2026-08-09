@@ -11,6 +11,7 @@ import { BrightnessTab } from './components/brightness/BrightnessTab';
 import { MapZonesTab } from './components/map/MapZonesTab';
 import { PalettesTab } from './components/palettes/PalettesTab';
 import { PresetsTab } from './components/presets/PresetsTab';
+import { ShotBoxPage } from './components/presets/ShotBoxPage';
 import { SettingsTab } from './components/settings/SettingsTab';
 import { ShowsTab } from './components/shows/ShowsTab';
 import { LS_KEY, LS_PROFILES, migrateConfig } from './lib/config';
@@ -165,6 +166,7 @@ export function App() {
               element={<MapZonesTab data={data} update={update} mapsReady={mapsReady} />}
             />
             <Route path="/presets" element={<PresetsTab data={data} update={update} />} />
+            <Route path="/shotbox" element={<ShotBoxPage data={data} />} />
             <Route path="/palettes" element={<PalettesTab data={data} update={update} />} />
             <Route path="/shows" element={<ShowsTab data={data} update={update} />} />
             <Route path="/brightness" element={<BrightnessTab data={data} update={update} />} />
