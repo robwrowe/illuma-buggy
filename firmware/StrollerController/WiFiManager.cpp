@@ -33,6 +33,8 @@ void connectToWLED(bool force) {
     // Do NOT call snapshotWledBaseline / ensureWledPowerOn here — this runs on a
     // FreeRTOS WiFi task. Concurrent HTTPClient with loop() hangs / races.
     // Main loop picks up the newly-connected edge and snapshots there.
+    Serial.printf("[Diag] WiFi (re)connected — forcing baseline re-snapshot. currentOverride=%d mbActiveRuleId=%s\n",
+                  (int)currentOverride, mbActiveRuleId[0] ? mbActiveRuleId : "(none)");
     wledWasConnected = false;  // force main-loop one-shot snapshot
   } else {
     Serial.println("\n[WiFi] Failed — will retry");
