@@ -103,7 +103,7 @@ static int hexNibble(char c) {
 // ── Anchor-relative offset resolution ───────────────────────────────────
 
 // Returns -1 (not found) or a valid index < plen.
-static int resolveAnchorOffset(const uint8_t* payload, size_t plen, const JsonObject& anchor) {
+static int resolveAnchorOffset(const uint8_t* payload, size_t plen, JsonObjectConst anchor) {
   if (anchor.isNull() || !payload) return -1;
   const char* byteHex = anchor["byte"] | "";
   if (!byteHex || strlen(byteHex) < 2) return -1;
@@ -136,9 +136,10 @@ static int resolveAnchorOffset(const uint8_t* payload, size_t plen, const JsonOb
 // True only for a real anchor object with a 2-char hex marker.
 // JSON null, missing key, or empty `{}` must NOT be treated as anchors — those
 // fall through to absolute `offset` (editor stores `"anchor": null` on fixed leaves).
-static bool isUsableAnchorObject(JsonVariantConst av, JsonObject& outAnchor) {
-  if (!av.is<JsonObject>()) return false;
-  outAnchor = av.as<JsonObject>();
+// Uses JsonObjectConst: node["anchor"] on a const JsonObject is JsonVariantConst,
+// which cannot convert to mutable JsonObject (ArduinoJson InvalidConversion).
+static bool isUsableAnchorObject(JsonVariantConst av, JsonObjectConst& outAnchor) {
+  outAnchor = av.as<JsonObjectConst>();
   if (outAnchor.isNull()) return false;
   const char* byteHex = outAnchor["byte"] | "";
   return byteHex && strlen(byteHex) >= 2;
@@ -150,7 +151,7 @@ static bool isUsableAnchorObject(JsonVariantConst av, JsonObject& outAnchor) {
 // defaults; if node["requireAnchor"] is true, findMatchingRule skips the rule.
 static int resolveOffsetOrAnchor(const uint8_t* payload, size_t plen, const JsonObject& node,
                                  int fallbackOffset) {
-  JsonObject anchor;
+  JsonObjectConst anchor;
   if (isUsableAnchorObject(node["anchor"], anchor)) {
     return resolveAnchorOffset(payload, plen, anchor);
   }
@@ -161,7 +162,7 @@ static bool nodeRequiresUnresolvedAnchor(const uint8_t* payload, size_t plen,
                                          const JsonObject& node) {
   if (node.isNull()) return false;
   if (!(node["requireAnchor"] | false)) return false;
-  JsonObject anchor;
+  JsonObjectConst anchor;
   if (!isUsableAnchorObject(node["anchor"], anchor)) return false;
   return resolveAnchorOffset(payload, plen, anchor) < 0;
 }
