@@ -43,11 +43,6 @@ void setOverride(OverrideSource src) {
 }
 
 void saveWledStateForOverride() {
-  Serial.printf("[Diag] saveWledStateForOverride: alreadySaved=%d liveLen=%u baselineLen=%u currentOverride=%d\n",
-                savedWledState.length() > 0,
-                (unsigned)liveWledState.length(),
-                (unsigned)baselineWledState.length(),
-                (int)currentOverride);
   if (savedWledState.length() > 0) return;
 
   if (savedRestoreOverride == NONE && savedRestorePresetId.length() == 0) {
@@ -354,12 +349,6 @@ void clearOverride() {
   savedRestoreOverride = NONE;
 
   Serial.println("[Override] Cleared");
-  Serial.printf("[Diag] clearOverride restore inputs: snapshotLen=%u presetId=%s baselineLen=%u dipToBlack=%d fadeMs=%lu\n",
-                (unsigned)snapshot.length(),
-                presetId.length() > 0 ? presetId.c_str() : "(none)",
-                (unsigned)baselineWledState.length(),
-                (int)dipToBlack,
-                fadeMs);
 
   bool restored = false;
   bool pending = false;

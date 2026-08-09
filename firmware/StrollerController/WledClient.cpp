@@ -154,8 +154,6 @@ void snapshotWledBaseline() {
 
   Serial.printf("[WLED] Baseline snapshot (%u bytes, bri=%d)\n",
                 (unsigned)baselineWledState.length(), currentBrightness);
-  Serial.printf("[Diag] Baseline snapshot content (first 200 chars): %s\n",
-                baselineWledState.substring(0, 200).c_str());
 }
 
 void loadWledBaselineFromNvs() {

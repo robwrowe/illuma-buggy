@@ -283,8 +283,6 @@ void loop() {
   } else if (!wledWasConnected) {
     wledWasConnected = true;
     delay(300);  // let AP/WLED settle after STA join
-    Serial.printf("[Diag] snapshotWledBaseline about to run. currentOverride=%d mbActiveRuleId=%s\n",
-                  (int)currentOverride, mbActiveRuleId[0] ? mbActiveRuleId : "(none)");
     snapshotWledBaseline();
     ensureWledPowerOn();
   } else {
