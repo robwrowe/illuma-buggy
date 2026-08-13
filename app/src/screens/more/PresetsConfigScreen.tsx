@@ -30,6 +30,7 @@ export default function PresetsConfigScreen() {
     overrideKillOnZone, setOverrideKillOnZone,
     presetApplyMode, setPresetApplyMode,
     autoWledDirect, setAutoWledDirect,
+    alwaysAttemptWledDirect, setAlwaysAttemptWledDirect,
     recallState, setRecallState, saveToStorage,
   } = useAppStore();
   const updateOverride = (value: boolean) => {
@@ -43,6 +44,10 @@ export default function PresetsConfigScreen() {
   };
   const updateAutoWledDirect = (value: boolean) => {
     setAutoWledDirect(value);
+    saveToStorage();
+  };
+  const updateAlwaysAttemptWledDirect = (value: boolean) => {
+    setAlwaysAttemptWledDirect(value);
     saveToStorage();
   };
   const updateRecall = (key: keyof RecallState, value: RecallValue) => {
@@ -91,6 +96,22 @@ export default function PresetsConfigScreen() {
           <Switch
             value={autoWledDirect}
             onValueChange={updateAutoWledDirect}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
+        </View>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Always attempt direct WLED first</Text>
+            <Text style={s.rowHint}>
+              Skip the reachability check and try direct WLED before BLE — useful when
+              the phone is hosting the StrollerNet hotspot, where reachability can't
+              always be confirmed in advance. Falls back to BLE automatically if it fails.
+            </Text>
+          </View>
+          <Switch
+            value={alwaysAttemptWledDirect}
+            onValueChange={updateAlwaysAttemptWledDirect}
             trackColor={{ false: colors.borderFocus, true: colors.primary }}
             thumbColor="#fff"
           />
