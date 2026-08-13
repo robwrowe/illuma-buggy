@@ -1,7 +1,8 @@
 /**
  * Direct phone → WLED HTTP client for zone preset applies. Bypasses BLE + logic board
- * entirely. Only viable when phone WiFi is joined to the GLEDOPTO AP (StrollerNet),
- * which is always true when the phone is hosting the hotspot GLEDOPTO uses.
+ * entirely. Routing uses `isWledReachable()` (HTTP probe) rather than SSID matching —
+ * works whether the phone joined StrollerNet or is hosting the hotspot GLEDOPTO joins.
+ * `isOnWledNetwork()` remains for UI "on StrollerNet" display only.
  */
 
 import NetInfo from '@react-native-community/netinfo';
@@ -10,6 +11,11 @@ import type { Preset, RecallState } from '../stores/store';
 import type { CustomSegmentLayout, SharedSegmentMap } from './segmentLayouts';
 
 const FETCH_TIMEOUT_MS = 2500;
+const PROBE_TIMEOUT_MS = 700;
+const PROBE_CACHE_MS = 12_000;
+
+let lastProbeAt = 0;
+let lastProbeResult = false;
 
 /** Current WiFi SSID the phone is joined to, or null if not on WiFi / unavailable. */
 export async function getCurrentWifiSsid(): Promise<string | null> {
@@ -42,6 +48,40 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
       setTimeout(() => reject(new Error('WLED request timed out')), ms),
     ),
   ]);
+}
+
+/**
+ * Best-effort check that WLED is reachable right now over whatever network
+ * path the phone currently has — hotspot-hosting, joined-AP, doesn't matter.
+ * Cached briefly so repeated zone-GPS applies don't each pay the probe cost.
+ */
+export async function isWledReachable(force = false): Promise<boolean> {
+  const now = Date.now();
+  if (!force && now - lastProbeAt < PROBE_CACHE_MS) {
+    return lastProbeResult;
+  }
+  const { wledIp, wledPort } = useAppStore.getState();
+  const host = (wledIp || '').trim();
+  if (!host) {
+    lastProbeAt = now;
+    lastProbeResult = false;
+    return false;
+  }
+  const port = wledPort || 80;
+  const url = `http://${host}:${port}/json/info`;
+  try {
+    const res = await withTimeout(fetch(url, { method: 'GET' }), PROBE_TIMEOUT_MS);
+    lastProbeResult = res.ok;
+  } catch {
+    lastProbeResult = false;
+  }
+  lastProbeAt = now;
+  return lastProbeResult;
+}
+
+/** Invalidate the cached reachability result — call after WLED IP/port changes. */
+export function invalidateWledReachabilityCache(): void {
+  lastProbeAt = 0;
 }
 
 /** POST a resolved WLED state payload directly to WLED's HTTP JSON API. */
