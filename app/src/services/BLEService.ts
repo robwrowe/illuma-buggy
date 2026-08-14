@@ -462,6 +462,12 @@ class BLEService {
   sendMbUnmatchedLogConfig(active: boolean) {
     return this.send({ type: 'mb_unmatched_log_config', active });
   }
+  sendSetField(field: string, value: unknown) {
+    return this.send({ type: 'set_field', field, value });
+  }
+  sendStatusLedMode(mode: 0 | 1 | 2) {
+    return this.sendSetField('statusLedMode', mode);
+  }
   sendBoardRole(role: 'standalone' | 'logic_board') {
     return this.send({ type: 'set_board_role', role });
   }

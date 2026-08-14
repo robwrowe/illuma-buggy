@@ -123,6 +123,7 @@ unlisted field names are rejected with `reason:"not_whitelisted"`. Current white
 | `bleEffectTransitionMs` | ulong | 0–5000 | `bleTransMs` |
 | `bleScanLogEnabled` | bool | — | `scanLog` |
 | `rulesPaused` | bool | — | `rulesPaused` |
+| `statusLedMode` | u8 | 0=normal, 1=dim (~30%), 2=off. Applied live via `writeStatusRgb()`; boot flash is raw and ignores this | `statusLedMode` |
 | `boardRole` | string | `"logic_board"` / `"dual"` / `"dual_board"` → logic board mode, anything else → standalone. Not persisted via this path — applies live via `set_board_role` logic and reboots may be required for some effects | — |
 
 Most fields listed above already have dedicated commands (`sw_config`, `mb_config`,

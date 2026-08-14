@@ -1,6 +1,11 @@
 #include "StatusLed.h"
 #include "Config.h"
 
+// 0=normal, 1=dim(~30%), 2=off. Defined unconditionally (outside the
+// HAS_STATUS_NEOPIXEL guard below) so RuntimeFields.cpp always links,
+// even on builds without the status pixel.
+uint8_t statusLedMode = 0;
+
 #if HAS_STATUS_NEOPIXEL
 
 #include "Globals.h"
@@ -25,6 +30,13 @@ static unsigned long lastToggleMs = 0;
 static bool blinkOn = false;
 
 static void writeStatusRgb(uint8_t r, uint8_t g, uint8_t b) {
+  if (statusLedMode == 2) {
+    r = 0; g = 0; b = 0;
+  } else if (statusLedMode == 1) {
+    r = (uint8_t)((uint16_t)r * 77 / 255);
+    g = (uint8_t)((uint16_t)g * 77 / 255);
+    b = (uint8_t)((uint16_t)b * 77 / 255);
+  }
   // Native HAL path — more reliable on S3 than Adafruit_NeoPixel + WiFi.
   rgbLedWrite(STATUS_LED_PIN_PRIMARY, r, g, b);
   if (STATUS_LED_PIN_ALT != STATUS_LED_PIN_PRIMARY) {
@@ -50,8 +62,11 @@ static LedState computeState() {
 
 void statusLedInit() {
   // Hard-code 38 for DevKitC-1 v1.3 — don't trust PIN_RGB_LED (core defaults to 48).
+  // Boot flash is raw (bypasses statusLedMode) so there's always a visible indicator.
   rgbLedWrite(38, 0, 255, 255);
-  writeStatusRgb(0, 255, 255);
+  if (STATUS_LED_PIN_ALT != 38) {
+    rgbLedWrite(STATUS_LED_PIN_ALT, 0, 255, 255);
+  }
   Serial.printf("[StatusLed] rgbLedWrite GPIO %u + %u (v1.3 LED = 38)\n",
                 (unsigned)STATUS_LED_PIN_PRIMARY, (unsigned)STATUS_LED_PIN_ALT);
 }

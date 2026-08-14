@@ -59,6 +59,7 @@ void setup() {
   bleScanLogEnabled   = prefs.getBool("scanLog", true);
   mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
   rulesPaused         = prefs.getBool("rulesPaused", false);
+  statusLedMode       = prefs.getUChar("statusLedMode", 0);
   // Prefer SPIFFS for large rules JSON; migrate leftover NVS blobs once.
   // Discard corrupt/empty blobs so a truncated legacy file doesn't look like a
   // successful load (rules=0) and block a clean "waiting for push" state.
