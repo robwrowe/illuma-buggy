@@ -24,3 +24,16 @@ extern unsigned long lastDisneySeenMs;
 extern unsigned long lastForwardMs;
 /** Last UART heartbeat received from logic (0 = never). */
 extern unsigned long lastLogicHbMs;
+
+/** Scan-task → loop() ring: onResult pushes, drainScanRing() sends UART/logs. */
+#define SCAN_RING_SIZE 24
+
+struct ScanRingSlot {
+  ParsedDisneyPacket pkt;
+  bool valid;
+};
+
+extern ScanRingSlot scanRing[SCAN_RING_SIZE];
+extern volatile uint8_t scanRingHead;   // written by onResult (scan task)
+extern volatile uint8_t scanRingTail;   // read by loop()
+extern volatile uint32_t scanRingDropped; // count of overwrites, for diagnostics

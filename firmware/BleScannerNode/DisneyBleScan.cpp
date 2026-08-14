@@ -3,9 +3,7 @@
 #include "DisneyBleFilter.h"
 #include "MbPacketDecode.h"
 #include "ScannerPayloadTransport.h"
-#include "ScannerStatusDisplay.h"
 #include "DebugLog.h"
-#include "SdRawLogger.h"
 #include "Config.h"
 #include <NimBLEDevice.h>
 #include <string>
@@ -20,19 +18,15 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
     size_t len = mfr.size();
     int rssi = device->getRSSI();
 
+    // Sniff stays in onResult: only active during operator-triggered windows.
     if (millis() < bleSniffUntilMs) {
       serialLogSniffPacket(rssi, data, len);
     }
 
     if (!isDisneyMfr(data, len)) return;
     lastDisneySeenMs = millis();
-    sdRawLoggerWrite(data, len, rssi, (uint64_t)millis());
-    scannerStatusDisplayNotePacket(data, len, rssi);
 
-    const char* tag = classifyScanPacket(data, len);
     bool isNew = scanDedupIsNew(data, len);
-    serialLogScanPacket(tag, rssi, data, len, isNew);
-    notifyBleCapturePacket(tag, rssi, data, len, isNew);
 
     const uint8_t* payload;
     size_t plen;
@@ -57,9 +51,35 @@ class DisneyBLEScanCallbacks : public NimBLEScanCallbacks {
       if (!isNew && !strongSignal && (millis() - lastUnknownFwdMs) < 2000) return;
       lastUnknownFwdMs = millis();
     }
-    scannerTransportSend(pkt);
+
+    // Push to ring — UART / Serial I/O happens in drainScanRing() from loop().
+    uint8_t next = (uint8_t)((scanRingHead + 1) % SCAN_RING_SIZE);
+    if (next == scanRingTail) {
+      // Ring full — drop oldest rather than block. Count it so it's visible.
+      scanRingTail = (uint8_t)((scanRingTail + 1) % SCAN_RING_SIZE);
+      scanRingDropped++;
+    }
+    scanRing[scanRingHead].pkt = pkt;
+    scanRing[scanRingHead].valid = true;
+    scanRingHead = next;
   }
 };
+
+void drainScanRing() {
+  while (scanRingTail != scanRingHead) {
+    ScanRingSlot& slot = scanRing[scanRingTail];
+    if (slot.valid) {
+      scannerTransportSend(slot.pkt);
+      slot.valid = false;
+    }
+    scanRingTail = (uint8_t)((scanRingTail + 1) % SCAN_RING_SIZE);
+  }
+  static unsigned long lastDropLogMs = 0;
+  if (scanRingDropped > 0 && millis() - lastDropLogMs > 5000) {
+    lastDropLogMs = millis();
+    Serial.printf("[Scan] ring drops so far: %lu\n", (unsigned long)scanRingDropped);
+  }
+}
 
 void startBLEScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
@@ -69,10 +89,12 @@ void startBLEScan() {
   scan->setInterval(80);   // 50 ms
   scan->setWindow(79);     // ~continuous
 #else
-  // Classic ESP32: near-100% active window + Serial/UART in onResult trips TWDT.
+  // Classic ESP32: onResult() now only does math + ring-buffer push (no I/O),
+  // so near-continuous duty is safe — matches the S3 logic board.
+  // Field-test incrementally (e.g. 100/90 first) if TWDT or ring drops appear.
   scan->setActiveScan(true);
-  scan->setInterval(160);  // 100 ms
-  scan->setWindow(48);     // ~30% duty
+  scan->setInterval(80);   // 50 ms
+  scan->setWindow(79);     // ~continuous
 #endif
   scan->setDuplicateFilter(false);
   scan->start(0, false);

@@ -79,5 +79,6 @@ void loop() {
   scannerUartPoll();
   scannerUartHeartbeatTick();
   scannerStatusDisplayUpdate();
+  drainScanRing();
   delay(10);
 }
