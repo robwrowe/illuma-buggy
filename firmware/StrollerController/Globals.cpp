@@ -105,6 +105,7 @@ String baselineWledState  = "";
 String mbMappingJson = "";
 String mbRulesJson = "";
 bool   mbMappingLoadedFromNvs = false;
+bool   mbRulesFsDegraded = false;
 String bleDefaultPresetId = "";
 bool   wledWasConnected   = false;
 bool   wledHttpOk         = false;

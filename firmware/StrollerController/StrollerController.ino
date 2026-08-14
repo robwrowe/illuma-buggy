@@ -140,6 +140,7 @@ void setup() {
       if (mbRulesFsSave(mbRulesJson)) {
         Serial.println("[Rules] Embedded rules persisted to SPIFFS");
       } else {
+        mbRulesFsDegraded = true;
         Serial.println("[Rules] WARNING: embedded rules loaded into RAM but SPIFFS persist failed");
       }
     }

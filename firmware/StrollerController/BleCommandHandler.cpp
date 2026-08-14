@@ -447,6 +447,7 @@ void handleBLECommand(const String& msg) {
                     persisted ? "ok" : "FAIL",
                     cacheOk ? "ok" : "FAIL");
       if (!persisted) {
+        mbRulesFsDegraded = true;
         bleNotify("{\"type\":\"ack\",\"action\":\"set_mb_rules\",\"ok\":false,\"reason\":\"fs_persist\"}");
         return;
       }
@@ -715,6 +716,7 @@ void handleBLECommand(const String& msg) {
       "\"ble_transition_ms\":" + String(bleEffectTransitionMs) + ","
       "\"rules_paused\":" + String(rulesPaused ? "true" : "false") + ","
       "\"mb_mapping_loaded\":" + String(mbMappingLoadedFromNvs ? "true" : "false") + ","
+      "\"mb_rules_fs_degraded\":" + String(mbRulesFsDegraded ? "true" : "false") + ","
       "\"mb_layout_active\":" + String((int)mbActiveLayoutIdx) + ","
       "\"mb_layout_name\":\"" + String(mbLayoutCount > 0 ? mbLayouts[mbActiveLayoutIdx].name : "Default") + "\","
       "\"mb_layout_count\":" + String((int)mbLayoutCount) + ","

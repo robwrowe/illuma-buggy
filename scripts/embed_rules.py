@@ -65,6 +65,37 @@ def main():
         )
         sys.exit(1)
 
+    # Completeness check: this embedded copy is the fallback the firmware
+    # silently loads whenever SPIFFS-persisted rules are missing or corrupt
+    # (see docs/rules-psram-runbook.md). A fallback with no colors/segments
+    # produces stock/wrong-looking output with no way to tell why, since it's
+    # compiled into the binary rather than visible as a bad file on disk.
+    # Warn loudly rather than staying silent; do not hard-fail (rules-only
+    # embeds can be intentional).
+    colors = mapping.get("colors")
+    segments = mapping.get("segments")
+    warnings = []
+    # Profile exports store colors as a hex array; BLE/firmware mapping may
+    # use an index-keyed object. Either non-empty collection is complete.
+    colors_ok = isinstance(colors, (dict, list)) and len(colors) > 0
+    segments_ok = isinstance(segments, (dict, list)) and len(segments) > 0
+    if not colors_ok:
+        warnings.append("'colors' is missing or empty")
+    if not segments_ok:
+        warnings.append("'segments' is missing or empty")
+    if warnings:
+        print(
+            "[embed_rules] WARNING: embedding a fallback ruleset that is INCOMPLETE:\n"
+            + "\n".join(f"  - {w}" for w in warnings)
+            + "\n  This is the firmware's silent fallback if SPIFFS rules ever fail to "
+              "load — an incomplete embed here means a field failure falls back to "
+              "wrong/default colors with no serial-log-free way to notice.\n"
+              "  If this is intentional (e.g. rules-only test embed), ignore this warning.\n"
+              "  Otherwise: re-export the full profile from the web app (not a partial/\n"
+              "  rules-only export) before re-running this script.",
+            file=sys.stderr,
+        )
+
     # Compact JSON for flash size; keep Unicode as-is.
     raw = json.dumps(mapping, separators=(",", ":"), ensure_ascii=False)
     if mapping is not parsed:
@@ -85,9 +116,10 @@ def main():
         "static const bool kHasEmbeddedRules = true;\n"
         f'static const char kEmbeddedRulesJson[] = "{escaped}";\n'
     )
+    color_count = len(colors) if isinstance(colors, (dict, list)) else 0
     print(
         f"[embed_rules] embedded {len(raw.encode('utf-8'))} bytes "
-        f"({len(rules)} rules)"
+        f"({len(rules)} rules, {color_count} colors)"
     )
 
 

@@ -223,8 +223,10 @@ void statusDisplayUpdate() {
   }
 
   String presetText = String("Preset:") + presetDisplayName(currentPresetId);
-  String rulesText = String("Rules:") + String(ruleCount) + " | " +
-                     (lastFiredRuleName.length() ? lastFiredRuleName : "(none)");
+  String rulesText = mbRulesFsDegraded
+                     ? String("Rules:NOT ON FS")
+                     : (String("Rules:") + String(ruleCount) + " | " +
+                        (lastFiredRuleName.length() ? lastFiredRuleName : "(none)"));
 
   int left = OLED_ROWS - rowsUsed;
   int pNeed = linesNeeded(presetText);

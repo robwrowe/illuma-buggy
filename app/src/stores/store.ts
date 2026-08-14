@@ -199,6 +199,7 @@ export interface DeviceStatus {
   wledIp?:              string;
   wledPort?:            number;
   mbMappingLoaded?:     boolean;
+  mbRulesFsDegraded?:   boolean;
   boardRole?:           BoardRoleMode;
   scannerMac?:          string;
   logicMac?:            string;
