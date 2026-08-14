@@ -33,9 +33,9 @@ static void writeStatusRgb(uint8_t r, uint8_t g, uint8_t b) {
   if (statusLedMode == 2) {
     r = 0; g = 0; b = 0;
   } else if (statusLedMode == 1) {
-    r = (uint8_t)((uint16_t)r * 77 / 255);
-    g = (uint8_t)((uint16_t)g * 77 / 255);
-    b = (uint8_t)((uint16_t)b * 77 / 255);
+    r = (uint8_t)((uint16_t)r * 38 / 255);
+    g = (uint8_t)((uint16_t)g * 38 / 255);
+    b = (uint8_t)((uint16_t)b * 38 / 255);
   }
   // Native HAL path — more reliable on S3 than Adafruit_NeoPixel + WiFi.
   rgbLedWrite(STATUS_LED_PIN_PRIMARY, r, g, b);
