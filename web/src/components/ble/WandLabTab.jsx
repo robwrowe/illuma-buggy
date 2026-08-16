@@ -30,6 +30,7 @@ import { EMPTY_FINDING_FORM, formAfterLog } from '../../lib/sheets/wandLabFindin
 import { postLogEntryToSheets, serializeByteTags } from '../../lib/sheets/wandLabSheetsClient';
 import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
 import { EMPTY_ANALYZER_SESSION, WandLabAnalyzerTab } from './WandLabAnalyzerTab';
+import { WandLabTailBuilderTab } from './WandLabTailBuilderTab';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
 import { WandLabLogPanel } from './WandLabLogPanel';
 import { WandLabPacketSequence } from './WandLabPacketSequence';
@@ -691,7 +692,7 @@ export function WandLabTab({ data, update }) {
                     value={SW_FX_PRESET_BYTES[presetKey] ? presetKey : ''}
                     allowEmpty
                     onChange={loadPreset}
-                    placeholder={presetKey.startsWith('mb:') || presetKey === 'sequence' || presetKey === 'paste' ? presetKey : 'Load show preset…'}
+                    placeholder={presetKey.startsWith('mb:') || presetKey === 'sequence' || presetKey === 'paste' || presetKey === 'tail-builder' ? presetKey : 'Load show preset…'}
                     options={Object.keys(SW_FX_PRESET_BYTES).map((k) => ({ value: k, label: k, searchText: k }))}
                   />
                 </Field>
@@ -707,6 +708,15 @@ export function WandLabTab({ data, update }) {
                   onBurstComplete={(payload) => addLogEntry(payload)}
                 />
               </Stack>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="tail" pt="md">
+              <WandLabTailBuilderTab
+                simIp={lab.simIp}
+                onStatus={setStatus}
+                onSendPacket={sendBytes}
+                onLoadToByteEditor={(arr) => { setByteArray(arr, 'tail-builder'); setLabTab('bytes'); }}
+              />
             </Tabs.Panel>
 
             <Tabs.Panel value="sequence" pt="md">
