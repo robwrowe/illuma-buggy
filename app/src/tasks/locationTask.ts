@@ -27,6 +27,10 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       vis.state === 'active' &&
       Date.now() - vis.updatedAt < FOREGROUND_VISIBILITY_MAX_AGE_MS
     ) {
+      console.log('[LocationTask] skip — visibility says active', {
+        updatedAt: vis.updatedAt,
+        age: Date.now() - vis.updatedAt,
+      });
       return;
     }
 
