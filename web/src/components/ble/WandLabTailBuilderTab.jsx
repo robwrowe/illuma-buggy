@@ -10,10 +10,13 @@ import {
   Table,
   Text,
   Textarea,
+  TextInput,
 } from '@mantine/core';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { DEFAULT_MB_WLED_COLORS, mbPaletteOptions } from '../../lib/ble/mbConstants';
+import { decodeMbColorMaskByte } from '../../lib/ble/mbPayloads';
+import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
 import {
   decodeTimingByte,
   timingByteFromEditFields,
@@ -22,6 +25,7 @@ import {
 import {
   TAIL_BUILDER_COLOR_FORMATS,
   assembleTailPayload,
+  encodeTailColorByte,
   omitConsecutiveDuplicateTails,
   parseTailList,
   tailBytesToDisplayHex,
@@ -137,6 +141,86 @@ function TailTimingEditor({ timingByte, onChange }) {
   );
 }
 
+function parseHexByte(raw) {
+  const t = String(raw || '').trim().replace(/^0x/i, '');
+  if (!/^[0-9a-fA-F]{1,2}$/.test(t)) return null;
+  return parseInt(t, 16) & 0xff;
+}
+
+function ByteHexBitsEditor({ byteValue, onChange }) {
+  const value = Number(byteValue) & 0xff;
+  const [bitsDraft, setBitsDraft] = useState(() => byteToBitString(value));
+  const [hexDraft, setHexDraft] = useState(() => value.toString(16).padStart(2, '0').toUpperCase());
+
+  useEffect(() => {
+    setBitsDraft(byteToBitString(value));
+    setHexDraft(value.toString(16).padStart(2, '0').toUpperCase());
+  }, [value]);
+
+  const commitByte = (n) => {
+    if (!Number.isFinite(n)) return;
+    onChange?.(n & 0xff);
+  };
+
+  return (
+    <Group gap={6} align="flex-end" wrap="nowrap">
+      <TextInput
+        label="Bits"
+        value={bitsDraft}
+        onChange={(e) => {
+          const clean = e.currentTarget.value.replace(/[^01]/g, '').slice(0, 8);
+          setBitsDraft(clean);
+          if (clean.length === 8) {
+            const val = parseBitStringToByte(clean);
+            if (val != null) commitByte(val);
+          }
+        }}
+        onBlur={() => {
+          if (!bitsDraft.length) {
+            setBitsDraft(byteToBitString(value));
+            return;
+          }
+          const padded = bitsDraft.padStart(8, '0');
+          setBitsDraft(padded);
+          const val = parseBitStringToByte(padded);
+          if (val != null) commitByte(val);
+        }}
+        size="xs"
+        ff="monospace"
+        placeholder="00000000"
+        w={96}
+        styles={{ input: { paddingInline: 6 } }}
+      />
+      <TextInput
+        label="Hex"
+        value={hexDraft}
+        onChange={(e) => {
+          const clean = e.currentTarget.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 2);
+          setHexDraft(clean.toUpperCase());
+          if (clean.length === 2) {
+            const val = parseHexByte(clean);
+            if (val != null) commitByte(val);
+          }
+        }}
+        onBlur={() => {
+          const val = parseHexByte(hexDraft);
+          if (val == null) {
+            setHexDraft(value.toString(16).padStart(2, '0').toUpperCase());
+            return;
+          }
+          setHexDraft(val.toString(16).padStart(2, '0').toUpperCase());
+          commitByte(val);
+        }}
+        size="xs"
+        ff="monospace"
+        placeholder="00"
+        w={56}
+        styles={{ input: { paddingInline: 6 } }}
+      />
+    </Group>
+  );
+}
+
 function ColorSwatchBox({ background }) {
   return (
     <div
@@ -214,6 +298,11 @@ export function WandLabTailBuilderTab({
 
   const patchColor = (idx, patch) => {
     setColors((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  };
+
+  const applyPaletteByte = (idx, byte) => {
+    const decoded = decodeMbColorMaskByte(byte);
+    patchColor(idx, { paletteIdx: decoded.palette, mask: decoded.mask });
   };
 
   const setFormat = (fmt) => {
@@ -335,35 +424,57 @@ export function WandLabTailBuilderTab({
         />
       </Field>
 
-      <Stack gap="xs">
+      <Stack gap="sm">
         {activeColors.map((c, idx) => {
           const swatch = isRgb
             ? `rgb(${Number(c.r ?? 0)}, ${Number(c.g ?? 0)}, ${Number(c.b ?? 0)})`
             : (DEFAULT_MB_WLED_COLORS[c.paletteIdx ?? 0] || '#000');
+          const paletteByte = encodeTailColorByte(c);
           return (
-            <Group key={idx} gap="xs" align="flex-end" wrap="wrap">
-              <Text size="xs" c="dimmed" w={52} pb={6}>
-                Color {idx + 1}
-              </Text>
-              <ColorSwatchBox background={swatch} />
+            <Stack
+              key={idx}
+              gap={6}
+              p={8}
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                background: 'var(--surface2)',
+              }}
+            >
+              <Group gap="xs" align="center">
+                <Text size="xs" c="dimmed" w={52}>
+                  Color {idx + 1}
+                </Text>
+                <ColorSwatchBox background={swatch} />
+              </Group>
               {isRgb ? (
-                <>
+                <Stack gap={6}>
                   {['r', 'g', 'b'].map((ch) => (
-                    <Field key={ch} label={ch.toUpperCase()} style={{ marginBottom: 0, flex: '1 1 72px' }}>
-                      <NumberInput
-                        size="xs"
-                        min={0}
-                        max={255}
-                        value={c[ch] ?? 0}
-                        onChange={(v) =>
-                          patchColor(idx, { [ch]: Math.max(0, Math.min(255, Number(v) || 0)) })
-                        }
+                    <Group key={ch} gap="xs" align="flex-end" wrap="wrap">
+                      <Field label={ch.toUpperCase()} style={{ marginBottom: 0, flex: '0 1 72px' }}>
+                        <NumberInput
+                          size="xs"
+                          min={0}
+                          max={255}
+                          value={c[ch] ?? 0}
+                          onChange={(v) =>
+                            patchColor(idx, { [ch]: Math.max(0, Math.min(255, Number(v) || 0)) })
+                          }
+                        />
+                      </Field>
+                      <ByteHexBitsEditor
+                        byteValue={c[ch] ?? 0}
+                        onChange={(byte) => patchColor(idx, { [ch]: byte })}
                       />
-                    </Field>
+                    </Group>
                   ))}
-                </>
+                </Stack>
               ) : (
-                <>
+                <Group gap="xs" align="flex-end" wrap="wrap">
+                  <ByteHexBitsEditor
+                    byteValue={paletteByte}
+                    onChange={(byte) => applyPaletteByte(idx, byte)}
+                  />
                   <Field label="Palette" style={{ marginBottom: 0, flex: '1 1 180px' }}>
                     <SearchableSelect
                       value={String(c.paletteIdx ?? 0)}
@@ -383,9 +494,9 @@ export function WandLabTailBuilderTab({
                       }
                     />
                   </Field>
-                </>
+                </Group>
               )}
-            </Group>
+            </Stack>
           );
         })}
       </Stack>
