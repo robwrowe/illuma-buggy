@@ -28,6 +28,7 @@ import {
   assembleTailPayload,
   encodeTailColorByte,
   omitConsecutiveDuplicateTails,
+  parseTailLine,
   parseTailList,
   tailBytesToDisplayHex,
 } from '../../lib/ble/tailBuilder';
@@ -222,6 +223,136 @@ function ByteHexBitsEditor({ byteValue, onChange }) {
   );
 }
 
+function entryFromBytes(bytes) {
+  const b = (bytes || []).map((x) => x & 0xff);
+  return {
+    bytes: b,
+    hex: b.map((x) => x.toString(16).padStart(2, '0')).join(''),
+    displayHex: tailBytesToDisplayHex(b),
+  };
+}
+
+function tailsToRaw(tails) {
+  return (tails || []).map((t) => tailBytesToDisplayHex(t.bytes)).join('\n');
+}
+
+function TailByteStackCell({ byteValue, onChange }) {
+  const value = Number(byteValue) & 0xff;
+  const [bitsDraft, setBitsDraft] = useState(() => byteToBitString(value));
+  const [hexDraft, setHexDraft] = useState(() => value.toString(16).padStart(2, '0').toUpperCase());
+
+  useEffect(() => {
+    setBitsDraft(byteToBitString(value));
+    setHexDraft(value.toString(16).padStart(2, '0').toUpperCase());
+  }, [value]);
+
+  const commitByte = (n) => {
+    if (!Number.isFinite(n)) return;
+    if ((n & 0xff) === value) return;
+    onChange?.(n & 0xff);
+  };
+
+  const inputStyle = {
+    input: {
+      fontFamily: 'monospace',
+      fontSize: 10,
+      textAlign: 'center',
+      paddingInline: 2,
+      minHeight: 22,
+      height: 22,
+    },
+  };
+
+  return (
+    <Stack gap={1} align="center" style={{ width: 76 }}>
+      <TextInput
+        aria-label="Byte hex"
+        value={hexDraft}
+        onChange={(e) => {
+          const clean = e.currentTarget.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 2);
+          setHexDraft(clean.toUpperCase());
+          if (clean.length === 2) {
+            const val = parseHexByte(clean);
+            if (val != null) commitByte(val);
+          }
+        }}
+        onBlur={() => {
+          const val = parseHexByte(hexDraft);
+          if (val == null) {
+            setHexDraft(value.toString(16).padStart(2, '0').toUpperCase());
+            return;
+          }
+          setHexDraft(val.toString(16).padStart(2, '0').toUpperCase());
+          commitByte(val);
+        }}
+        size="xs"
+        w={76}
+        styles={inputStyle}
+      />
+      <TextInput
+        aria-label="Byte bits"
+        value={bitsDraft}
+        onChange={(e) => {
+          const clean = e.currentTarget.value.replace(/[^01]/g, '').slice(0, 8);
+          setBitsDraft(clean);
+          if (clean.length === 8) {
+            const val = parseBitStringToByte(clean);
+            if (val != null) commitByte(val);
+          }
+        }}
+        onBlur={() => {
+          if (!bitsDraft.length) {
+            setBitsDraft(byteToBitString(value));
+            return;
+          }
+          const padded = bitsDraft.padStart(8, '0');
+          setBitsDraft(padded);
+          const val = parseBitStringToByte(padded);
+          if (val != null) commitByte(val);
+        }}
+        size="xs"
+        placeholder="00000000"
+        w={76}
+        styles={inputStyle}
+      />
+    </Stack>
+  );
+}
+
+function TailHexLineInput({ displayHex, onCommit }) {
+  const [draft, setDraft] = useState(displayHex);
+
+  useEffect(() => {
+    setDraft(displayHex);
+  }, [displayHex]);
+
+  const commit = () => {
+    const bytes = parseTailLine(draft);
+    if (!bytes.length) {
+      setDraft(displayHex);
+      return;
+    }
+    onCommit?.(bytes);
+  };
+
+  return (
+    <TextInput
+      size="xs"
+      ff="monospace"
+      value={draft}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setDraft(e.currentTarget.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur();
+        }
+      }}
+      styles={{ input: { fontSize: 11 } }}
+    />
+  );
+}
+
 function ColorSwatchBox({ background }) {
   return (
     <div
@@ -251,6 +382,7 @@ export function WandLabTailBuilderTab({
   const [omitDupes, setOmitDupes] = useWandLabUiState('tail.omitDupes', true);
   const [selectedTailIdx, setSelectedTailIdx] = useWandLabUiState('tail.selectedIdx', 0);
   const [sendWaitMs, setSendWaitMs] = useWandLabUiState('tail.sendWaitMs', 1000);
+  const [bitsRowIdxs, setBitsRowIdxs] = useWandLabUiState('tail.bitsRowIdxs', () => []);
   const [sendingAll, setSendingAll] = useState(false);
   const [vibration, setVibration] = useWandLabUiState('tail.vibration', null);
   const [envelope, setEnvelope] = useWandLabUiState('tail.envelope', 'e1');
@@ -315,6 +447,67 @@ export function WandLabTailBuilderTab({
   const applyTailPaste = (text) => {
     setTailRaw(text);
     setSelectedTailIdx(0);
+  };
+
+  const writeDisplayTails = (next, selectIdx = null) => {
+    setTailRaw(tailsToRaw(next));
+    if (selectIdx != null) setSelectedTailIdx(selectIdx);
+  };
+
+  const patchTailBytes = (idx, bytes) => {
+    writeDisplayTails(displayTails.map((t, i) => (i === idx ? entryFromBytes(bytes) : t)), idx);
+  };
+
+  const patchTailByte = (rowIdx, byteIdx, value) => {
+    const row = displayTails[rowIdx];
+    if (!row) return;
+    const nextBytes = row.bytes.map((b, i) => (i === byteIdx ? value & 0xff : b));
+    patchTailBytes(rowIdx, nextBytes);
+  };
+
+  const duplicateRow = (idx) => {
+    const row = displayTails[idx];
+    if (!row) return;
+    const next = [...displayTails];
+    next.splice(idx + 1, 0, entryFromBytes([...row.bytes]));
+    setOmitDupes(false);
+    const bits = Array.isArray(bitsRowIdxs) ? bitsRowIdxs : [];
+    const copyBits = bits.includes(idx);
+    setBitsRowIdxs([...new Set([
+      ...bits.map((i) => (i > idx ? i + 1 : i)),
+      ...(copyBits ? [idx + 1] : []),
+    ])]);
+    writeDisplayTails(next, idx + 1);
+  };
+
+  const toggleBitsRow = (idx) => {
+    const bits = Array.isArray(bitsRowIdxs) ? bitsRowIdxs : [];
+    setBitsRowIdxs(bits.includes(idx) ? bits.filter((i) => i !== idx) : [...bits, idx]);
+  };
+
+  const showBitsAll = () => {
+    setBitsRowIdxs(displayTails.map((_, i) => i));
+  };
+
+  const showHexAll = () => {
+    setBitsRowIdxs([]);
+  };
+
+  const duplicateAllRows = () => {
+    if (!displayTails.length) return;
+    const bits = new Set(Array.isArray(bitsRowIdxs) ? bitsRowIdxs : []);
+    const next = [];
+    const nextBits = [];
+    displayTails.forEach((t, i) => {
+      const origIdx = next.length;
+      next.push(entryFromBytes([...t.bytes]));
+      const copyIdx = next.length;
+      next.push(entryFromBytes([...t.bytes]));
+      if (bits.has(i)) nextBits.push(origIdx, copyIdx);
+    });
+    setOmitDupes(false);
+    setBitsRowIdxs(nextBits);
+    writeDisplayTails(next, Math.min(displayTails.length * 2 - 1, safeIdx * 2 + 1));
   };
 
   const sendAssembled = async (bytes, label) => {
@@ -536,22 +729,52 @@ export function WandLabTailBuilderTab({
       </Field>
 
       {isTailList && displayTails.length > 0 && (
-        <Table.ScrollContainer minWidth={480}>
+        <Stack gap="xs">
+          <Group gap={6} wrap="wrap">
+            <Button
+              size="compact-xs"
+              variant={
+                displayTails.length > 0
+                && displayTails.every((_, i) => Array.isArray(bitsRowIdxs) && bitsRowIdxs.includes(i))
+                  ? 'filled'
+                  : 'default'
+              }
+              onClick={showBitsAll}
+            >
+              Bits all
+            </Button>
+            <Button
+              size="compact-xs"
+              variant={
+                !Array.isArray(bitsRowIdxs) || bitsRowIdxs.length === 0
+                  ? 'filled'
+                  : 'default'
+              }
+              onClick={showHexAll}
+            >
+              Hex all
+            </Button>
+            <Button size="compact-xs" variant="default" onClick={duplicateAllRows}>
+              Dup all
+            </Button>
+          </Group>
+          <Table.ScrollContainer minWidth={640}>
           <Table striped highlightOnHover withTableBorder withColumnBorders>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th w={36}>#</Table.Th>
-                <Table.Th>Tail hex</Table.Th>
+                <Table.Th>Tail</Table.Th>
                 <Table.Th w={48}>Len</Table.Th>
-                <Table.Th w={88} />
+                <Table.Th w={200} />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
               {displayTails.map((t, i) => {
                 const isSelected = i === safeIdx;
+                const showBits = Array.isArray(bitsRowIdxs) && bitsRowIdxs.includes(i);
                 return (
                   <Table.Tr
-                    key={`${t.hex}-${i}`}
+                    key={`tail-${i}`}
                     onClick={() => setSelectedTailIdx(i)}
                     style={{
                       cursor: 'pointer',
@@ -564,29 +787,64 @@ export function WandLabTailBuilderTab({
                       <Text size="xs" c="dimmed">{i + 1}</Text>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap={6} wrap="nowrap">
-                        {isSelected && <Badge size="xs" color="teal" variant="light">Selected</Badge>}
-                        <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
-                          {t.displayHex}
-                        </Text>
-                      </Group>
+                      <Stack gap={4}>
+                        {isSelected && <Badge size="xs" color="teal" variant="light" w="fit-content">Selected</Badge>}
+                        {showBits ? (
+                          <Group gap={4} wrap="wrap" onClick={(e) => e.stopPropagation()}>
+                            {t.bytes.map((b, bi) => (
+                              <TailByteStackCell
+                                key={bi}
+                                byteValue={b}
+                                onChange={(v) => patchTailByte(i, bi, v)}
+                              />
+                            ))}
+                          </Group>
+                        ) : (
+                          <TailHexLineInput
+                            displayHex={t.displayHex}
+                            onCommit={(bytes) => patchTailBytes(i, bytes)}
+                          />
+                        )}
+                      </Stack>
                     </Table.Td>
                     <Table.Td>
                       <Text size="xs" ff="monospace">{t.bytes.length}</Text>
                     </Table.Td>
                     <Table.Td>
-                      <Button
-                        size="compact-xs"
-                        variant="light"
-                        color="teal"
-                        disabled={!simIp || sendingAll}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void handleSendRow(i);
-                        }}
-                      >
-                        Send
-                      </Button>
+                      <Group gap={4} wrap="nowrap">
+                        <Button
+                          size="compact-xs"
+                          variant={showBits ? 'filled' : 'default'}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleBitsRow(i);
+                          }}
+                        >
+                          {showBits ? 'Hex' : 'Bits'}
+                        </Button>
+                        <Button
+                          size="compact-xs"
+                          variant="default"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            duplicateRow(i);
+                          }}
+                        >
+                          Dup
+                        </Button>
+                        <Button
+                          size="compact-xs"
+                          variant="light"
+                          color="teal"
+                          disabled={!simIp || sendingAll}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleSendRow(i);
+                          }}
+                        >
+                          Send
+                        </Button>
+                      </Group>
                     </Table.Td>
                   </Table.Tr>
                 );
@@ -594,6 +852,7 @@ export function WandLabTailBuilderTab({
             </Table.Tbody>
           </Table>
         </Table.ScrollContainer>
+        </Stack>
       )}
 
       <Field label="Vibration">
