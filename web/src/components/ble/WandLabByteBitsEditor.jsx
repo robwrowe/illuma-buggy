@@ -19,6 +19,7 @@ import {
 } from '../../lib/ble/e9Decode';
 import { decodeMbColorMaskByte, encodeMbColorMaskByte, decodeMb6BitChannelFields, encodeMb6BitChannel } from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
 const EDIT_MODES = [
   { value: 'binary', label: 'Bin' },
@@ -312,7 +313,7 @@ function ByteEditorCard({ byteIndex, byteValue, origValue, editMode, onEditModeC
 }
 
 export function WandLabByteBitsEditor({ selections, onChange, onReset }) {
-  const [editModes, setEditModes] = useState({});
+  const [editModes, setEditModes] = useWandLabUiState('byteEditModes', () => ({}));
 
   if (!selections?.length) return null;
 

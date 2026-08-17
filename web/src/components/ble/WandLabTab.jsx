@@ -38,6 +38,7 @@ import { WandLabQuickCommands } from './WandLabQuickCommands';
 import { WandLabShowPanel } from './WandLabShowPanel';
 import { SweepByteIndex, WandLabSweepPanel } from './WandLabSweepPanel';
 import { WandLabByteBitsEditor } from './WandLabByteBitsEditor';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
 const LAB_TABS = WAND_LAB_SECTIONS;
 
@@ -81,28 +82,28 @@ export function WandLabTab({ data, update }) {
 
   const lab = data.wandLab || DEFAULT_DATA.wandLab;
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
-  const [presetKey, setPresetKey] = useState('rainbow');
-  const [bytes, setBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
-  const [origBytes, setOrigBytes] = useState([...SW_FX_PRESET_BYTES.rainbow]);
-  const [sequencePackets, setSequencePackets] = useState([]);
-  const [findingForm, setFindingForm] = useState({ ...EMPTY_FINDING_FORM });
+  const [presetKey, setPresetKey] = useWandLabUiState('editor.presetKey', 'rainbow');
+  const [bytes, setBytes] = useWandLabUiState('editor.bytes', () => [...SW_FX_PRESET_BYTES.rainbow]);
+  const [origBytes, setOrigBytes] = useWandLabUiState('editor.origBytes', () => [...SW_FX_PRESET_BYTES.rainbow]);
+  const [sequencePackets, setSequencePackets] = useWandLabUiState('sequence.packets', () => []);
+  const [findingForm, setFindingForm] = useWandLabUiState('findingForm', () => ({ ...EMPTY_FINDING_FORM }));
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState('');
-  const [logFilter, setLogFilter] = useState('');
-  const [mbCmd, setMbCmd] = useState('single');
-  const [mbPal, setMbPal] = useState(String(MB_PAL_OFF));
-  const [mbMask, setMbMask] = useState('0');
-  const [mbInner, setMbInner] = useState('21');
-  const [mbOuter, setMbOuter] = useState('0');
-  const [mbRgb, setMbRgb] = useState({ r: 63, g: 0, b: 0 });
-  const [mbFive, setMbFive] = useState({ tl: '0', bl: '2', br: '21', tr: '8', c: '19' });
-  const [mbPattern, setMbPattern] = useState('solid');
-  const [hexPaste, setHexPaste] = useState('');
+  const [logFilter, setLogFilter] = useWandLabUiState('logFilter', '');
+  const [mbCmd, setMbCmd] = useWandLabUiState('mb.cmd', 'single');
+  const [mbPal, setMbPal] = useWandLabUiState('mb.pal', String(MB_PAL_OFF));
+  const [mbMask, setMbMask] = useWandLabUiState('mb.mask', '0');
+  const [mbInner, setMbInner] = useWandLabUiState('mb.inner', '21');
+  const [mbOuter, setMbOuter] = useWandLabUiState('mb.outer', '0');
+  const [mbRgb, setMbRgb] = useWandLabUiState('mb.rgb', () => ({ r: 63, g: 0, b: 0 }));
+  const [mbFive, setMbFive] = useWandLabUiState('mb.five', () => ({ tl: '0', bl: '2', br: '21', tr: '8', c: '19' }));
+  const [mbPattern, setMbPattern] = useWandLabUiState('mb.pattern', 'solid');
+  const [hexPaste, setHexPaste] = useWandLabUiState('editor.hexPaste', '');
   const [editingLogId, setEditingLogId] = useState(null);
-  const [sweepIndices, setSweepIndices] = useState([]);
+  const [sweepIndices, setSweepIndices] = useWandLabUiState('editor.sweepIndices', () => []);
   const [sweepLivePayload, setSweepLivePayload] = useState(null);
   const [analyzerImportSeed, setAnalyzerImportSeed] = useState(null);
-  const [analyzerSession, setAnalyzerSession] = useState(() => ({ ...EMPTY_ANALYZER_SESSION }));
+  const [analyzerSession, setAnalyzerSession] = useWandLabUiState('analyzer.session', () => ({ ...EMPTY_ANALYZER_SESSION }));
 
   const palOpts = mbPaletteOptions();
 
@@ -492,7 +493,7 @@ export function WandLabTab({ data, update }) {
 
           {status && <Text size="xs" c="dimmed">{status}</Text>}
 
-          <Tabs value={labTab} onChange={(v) => v && setLabTab(v)} keepMounted={false}>
+          <Tabs value={labTab} onChange={(v) => v && setLabTab(v)} keepMounted>
             <Tabs.List>
               {LAB_TABS.map((t) => (
                 <Tabs.Tab key={t.path} value={t.path}>{t.label}</Tabs.Tab>

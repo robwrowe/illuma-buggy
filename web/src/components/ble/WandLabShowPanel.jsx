@@ -5,6 +5,7 @@ import {
   startShow,
 } from '../../lib/ble/wandSimClient';
 import { useShowProgress } from '../../hooks/useShowProgress';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
 export function WandLabShowPanel({
   simIp,
@@ -12,8 +13,8 @@ export function WandLabShowPanel({
   onStatus,
   onBurstComplete,
 }) {
-  const [repeatCount, setRepeatCount] = useState(1);
-  const [dwellMs, setDwellMs] = useState(1000);
+  const [repeatCount, setRepeatCount] = useWandLabUiState('show.repeatCount', 1);
+  const [dwellMs, setDwellMs] = useWandLabUiState('show.dwellMs', 1000);
   const [burstNote, setBurstNote] = useState('');
   const [showBurstLog, setShowBurstLog] = useState(false);
   const { progress, startPolling, stop } = useShowProgress(simIp);

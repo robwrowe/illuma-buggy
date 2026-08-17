@@ -22,6 +22,7 @@ import {
   timingByteFromEditFields,
   timingByteToEditFields,
 } from '../../lib/ble/e9Decode';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 import {
   TAIL_BUILDER_COLOR_FORMATS,
   assembleTailPayload,
@@ -242,17 +243,17 @@ export function WandLabTailBuilderTab({
   onSendPacket,
   onLoadToByteEditor,
 }) {
-  const [timingByte, setTimingByte] = useState(0x0f);
-  const [colorFormat, setColorFormat] = useState('0f');
-  const [colorCount, setColorCount] = useState(2);
-  const [colors, setColors] = useState(() => defaultColors(2));
-  const [tailRaw, setTailRaw] = useState('58 F4 48 82 D1 46 02 08 D0 65 00');
-  const [omitDupes, setOmitDupes] = useState(true);
-  const [selectedTailIdx, setSelectedTailIdx] = useState(0);
-  const [sendWaitMs, setSendWaitMs] = useState(1000);
+  const [timingByte, setTimingByte] = useWandLabUiState('tail.timingByte', 0x0f);
+  const [colorFormat, setColorFormat] = useWandLabUiState('tail.colorFormat', '0f');
+  const [colorCount, setColorCount] = useWandLabUiState('tail.colorCount', 2);
+  const [colors, setColors] = useWandLabUiState('tail.colors', () => defaultColors(2));
+  const [tailRaw, setTailRaw] = useWandLabUiState('tail.raw', '58 F4 48 82 D1 46 02 08 D0 65 00');
+  const [omitDupes, setOmitDupes] = useWandLabUiState('tail.omitDupes', true);
+  const [selectedTailIdx, setSelectedTailIdx] = useWandLabUiState('tail.selectedIdx', 0);
+  const [sendWaitMs, setSendWaitMs] = useWandLabUiState('tail.sendWaitMs', 1000);
   const [sendingAll, setSendingAll] = useState(false);
-  const [vibration, setVibration] = useState(null);
-  const [envelope, setEnvelope] = useState('e1');
+  const [vibration, setVibration] = useWandLabUiState('tail.vibration', null);
+  const [envelope, setEnvelope] = useWandLabUiState('tail.envelope', 'e1');
   const [copyMsg, setCopyMsg] = useState('');
   const sendAllGen = useRef(0);
 
@@ -389,11 +390,12 @@ export function WandLabTailBuilderTab({
   };
 
   const omitted = parsedList.tails.length - displayTails.length;
+  const isTailList = parsedList.tails.length > 1;
   const listDesc = displayTails.length
     ? `${displayTails.length} tail${displayTails.length === 1 ? '' : 's'}`
       + (parsedList.tails.length !== displayTails.length ? ` (${parsedList.tails.length} lines, ${omitted} consecutive dupe${omitted === 1 ? '' : 's'} omitted)` : '')
       + (parsedList.skipped ? `, ${parsedList.skipped} skipped` : '')
-      + (displayTails.length > 1 ? ` — selected #${safeIdx + 1} (${tailBytes.length} bytes)` : ` (${tailBytes.length} bytes)`)
+      + (isTailList ? ` — selected #${safeIdx + 1} (${tailBytes.length} bytes)` : ` (${tailBytes.length} bytes)`)
     : 'No tails parsed';
 
   return (
@@ -533,7 +535,7 @@ export function WandLabTailBuilderTab({
         />
       </Field>
 
-      {displayTails.length > 1 && (
+      {isTailList && displayTails.length > 0 && (
         <Table.ScrollContainer minWidth={480}>
           <Table striped highlightOnHover withTableBorder withColumnBorders>
             <Table.Thead>
