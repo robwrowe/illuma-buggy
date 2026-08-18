@@ -380,6 +380,12 @@ interface AppState {
   setWledIp:             (val: string) => void;
   wledPort:              number;
   setWledPort:           (val: number) => void;
+  /**
+   * Logic board HTTP address (`illuma-logic.local` or a resolved IP).
+   * Discovery populates this; fetch uses whatever is stored.
+   */
+  boardIp:               string;
+  setBoardIp:            (val: string) => void;
   /** Background GPS poll interval (seconds) while zones are enabled. */
   locationPollSec:       number;
   setLocationPollSec:    (val: number) => void;
@@ -504,6 +510,7 @@ const DEFAULT_SHOW_MODE: ShowModeConfig = {
 };
 
 const DEFAULT_WAND_LAB: WandLabConfig = { simIp: '', log: [] };
+export const DEFAULT_BOARD_IP = 'illuma-logic.local';
 
 const DEFAULT_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: false, segments: false,
@@ -771,6 +778,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   wledPass:            '',
   wledIp:              '',
   wledPort:            80,
+  boardIp:             DEFAULT_BOARD_IP,
   sheetsEndpoint:      '',
   sheetsUploadQueue:   [],
   sheetsUploadInFlight: false,
@@ -975,6 +983,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ wledPort: val });
     void import('../utils/wledDirect').then(m => m.invalidateWledReachabilityCache());
   },
+  setBoardIp:            (val)          => set({ boardIp: val }),
   setSheetsEndpoint:     (val)          => { set({ sheetsEndpoint: val }); get().saveToStorage(); },
   enqueueSheetsUpload:   (item)         => set((s) => {
     if (s.sheetsUploadQueue.some((q) => q.sessionId === item.sessionId)) return s;
@@ -1150,7 +1159,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandTimeoutSec','rulesPaused','logMarkerSnippets','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
-                    'wledSsid','wledPass','wledIp','wledPort','sheetsEndpoint','sheetsUploadQueue',
+                    'wledSsid','wledPass','wledIp','wledPort','boardIp','sheetsEndpoint','sheetsUploadQueue',
                     'zonesEnabled','syncMode','boardConnectEnabled','parkMode',
                     'statusLedMode',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
@@ -1200,6 +1209,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         wledPass:           d.wledPass           ?? '',
         wledIp:             d.wledIp             ?? '',
         wledPort:           d.wledPort           ?? 80,
+        boardIp:            (typeof d.boardIp === 'string' && d.boardIp.trim()) ? d.boardIp : DEFAULT_BOARD_IP,
         sheetsEndpoint:     typeof d.sheetsEndpoint === 'string' ? d.sheetsEndpoint : '',
         sheetsUploadQueue:  Array.isArray(d.sheetsUploadQueue) ? d.sheetsUploadQueue : [],
         zonesEnabled:       d.zonesEnabled       ?? true,
@@ -1280,6 +1290,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['wledPass',           JSON.stringify(s.wledPass)],
         ['wledIp',             JSON.stringify(s.wledIp)],
         ['wledPort',           JSON.stringify(s.wledPort)],
+        ['boardIp',            JSON.stringify(s.boardIp)],
         ['sheetsEndpoint',     JSON.stringify(s.sheetsEndpoint)],
         ['sheetsUploadQueue',  JSON.stringify(s.sheetsUploadQueue)],
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],

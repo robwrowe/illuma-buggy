@@ -1,5 +1,26 @@
 #include "WiFiManager.h"
 #include "Globals.h"
+#include <ESPmDNS.h>
+
+static bool logicMdnsStarted = false;
+
+void stopLogicBoardMdns() {
+  if (!logicMdnsStarted) return;
+  MDNS.end();
+  logicMdnsStarted = false;
+}
+
+void startLogicBoardMdns() {
+  stopLogicBoardMdns();
+  if (!MDNS.begin("illuma-logic")) {
+    Serial.println("[mDNS] Failed to start responder");
+    return;
+  }
+  MDNS.addService("http", "tcp", 80);
+  MDNS.addServiceTxt("http", "tcp", "role", "logic");
+  logicMdnsStarted = true;
+  Serial.println("[mDNS] Advertising as illuma-logic.local");
+}
 
 void connectToWLED(bool force) {
   if (!force && WiFi.status() == WL_CONNECTED) {
@@ -11,6 +32,7 @@ void connectToWLED(bool force) {
     return;
   }
   wifiConnectInProgress = true;
+  stopLogicBoardMdns();
   WiFi.disconnect(true);
   int waitAttempts = 0;
   while (WiFi.status() == WL_CONNECTED && waitAttempts < 20) {
@@ -30,6 +52,7 @@ void connectToWLED(bool force) {
   }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+    startLogicBoardMdns();
     // Do NOT call snapshotWledBaseline / ensureWledPowerOn here — this runs on a
     // FreeRTOS WiFi task. Concurrent HTTPClient with loop() hangs / races.
     // Main loop picks up the newly-connected edge and snapshots there.

@@ -24,6 +24,9 @@ module.exports = ({ config }) => ({
         "IllumaBuggy uses your location to trigger LED presets based on where you are in the park.",
       NSLocationAlwaysUsageDescription:
         "IllumaBuggy uses your location in the background to trigger LED presets automatically.",
+      NSLocalNetworkUsageDescription:
+        "IllumaBuggy discovers your stroller's logic board on the local network.",
+      NSBonjourServices: ["_http._tcp."],
       UIBackgroundModes: ["location", "bluetooth-central", "bluetooth-peripheral"],
     },
   },
@@ -52,6 +55,7 @@ module.exports = ({ config }) => ({
       "android.permission.BLUETOOTH",
       "android.permission.BLUETOOTH_ADMIN",
       "android.permission.BLUETOOTH_CONNECT",
+      "android.permission.CHANGE_WIFI_MULTICAST_STATE",
       "android.permission.ACCESS_COARSE_LOCATION",
       "android.permission.ACCESS_FINE_LOCATION",
     ],

@@ -55,7 +55,11 @@ GitHub Actions (`.github/workflows/pages.yml`) builds and deploys `web/dist` on 
 
 ## Wand Lab / WandSimulator
 
-See `firmware/WandSimulator/API.md`. The web tool talks to `http://<sim-ip>/status`, `/send`, `/show`, and `/stop`.
+See `firmware/WandSimulator/API.md`. The web tool talks to `http://illuma-wandsim.local/status` (or an IP you type), `/send`, `/show`, and `/stop`.
 
 - **/send hex** — payload only (no `8301`); byte editor uses this convention
 - **/show** — full bytes including `8301`; burst, sweep, and capture replay use this
+
+### `.local` hostnames (mDNS)
+
+macOS and most Linux desktops resolve `*.local` out of the box (Avahi on Linux). Windows needs a one-time [Bonjour Print Services](https://support.apple.com/kb/DL999) install (or iTunes / Bonjour from Apple) before `illuma-wandsim.local` / `illuma-logic.local` resolve in the browser. If mDNS is blocked on the network, type the board's IP in the same field.

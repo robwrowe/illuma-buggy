@@ -6,6 +6,10 @@ UART. See [`PROTOCOL.md`](./PROTOCOL.md) for the app ↔ board BLE protocol and
 [`../../docs/pcb-final-build-spec.md`](../../docs/pcb-final-build-spec.md) for the dual-board
 build spec.
 
+After WiFi connects, the board is reachable at **`illuma-logic.local`** as well as its IP
+(mDNS HTTP service, TXT `role=logic`). Manual IP entry remains the fallback if mDNS is
+blocked.
+
 ## Arduino IDE settings
 
 - Board: **ESP32S3 Dev Module**

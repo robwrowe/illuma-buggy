@@ -9,14 +9,15 @@ is being rebuilt around it.
 
 1. Flash `WandSimulator.ino`, open Serial @ 115200.
 2. Run `wifi <ssid> <password>` (see [Serial commands](#serial-commands)).
-   The board prints its IP once connected:
+   The board prints its IP once connected and advertises mDNS:
    ```
    [WandSim] WiFi connected: 192.168.1.42
    [WandSim] HTTP server on :80 (/status, /send, /show, /stop)
+   [WandSim] Advertising as illuma-wandsim.local
    ```
-3. Talk to `http://<that-ip>/...`. There's no mDNS name — discover the IP via
-   Serial, or have your client scan/ask the user for it (this is what the web
-   tool's "Simulator IP" field is for).
+3. Talk to `http://illuma-wandsim.local/...` or `http://<that-ip>/...`. The
+   hostname is the default; type the printed IP if mDNS doesn't resolve
+   (some routers and phone hotspots block multicast).
 
 Things to design around, not workarounds to fix:
 
@@ -51,7 +52,7 @@ If you're hand-building a payload from the packet builders in this file
 
 ## HTTP endpoints
 
-Base URL: `http://<board-ip>` (port 80). All responses are `application/json`
+Base URL: `http://illuma-wandsim.local` or `http://<board-ip>` (port 80). All responses are `application/json`
 except where noted. All endpoints send CORS headers and answer `OPTIONS`.
 
 ### `GET /status`

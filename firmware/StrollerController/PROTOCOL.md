@@ -13,6 +13,8 @@ packet decoding (see `docs/disney-ble-protocol.md`, being updated separately).
 
 App writes JSON to CMD. Board notifies JSON on NOTIFY. Large responses are chunked (`seq`, `last`, `data`).
 
+Once WiFi is up, the board also advertises mDNS as **`illuma-logic.local`** (HTTP on port 80, TXT `role=logic`) in addition to its DHCP IP. Type an IP if the network blocks multicast.
+
 Source of truth for the tables below: `firmware/StrollerController/BleCommandHandler.cpp`
 (command dispatch) and `firmware/StrollerController/RuntimeFields.h` (runtime field
 whitelist). Re-check that file if this doc and firmware ever disagree.

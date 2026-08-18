@@ -49,6 +49,9 @@ export function loadAppData(stored) {
   merged.showSettings = { ...DEFAULT_DATA.showSettings, ...(merged.showSettings || {}) };
   merged.showInstanceOverrides = merged.showInstanceOverrides || {};
   merged.wandLab = merged.wandLab || DEFAULT_DATA.wandLab;
+  if (!(merged.wandLab.simIp || '').trim()) {
+    merged.wandLab = { ...merged.wandLab, simIp: DEFAULT_DATA.wandLab.simIp };
+  }
   // Drop legacy region-keyed layout list (superseded by mbMapping.segmentMaps).
   delete merged.mbSegmentLayouts;
   delete merged.mbActiveSegmentLayoutId;

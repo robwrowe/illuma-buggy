@@ -481,13 +481,14 @@ export function WandLabTab({ data, update }) {
         <Stack p="md" gap="md">
           <Text size="xs" c="dimmed">
             Byte-stepper for WandSimulator on your LAN. Flash WandSimulator, run{' '}
-            <Text span ff="monospace">wifi KyLan Ren password</Text> in Serial, then enter its IP below.
+            <Text span ff="monospace">wifi KyLan Ren password</Text> in Serial. It advertises as{' '}
+            <Text span ff="monospace">illuma-wandsim.local</Text> — type an IP if mDNS does not resolve.
           </Text>
 
           <TextInput
             label="Simulator IP"
             value={lab.simIp || ''}
-            placeholder="192.168.1.x"
+            placeholder="illuma-wandsim.local (or IP address)"
             onChange={(e) => update({ wandLab: { ...lab, simIp: e.target.value.trim() } })}
           />
 
