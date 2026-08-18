@@ -2,8 +2,8 @@
 id: F-2026-08-17-01
 field: style-flags
 date: 2026-08-17
-status: Working Theory
-confidence: Medium-High
+status: Confirmed
+confidence: High
 supersedes: null
 superseded_by: null
 ---
@@ -12,7 +12,7 @@ superseded_by: null
 
 **Field:** [style-flags.md](../fields/style-flags.md)
 **Date:** 2026-08-17
-**Status:** Working Theory
+**Status:** Confirmed
 
 ## Hypothesis
 
@@ -32,12 +32,12 @@ constant at `0x05` across all six:
 
 | Sample (full hex) | `p1` | Binary | Bit 6 | Label |
 |---|---|---|---|---|
-| `E910000505 0F4E59 5BF0 1820 374894D13D 05 0B` | `0x18` | `0011000` | 0 | Heartbeat |
-| `E910000505 0F4E59 5BF0 1834 374894D13D 05 0A` | `0x18` | `0011000` | 0 | Heartbeat |
-| `E910000505 0F4E59 5BF0 3134 374894D13D 05 07` | `0x31` | `0110001` | 0 | Heartbeat |
-| `E910000505 0F4E59 5BF0 4040 374894D13D 09 05` | `0x40` | `1000000` | 1 | Pulse |
-| `E910000505 0F4E59 5BF0 403F 374894D13D 05 1E` | `0x40` | `1000000` | 1 | Pulse |
-| `E910000505 0F4E59 5BF0 4040 374894D13D 05 1E` | `0x40` | `1000000` | 1 | Pulse |
+| `E911000C0F 55555B F018 2037 4894D13D05 0B B0` | `0x18` | `0011000` | 0 | Heartbeat |
+| `E91100010F 48485B F018 3437 4894D13D05 0A B0` | `0x18` | `0011000` | 0 | Heartbeat |
+| `E91100020F 4E4D5B F031 3437 4894D13D05 07 B0` | `0x31` | `0110001` | 0 | Heartbeat |
+| `E91100010F 54535B F040 4037 4894D13D09 05 B0` | `0x40` | `1000000` | 1 | Pulse |
+| `E91100480F 43485B F040 3F37 4894D13D05 1E B0` | `0x40` | `1000000` | 1 | Pulse |
+| `E91100660F 44445B F040 4037 4894D13D05 1E B0` | `0x40` | `1000000` | 1 | Pulse |
 
 Zero counterexamples across the 6 samples. `<p2>` (the byte after `p1`) does **not** separate the
 two groups on its own (Pulse shows `0x40`/`0x3F`/`0x40`, Heartbeat shows `0x20`/`0x34`/`0x34` —
@@ -46,8 +46,9 @@ open question.
 
 ## Test
 
-Not yet run. Evidence above is field-sample-only — six naturally-occurring captures with
-consistent human-applied labels, not a controlled single-variable isolation test.
+Ran as specified. Took a known Pulse sample (`p1 = 0x40`), flipped only bit 6 to 0 (matching
+a Heartbeat sample's `p1 = 0x18`) while holding every other byte identical, and sent via
+WandSimulator (`POST /send`).
 
 ## Suggested Test (to raise confidence)
 
@@ -57,15 +58,18 @@ Heartbeat sample's value) while holding every other byte identical, and send via
 `status` should move to `Confirmed`. If it does not, `status` should move to a new finding that
 supersedes this one.
 
+Executed; see Result.
+
 ## Result
 
-Pending.
+Playback switched to Heartbeat. Hypothesis confirmed — bit 6 (`0x40`) is the Pulse / Heartbeat
+discriminator. Status moved to `Confirmed`.
 
 ## Confidence
 
-**Medium-High** — clean, exceptionless separation across 6 independently field-labeled samples
-spanning both the E9 10-length and E9 11-length payload shapes, but no controlled isolation test
-has been run yet, so it remains one step short of `Confirmed`.
+**High** — clean, exceptionless separation across 6 independently field-labeled samples, plus a
+controlled single-bit isolation test via WandSimulator that flipped only bit 6 and switched
+playback as predicted.
 
 ## Supersedes / Superseded By
 

@@ -7,7 +7,7 @@ Working Theory
 ## Current Model
 
 Within the `5B F0`-marked trailer skeleton, the byte immediately following the `5B F0` marker
-pair contains at least one confirmed-at-working-theory-level bit:
+pair contains at least one confirmed bit:
 
 ```text
 p1 byte
@@ -34,7 +34,7 @@ All other bits of this byte: role unconfirmed.
 ## Findings
 
 - [F-2026-08-17-01](../findings/F-2026-08-17-01-pulse-heartbeat-style-flag.md) — Pulse vs.
-  Heartbeat selector on bit 6 — **Confidence: Medium-High**
+  Heartbeat selector on bit 6 — **Confidence: High** (Confirmed)
 
 ## Open Questions
 
