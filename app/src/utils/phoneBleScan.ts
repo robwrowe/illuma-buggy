@@ -25,6 +25,7 @@ export function isDisneyMfr(raw: number[]): boolean {
   if (raw.length >= 2 && raw[0] === 0x83 && raw[1] === 0x01) return true;
   const p = disneyPayload(raw);
   if (isWandCast(p) || isLegacyCf9bCast(p) || isWandIdleBeacon(p)) return true;
+  if (p.length >= 1 && p[0] === 0xC4) return true;  // candidate Fab 50 statue — unconfirmed
   return p.length >= 1 && (p[0] === 0xCC || p[0] === 0xE1 || p[0] === 0xE2 || p[0] === 0xE9);
 }
 
@@ -37,6 +38,7 @@ export function classifyScanPacket(raw: number[]): string {
   if (p.length >= 2 && p[0] === 0xCC && p[1] === 0x03) return 'PING';
   if (p.length >= 5 && (p[0] === 0xE1 || p[0] === 0xE2) && p[2] === 0xE9) return 'MB+';
   if (p.length >= 2 && p[0] === 0xE9) return 'SHOW';
+  if (p.length >= 1 && p[0] === 0xC4) return 'STATUE?';  // candidate Fab 50 — unconfirmed
   return 'DISNEY';
 }
 

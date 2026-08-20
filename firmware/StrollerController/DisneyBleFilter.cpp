@@ -29,6 +29,7 @@ bool isDisneyMfr(const uint8_t* data, size_t len) {
 
   // Payload-only injects (no CID prefix), e.g. lab / UART: known bare opcode families.
   if (pl >= 2 && (p[0] == 0xE9 || p[0] == 0xCD)) return true;
+  if (pl >= 1 && p[0] == 0xC4) return true;  // candidate Fab 50 statue — see docs/c4-fab50-statue-flag.md
   return false;
 }
 
@@ -54,6 +55,7 @@ const char* classifyScanPacket(const uint8_t* data, size_t len) {
   if (pl >= 2 && p[0] == 0xCC && p[1] == 0x03) return "PING";
   if (pl >= 4 && isMbEnvelopeByte(p[0]) && p[1] == 0x00) return "MB+";
   if (pl >= 2 && p[0] == 0xE9) return "SHOW";
+  if (pl >= 1 && p[0] == 0xC4) return "STATUE?";  // candidate Fab 50 — unconfirmed
   return "DISNEY";
 }
 

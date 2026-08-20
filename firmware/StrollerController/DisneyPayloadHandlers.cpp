@@ -75,6 +75,10 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
 
   if (!payload || plen == 0) return;
 
+  if (pkt.kind == DisneyPacketKind::C4_STATUE_CANDIDATE) {
+    notifySwDebug("c4_statue_candidate", payload, plen);
+  }
+
   // Wand cast dedupe
   if (looksLikeWandPayload(payload, plen)) {
     if (wandCastIsDuplicateAdvert(payload, plen)) {
