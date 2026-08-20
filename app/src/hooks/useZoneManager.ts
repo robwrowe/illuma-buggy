@@ -216,6 +216,7 @@ export function useZoneManager() {
             mayShowUserSettingsDialog: false,
           },
           (loc) => {
+            void runtimeBridge.markForegroundFixDelivered();
             processLocationUpdate(
               { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
               { background: false, accuracyM: loc.coords.accuracy ?? undefined },

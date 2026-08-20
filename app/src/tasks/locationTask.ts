@@ -8,6 +8,7 @@ let storeHydrated = false;
 let lastProcessedAt = 0;
 const MIN_PROCESS_INTERVAL_MS = 1000;
 const FOREGROUND_VISIBILITY_MAX_AGE_MS = 12_000;
+const FOREGROUND_FIX_MAX_AGE_MS = 8_000; // watchPositionAsync timeInterval is 3000ms
 
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   try {
@@ -16,20 +17,25 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       return;
     }
     // Foreground watchPositionAsync already drives zone logic while the app is open.
-    // Use the persisted visibility snapshot (written by useZoneManager on AppState change)
-    // instead of AppState.currentState — task callbacks can run in contexts where
-    // AppState is stale, and the previous AppState gate blocked all background ticks.
+    // Use the persisted visibility snapshot (written by useZoneManager on AppState
+    // change) instead of AppState.currentState — task callbacks can run in contexts
+    // where AppState is stale. Require a recent foreground GPS fix as well: a
+    // stale `state: 'active'` after lock (JS listener delayed) must not skip this
+    // task, or zone presets never fire until the app is reopened.
     const bridge =
       require('../utils/locationRuntimeBridge') as typeof import('../utils/locationRuntimeBridge');
     if (typeof bridge.getAppVisibility !== 'function') return;
     const vis = await bridge.getAppVisibility();
-    if (
-      vis.state === 'active' &&
-      Date.now() - vis.updatedAt < FOREGROUND_VISIBILITY_MAX_AGE_MS
-    ) {
-      console.log('[LocationTask] skip — visibility says active', {
+    const visibilityLooksActive =
+      vis.state === 'active' && Date.now() - vis.updatedAt < FOREGROUND_VISIBILITY_MAX_AGE_MS;
+    const foregroundFixIsFresh =
+      typeof vis.lastForegroundFixAt === 'number' &&
+      Date.now() - vis.lastForegroundFixAt < FOREGROUND_FIX_MAX_AGE_MS;
+
+    if (visibilityLooksActive && foregroundFixIsFresh) {
+      console.log('[LocationTask] skip — foreground watcher confirmed live', {
         updatedAt: vis.updatedAt,
-        age: Date.now() - vis.updatedAt,
+        lastForegroundFixAt: vis.lastForegroundFixAt,
       });
       return;
     }

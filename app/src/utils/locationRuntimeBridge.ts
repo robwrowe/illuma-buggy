@@ -54,6 +54,8 @@ export interface BleLinkSnapshot {
 export interface AppVisibilitySnapshot {
   state: 'active' | 'background' | 'inactive' | 'unknown';
   updatedAt: number;
+  /** Last GPS fix delivered by the foreground watchPositionAsync callback. */
+  lastForegroundFixAt?: number;
 }
 
 export async function saveLocationRuntime(snapshot: LocationRuntimeSnapshot): Promise<void> {
@@ -153,7 +155,12 @@ export async function getBleLinkStatus(): Promise<BleLinkSnapshot> {
 
 
 export async function setAppVisibility(state: 'active' | 'background' | 'inactive' | 'unknown'): Promise<void> {
-  const snap: AppVisibilitySnapshot = { state, updatedAt: Date.now() };
+  const existing = await getAppVisibility();
+  const snap: AppVisibilitySnapshot = {
+    state,
+    updatedAt: Date.now(),
+    lastForegroundFixAt: existing.lastForegroundFixAt,
+  };
   await AsyncStorage.setItem(APP_VISIBILITY_KEY, JSON.stringify(snap));
 }
 
@@ -165,6 +172,21 @@ export async function getAppVisibility(): Promise<AppVisibilitySnapshot> {
   } catch {
     return { state: 'unknown', updatedAt: 0 };
   }
+}
+
+/** Record that the foreground watcher delivered a GPS fix, without changing AppState. */
+export async function markForegroundFixDelivered(at = Date.now()): Promise<void> {
+  const raw = await AsyncStorage.getItem(APP_VISIBILITY_KEY);
+  let snap: AppVisibilitySnapshot = { state: 'unknown', updatedAt: 0 };
+  if (raw) {
+    try {
+      snap = JSON.parse(raw) as AppVisibilitySnapshot;
+    } catch {
+      // keep default
+    }
+  }
+  snap.lastForegroundFixAt = at;
+  await AsyncStorage.setItem(APP_VISIBILITY_KEY, JSON.stringify(snap));
 }
 
 export type PendingBleActionInput =
