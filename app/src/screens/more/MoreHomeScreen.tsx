@@ -9,7 +9,7 @@ const MORE_DESTINATIONS = [
   ['Brightness', 'Day, night, and indoor brightness'],
   ['ParkShows', 'Show preset assignments'],
   ['BleData', 'Calibration and BLE mapping'],
-  ['LogicBoard', 'Board mode and WLED network'],
+  ['LogicBoard', 'Board mode, HTTP address, and WLED network'],
   ['Diagnostics', 'Capture diagnostics'],
   ['LiveLog', 'Real-time BLE command and status log'],
   ['Zones', 'Edit location zones'],

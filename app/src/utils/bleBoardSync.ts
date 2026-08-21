@@ -20,7 +20,7 @@ import { isPresetSynced, markPresetSynced } from './blePresetCache';
 import type { MbMappingConfig } from './mbConfig';
 import { collectMappingPresetIds, compactMbPayloadForBle } from './mbConfig';
 import { TRANSITION_STYLE_TO_BS } from './transitionStyles';
-import { isOnWledNetwork, applyPresetWledDirect } from './wledDirect';
+import { isWledReachable, applyPresetWledDirect } from './wledDirect';
 
 const BOARD_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: true, segments: true,
@@ -213,27 +213,26 @@ export async function applyPresetRouted(
   presetApplyMode: PresetApplyMode,
   opts?: ApplyPresetOptions,
 ): Promise<boolean> {
-  const { autoWledDirect } = useAppStore.getState();
+  const { autoWledDirect, alwaysAttemptWledDirect } = useAppStore.getState();
 
-  // wledDirect: explicit mode, OR auto-detect enabled and phone is on StrollerNet.
+  // wledDirect: explicit mode, OR auto-detect enabled (unless mode is 'board').
   // Zone-GPS applies only (opts?.zoneGps) — do not route MB-mapping-triggered or
   // manual-screen applies through direct mode; those still go via BLE as today.
+  // Reachability is probed via HTTP (not SSID) so phone-as-hotspot-host works.
   const shouldTryDirect =
     !!opts?.zoneGps &&
     (presetApplyMode === 'wledDirect' || (autoWledDirect && presetApplyMode !== 'board'));
 
   if (shouldTryDirect) {
-    const onNetwork = await isOnWledNetwork();
-    if (onNetwork) {
-      console.log('[Apply] routing via wledDirect (phone on StrollerNet)', preset.id);
+    const reachable = alwaysAttemptWledDirect || await isWledReachable();
+    if (reachable) {
+      console.log('[Apply] routing via wledDirect (WLED reachable)', preset.id);
       const ok = await applyPresetWledDirect(preset, recall, sharedMaps, layouts);
       if (ok) return true;
       console.warn('[Apply] wledDirect failed — falling back to BLE route');
       // fall through to existing BLE routing below
     } else if (presetApplyMode === 'wledDirect') {
-      // Explicit direct mode but phone isn't on StrollerNet — fall through to BLE
-      // (never fail a zone apply outright if BLE is available) but log loudly.
-      console.warn('[Apply] wledDirect mode set but phone not on StrollerNet — using BLE');
+      console.warn('[Apply] wledDirect mode set but WLED unreachable — using BLE');
     }
   }
 

@@ -21,3 +21,8 @@ uint32_t uartFwdSeq = 0;
 unsigned long lastDisneySeenMs = 0;
 unsigned long lastForwardMs = 0;
 unsigned long lastLogicHbMs = 0;
+
+ScanRingSlot scanRing[SCAN_RING_SIZE];
+volatile uint8_t scanRingHead = 0;
+volatile uint8_t scanRingTail = 0;
+volatile uint32_t scanRingDropped = 0;

@@ -39,9 +39,9 @@ Use this when iterating in the web tool. No firmware rebuild.
 
 That sends `set_mb_rules` with a compact mapping payload. Firmware:
 
-1. Saves JSON to SPIFFS `/mb_rules.json`
+1. Writes JSON to a temp file (`/mb_rules.json.tmp`), verifies size, then renames into `/mb_rules.json` (the previous file is not deleted until the temp write succeeds)
 2. Deserializes into the PSRAM rules cache
-3. ACKs with `cacheApplied: true|false`
+3. ACKs with `cacheApplied: true|false`. Failed persist ACKs `reason: fs_persist` and sets sticky `mb_rules_fs_degraded` on the BLE `status` payload.
 
 ### Verify (serial @ 115200)
 
@@ -63,6 +63,8 @@ SPIFFS reload should print:
 [Rules] loadMbRulesFromJson …
 ```
 
+If a previous save was interrupted after writing `/mb_rules.json.tmp` but before rename, boot logs `[FS] /mb_rules.json missing but .tmp found — promoting .tmp` and uses that copy.
+
 No need to re-push unless you changed rules on the phone/web again.
 
 ---
@@ -81,12 +83,14 @@ firmware/StrollerController/embedded_rules.json
 
 **Shape:** the MB mapping document (what `set_mb_rules` stores).
 
+Always regenerate `embedded_rules.json` from a **full profile export** (web app → Export JSON → save as `firmware/StrollerController/embedded_rules.json`) immediately before running `embed_rules.py`. Do not reuse an older copy or a rules-only snippet. The embedded fallback is compiled into the firmware image and has no mechanism to self-update — it is only as current as the last time this file was regenerated and the firmware rebuilt/reflashed. A SPIFFS persist failure (see Path A / troubleshooting) silently loads this compiled copy, so an incomplete or stale embed shows up in the field as wrong colors with no re-push required to “fix” it until the next flash.
+
 Required:
 
 - A non-empty `"rules"` array — either at the **root**, or under `"mbMapping"` (full web **Export JSON** profiles)
-- Typically also `segmentMaps`, `timingModels`, `colors`, etc.
+- Typically also `segmentMaps`, `timingModels`, `colors`, `segments`
 
-`embed_rules.py` accepts either form. If you drop in a full profile export, it unwraps `mbMapping` and only that object is baked into flash (not presets/zones/etc.).
+`embed_rules.py` accepts either form. If you drop in a full profile export, it unwraps `mbMapping` and only that object is baked into flash (not presets/zones/etc.). The script **warns on stderr** (non-fatal) if `colors` or `segments` is missing/empty, so a rules-only embed cannot slip into a production binary unnoticed.
 
 Optional top-level flag:
 
@@ -129,8 +133,10 @@ What it does:
 Success looks like:
 
 ```text
-[embed_rules] embedded N bytes from embedded_rules.json (R rules)
+[embed_rules] embedded N bytes (R rules, C colors)
 ```
+
+A full profile should report a non-zero color count (typically 32). If `colors` or `segments` is missing, the script still writes the header (exit 0) but prints a multi-line `WARNING: embedding a fallback ruleset that is INCOMPLETE` to stderr.
 
 Failures:
 
@@ -181,7 +187,8 @@ Then the normal load path fills PSRAM. Later boots (with `forceOverride` false a
 | No seed after flash | Forgot `embed_rules.py`, or placeholder header | Run script; confirm `kHasEmbeddedRules` is true in `EmbeddedRules.h`; reflash |
 | Seed skipped on boot | SPIFFS already has rules and `forceOverride` is false | Expected — use BLE push, or set `forceOverride`, or clear SPIFFS |
 | `cache=FAIL` after BLE | Parse/alloc failed (size / nesting) | Check capacity gauge in web UI; compact payload; serial `[Rules]` heap lines |
-| `fs=FAIL` / `reason: fs_persist` | SPIFFS write failed | Free space / remount; serial `[FS]` lines |
+| `fs=FAIL` / `reason: fs_persist` | SPIFFS write failed (full, fragmented, or mid-write error). Live `/mb_rules.json` is left untouched | Serial `[FS]` lines include `free=` / `insufficient headroom`. Re-push after freeing space; BLE `status.mb_rules_fs_degraded` stays true until a save succeeds |
+| `mb_rules_fs_degraded: true` | Last persist failed; RAM rules may not match disk (reboot can fall back to SPIFFS or the compiled embed) | Re-push rules from the app; confirm `[FS] saved /mb_rules.json` and status flag clears |
 | `psramSize=0` at boot | PSRAM disabled in board options | Enable **OPI PSRAM**; rules still try internal heap fallback but large sets may fail |
 | Edited `embedded_rules.json` but board unchanged | Header / binary not regenerated | Re-run `embed_rules.py`, rebuild, flash |
 

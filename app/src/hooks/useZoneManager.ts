@@ -43,16 +43,16 @@ export function useZoneManager() {
     let appStateGeneration = 0;
     let fgsStartPending = false;
 
-    const persistAppVisibility = (state: AppStateStatus | 'unknown') => {
+    const persistAppVisibility = async (state: AppStateStatus | 'unknown') => {
       const setter = (runtimeBridge as any).setAppVisibility as
         | ((s: 'active' | 'background' | 'inactive' | 'unknown') => Promise<void>)
         | undefined;
       if (typeof setter === 'function') {
-        void setter((state as 'active' | 'background' | 'inactive') ?? 'unknown');
+        await setter((state as 'active' | 'background' | 'inactive') ?? 'unknown');
       }
     };
 
-    persistAppVisibility(appState);
+    void persistAppVisibility(appState);
 
     const isFgsManifestError = (e: unknown): boolean => {
       const msg = e instanceof Error ? e.message : String(e);
@@ -216,6 +216,7 @@ export function useZoneManager() {
             mayShowUserSettingsDialog: false,
           },
           (loc) => {
+            void runtimeBridge.markForegroundFixDelivered();
             processLocationUpdate(
               { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
               { background: false, accuracyM: loc.coords.accuracy ?? undefined },
@@ -337,14 +338,14 @@ export function useZoneManager() {
     const appStateSub = AppState.addEventListener('change', (next) => {
       const prev = appState;
       appState = next;
-      persistAppVisibility(next);
-      const gen = ++appStateGeneration;
-      console.log('[Location] appState', prev, '→', next);
-      if (!zonesEnabledRef.current && !captureLocationRef.current) return;
+      void (async () => {
+        await persistAppVisibility(next);
+        const gen = ++appStateGeneration;
+        console.log('[Location] appState', prev, '→', next);
+        if (!zonesEnabledRef.current && !captureLocationRef.current) return;
 
-      if (next === 'active') {
-        stopDrainPoll();
-        void (async () => {
+        if (next === 'active') {
+          stopDrainPoll();
           if (gen !== appStateGeneration) return;
           if (!pollTimer) {
             await syncWatchMode('app-foreground-recover');
@@ -362,11 +363,9 @@ export function useZoneManager() {
             void startBackgroundTask('fgs-missing-on-foreground');
           }
           await refreshLocationNow('app-foreground');
-        })();
-      } else if (prev === 'active') {
-        stopForegroundWatch();
-        startDrainPoll();
-        void (async () => {
+        } else if (prev === 'active') {
+          stopForegroundWatch();
+          startDrainPoll();
           if (gen !== appStateGeneration) return;
           if (!pollTimer) {
             await syncWatchMode('app-background-recover');
@@ -388,8 +387,8 @@ export function useZoneManager() {
           }
           await syncBackgroundSnapshot('app-background');
           await refreshLocationNow('app-background', true);
-        })();
-      }
+        }
+      })();
     });
 
     const storeSub = useAppStore.subscribe((state, prev) => {

@@ -27,7 +27,7 @@ export default function RulesScreen() {
   const { colors } = useTheme();
   const s = moreStyles(colors);
   const { isConnected } = useBLE();
-  const { rulesPaused, setRulesPaused, mbMapping } = useAppStore();
+  const { rulesPaused, setRulesPaused, mbMapping, deviceStatus } = useAppStore();
   const [rules, setRules] = useState<BoardRule[]>(() => rulesFromPhoneConfig(mbMapping.rules));
   const [loading, setLoading] = useState(false);
   const [sort, setSort] = useState<SortMode>('priority');
@@ -109,6 +109,11 @@ export default function RulesScreen() {
                 ? 'Showing board rule state (enabled flags from IllumaBuggy).'
                 : 'Showing rules from phone config. Connect + refresh to sync board toggles.'}
             </Text>
+            {isConnected && deviceStatus?.mbRulesFsDegraded ? (
+              <Text style={[s.rowHint, { color: colors.danger }]}>
+                Rules not saved to board storage — reboot risk. Re-push the full mapping from the web tool or a board sync.
+              </Text>
+            ) : null}
             <View style={s.recallBtns}>
               {(['priority', 'az', 'za'] as SortMode[]).map(option => (
                 <TouchableOpacity key={option} style={[s.recallBtn, sort === option && { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => setSort(option)}>

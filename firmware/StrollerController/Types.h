@@ -51,6 +51,7 @@ enum class DisneyPacketKind : uint8_t {
   E90C_ANIMATION,
   E90E_FLASH,
   E9_UNCLASSIFIED,
+  C4_STATUE_CANDIDATE,  // unconfirmed — see docs/c4-fab50-statue-flag.md
 };
 
 // Wire contract for UART scanner→logic and decode→apply boundary. Packed for stable sizeof.

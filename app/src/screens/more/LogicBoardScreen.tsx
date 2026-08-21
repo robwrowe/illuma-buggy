@@ -1,8 +1,10 @@
-import React from 'react';
-import { Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import IconSearch from '@tabler/icons-react-native/dist/esm/icons/IconSearch';
 import IconWifi from '@tabler/icons-react-native/dist/esm/icons/IconWifi';
-import { BoardRoleMode, useAppStore } from '../../stores/store';
+import { BoardRoleMode, DEFAULT_BOARD_IP, useAppStore } from '../../stores/store';
 import { bleService } from '../../services/BLEService';
+import { discoverLogicBoardIp } from '../../services/boardDiscovery';
 import { useBLE } from '../../hooks/useBLE';
 import { useTheme } from '../../utils/theme';
 import { moreStyles } from './moreStyles';
@@ -13,8 +15,10 @@ export default function LogicBoardScreen() {
   const { isConnected } = useBLE();
   const {
     boardRole, setBoardRole, deviceStatus, wledSsid, setWledSsid, wledPass, setWledPass,
-    wledIp, setWledIp, wledPort, setWledPort, saveToStorage,
+    wledIp, setWledIp, wledPort, setWledPort, boardIp, setBoardIp, saveToStorage,
   } = useAppStore();
+  const [finding, setFinding] = useState(false);
+  const [findMessage, setFindMessage] = useState<string | null>(null);
   const updateBoardRole = (role: BoardRoleMode) => {
     setBoardRole(role);
     if (isConnected) void bleService.sendBoardRole(role);
@@ -38,6 +42,25 @@ export default function LogicBoardScreen() {
     saveToStorage();
     Alert.alert('Saved', 'WLED network settings sent to board. WiFi will reconnect.');
   };
+  const findOnNetwork = async () => {
+    if (finding) return;
+    setFinding(true);
+    setFindMessage(null);
+    try {
+      const ip = await discoverLogicBoardIp();
+      if (ip) {
+        setBoardIp(ip);
+        saveToStorage();
+        setFindMessage(`Found ${ip}`);
+      } else {
+        setFindMessage("Couldn't find it automatically — enter the IP manually");
+      }
+    } catch {
+      setFindMessage("Couldn't find it automatically — enter the IP manually");
+    } finally {
+      setFinding(false);
+    }
+  };
   const dual = boardRole === 'logic_board';
   const statusText = !dual
     ? 'Standalone — local BLE scan on logic board'
@@ -59,6 +82,32 @@ export default function LogicBoardScreen() {
           ))}
         </View>
         <Text style={[s.rowHint, { color: statusColor }]}>{statusText}</Text>
+      </View>
+      <View style={s.section}>
+        <Text style={s.sectionTitle}>Logic board HTTP</Text>
+        <Text style={s.sectionHint}>
+          Hostname used for HTTP to the board. Defaults to {DEFAULT_BOARD_IP} — tap Find if that stalls, or type an IP.
+        </Text>
+        <View style={s.wledField}>
+          <Text style={s.rowLabel}>IP / hostname</Text>
+          <TextInput
+            style={s.wledInput}
+            value={boardIp}
+            onChangeText={setBoardIp}
+            onEndEditing={() => saveToStorage()}
+            placeholder={DEFAULT_BOARD_IP}
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+        <TouchableOpacity style={s.dataBtn} onPress={() => { void findOnNetwork(); }} disabled={finding}>
+          {finding
+            ? <ActivityIndicator size="small" color={colors.primary} />
+            : <IconSearch size={16} color={colors.primary} />}
+          <Text style={s.dataBtnText}>{finding ? 'Searching…' : 'Find on network'}</Text>
+        </TouchableOpacity>
+        {findMessage ? <Text style={s.rowHint}>{findMessage}</Text> : null}
       </View>
       <View style={s.section}>
         <Text style={s.sectionTitle}>WLED Network</Text>

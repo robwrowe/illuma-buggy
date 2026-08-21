@@ -119,6 +119,12 @@
 // S3 logic: SPI pins 10–13. Classic ESP32 scanner: GPIO 6–11 are flash — use VSPI.
 // Flip HAS_SD_LOGGER to 1 when a card is installed; 0 skips SPI mount (RAM ring still works on logic).
 #define HAS_SD_LOGGER 0
+
+// Flip to 0 to skip the in-RAM rule-event ring entirely (saves 2x snprintf +
+// strncpy per rule event on the logic board hot path). Disables the BLE
+// "pull rule log" debug feature until re-enabled. Independent of HAS_SD_LOGGER.
+// Off while chasing field lag; set to 1 to restore BLE rule-log pull.
+#define HAS_RULE_LOG_RING 0
 #if defined(ILLUMA_LOGIC_BOARD) || CONFIG_IDF_TARGET_ESP32S3
 #define SD_CS_PIN   10
 #define SD_SCK_PIN  12

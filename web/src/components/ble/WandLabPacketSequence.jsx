@@ -21,6 +21,7 @@ import {
 } from '../../lib/ble/wandSimClient';
 import { useShowProgress } from '../../hooks/useShowProgress';
 import { generateId } from '../../lib/utils';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
 function emptyPacket() {
   return { id: generateId(), bytes: [], waitMs: 1000, label: '' };
@@ -34,10 +35,10 @@ export function WandLabPacketSequence({
   onLoadToEditor,
   onSequenceComplete,
 }) {
-  const [pasteText, setPasteText] = useState('');
-  const [strip8301, setStrip8301] = useState(true);
-  const [omitConsecutiveDupes, setOmitConsecutiveDupes] = useState(true);
-  const [defaultWaitMs, setDefaultWaitMs] = useState(1000);
+  const [pasteText, setPasteText] = useWandLabUiState('sequence.pasteText', '');
+  const [strip8301, setStrip8301] = useWandLabUiState('sequence.strip8301', true);
+  const [omitConsecutiveDupes, setOmitConsecutiveDupes] = useWandLabUiState('sequence.omitDupes', true);
+  const [defaultWaitMs, setDefaultWaitMs] = useWandLabUiState('sequence.defaultWaitMs', 1000);
   const [lastSentId, setLastSentId] = useState(null);
   const [manualNextIdx, setManualNextIdx] = useState(0);
   const [stepping, setStepping] = useState(false);

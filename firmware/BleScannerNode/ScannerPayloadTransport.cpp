@@ -43,10 +43,11 @@ void scannerTransportSend(const ParsedDisneyPacket& pkt) {
   lastForwardMs = millis();
   uartFwdSeq++;
   if (uartFwdSeq <= 40 || (uartFwdSeq % 25) == 0) {
-    Serial.printf("[UART] forwarding scan packet #%lu (len=%u kind=%u op=0x%04X)\n",
+    Serial.printf("[UART] forwarding scan packet #%lu (len=%u kind=%u op=0x%04X%s)\n",
                   (unsigned long)uartFwdSeq,
                   (unsigned)sizeof(pkt),
-                  (unsigned)pkt.kind, (unsigned)pkt.opcode);
+                  (unsigned)pkt.kind, (unsigned)pkt.opcode,
+                  pkt.kind == DisneyPacketKind::C4_STATUE_CANDIDATE ? " STATUE?" : "");
   }
 }
 

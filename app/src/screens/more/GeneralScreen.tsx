@@ -24,13 +24,19 @@ export default function GeneralScreen() {
   const { isConnected } = useBLE();
   const {
     locationPollSec, setLocationPollSec, ftbPresetId, setFtbPresetId, presets, syncMode, setSyncMode,
-    boardConnectEnabled, setBoardConnectEnabled, parkMode, setParkMode, saveToStorage, exportData, importData,
+    boardConnectEnabled, setBoardConnectEnabled, parkMode, setParkMode, statusLedMode, setStatusLedMode,
+    saveToStorage, exportData, importData,
   } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
   const modes: { label: string; value: ThemeMode; icon: React.ReactNode }[] = [
     { label: 'Light', value: 'light', icon: <IconSun size={16} color={mode === 'light' ? colors.primary : colors.textMuted} /> },
     { label: 'Dark', value: 'dark', icon: <IconMoon size={16} color={mode === 'dark' ? colors.primary : colors.textMuted} /> },
     { label: 'System', value: 'system', icon: <IconDeviceDesktop size={16} color={mode === 'system' ? colors.primary : colors.textMuted} /> },
+  ];
+  const ledModes: { label: string; value: 0 | 1 | 2 }[] = [
+    { label: 'Normal', value: 0 },
+    { label: 'Dim', value: 1 },
+    { label: 'Off', value: 2 },
   ];
   const exportConfig = async () => {
     try {
@@ -95,6 +101,23 @@ export default function GeneralScreen() {
       </View>
       <View style={s.section}>
         <Text style={s.sectionTitle}>Device</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Status LED</Text>
+            <Text style={s.rowHint}>Brightness of the logic board's onboard status light.</Text>
+          </View>
+        </View>
+        <View style={s.themeRow}>
+          {ledModes.map(({ label, value }) => (
+            <TouchableOpacity
+              key={value}
+              style={[s.themeBtn, statusLedMode === value && { borderColor: colors.primary, backgroundColor: colors.primaryDim }]}
+              onPress={() => { setStatusLedMode(value); if (bleService.isConnected()) void bleService.sendStatusLedMode(value); }}
+            >
+              <Text style={[s.themeBtnText, statusLedMode === value && { color: colors.primary }]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
         <View style={s.row}><View style={{ flex: 1 }}><Text style={s.rowLabel}>Park Mode</Text><Text style={s.rowHint}>Minimize BLE traffic and skip config push on connect.</Text></View><Switch value={parkMode} onValueChange={setParkMode} trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" /></View>
         <View style={s.row}><View style={{ flex: 1 }}><Text style={s.rowLabel}>Connect to IllumaBuggy board</Text><Text style={s.rowHint}>Turn off for phone-only park use.</Text></View><Switch value={boardConnectEnabled} onValueChange={setBoardConnectEnabled} trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" /></View>
         <View style={s.row}>{isConnected ? <IconBluetooth size={18} color={colors.success} /> : <IconBluetoothOff size={18} color={colors.danger} />}<Text style={s.rowLabel}>IllumaBuggy</Text><Text style={s.rowHint}>{isConnected ? 'Connected' : 'Disconnected'}</Text></View>

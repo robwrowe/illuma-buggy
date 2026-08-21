@@ -6,6 +6,7 @@
 | [e9-parser-and-effect-mapping.md](./e9-parser-and-effect-mapping.md) | E9 parser tiers, effect-class mapping, app-side WLED routing |
 | [starlight-wand-codes.md](./starlight-wand-codes.md) | Starlight Bubble Wand packets, effects, testing |
 | [magic-band-bluetooth-codes.md](./magic-band-bluetooth-codes.md) | Archived [emcot.world](https://emcot.world/Disney_MagicBand%2B_Bluetooth_Codes) community wiki (detailed byte breakdowns) |
+| [c4-fab50-statue-flag.md](./c4-fab50-statue-flag.md) | **Hypothesis** — `0xC4` tagged `STATUE?` / `C4_STATUE_CANDIDATE` (Fab 50 statue candidate; no decode) |
 
 ## External references
 
@@ -21,5 +22,6 @@
 - [rule-exclusivity-checklist.md](./rule-exclusivity-checklist.md) — bench matrix for ignore-lower / ignore-all rule flags
 - [rule-engine-anchor-offsets.md](./rule-engine-anchor-offsets.md) — anchor-relative byte offsets in MB rules (schema + research notes)
 - [mb-sw-test-checklist.md](./mb-sw-test-checklist.md) — MagicBand+ / Starlight bench & park checks
+- [c4-fab50-statue-flag.md](./c4-fab50-statue-flag.md) — `0xC4` statue-candidate flag (unconfirmed; not a decode)
 - [firmware/StrollerController/PROTOCOL.md](../firmware/StrollerController/PROTOCOL.md) — app ↔ board JSON over BLE
 - [firmware/WandSimulator/README.md](../firmware/WandSimulator/README.md) — bench broadcaster serial commands

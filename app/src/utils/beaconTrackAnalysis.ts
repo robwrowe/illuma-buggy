@@ -153,6 +153,9 @@ export function packetFingerprint(packet: BleCapturePacket): string {
     const opcode = (p[0] << 8) | (p[1] ?? 0);
     return `SHOW:${opcode.toString(16)}`;
   }
+  if (packet.tag === 'STATUE?' || (p.length >= 1 && p[0] === 0xC4)) {
+    return `STATUE?:${p.slice(0, 4).map(b => b.toString(16).padStart(2, '0')).join('')}`;
+  }
   return `${packet.tag}:${p.slice(0, 4).map(b => b.toString(16).padStart(2, '0')).join('')}`;
 }
 

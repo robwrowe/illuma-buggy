@@ -21,6 +21,7 @@ import {
 import { MB_PAL_OFF } from '../../lib/ble/mbConstants';
 import { buildMbSingle } from '../../lib/ble/mbPayloads';
 import { useShowProgress } from '../../hooks/useShowProgress';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
 const MB_OFF_BYTES = buildMbSingle(MB_PAL_OFF);
 
@@ -51,13 +52,13 @@ export function WandLabSweepPanel({
   onLivePayloadChange,
 }) {
   const [opened, { toggle }] = useDisclosure(false);
-  const [startHex, setStartHex] = useState('00');
-  const [endHex, setEndHex] = useState('FF');
-  const [stepHex, setStepHex] = useState('01');
-  const [dwellMs, setDwellMs] = useState(3000);
-  const [offBetween, setOffBetween] = useState(false);
-  const [offWaitMs, setOffWaitMs] = useState(1000);
-  const [manualAdvance, setManualAdvance] = useState(false);
+  const [startHex, setStartHex] = useWandLabUiState('sweep.startHex', '00');
+  const [endHex, setEndHex] = useWandLabUiState('sweep.endHex', 'FF');
+  const [stepHex, setStepHex] = useWandLabUiState('sweep.stepHex', '01');
+  const [dwellMs, setDwellMs] = useWandLabUiState('sweep.dwellMs', 3000);
+  const [offBetween, setOffBetween] = useWandLabUiState('sweep.offBetween', false);
+  const [offWaitMs, setOffWaitMs] = useWandLabUiState('sweep.offWaitMs', 1000);
+  const [manualAdvance, setManualAdvance] = useWandLabUiState('sweep.manualAdvance', false);
   const [sweepValues, setSweepValues] = useState([]);
   const [sweepOffBetween, setSweepOffBetween] = useState(false);
   const [manualStepIdx, setManualStepIdx] = useState(-1);

@@ -2041,6 +2041,10 @@ export function withSegRefDefaults(ref) {
 }
 
 export function migrateWandLabDefaults(data) {
-  if (data.wandLab) return data;
-  return { ...data, wandLab: { simIp: '', log: [] } };
+  const DEFAULT_SIM_IP = 'illuma-wandsim.local';
+  if (!data.wandLab) return { ...data, wandLab: { simIp: DEFAULT_SIM_IP, log: [] } };
+  if (!(data.wandLab.simIp || '').trim()) {
+    return { ...data, wandLab: { ...data.wandLab, simIp: DEFAULT_SIM_IP } };
+  }
+  return data;
 }

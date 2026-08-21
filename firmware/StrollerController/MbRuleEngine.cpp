@@ -916,6 +916,63 @@ static void beginMbRuleDip(unsigned long fadeMs) {
   sdRuleLoggerWrite("lifecycle", "\"transition\":\"ON_TO_DIP\"");
 }
 
+// Decodes the rule's timing byte from `payload` and returns the fade-out
+// duration + blending style that should apply if the rule stops now.
+// Does not touch onTimeMs/onHoldMs/mbRulePhaseDeadlineMs.
+struct FadeOutDecode {
+  unsigned long fadeMs;
+  int stopBlendingStyle;
+};
+
+static FadeOutDecode decodeRuleFadeOut(const JsonObject& rule,
+                                        const uint8_t* payload, size_t plen) {
+  JsonObject timing = rule["timing"].as<JsonObject>();
+  bool timingActive = !timing.isNull() && (timing["enabled"] | false);
+
+  unsigned long stretchMs = 0;
+  if (timingActive) {
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, timing, 5);
+    uint8_t offset = offsetResolved < 0 ? 5 : (uint8_t)offsetResolved;
+    uint8_t timingByte = (offsetResolved >= 0 && payload && offset < plen)
+      ? payload[offset]
+      : (uint8_t)fallbackValueOrZero(timing);
+    const char* timingModelId = timing["timingModelId"] | "";
+    JsonObject timingModel = findTimingModelById(timingModelId);
+    TimingDecode td = decodeTimingByte(timingByte, timingModel);
+    stretchMs = td.stretchMs;
+  } else {
+    JsonObject fb = rule["fallbackDuration"].as<JsonObject>();
+    if (!fb.isNull() && (fb["enabled"] | false)) {
+      float fadeSec = fb["fadeSec"] | 0.0f;
+      if (fadeSec < 0) fadeSec = 0;
+      stretchMs = (unsigned long)(fadeSec * 1000.0f + 0.5f);
+    }
+  }
+
+  long fadeOverride = -1;
+  if (!timing.isNull() && timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
+    fadeOverride = (long)(timing["fadeOverrideMs"] | -1);
+  }
+
+  FadeOutDecode out;
+  out.fadeMs = (fadeOverride >= 0) ? (unsigned long)fadeOverride : stretchMs;
+  out.stopBlendingStyle = -1;
+
+  JsonObject stopTr = rule["stopTransition"].as<JsonObject>();
+  if (!stopTr.isNull() && (stopTr["enabled"] | false)) {
+    const char* stype = stopTr["type"] | "fade";
+    const char* durMode = stopTr["durationMode"] | "timingFade";
+    if (strcmp(stype, "instant") == 0) {
+      out.fadeMs = 0;
+    } else if (strcmp(durMode, "custom") == 0 && stopTr.containsKey("timeMs")
+               && !stopTr["timeMs"].isNull()) {
+      out.fadeMs = (unsigned long)(stopTr["timeMs"] | out.fadeMs);
+    }
+    out.stopBlendingStyle = blendingStyleFromTypeString(stype);
+  }
+  return out;
+}
+
 static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload, size_t plen) {
   JsonObject timing = rule["timing"].as<JsonObject>();
   bool timingActive = !timing.isNull() && (timing["enabled"] | false);
@@ -973,27 +1030,11 @@ static void beginTimedRuleOnPhase(const JsonObject& rule, const uint8_t* payload
   mbActiveRuleId[MB_RULE_ID_LEN - 1] = '\0';
   mbActiveRuleCooldownMode =
     (strcmp(mode, "fixed") == 0) ? MB_COOLDOWN_FIXED : MB_COOLDOWN_ON_MATCH;
-  long fadeOverride = -1;
-  if (!timing.isNull() && timing.containsKey("fadeOverrideMs") && !timing["fadeOverrideMs"].isNull()) {
-    fadeOverride = (long)(timing["fadeOverrideMs"] | -1);
-  }
-  // stretchMs drives the FTB transition during the final flash cycle (timingFade mode).
-  mbRuleFadeMs = (fadeOverride >= 0) ? (unsigned long)fadeOverride : td.stretchMs;
 
-  mbRuleStopBlendingStyle = -1;
-  JsonObject stopTr = rule["stopTransition"].as<JsonObject>();
-  if (!stopTr.isNull() && (stopTr["enabled"] | false)) {
-    const char* stype = stopTr["type"] | "fade";
-    const char* durMode = stopTr["durationMode"] | "timingFade";
-    if (strcmp(stype, "instant") == 0) {
-      mbRuleFadeMs = 0;
-    } else if (strcmp(durMode, "custom") == 0 && stopTr.containsKey("timeMs")
-               && !stopTr["timeMs"].isNull()) {
-      mbRuleFadeMs = (unsigned long)(stopTr["timeMs"] | mbRuleFadeMs);
-    }
-    // else durationMode "timingFade": keep mbRuleFadeMs from stretch / fadeOverrideMs
-    mbRuleStopBlendingStyle = blendingStyleFromTypeString(stype);
-  }
+  // stretchMs drives the FTB transition during the final flash cycle (timingFade mode).
+  FadeOutDecode fo = decodeRuleFadeOut(rule, payload, plen);
+  mbRuleFadeMs = fo.fadeMs;
+  mbRuleStopBlendingStyle = fo.stopBlendingStyle;
 
   mbRuleCooldownMs = (unsigned long)cooldownSec * 1000UL;
   mbRulePhase = MB_RULE_ON;
@@ -1139,6 +1180,18 @@ bool onTimedRuleRepeatMatch(const JsonObject& rule, const uint8_t* payload, size
     if ((long)(slackDeadline - mbRulePhaseDeadlineMs) > 0) {
       mbRulePhaseDeadlineMs = slackDeadline;
     }
+    // Refresh fade-out timing from this (repeat) packet — Disney devices vary
+    // fadeBits packet-to-packet even when the rest of the payload repeats, and
+    // the fade that plays when the burst finally goes quiet should reflect the
+    // most recently seen packet, not the one that first triggered the rule.
+    FadeOutDecode fo = decodeRuleFadeOut(rule, payload, plen);
+    if (fo.fadeMs != mbRuleFadeMs || fo.stopBlendingStyle != mbRuleStopBlendingStyle) {
+      Serial.printf("[Rule] refresh fade on repeat: %lums -> %lums (bs %d -> %d) id=%s\n",
+                    mbRuleFadeMs, fo.fadeMs, mbRuleStopBlendingStyle, fo.stopBlendingStyle,
+                    rule["id"] | "");
+    }
+    mbRuleFadeMs = fo.fadeMs;
+    mbRuleStopBlendingStyle = fo.stopBlendingStyle;
     return true;
   }
   return false;

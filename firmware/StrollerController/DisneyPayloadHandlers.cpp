@@ -26,6 +26,22 @@ static bool looksLikeWandPayload(const uint8_t* payload, size_t plen) {
   return false;
 }
 
+// E9-family check: 8301EX00E9 (envelope) or bare 8301E9.
+// payload[] here is already the raw mfr-data buffer starting at the
+// Disney envelope byte (same convention hexPrefix rules match against;
+// the 8301 two-byte BLE header is stripped before this point).
+static bool isE9FamilyPayload(const uint8_t* payload, size_t plen) {
+  if (!payload) return false;
+  if (plen >= 1 && payload[0] == 0xE9) return true;
+  if (plen >= 3 &&
+      (payload[0] & 0xF0) == 0xE0 && payload[0] != 0xE9 &&
+      payload[1] == 0x00 &&
+      payload[2] == 0xE9) {
+    return true;
+  }
+  return false;
+}
+
 bool mbEffectIsRepeatAdvert(const uint8_t* payload, size_t plen) {
   if (plen == 0 || lastMbEffectLen == 0) return false;
   size_t n = plen < sizeof(lastMbEffectPayload) ? plen : sizeof(lastMbEffectPayload);
@@ -58,6 +74,10 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
   }
 
   if (!payload || plen == 0) return;
+
+  if (pkt.kind == DisneyPacketKind::C4_STATUE_CANDIDATE) {
+    notifySwDebug("c4_statue_candidate", payload, plen);
+  }
 
   // Wand cast dedupe
   if (looksLikeWandPayload(payload, plen)) {
@@ -166,7 +186,9 @@ void applyParsedDisneyPacket(const ParsedDisneyPacket& pkt) {
     snprintf(detail, sizeof(detail), "\"len\":%u,\"rssi\":%d", (unsigned)plen, rssi);
     sdRuleLoggerWrite("no_match", detail);
   }
-  notifyMbUnmatched(payload, plen);
+  if (isE9FamilyPayload(payload, plen)) {
+    notifyMbUnmatched(payload, plen);
+  }
 
   if (bleDefaultPresetId.length() > 0) {
     bool wand = looksLikeWandPayload(payload, plen);

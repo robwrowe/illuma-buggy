@@ -116,6 +116,8 @@ export function describeBlePacket(tag: string, hex: string): string {
 
   if (bytes.length >= 2 && bytes[0] === 0x0f && bytes[1] === 0x11) return 'Wand idle beacon';
 
+  if (bytes[0] === 0xc4) return 'STATUE? (Fab 50 candidate, unconfirmed)';
+
   return tag;
 }
 

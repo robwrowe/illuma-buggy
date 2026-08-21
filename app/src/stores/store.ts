@@ -199,6 +199,7 @@ export interface DeviceStatus {
   wledIp?:              string;
   wledPort?:            number;
   mbMappingLoaded?:     boolean;
+  mbRulesFsDegraded?:   boolean;
   boardRole?:           BoardRoleMode;
   scannerMac?:          string;
   logicMac?:            string;
@@ -343,9 +344,13 @@ interface AppState {
   /** Experimental: 'legacy' phone-resolves wled_raw; 'board' uses preset_apply when synced; 'wledDirect' phone→WLED HTTP for zone GPS. */
   presetApplyMode:       PresetApplyMode;
   setPresetApplyMode:    (val: PresetApplyMode) => void;
-  /** When true (default), zone GPS applies auto-use wledDirect if phone is on StrollerNet (unless mode is 'board'). */
+  /** When true (default), zone GPS applies auto-use wledDirect if WLED is reachable (unless mode is 'board'). */
   autoWledDirect:        boolean;
   setAutoWledDirect:     (val: boolean) => void;
+  /** When true, zone GPS applies always attempt wledDirect first (skips reachability
+   * probe/SSID check) before falling back to BLE. Overrides autoWledDirect's gating. */
+  alwaysAttemptWledDirect:        boolean;
+  setAlwaysAttemptWledDirect:     (val: boolean) => void;
   starlightEnabled:      boolean;
   setStarlightEnabled:   (val: boolean) => void;
   starlightTimeoutSec:   number;
@@ -375,6 +380,12 @@ interface AppState {
   setWledIp:             (val: string) => void;
   wledPort:              number;
   setWledPort:           (val: number) => void;
+  /**
+   * Logic board HTTP address (`illuma-logic.local` or a resolved IP).
+   * Discovery populates this; fetch uses whatever is stored.
+   */
+  boardIp:               string;
+  setBoardIp:            (val: string) => void;
   /** Background GPS poll interval (seconds) while zones are enabled. */
   locationPollSec:       number;
   setLocationPollSec:    (val: number) => void;
@@ -391,6 +402,9 @@ interface AppState {
   /** Park Mode: minimize BLE traffic — skip config push on connect; hide setup tabs. */
   parkMode:              boolean;
   setParkMode:           (val: boolean) => void;
+  /** Status LED brightness on the logic board: 0=normal, 1=dim(~30%), 2=off. */
+  statusLedMode:         0 | 1 | 2;
+  setStatusLedMode:      (val: 0 | 1 | 2) => void;
   boardRole:             BoardRoleMode;
   setBoardRole:          (role: BoardRoleMode) => void;
   scannerMac:            string;
@@ -496,6 +510,7 @@ const DEFAULT_SHOW_MODE: ShowModeConfig = {
 };
 
 const DEFAULT_WAND_LAB: WandLabConfig = { simIp: '', log: [] };
+export const DEFAULT_BOARD_IP = 'illuma-logic.local';
 
 const DEFAULT_PRESET_MEMORY: PresetMemory = {
   effect: true, palette: true, parameters: true, color: false, segments: false,
@@ -749,6 +764,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   overrideKillOnZone:  false,
   presetApplyMode:     'legacy' as PresetApplyMode,
   autoWledDirect:      true,
+  alwaysAttemptWledDirect: false,
   starlightEnabled:    true,
   starlightTimeoutSec: 15,
   magicBandEnabled:    true,
@@ -762,6 +778,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   wledPass:            '',
   wledIp:              '',
   wledPort:            80,
+  boardIp:             DEFAULT_BOARD_IP,
   sheetsEndpoint:      '',
   sheetsUploadQueue:   [],
   sheetsUploadInFlight: false,
@@ -771,6 +788,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   syncMode:            'auto',
   boardConnectEnabled: true,
   parkMode:            false,
+  statusLedMode:       0,
   boardRole:           'standalone',
   scannerMac:          '',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
@@ -924,6 +942,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setOverrideKillOnZone: (val)          => set({ overrideKillOnZone: val }),
   setPresetApplyMode:    (val)          => set({ presetApplyMode: val }),
   setAutoWledDirect:     (val)          => set({ autoWledDirect: val }),
+  setAlwaysAttemptWledDirect: (val)     => set({ alwaysAttemptWledDirect: val }),
   setStarlightEnabled:   (val)          => set({ starlightEnabled: val }),
   setStarlightTimeoutSec:(val)          => set({ starlightTimeoutSec: val }),
   setMagicBandEnabled:   (val)          => set({ magicBandEnabled: val }),
@@ -955,8 +974,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   setBleEffectTransitionMs:(val)        => set({ bleEffectTransitionMs: val }),
   setWledSsid:           (val)          => set({ wledSsid: val }),
   setWledPass:           (val)          => set({ wledPass: val }),
-  setWledIp:             (val)          => set({ wledIp: val }),
-  setWledPort:           (val)          => set({ wledPort: val }),
+  setWledIp: (val) => {
+    set({ wledIp: val });
+    // Dynamic import avoids a static cycle (wledDirect imports this store).
+    void import('../utils/wledDirect').then(m => m.invalidateWledReachabilityCache());
+  },
+  setWledPort: (val) => {
+    set({ wledPort: val });
+    void import('../utils/wledDirect').then(m => m.invalidateWledReachabilityCache());
+  },
+  setBoardIp:            (val)          => set({ boardIp: val }),
   setSheetsEndpoint:     (val)          => { set({ sheetsEndpoint: val }); get().saveToStorage(); },
   enqueueSheetsUpload:   (item)         => set((s) => {
     if (s.sheetsUploadQueue.some((q) => q.sessionId === item.sessionId)) return s;
@@ -977,6 +1004,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSyncMode:           (val)          => { set({ syncMode: val }); get().saveToStorage(); },
   setBoardConnectEnabled:(val)          => { set({ boardConnectEnabled: val }); get().saveToStorage(); },
   setParkMode:           (val)          => { set({ parkMode: val }); get().saveToStorage(); },
+  setStatusLedMode:      (val)          => { set({ statusLedMode: val }); get().saveToStorage(); },
   setBoardRole:          (role)         => { set({ boardRole: role }); get().saveToStorage(); },
   setScannerMac:         (mac)          => set({ scannerMac: mac }),
 
@@ -1127,12 +1155,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadFromStorage: async () => {
     try {
       const keys = ['presets','zones','indoorZones','brightnessConfig','colorCalibration','overrideKillOnZone',
-                    'presetApplyMode','autoWledDirect',
+                    'presetApplyMode','autoWledDirect','alwaysAttemptWledDirect',
                     'starlightEnabled','starlightTimeoutSec','magicBandEnabled',
                     'magicBandTimeoutSec','rulesPaused','logMarkerSnippets','mbUnmatchedLogEnabled',
                     'bleEffectTransitionMs',
-                    'wledSsid','wledPass','wledIp','wledPort','sheetsEndpoint','sheetsUploadQueue',
+                    'wledSsid','wledPass','wledIp','wledPort','boardIp','sheetsEndpoint','sheetsUploadQueue',
                     'zonesEnabled','syncMode','boardConnectEnabled','parkMode',
+                    'statusLedMode',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'bleCaptureIgnoreTags',
@@ -1167,6 +1196,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         presetApplyMode:    (d.presetApplyMode === 'board' || d.presetApplyMode === 'wledDirect'
           ? d.presetApplyMode : 'legacy') as PresetApplyMode,
         autoWledDirect:     d.autoWledDirect ?? true,
+        alwaysAttemptWledDirect: d.alwaysAttemptWledDirect ?? false,
         starlightEnabled:   d.starlightEnabled   ?? true,
         starlightTimeoutSec:d.starlightTimeoutSec ?? 15,
         magicBandEnabled:   d.magicBandEnabled   ?? true,
@@ -1179,12 +1209,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         wledPass:           d.wledPass           ?? '',
         wledIp:             d.wledIp             ?? '',
         wledPort:           d.wledPort           ?? 80,
+        boardIp:            (typeof d.boardIp === 'string' && d.boardIp.trim()) ? d.boardIp : DEFAULT_BOARD_IP,
         sheetsEndpoint:     typeof d.sheetsEndpoint === 'string' ? d.sheetsEndpoint : '',
         sheetsUploadQueue:  Array.isArray(d.sheetsUploadQueue) ? d.sheetsUploadQueue : [],
         zonesEnabled:       d.zonesEnabled       ?? true,
         syncMode:           d.syncMode           ?? 'auto',
         boardConnectEnabled:d.boardConnectEnabled ?? true,
         parkMode:           d.parkMode ?? false,
+        statusLedMode:      (d.statusLedMode as 0 | 1 | 2) ?? 0,
         boardRole:          (d.boardRole as BoardRoleMode) ?? 'standalone',
         scannerMac:         (d.scannerMac as string) ?? '',
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
@@ -1245,6 +1277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['overrideKillOnZone', JSON.stringify(s.overrideKillOnZone)],
         ['presetApplyMode', JSON.stringify(s.presetApplyMode)],
         ['autoWledDirect', JSON.stringify(s.autoWledDirect)],
+        ['alwaysAttemptWledDirect', JSON.stringify(s.alwaysAttemptWledDirect)],
         ['starlightEnabled',   JSON.stringify(s.starlightEnabled)],
         ['starlightTimeoutSec',JSON.stringify(s.starlightTimeoutSec)],
         ['magicBandEnabled',   JSON.stringify(s.magicBandEnabled)],
@@ -1257,12 +1290,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['wledPass',           JSON.stringify(s.wledPass)],
         ['wledIp',             JSON.stringify(s.wledIp)],
         ['wledPort',           JSON.stringify(s.wledPort)],
+        ['boardIp',            JSON.stringify(s.boardIp)],
         ['sheetsEndpoint',     JSON.stringify(s.sheetsEndpoint)],
         ['sheetsUploadQueue',  JSON.stringify(s.sheetsUploadQueue)],
         ['zonesEnabled',       JSON.stringify(s.zonesEnabled)],
         ['syncMode',           JSON.stringify(s.syncMode)],
         ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],
         ['parkMode',            JSON.stringify(s.parkMode)],
+        ['statusLedMode',       JSON.stringify(s.statusLedMode)],
         ['boardRole',           JSON.stringify(s.boardRole)],
         ['scannerMac',          JSON.stringify(s.scannerMac)],
         ['locationPollSec',    JSON.stringify(s.locationPollSec)],
@@ -1372,12 +1407,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       overrideKillOnZone: s.overrideKillOnZone,
       presetApplyMode:    s.presetApplyMode,
       autoWledDirect:     s.autoWledDirect,
+      alwaysAttemptWledDirect: s.alwaysAttemptWledDirect,
       starlightEnabled:   s.starlightEnabled,   starlightTimeoutSec: s.starlightTimeoutSec,
       magicBandEnabled:   s.magicBandEnabled,
       rulesPaused:        s.rulesPaused,
       logMarkerSnippets:  s.logMarkerSnippets,
       magicBandTimeoutSec:s.magicBandTimeoutSec,
       bleEffectTransitionMs: s.bleEffectTransitionMs,
+      statusLedMode:      s.statusLedMode,
       boardRole:          s.boardRole,
       scannerMac:         s.scannerMac,
       locationPollSec:    s.locationPollSec,
@@ -1405,6 +1442,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       presetApplyMode:    (m.presetApplyMode === 'board' || m.presetApplyMode === 'wledDirect'
         ? m.presetApplyMode : 'legacy') as PresetApplyMode,
       autoWledDirect:     m.autoWledDirect ?? true,
+      alwaysAttemptWledDirect: m.alwaysAttemptWledDirect ?? false,
       starlightEnabled:   m.starlightEnabled   ?? true,
       starlightTimeoutSec:m.starlightTimeoutSec ?? 15,
       magicBandEnabled:   m.magicBandEnabled   ?? true,
@@ -1412,6 +1450,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       logMarkerSnippets: Array.isArray(m.logMarkerSnippets) ? m.logMarkerSnippets : [],
       magicBandTimeoutSec:m.magicBandTimeoutSec ?? 15,
       bleEffectTransitionMs: m.bleEffectTransitionMs ?? 700,
+      statusLedMode:      (m.statusLedMode as 0 | 1 | 2) ?? 0,
       boardRole:          (m.boardRole as BoardRoleMode) ?? 'standalone',
       scannerMac:         (m.scannerMac as string) ?? '',
       locationPollSec:    m.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,

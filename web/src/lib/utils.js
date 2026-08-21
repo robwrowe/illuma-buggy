@@ -215,7 +215,7 @@ export const DEFAULT_DATA = {
     showAutoBrightness: true,
   },
   showInstanceOverrides: {},
-  wandLab: { simIp: '', log: [] },
+  wandLab: { simIp: 'illuma-wandsim.local', log: [] },
   ftbPresetId: '',
   mbMapping: null, // filled by normalizeMbMapping on load
 };

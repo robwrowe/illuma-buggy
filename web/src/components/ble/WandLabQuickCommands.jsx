@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   Button,
   Group,
@@ -9,6 +8,7 @@ import {
 } from '@mantine/core';
 import { MB_SEGMENT_SIM_COMMAND, mbPaletteOptions } from '../../lib/ble/mbConstants';
 import { sendLine, stopShow } from '../../lib/ble/wandSimClient';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
 const SW_FX_NAMES = [
   'rainbow', 'flash', 'sparkle', 'pulse', 'circle', 'fade', 'fade2', 'blink', 'palette5',
@@ -21,11 +21,11 @@ const MB_COLOR_SHORT = [
 ];
 
 export function WandLabQuickCommands({ simIp, onStatus, sending, setSending }) {
-  const [mbColor, setMbColor] = useState('red');
-  const [mbLoopColor, setMbLoopColor] = useState('red');
-  const [swFx, setSwFx] = useState('rainbow');
-  const [testSeg, setTestSeg] = useState('all');
-  const [five, setFive] = useState({ tl: '0', bl: '2', br: '21', tr: '8', c: '19' });
+  const [mbColor, setMbColor] = useWandLabUiState('quick.mbColor', 'red');
+  const [mbLoopColor, setMbLoopColor] = useWandLabUiState('quick.mbLoopColor', 'red');
+  const [swFx, setSwFx] = useWandLabUiState('quick.swFx', 'rainbow');
+  const [testSeg, setTestSeg] = useWandLabUiState('quick.testSeg', 'all');
+  const [five, setFive] = useWandLabUiState('quick.five', () => ({ tl: '0', bl: '2', br: '21', tr: '8', c: '19' }));
 
   const palOpts = mbPaletteOptions();
   const runLine = async (line) => {

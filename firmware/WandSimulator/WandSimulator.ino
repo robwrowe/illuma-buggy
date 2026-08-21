@@ -15,6 +15,7 @@
 #include <NimBLEDevice.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include <vector>
 #if CONFIG_IDF_TARGET_ESP32S3
@@ -654,6 +655,7 @@ void printHelp() {
   Serial.println("  wifi off                — disconnect WiFi / HTTP");
   Serial.println("  help");
   Serial.println("  HTTP: GET /status, POST /send {line|hex}, POST /show (batch playback), POST /stop");
+  Serial.println("  mDNS: illuma-wandsim.local (once WiFi is connected)");
   Serial.println("  Names: 0-31, or hyphenated MB palette names");
   Serial.println("         e.g. red midnight-blue yellow-orange lime-green pink-3");
   Serial.println("         Short: cyan purple blue pink yellow lime orange red green white");
@@ -1014,6 +1016,26 @@ void stopSimHttpServer() {
   }
 }
 
+static bool simMdnsStarted = false;
+
+void stopSimMdns() {
+  if (!simMdnsStarted) return;
+  MDNS.end();
+  simMdnsStarted = false;
+}
+
+void startSimMdns() {
+  stopSimMdns();
+  if (!MDNS.begin("illuma-wandsim")) {
+    Serial.println("[WandSim] mDNS failed to start");
+    return;
+  }
+  MDNS.addService("http", "tcp", 80);
+  MDNS.addServiceTxt("http", "tcp", "role", "wandsim");
+  simMdnsStarted = true;
+  Serial.println("[WandSim] Advertising as illuma-wandsim.local");
+}
+
 void startSimHttpServer() {
   stopSimHttpServer();
   simServer = new WebServer(80);
@@ -1030,6 +1052,7 @@ void startSimHttpServer() {
 
 void stopSimWifi() {
   stopSimHttpServer();
+  stopSimMdns();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   simWifiConnected = false;
@@ -1040,6 +1063,7 @@ void stopSimWifi() {
 
 void startSimWifiConnect() {
   stopSimHttpServer();
+  stopSimMdns();
   simWifiConnected = false;
   simWifiConnecting = true;
   wifiConnectStartMs = millis();
@@ -1056,6 +1080,7 @@ void serviceSimWifi() {
       simWifiConnected = true;
       Serial.printf("[WandSim] WiFi connected: %s\n", WiFi.localIP().toString().c_str());
       startSimHttpServer();
+      startSimMdns();
     } else if (millis() - wifiConnectStartMs > 20000) {
       simWifiConnecting = false;
       Serial.println("[WandSim] WiFi connect timeout");
@@ -1068,6 +1093,7 @@ void serviceSimWifi() {
   if (simWifiConnected && WiFi.status() != WL_CONNECTED) {
     simWifiConnected = false;
     stopSimHttpServer();
+    stopSimMdns();
     Serial.println("[WandSim] WiFi dropped");
   }
 

@@ -43,8 +43,9 @@ void transportOnUartPacket(const ParsedDisneyPacket& pkt) {
   lastScannerPacketMs = millis();
   uartRxPacketCount++;
   if (uartRxPacketCount <= 40 || (uartRxPacketCount % 25) == 0) {
-    Serial.printf("[UART] recv packet #%lu kind=%u op=0x%04X\n",
-                  (unsigned long)uartRxPacketCount, (unsigned)pkt.kind, (unsigned)pkt.opcode);
+    Serial.printf("[UART] recv packet #%lu kind=%u op=0x%04X%s\n",
+                  (unsigned long)uartRxPacketCount, (unsigned)pkt.kind, (unsigned)pkt.opcode,
+                  pkt.kind == DisneyPacketKind::C4_STATUE_CANDIDATE ? " STATUE?" : "");
   }
   queueParsedPacket(pkt);
 }

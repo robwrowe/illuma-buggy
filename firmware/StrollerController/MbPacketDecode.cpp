@@ -202,6 +202,16 @@ ParsedDisneyPacket decodeDisneyPayload(const uint8_t* payload, size_t plen, unsi
     return pkt;
   }
 
+  if (plen >= 1 && payload[0] == 0xC4) {
+    // Candidate Fab 50 statue beacon — unconfirmed structure, flag-only.
+    // opcode stores first two bytes (or just 0xC4 00 if plen==1) for CSV/log visibility.
+    pkt.opcode = (plen >= 2) ? (((uint16_t)payload[0] << 8) | payload[1])
+                              : ((uint16_t)payload[0] << 8);
+    markUndecodable(pkt, payload, plen);
+    pkt.kind = DisneyPacketKind::C4_STATUE_CANDIDATE;
+    return pkt;
+  }
+
   // Unclassified Disney payload (e.g. proximity/parade beacons) — keep raw for rule engine.
   copyRaw(pkt, payload, plen);
   return pkt;

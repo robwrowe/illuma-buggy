@@ -31,6 +31,7 @@ function mapStatusMessage(msg: Record<string, unknown>): DeviceStatus {
     wledIp:            msg.wled_ip != null ? String(msg.wled_ip) : undefined,
     wledPort:          msg.wled_port != null ? Number(msg.wled_port) : undefined,
     mbMappingLoaded:   msg.mb_mapping_loaded != null ? Boolean(msg.mb_mapping_loaded) : undefined,
+    mbRulesFsDegraded: msg.mb_rules_fs_degraded != null ? Boolean(msg.mb_rules_fs_degraded) : undefined,
     boardRole:         msg.board_role === 'logic_board' ? 'logic_board' : 'standalone',
     scannerMac:        msg.scanner_mac != null ? String(msg.scanner_mac) : undefined,
     logicMac:          msg.logic_mac != null ? String(msg.logic_mac) : undefined,

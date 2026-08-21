@@ -1,7 +1,7 @@
-import { useState } from 'react';
 import { Button, Checkbox, Group, Stack, Text, TextInput } from '@mantine/core';
 import { importHexForDestination, parsePasteToPackets } from '../../lib/ble/captureImport';
 import { hasCompanyIdPrefix, startShow } from '../../lib/ble/wandSimClient';
+import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
 export function WandLabCapturePaste({
   hexPaste,
@@ -11,8 +11,8 @@ export function WandLabCapturePaste({
   simIp,
   onShowQueued,
 }) {
-  const [destination, setDestination] = useState('editor');
-  const [strip8301, setStrip8301] = useState(true);
+  const [destination, setDestination] = useWandLabUiState('capture.destination', 'editor');
+  const [strip8301, setStrip8301] = useWandLabUiState('capture.strip8301', true);
 
   const autoStrip = destination === 'editor';
   const effectiveStrip = autoStrip ? strip8301 : false;

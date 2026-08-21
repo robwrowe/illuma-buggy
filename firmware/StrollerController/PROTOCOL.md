@@ -13,6 +13,8 @@ packet decoding (see `docs/disney-ble-protocol.md`, being updated separately).
 
 App writes JSON to CMD. Board notifies JSON on NOTIFY. Large responses are chunked (`seq`, `last`, `data`).
 
+Once WiFi is up, the board also advertises mDNS as **`illuma-logic.local`** (HTTP on port 80, TXT `role=logic`) in addition to its DHCP IP. Type an IP if the network blocks multicast.
+
 Source of truth for the tables below: `firmware/StrollerController/BleCommandHandler.cpp`
 (command dispatch) and `firmware/StrollerController/RuntimeFields.h` (runtime field
 whitelist). Re-check that file if this doc and firmware ever disagree.
@@ -99,7 +101,7 @@ the crossfade path used for live BLE effects.
 | `get_rule_log` | Pull newest ring entries (`limit` 1–96, clamped). Optional `events` string or array allow-list. Always served from RAM ring (SD is a durable mirror) |
 | `ble_capture_config` | Starts/stops recording live Disney BLE traffic to the app (separate from the always-on unmatched-packet log). `duration_ms` auto-stops; omit for manual stop only |
 | `mb_unmatched_log_config` | Independent of `ble_capture_config` — always-on log of rule-engine misses, toggled/persisted separately |
-| `set_mb_rules` (aliases: `mb_rules_config`, `mb_mapping_config`) | Full rules/segment-map replacement. Accepts either `{"mapping": {...}}` or the mapping object directly at top level. Persisted to LittleFS (not NVS — the old NVS blob storage overflowed the 20 KB partition and is actively cleared on every write) |
+| `set_mb_rules` (aliases: `mb_rules_config`, `mb_mapping_config`) | Full rules/segment-map replacement. Accepts either `{"mapping": {...}}` or the mapping object directly at top level. Persisted to SPIFFS `/mb_rules.json` via a temp-file-then-rename write (not NVS — the old NVS blob storage overflowed the 20 KB partition and is actively cleared on every write). Failed persist ACKs `reason: fs_persist` and sets sticky `mb_rules_fs_degraded` |
 
 Chase `sx`/`grp` and solid colors come from **rules/presets**, not global chase config (`mb_chase_config` / `five_point` removed).
 
@@ -123,6 +125,7 @@ unlisted field names are rejected with `reason:"not_whitelisted"`. Current white
 | `bleEffectTransitionMs` | ulong | 0–5000 | `bleTransMs` |
 | `bleScanLogEnabled` | bool | — | `scanLog` |
 | `rulesPaused` | bool | — | `rulesPaused` |
+| `statusLedMode` | u8 | 0=normal, 1=dim (~30%), 2=off. Applied live via `writeStatusRgb()`; boot flash is raw and ignores this | `statusLedMode` |
 | `boardRole` | string | `"logic_board"` / `"dual"` / `"dual_board"` → logic board mode, anything else → standalone. Not persisted via this path — applies live via `set_board_role` logic and reboots may be required for some effects | — |
 
 Most fields listed above already have dedicated commands (`sw_config`, `mb_config`,
@@ -266,6 +269,7 @@ Then a chunked `rule_log` envelope assembling to a JSON array body.
   "ble_transition_ms": 700,
   "rules_paused": false,
   "mb_mapping_loaded": true,
+  "mb_rules_fs_degraded": false,
   "mb_layout_active": 0,
   "mb_layout_name": "Default",
   "mb_layout_count": 1,
@@ -295,6 +299,11 @@ When WiFi/WLED is up, `brightness` is refreshed from WLED `/json/si` before stat
 is `false` until the first scanner packet/heartbeat is received after boot, and `scanner_age_ms`
 is the time since the last one. These fields are meaningful only when `board_role` is
 `logic_board`.
+
+`mb_rules_fs_degraded` is sticky in RAM: `true` after any failed persist of `/mb_rules.json`
+(including a failed embedded-rules seed), `false` after a later successful save. The live
+rule cache may still be running; a reboot can fall back to whatever is actually on SPIFFS
+(or the compiled-in embed). The app shows a "reboot risk" warning when this is true.
 
 ### MagicBand+ events
 

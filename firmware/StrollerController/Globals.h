@@ -99,6 +99,8 @@ extern String baselineWledState;
 extern String mbMappingJson;
 extern String mbRulesJson;
 extern bool   mbMappingLoadedFromNvs;
+/** Sticky: last SPIFFS persist of /mb_rules.json failed; RAM may not match disk. */
+extern bool   mbRulesFsDegraded;
 extern String bleDefaultPresetId;
 extern bool   wledWasConnected;
 

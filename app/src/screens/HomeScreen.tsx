@@ -356,6 +356,11 @@ export default function HomeScreen() {
         )}
         {isConnected && syncMode === "manual" && <Text style={[s.subText, { color: colors.warning }]}>Manual sync — board is running its own saved config</Text>}
         {isConnected && parkMode && <Text style={[s.subText, { color: colors.warning }]}>Park Mode — minimal BLE (no auto config push)</Text>}
+        {isConnected && deviceStatus?.mbRulesFsDegraded && (
+          <Text style={[s.subText, { color: colors.danger }]}>
+            Rules not saved to board storage — reboot risk. Re-push rules from the app.
+          </Text>
+        )}
         {deviceStatus && (
           <View style={s.row}>
             {deviceStatus.wifiConnected ? <IconWifi size={13} color={colors.success} /> : <IconWifiOff size={13} color={colors.danger} />}

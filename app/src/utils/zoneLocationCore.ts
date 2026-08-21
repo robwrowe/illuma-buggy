@@ -18,11 +18,13 @@ import {
 } from './locationRuntimeBridge';
 
 const ZONE_REAPPLY_MS = 45_000;
+const ZONE_TRANSITION_SETTLE_MS = 4000; // require candidate to hold across ~1-2 GPS fixes
 const BRIGHTNESS_RAMP_MS = 2000;
 
 let currentZoneId: string | null = null;
 let pendingZone: Zone | null = null;
 let lastZoneApply: { zoneId: string; at: number } | null = null;
+let pendingTransition: { zoneId: string | null; since: number } | null = null;
 let isIndoor = false;
 let lastBrightness: number | null = null;
 let brightnessTimer: ReturnType<typeof setTimeout> | null = null;
@@ -155,10 +157,35 @@ function runZoneTriggerLogic(
     prevId = null;
     currentZoneId = null;
     lastZoneApply = null;
+    pendingTransition = null;
     zoneLog('re-evaluating zones after show protection ended', { reason });
   }
 
-  if (triggerZone?.id === prevId) return;
+  const candidateId = triggerZone?.id ?? null;
+
+  if (candidateId === prevId) {
+    pendingTransition = null; // stable — clear any in-flight settle timer
+    return;
+  }
+
+  // New candidate differs from the committed zone — require it to be stable
+  // across the settle window before actually transitioning. This absorbs GPS
+  // jitter at multi-zone crosspoints where consecutive fixes can toggle
+  // between adjacent zones.
+  const now = Date.now();
+  if (!pendingTransition || pendingTransition.zoneId !== candidateId) {
+    pendingTransition = { zoneId: candidateId, since: now };
+    zoneLog('transition candidate (settling)', {
+      from: prevId,
+      to: candidateId,
+      reason,
+    });
+    return;
+  }
+  if (now - pendingTransition.since < ZONE_TRANSITION_SETTLE_MS) {
+    return; // still settling
+  }
+  pendingTransition = null;
 
   if (triggerZone?.presetId) {
     zoneLog(`transition → "${triggerZone.name}"`, {
@@ -398,6 +425,7 @@ export function resetZoneLocationRuntime() {
   lastSolarDay = null;
   zoneTriggersSuppressed = false;
   lastLoggedActiveIds = [];
+  pendingTransition = null;
 }
 
 onBoardSyncStatus((status) => {

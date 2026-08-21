@@ -11,6 +11,7 @@ static char currentLogPath[32];
 static File logFile;
 #endif
 
+#if HAS_RULE_LOG_RING
 // In-RAM ring so BLE pull does not need SD seek. Survives SD soft-fail after boot.
 static constexpr size_t SD_RULE_LOG_RING_CAP = 96;
 static constexpr size_t SD_RULE_LOG_LINE_MAX = 220;
@@ -53,10 +54,15 @@ static bool eventAllowed(const char* line, const char* eventFilter) {
   }
   return false;
 }
+#endif
 
 bool sdRuleLoggerInit() {
 #if !HAS_SD_LOGGER
+#if HAS_RULE_LOG_RING
   Serial.println("[SD] skipped (HAS_SD_LOGGER=0; RAM ring still active)");
+#else
+  Serial.println("[SD] skipped (HAS_SD_LOGGER=0, HAS_RULE_LOG_RING=0)");
+#endif
   sdReady = false;
   currentLogPath[0] = '\0';
   return false;
@@ -83,7 +89,11 @@ bool sdRuleLoggerInit() {
   }
 
   if (!mounted) {
+#if HAS_RULE_LOG_RING
     Serial.println("[SD] mount failed (ring log still active in RAM)");
+#else
+    Serial.println("[SD] mount failed (HAS_RULE_LOG_RING=0; no RAM ring)");
+#endif
     Serial.println("[SD] check: FAT32 (not exFAT), 3.3V module VCC, MOSI/MISO not swapped");
     sdReady = false;
     currentLogPath[0] = '\0';
@@ -106,9 +116,20 @@ bool sdRuleLoggerReady() { return sdReady; }
 
 const char* sdRuleLoggerPath() { return currentLogPath; }
 
-size_t sdRuleLoggerRingCount() { return ringCount; }
+size_t sdRuleLoggerRingCount() {
+#if HAS_RULE_LOG_RING
+  return ringCount;
+#else
+  return 0;
+#endif
+}
 
 void sdRuleLoggerWrite(const char* event, const char* detailJson) {
+#if !HAS_RULE_LOG_RING
+  (void)event;
+  (void)detailJson;
+  return;
+#else
   if (!event) return;
   char line[SD_RULE_LOG_LINE_MAX];
   int n = snprintf(line, sizeof(line), "{\"ts\":%lu,\"event\":\"%s\"",
@@ -134,9 +155,16 @@ void sdRuleLoggerWrite(const char* event, const char* detailJson) {
   logFile.print('\n');
   logFile.flush();
 #endif
+#endif
 }
 
 size_t sdRuleLoggerBuildTailJson(String& out, size_t maxLines, const char* eventFilter) {
+#if !HAS_RULE_LOG_RING
+  (void)maxLines;
+  (void)eventFilter;
+  out = "[]";
+  return 0;
+#else
   out = "[";
   if (ringCount == 0 || maxLines == 0) {
     out += "]";
@@ -164,4 +192,5 @@ size_t sdRuleLoggerBuildTailJson(String& out, size_t maxLines, const char* event
   }
   out += "]";
   return matched;
+#endif
 }
