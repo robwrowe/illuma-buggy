@@ -8,7 +8,7 @@ import { resolveActivePark } from './resolveActivePark';
 import { bleService } from '../services/BLEService';
 import { applyZonePreset } from './bleBoardSync';
 import { getBoardSyncStatus, onBoardSyncStatus } from './boardSyncState';
-import { notifyZoneEffectApplied, dismissZoneEffectNotification } from '../services/strollerNotification';
+import { notifyZoneEffectApplied, notifyZoneSuppressed, dismissZoneEffectNotification } from '../services/strollerNotification';
 import { shouldProtectShowFromZones } from './showZoneGuard';
 import {
   saveLocationRuntime,
@@ -61,11 +61,24 @@ function shouldApplyZone(zone: Zone, force: boolean): boolean {
   return Date.now() - lastZoneApply.at >= ZONE_REAPPLY_MS;
 }
 
+function zoneApplyCanUseWledDirect(): boolean {
+  const s = useAppStore.getState();
+  return s.presetApplyMode === 'wledDirect'
+    || (!!s.autoWledDirect && s.presetApplyMode !== 'board');
+}
+
 function canApplyZoneNow(): boolean {
+  // Zone GPS can POST to WLED from the phone without waiting for BLE bootstrap.
+  if (zoneApplyCanUseWledDirect()) return true;
   if (!bleService.isConnected() || !bleService.isSessionReady()) return false;
   const phase = getBoardSyncStatus().phase;
   if (phase === 'connecting' || phase === 'essential') return false;
   return true;
+}
+
+function zoneNotReadyDetail(): string {
+  const phase = getBoardSyncStatus().phase;
+  return `connected=${bleService.isConnected()} sessionReady=${bleService.isSessionReady()} syncPhase=${phase}`;
 }
 
 function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
@@ -85,6 +98,11 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
         connected: bleService.isConnected(),
         sessionReady: bleService.isSessionReady(),
         syncPhase: getBoardSyncStatus().phase,
+      });
+      void notifyZoneSuppressed({
+        reason: 'BLE not ready',
+        zoneName: zone.name,
+        detail: zoneNotReadyDetail(),
       });
       return;
     }
@@ -201,14 +219,28 @@ function runZoneTriggerLogic(
 
   currentZoneId = triggerZone?.id ?? null;
   if (triggerZone?.presetId) {
-    if (!bleService.isConnected()) {
+    if (!bleService.isConnected() && !zoneApplyCanUseWledDirect()) {
       pendingZone = triggerZone;
       zoneLog('queued pending zone apply (not connected)', { zone: triggerZone.name });
+      void notifyZoneSuppressed({
+        reason: 'BLE disconnected — queued',
+        zoneName: triggerZone.name,
+      });
       return;
     }
     if (!canApplyZoneNow()) {
       pendingZone = triggerZone;
-      zoneLog('queued pending zone apply (BLE not ready)', { zone: triggerZone.name });
+      zoneLog('queued pending zone apply (BLE not ready)', {
+        zone: triggerZone.name,
+        connected: bleService.isConnected(),
+        sessionReady: bleService.isSessionReady(),
+        syncPhase: getBoardSyncStatus().phase,
+      });
+      void notifyZoneSuppressed({
+        reason: 'BLE not ready — queued',
+        zoneName: triggerZone.name,
+        detail: zoneNotReadyDetail(),
+      });
       return;
     }
     applyZoneEntry(triggerZone, true, reason);
@@ -226,9 +258,24 @@ function runZoneTriggerLogic(
 
 /** Flush a zone that was queued while BLE was disconnected or board still syncing. */
 export function flushPendingZoneIfConnected(reason: string) {
-  if (!pendingZone || !canApplyZoneNow()) return;
+  if (!pendingZone) return;
+  if (!canApplyZoneNow()) {
+    void notifyZoneSuppressed({
+      reason: 'BLE not ready (pending flush)',
+      zoneName: pendingZone.name,
+      detail: `${reason} · ${zoneNotReadyDetail()}`,
+    });
+    return;
+  }
   const s = useAppStore.getState();
-  if (isShowProtectingZones(s.activeZoneIds)) return;
+  if (isShowProtectingZones(s.activeZoneIds)) {
+    void notifyZoneSuppressed({
+      reason: 'Show protection (pending flush)',
+      zoneName: pendingZone.name,
+      detail: reason,
+    });
+    return;
+  }
   const zone = pendingZone;
   pendingZone = null;
   currentZoneId = zone.id;
@@ -243,11 +290,22 @@ export function flushPendingZoneOnBleReady() {
 export function reapplyCurrentZoneOnConnect() {
   const s = useAppStore.getState();
   if (!s.zonesEnabled) return;
-  if (isShowProtectingZones(s.activeZoneIds)) return;
+  if (isShowProtectingZones(s.activeZoneIds)) {
+    void notifyZoneSuppressed({
+      reason: 'Show protection (reconnect)',
+      zoneName: s.zones.find(z => z.id === currentZoneId)?.name ?? null,
+    });
+    return;
+  }
   const zone = s.zones.find(z => z.id === currentZoneId);
   if (!zone?.presetId) return;
   if (!canApplyZoneNow()) {
     pendingZone = zone;
+    void notifyZoneSuppressed({
+      reason: 'BLE not ready — queued',
+      zoneName: zone.name,
+      detail: `reconnect · ${zoneNotReadyDetail()}`,
+    });
     return;
   }
   applyZoneEntry(zone, false, 'reconnect');
@@ -352,6 +410,14 @@ export function processLocationUpdate(
   if (protectShow) {
     if (!zoneTriggersSuppressed) {
       zoneLog('triggers suppressed — show active in scope', { src });
+      const trigger = findTriggerZone(pt, zones);
+      void notifyZoneSuppressed({
+        reason: 'Show protection',
+        zoneName: trigger?.name ?? (activeIds.length ? 'in zone' : null),
+        detail: s.deviceStatus?.override === 3
+          ? 'board SHOW_MODE'
+          : 'schedule pre/live (scoped binding)',
+      });
     }
     zoneTriggersSuppressed = true;
     return;

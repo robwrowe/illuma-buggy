@@ -8,12 +8,16 @@ import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ZONE_EFFECT_NOTIFICATION_ID = 'illuma-zone-effect';
+const ZONE_SUPPRESSED_NOTIFICATION_ID = 'illuma-zone-suppressed';
 const BLE_DISCONNECT_NOTIFICATION_ID = 'illuma-ble-disconnected';
 const CHANNEL_ID = 'stroller-controls-high';
 const LAST_NOTIFIED_ZONE_KEY = 'illuma-last-notified-zone';
 const BLE_DISCONNECT_DEBOUNCE_MS = 30_000;
+const ZONE_SUPPRESSED_DEBOUNCE_MS = 20_000;
 let initialized = false;
 let lastBleDisconnectAt = 0;
+let lastZoneSuppressedAt = 0;
+let lastZoneSuppressedKey = '';
 
 export async function initStrollerNotifications(): Promise<void> {
   if (initialized) return;
@@ -75,6 +79,38 @@ export async function notifyZoneEffectApplied(opts: {
       sticky: false,
       priority: Notifications.AndroidNotificationPriority.HIGH,
       data: { type: 'zone_effect', zoneId: opts.triggerZoneId },
+      ...(Platform.OS === 'android' ? { channelId: CHANNEL_ID } : {}),
+    },
+    trigger: null,
+  });
+}
+
+/** Visible when a zone fire is skipped — GPS ticks would otherwise fail silently. */
+export async function notifyZoneSuppressed(opts: {
+  reason: string;
+  zoneName?: string | null;
+  detail?: string;
+}): Promise<void> {
+  const key = `${opts.reason}:${opts.zoneName || ''}:${opts.detail || ''}`;
+  const now = Date.now();
+  if (key === lastZoneSuppressedKey && now - lastZoneSuppressedAt < ZONE_SUPPRESSED_DEBOUNCE_MS) {
+    return;
+  }
+  lastZoneSuppressedKey = key;
+  lastZoneSuppressedAt = now;
+  await initStrollerNotifications();
+
+  const title = 'Zone preset not fired';
+  const body = [opts.zoneName, opts.reason, opts.detail].filter(Boolean).join(' · ');
+
+  await Notifications.scheduleNotificationAsync({
+    identifier: ZONE_SUPPRESSED_NOTIFICATION_ID,
+    content: {
+      title,
+      body,
+      sticky: false,
+      priority: Notifications.AndroidNotificationPriority.HIGH,
+      data: { type: 'zone_suppressed', reason: opts.reason },
       ...(Platform.OS === 'android' ? { channelId: CHANNEL_ID } : {}),
     },
     trigger: null,
