@@ -18,7 +18,7 @@ import { AppButton, AppCard } from '../shared/styles';
 import { buildLegacyShowModeConfig, fetchParkShows, inferShowKind, normalizeShowBinding } from '../../lib/map/themeParks';
 import { DEFAULT_DATA, generateId, showModePresetOptions, showPresetLabel } from '../../lib/utils';
 import { normalizeMbMapping, normalizeParadeDetection } from '../../lib/ble/mbMapping';
-import { webBleBoard } from '../../lib/ble/chunking';
+import { currentBoard } from '../../lib/ble/boardTransport';
 
 export function ShowsTab({ data, update }) {
   const parks = data.parks || [];
@@ -72,8 +72,11 @@ export function ShowsTab({ data, update }) {
   const sendParadeManual = async (type) => {
     setParadeMsg('');
     try {
-      if (!webBleBoard.connected) await webBleBoard.connect();
-      await webBleBoard.send({ type });
+      const board = currentBoard();
+      if (!board.connected) {
+        throw new Error('Not connected to the board — open 📡 Board and Connect first.');
+      }
+      await board.send({ type });
       setParadeMsg(type === 'parade_manual_start' ? 'Parade start sent.' : 'Parade stop sent.');
     } catch (e) {
       setParadeMsg(String(e.message || e));

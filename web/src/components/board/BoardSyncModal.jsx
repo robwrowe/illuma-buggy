@@ -1,19 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Checkbox, Group, Paper, Stack, Text } from '@mantine/core';
+import { Checkbox, Group, NumberInput, Paper, SegmentedControl, Stack, Text, TextInput } from '@mantine/core';
 import { Modal } from '../shared/Modal';
 import { AppButton } from '../shared/styles';
 import { webBleBoard } from '../../lib/ble/chunking';
+import {
+  activeBoard,
+  loadBoardTransportSettings,
+  saveBoardTransportSettings,
+} from '../../lib/ble/boardTransport';
 import { BOARD_SYNC_ITEMS, loadBoardSyncOptions, saveBoardSyncOptions, syncProfileToBoard } from '../../lib/boardSync';
 import { RuleLogPanel } from './RuleLogPanel';
 
 export function BoardSyncModal({ data, onClose }) {
-  const [connected, setConnected] = useState(webBleBoard.connected);
+  const [transport, setTransport] = useState(loadBoardTransportSettings);
+  const board = activeBoard(transport.mode);
+  const [connected, setConnected] = useState(board.connected);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [syncOptions, setSyncOptions] = useState(loadBoardSyncOptions);
-  const supported = webBleBoard.supported;
+  const supported = board.supported;
   const presetCount = (data.presets || []).length;
+  const restMode = transport.mode === 'rest';
 
   const setOption = (key, val) => {
     setSyncOptions((prev) => {
@@ -23,17 +31,33 @@ export function BoardSyncModal({ data, onClose }) {
     });
   };
 
+  const patchTransport = (patch) => {
+    setTransport(saveBoardTransportSettings(patch));
+  };
+
   const anySelected = Object.values(syncOptions).some(Boolean);
   const presetsBlocked = syncOptions.presets && presetCount === 0;
 
-  useEffect(() => webBleBoard.onConnectionChange(setConnected), []);
+  useEffect(() => activeBoard(transport.mode).onConnectionChange(setConnected), [transport.mode]);
+
+  const ensureConnected = async () => {
+    const b = activeBoard(transport.mode);
+    if (b.connected) return;
+    if (transport.mode === 'rest') {
+      await b.connect(transport.host, transport.port);
+    } else {
+      await b.connect();
+    }
+  };
 
   const handleConnect = async () => {
     setError('');
     setBusy(true);
     try {
-      await webBleBoard.connect();
-      setStatus('Connected to IllumaBuggy');
+      await ensureConnected();
+      setStatus(restMode
+        ? `Connected to ${transport.host}:${transport.port}`
+        : 'Connected to IllumaBuggy');
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -50,7 +74,7 @@ export function BoardSyncModal({ data, onClose }) {
     setError('');
     setBusy(true);
     try {
-      if (!connected) await webBleBoard.connect();
+      await ensureConnected();
       await syncProfileToBoard(data, setStatus, syncOptions);
       onClose();
     } catch (e) {
@@ -64,10 +88,41 @@ export function BoardSyncModal({ data, onClose }) {
     <Modal title="📡 Send to Board" onClose={onClose} width={560}>
       <Stack gap="md">
         <Text size="xs" c="dimmed" lh={1.6}>
-          Push selected settings to the ESP32 over Bluetooth — same protocol as the Android app.
-          Requires <strong>Chrome or Edge</strong> (Web Bluetooth). Serve this page via{' '}
-          <Text span ff="monospace" size="xs">./serve.sh</Text> on localhost.
+          Push selected settings to the ESP32. BLE uses the same protocol as the Android app
+          (Chrome/Edge + Web Bluetooth). REST posts the same JSON over WiFi on port 8080 —
+          much faster for large rules at the bench.
         </Text>
+        <SegmentedControl
+          size="xs"
+          value={transport.mode}
+          onChange={(mode) => patchTransport({ mode })}
+          data={[
+            { value: 'ble', label: 'Bluetooth' },
+            { value: 'rest', label: 'WiFi (REST)' },
+          ]}
+        />
+        {restMode && (
+          <Group gap="xs" grow>
+            <TextInput
+              size="xs"
+              label="Board host"
+              value={transport.host}
+              onChange={(e) => patchTransport({ host: e.target.value })}
+              placeholder="illuma-logic.local"
+              styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+            />
+            <NumberInput
+              size="xs"
+              label="Port"
+              value={transport.port}
+              onChange={(v) => patchTransport({ port: Number(v) || 8080 })}
+              min={1}
+              max={65535}
+              w={110}
+              styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+            />
+          </Group>
+        )}
         <Paper p="sm" bg="var(--surface2)" radius="md">
           <Text size="xs" fw={600} mb="xs">Include in sync</Text>
           {BOARD_SYNC_ITEMS.map(({ key, label, hint }) => (
@@ -89,7 +144,7 @@ export function BoardSyncModal({ data, onClose }) {
           GPS zones, brightness, and recall state stay in the browser / phone — export JSON to move those.
           Segment geometry for presets is resolved into concrete WLED seg[] before push.
         </Text>
-        {!supported && (
+        {!supported && !restMode && (
           <Text size="xs" c="red">Web Bluetooth is not available in this browser.</Text>
         )}
         <Group gap="xs" wrap="wrap">
@@ -98,7 +153,7 @@ export function BoardSyncModal({ data, onClose }) {
           ) : (
             <>
               <Text size="xs" c="green" fw={600} style={{ alignSelf: 'center' }}>● Connected</Text>
-              <AppButton variant="default" onClick={() => { webBleBoard.disconnect(); setStatus(''); }} disabled={busy}>Disconnect</AppButton>
+              <AppButton variant="default" onClick={() => { board.disconnect(); setStatus(''); }} disabled={busy}>Disconnect</AppButton>
             </>
           )}
           <AppButton variant="primary" onClick={handleSync} disabled={!supported || busy || !anySelected || presetsBlocked}>
@@ -114,7 +169,7 @@ export function BoardSyncModal({ data, onClose }) {
         {status && <Text size="xs" c="dimmed">{status}</Text>}
         {error && <Text size="xs" c="red">{error}</Text>}
 
-        <RuleLogPanel connected={supported} />
+        <RuleLogPanel connected={webBleBoard.supported} />
       </Stack>
     </Modal>
   );

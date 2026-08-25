@@ -30,6 +30,7 @@
 #include "StatusDisplay.h"
 #include "EmbeddedRules.h"
 #include "WledSendQueue.h"
+#include "HttpCommandServer.h"
 #include <ArduinoJson.h>
 
 void setup() {
@@ -191,6 +192,7 @@ void setup() {
 
   payloadTransportInit();
   wledSendQueueInit();
+  httpCommandServerInit();
 
   // Create command queue (10 slots)
   cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
@@ -243,6 +245,7 @@ void processPendingCommands() {
 void loop() {
   statusLedTick();
   uartScannerLinkPoll();
+  httpCommandServerPoll();
   // BLE first — app preset fire / status must not wait behind UART rule applies.
   processBleCmdQueue();
   processPendingCommands();

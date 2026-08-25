@@ -1,6 +1,7 @@
 #include "BlePeripheral.h"
 #include "Globals.h"
 #include "BleCommandHandler.h"
+#include "HttpCommandServer.h"
 #include "Config.h"
 #include <esp_heap_caps.h>
 // Peripheral-initiated ATT MTU exchange (Chrome Web Bluetooth never requests it).
@@ -22,6 +23,10 @@ void resetCmdChunkBuffer() {
 }
 
 void bleNotify(const String& json) {
+  if (httpCaptureTarget) {
+    *httpCaptureTarget = json;
+    return;  // HTTP-originated command — do not also push to BLE notify char
+  }
   if (!bleConnected || notifyChar == nullptr) return;
   notifyChar->setValue(json.c_str());
   notifyChar->notify();

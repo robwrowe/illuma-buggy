@@ -1,4 +1,5 @@
-import { BLE_SEND_DELAY_MS, isGattDisconnectedError, webBleBoard } from './ble/chunking';
+import { currentBoard, loadBoardTransportSettings } from './ble/boardTransport';
+import { BLE_SEND_DELAY_MS, isGattDisconnectedError } from './ble/chunking';
 import { compactMbPayloadForBle, normalizeMbMapping, normalizePreset } from './ble/mbMapping';
 import { DEFAULT_DATA, normalizeColorCalibration } from './utils';
 
@@ -29,14 +30,16 @@ export function saveBoardSyncOptions(options) {
 
 export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOARD_SYNC_OPTIONS) {
   const opts = { ...DEFAULT_BOARD_SYNC_OPTIONS, ...options };
-  const delay = (ms) => new Promise(r => setTimeout(r, ms));
+  const board = currentBoard();
+  const rest = loadBoardTransportSettings().mode === 'rest';
+  const delay = (ms) => (rest ? Promise.resolve() : new Promise((r) => setTimeout(r, ms)));
   const presets = data.presets || [];
   const mb = normalizeMbMapping(data.mbMapping);
   const sent = [];
 
   if (opts.effectTransition) {
     onProgress?.('Sending effect transitions…');
-    await webBleBoard.send({
+    await board.send({
       type: 'ble_effect_config',
       transition_ms: data.bleEffectTransitionMs ?? 700,
     });
@@ -47,7 +50,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
   if (opts.mbMapping) {
     onProgress?.('Sending BLE Data rules…');
     try {
-      await webBleBoard.send({
+      await board.send({
         type: 'set_mb_rules',
         mapping: compactMbPayloadForBle(mb),
       });
@@ -70,7 +73,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
     const calibration = normalizeColorCalibration(
       data.colorCalibration || DEFAULT_DATA.colorCalibration,
     );
-    await webBleBoard.send({
+    await board.send({
       type: 'set_color_calibration',
       calibration,
     });
@@ -80,7 +83,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 
   if (opts.overrideMode) {
     onProgress?.('Sending override mode…');
-    await webBleBoard.send({
+    await board.send({
       type: 'override_mode',
       kill_on_zone: !!data.overrideKillOnZone,
     });
@@ -90,7 +93,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 
   if (opts.mbRuleConfig) {
     onProgress?.('Sending BLE Data rule fade-to-black preset…');
-    await webBleBoard.send({
+    await board.send({
       type: 'mb_rule_config',
       ftbPresetId: data.ftbPresetId || '',
     });
@@ -100,7 +103,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
 
   if (opts.showMode) {
     onProgress?.('Sending show mode config…');
-    await webBleBoard.send({
+    await board.send({
       type: 'show_mode_config',
       parade: data.showModeConfig?.parade ?? DEFAULT_DATA.showModeConfig.parade,
       fireworks: data.showModeConfig?.fireworks ?? DEFAULT_DATA.showModeConfig.fireworks,
@@ -115,7 +118,7 @@ export async function syncProfileToBoard(data, onProgress, options = DEFAULT_BOA
       onProgress?.(`Saving preset ${i + 1}/${presets.length}: ${p.name}`);
       const normalized = normalizePreset(p);
       // Send the full new-shape preset; firmware stores it whole and resolves at apply time.
-      await webBleBoard.send({
+      await board.send({
         type: 'preset_save',
         ...normalized,
       });

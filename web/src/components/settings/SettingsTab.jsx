@@ -29,7 +29,7 @@ import { MB_COLOR_NAMES, MB_PAL_RANDOM, mbPaletteLabel } from '../../lib/ble/mbC
 import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
 import { DEFAULT_DATA, saveColorToLibrary, showModePresetOptions } from '../../lib/utils';
 import { fetchWledCatalog, loadCachedWledCatalog } from '../../lib/wled/catalog';
-import { webBleBoard } from '../../lib/ble/chunking';
+import { currentBoard } from '../../lib/ble/boardTransport';
 import { normalizeSheetsEndpoint } from '../../lib/sheets/config';
 
 export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoint }) {
@@ -268,8 +268,9 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
                   allowEmpty={true}
                   onChange={(v) => {
                     update({ ftbPresetId: v });
-                    if (webBleBoard.connected) {
-                      webBleBoard
+                    const board = currentBoard();
+                    if (board.connected) {
+                      board
                         .send({ type: 'mb_rule_config', ftbPresetId: v || '' })
                         .catch(() => {});
                     }

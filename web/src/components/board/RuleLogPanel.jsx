@@ -96,7 +96,10 @@ export function RuleLogPanel({ connected }) {
         <Text size="xs" fw={600}>Rule log (board)</Text>
         <Text size="xs" c="dimmed" lh={1.5}>
           Pulls the newest events from the board RAM ring (also mirrored to SD when a card is
-          mounted). Use markers mid-show, then filter for <Text span ff="monospace" size="xs">match</Text>
+          mounted) over Bluetooth. REST/WiFi push does not carry the live log stream. Use
+          markers mid-show, then filter for <Text span ff="monospace" size="xs">match</Text>
+          {' / '}
+          <Text span ff="monospace" size="xs">suppressed</Text>.
           {' / '}
           <Text span ff="monospace" size="xs">suppressed</Text>.
         </Text>
