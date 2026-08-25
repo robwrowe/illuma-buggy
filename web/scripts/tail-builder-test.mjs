@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Smoke tests for web/src/lib/ble/tailBuilder.js.
- * Usage: node scripts/tail-builder-test.mjs  (from web/)
+ * Smoke tests for web/src/lib/ble/tailBuilder.ts.
+ * Usage: npm run test:tail-builder  (from web/)
  */
-import { decodeMbColorMaskByte } from '../src/lib/ble/mbPayloads.js';
+import { decodeMbColorMaskByte } from '../src/lib/ble/mbPayloads.ts';
 import {
   assembleTailPayload,
   buildColorBlockBytes,
@@ -12,7 +12,7 @@ import {
   parseTailBytes,
   parseTailLine,
   parseTailList,
-} from '../src/lib/ble/tailBuilder.js';
+} from '../src/lib/ble/tailBuilder.ts';
 
 let failed = 0;
 
