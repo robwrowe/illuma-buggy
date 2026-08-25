@@ -140,6 +140,7 @@ export function WandLabLogPanel({
   onPurge,
   onRetryPending,
   pendingCount,
+  onCollapse,
 }) {
   const [shows, setShows] = useState(() => getWandLabShows());
   const [showsModalOpen, setShowsModalOpen] = useState(false);
@@ -179,7 +180,17 @@ export function WandLabLogPanel({
   return (
     <Stack h="100%" gap="sm" p="sm" style={{ minHeight: 0 }}>
       <Group justify="space-between" align="center" wrap="nowrap">
-        <SectionHead>Observation log</SectionHead>
+        <UnstyledButton
+          onClick={onCollapse}
+          disabled={!onCollapse}
+          title="Hide observation log"
+          style={{ flex: 1, minWidth: 0 }}
+        >
+          <Group gap={6} wrap="nowrap">
+            <Text size="xs" c="dimmed" ff="monospace">▾</Text>
+            <SectionHead>Observation log</SectionHead>
+          </Group>
+        </UnstyledButton>
         <Button
           size="compact-xs"
           variant="default"

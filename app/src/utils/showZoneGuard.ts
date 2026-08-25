@@ -30,14 +30,9 @@ export function shouldProtectShowFromZones(opts: {
   const inScope = (binding: ParkShowBinding) =>
     showBindingInScope(binding, activeParkId, activeZoneIds);
 
-  // Schedule-based protection only for bindings scoped to a GPS zone. A park-wide
-  // binding (no scopeZoneId) used to suppress *every* zone in the park during
-  // pre/live — walk into an unrelated zone and nothing fired. Park-wide still
-  // protects when the board is actually in SHOW_MODE (override path below).
-  if (
-    showScheduleProtects &&
-    parkBindings.some((b) => !!b.scopeZoneId && inScope(b))
-  ) {
+  // Park-wide bindings (no scopeZoneId) are in scope for the entire park —
+  // fireworks and similar shows should suppress every zone during pre/live.
+  if (showScheduleProtects && parkBindings.some(inScope)) {
     return true;
   }
 

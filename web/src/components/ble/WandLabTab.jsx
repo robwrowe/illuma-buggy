@@ -10,6 +10,7 @@ import {
   Tabs,
   Text,
   TextInput,
+  UnstyledButton,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { Field } from '../shared/Field';
@@ -104,6 +105,7 @@ export function WandLabTab({ data, update }) {
   const [sweepLivePayload, setSweepLivePayload] = useState(null);
   const [analyzerImportSeed, setAnalyzerImportSeed] = useState(null);
   const [analyzerSession, setAnalyzerSession] = useWandLabUiState('analyzer.session', () => ({ ...EMPTY_ANALYZER_SESSION }));
+  const [logCollapsed, setLogCollapsed] = useWandLabUiState('log.collapsed', false);
 
   const palOpts = mbPaletteOptions();
 
@@ -752,8 +754,8 @@ export function WandLabTab({ data, update }) {
       </ScrollArea>
 
       <Box
-        w={isNarrow ? '100%' : 300}
-        h={isNarrow ? 280 : '100%'}
+        w={isNarrow ? '100%' : (logCollapsed ? 36 : 300)}
+        h={isNarrow ? (logCollapsed ? 36 : 280) : '100%'}
         style={{
           flexShrink: 0,
           borderLeft: isNarrow ? undefined : '1px solid var(--border)',
@@ -761,25 +763,55 @@ export function WandLabTab({ data, update }) {
           minHeight: 0,
         }}
       >
-        <WandLabLogPanel
-          log={lab.log}
-          filteredLog={filteredLog}
-          form={findingForm}
-          onFormChange={setFindingForm}
-          derivedOpcode={derivedOpcode}
-          logFilter={logFilter}
-          onLogFilterChange={setLogFilter}
-          editingLogId={editingLogId}
-          onCancelEdit={() => { setEditingLogId(null); setFindingForm((f) => formAfterLog(f)); }}
-          onResetForm={() => setFindingForm({ ...EMPTY_FINDING_FORM })}
-          onAddEntry={() => addLogEntry()}
-          onLoadEntry={loadLogEntry}
-          onDeleteEntry={deleteLogEntry}
-          onExport={exportLog}
-          onPurge={purgeLog}
-          onRetryPending={retryPendingSheets}
-          pendingCount={pendingCount}
-        />
+        {logCollapsed ? (
+          <UnstyledButton
+            onClick={() => setLogCollapsed(false)}
+            title="Show observation log"
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: isNarrow ? '0 10px' : 0,
+            }}
+          >
+            <Text size="xs" c="dimmed" ff="monospace">{isNarrow ? '▴' : '◂'}</Text>
+            <Text
+              size="xs"
+              fw={600}
+              style={isNarrow ? undefined : {
+                writingMode: 'vertical-rl',
+                transform: 'rotate(180deg)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Observation log{(lab.log || []).length ? ` (${lab.log.length})` : ''}
+            </Text>
+          </UnstyledButton>
+        ) : (
+          <WandLabLogPanel
+            log={lab.log}
+            filteredLog={filteredLog}
+            form={findingForm}
+            onFormChange={setFindingForm}
+            derivedOpcode={derivedOpcode}
+            logFilter={logFilter}
+            onLogFilterChange={setLogFilter}
+            editingLogId={editingLogId}
+            onCancelEdit={() => { setEditingLogId(null); setFindingForm((f) => formAfterLog(f)); }}
+            onResetForm={() => setFindingForm({ ...EMPTY_FINDING_FORM })}
+            onAddEntry={() => addLogEntry()}
+            onLoadEntry={loadLogEntry}
+            onDeleteEntry={deleteLogEntry}
+            onExport={exportLog}
+            onPurge={purgeLog}
+            onRetryPending={retryPendingSheets}
+            pendingCount={pendingCount}
+            onCollapse={() => setLogCollapsed(true)}
+          />
+        )}
       </Box>
     </Box>
   );
