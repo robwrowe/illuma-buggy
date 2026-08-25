@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge,
+  Box,
   Button,
   Checkbox,
   Group,
@@ -23,6 +24,8 @@ import {
   timingByteToEditFields,
 } from '../../lib/ble/e9Decode';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
+import { loadBitPatterns, saveBitPatterns } from '../../lib/ble/byteAnalyzer';
+import { BitGridEditor } from './BitGridEditor';
 import {
   TAIL_BUILDER_COLOR_FORMATS,
   assembleTailPayload,
@@ -240,6 +243,9 @@ function TailByteStackCell({ byteValue, onChange }) {
   const value = Number(byteValue) & 0xff;
   const [bitsDraft, setBitsDraft] = useState(() => byteToBitString(value));
   const [hexDraft, setHexDraft] = useState(() => value.toString(16).padStart(2, '0').toUpperCase());
+  const [gridOpen, setGridOpen] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [patterns, setPatternsState] = useState([]);
 
   useEffect(() => {
     setBitsDraft(byteToBitString(value));
@@ -264,7 +270,7 @@ function TailByteStackCell({ byteValue, onChange }) {
   };
 
   return (
-    <Stack gap={1} align="center" style={{ width: 76 }}>
+    <Stack gap={1} align="center" style={{ width: gridOpen ? 280 : 76 }}>
       <TextInput
         aria-label="Byte hex"
         value={hexDraft}
@@ -315,6 +321,27 @@ function TailByteStackCell({ byteValue, onChange }) {
         w={76}
         styles={inputStyle}
       />
+      <Button size="compact-xs" variant={gridOpen ? 'filled' : 'default'} onClick={() => {
+        setGridOpen((v) => {
+          const next = !v;
+          if (next) setPatternsState(loadBitPatterns());
+          return next;
+        });
+      }}>
+        Grid
+      </Button>
+      {gridOpen && (
+        <Box style={{ width: 280 }} onClick={(e) => e.stopPropagation()}>
+          <BitGridEditor
+            byteValue={value}
+            groups={groups}
+            onGroupsChange={setGroups}
+            showTimingPreset
+            patterns={patterns}
+            onPatternsChange={(next) => setPatternsState(saveBitPatterns(next))}
+          />
+        </Box>
+      )}
     </Stack>
   );
 }

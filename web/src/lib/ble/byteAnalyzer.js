@@ -205,6 +205,117 @@ export function createEmptyParamDetail() {
   return { bitStart: 0, bitCount: 8, paramName: '' };
 }
 
+export const TIMING_BYTE_BIT_PRESET = [
+  { bitStart: 0, bitCount: 4, name: 't' },
+  { bitStart: 4, bitCount: 2, name: 'fadeBits' },
+  { bitStart: 6, bitCount: 1, name: 'scaler' },
+  { bitStart: 7, bitCount: 1, name: 'extended' },
+];
+
+/** Normalize legacy single-range param detail to the multi-group shape. */
+export function normalizeParamGroups(detail) {
+  if (detail?.mode === 'bitgroups' && Array.isArray(detail.groups)) return detail.groups;
+  if (detail?.paramName != null || detail?.bitStart != null || detail?.bitCount != null) {
+    return [{
+      bitStart: detail.bitStart ?? 0,
+      bitCount: detail.bitCount ?? 8,
+      name: detail.paramName || '',
+    }];
+  }
+  return [];
+}
+
+export function decodeBitGroupValue(byteValue, bitStart, bitCount) {
+  const count = Math.max(0, Math.min(8, Number(bitCount) || 0));
+  const start = Math.max(0, Math.min(7, Number(bitStart) || 0));
+  const mask = count >= 8 ? 0xff : ((1 << count) - 1);
+  return ((Number(byteValue) & 0xff) >> start) & mask;
+}
+
+export function bitGroupsOverlap(groups, candidate) {
+  const c0 = Number(candidate.bitStart) || 0;
+  const c1 = c0 + (Number(candidate.bitCount) || 0);
+  return (groups || []).some((g) => {
+    const g0 = Number(g.bitStart) || 0;
+    const g1 = g0 + (Number(g.bitCount) || 0);
+    return c0 < g1 && c1 > g0;
+  });
+}
+
+/** Per-bit agreement across a set of byte values — for compare-mode bit view. */
+export function bitAgreementAcross(values) {
+  return Array.from({ length: 8 }, (_, bi) => {
+    const bitIdx = 7 - bi; // display order b7..b0
+    const vals = (values || []).map((v) => ((Number(v) & 0xff) >> bitIdx) & 1);
+    return { bitIdx, values: vals, agree: new Set(vals).size <= 1 };
+  });
+}
+
+export function createEmptyBitPattern() {
+  return { id: `pat-${Date.now()}`, name: '', groups: [] };
+}
+
+export function bitPatternToParamDetail(pattern) {
+  return {
+    mode: 'bitgroups',
+    groups: (pattern?.groups || []).map((g) => ({ ...g })),
+  };
+}
+
+export function decodePatternAtByte(byteValue, groups) {
+  return (groups || []).map((g) => ({
+    name: g.name || '',
+    bitStart: g.bitStart ?? 0,
+    bitCount: g.bitCount ?? 8,
+    value: decodeBitGroupValue(byteValue, g.bitStart, g.bitCount),
+  }));
+}
+
+export function scanPatternOnRow(bytes, pattern) {
+  return (bytes || []).map((b, index) => ({
+    index,
+    byte: b & 0xff,
+    fields: decodePatternAtByte(b & 0xff, pattern?.groups || []),
+  }));
+}
+
+export function scanPatternAcrossRows(rows, pattern) {
+  const maxLen = (rows || []).reduce((m, r) => Math.max(m, r.bytes?.length || 0), 0);
+  const result = [];
+  for (let i = 0; i < maxLen; i++) {
+    const vals = (rows || []).filter((r) => i < (r.bytes?.length || 0)).map((r) => r.bytes[i] & 0xff);
+    const fieldStats = (pattern?.groups || []).map((g) => {
+      const decoded = vals.map((v) => decodeBitGroupValue(v, g.bitStart, g.bitCount));
+      return {
+        name: g.name || '',
+        distinctCount: new Set(decoded).size,
+        coverage: decoded.length,
+      };
+    });
+    result.push({ index: i, coverage: vals.length, fieldStats });
+  }
+  return result;
+}
+
+const BIT_PATTERNS_LS_KEY = 'illuma-wandlab-bit-patterns';
+
+export function loadBitPatterns() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BIT_PATTERNS_LS_KEY) || '[]');
+    if (Array.isArray(raw) && raw.length) return raw;
+  } catch { /* ignore */ }
+  const seed = [{ id: 'pat-timing', name: 'timing-like', groups: TIMING_BYTE_BIT_PRESET.map((g) => ({ ...g })) }];
+  saveBitPatterns(seed);
+  return seed;
+}
+
+export function saveBitPatterns(patterns) {
+  try {
+    localStorage.setItem(BIT_PATTERNS_LS_KEY, JSON.stringify(patterns));
+  } catch { /* quota */ }
+  return patterns;
+}
+
 export function createEmptyColorDetail() {
   return { mode: 'palette', channelRole: '', groupId: '' };
 }
@@ -405,14 +516,20 @@ export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
   });
 
   paramEntries.forEach(({ index, detail }) => {
-    rule.extract.push({
-      ...createEmptyExtract(detail.paramName || `param${index}`),
-      source: 'payloadBits',
-      ...loc(index),
-      bitStart: detail.bitStart ?? 0,
-      bitCount: detail.bitCount ?? 8,
-      paletteMap: false,
-      targets: [createEmptyExtractTarget('segmentField')],
+    const groups = normalizeParamGroups(detail);
+    const list = groups.length
+      ? groups
+      : [{ bitStart: detail.bitStart ?? 0, bitCount: detail.bitCount ?? 8, name: detail.paramName || `param${index}` }];
+    list.forEach((g, gi) => {
+      rule.extract.push({
+        ...createEmptyExtract(g.name || `param${index}${list.length > 1 ? `_${gi}` : ''}`),
+        source: 'payloadBits',
+        ...loc(index),
+        bitStart: g.bitStart ?? 0,
+        bitCount: g.bitCount ?? 8,
+        paletteMap: false,
+        targets: [createEmptyExtractTarget('segmentField')],
+      });
     });
   });
   if (paramEntries.length) {
