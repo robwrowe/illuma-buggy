@@ -17,6 +17,7 @@
 #include "StatusDisplay.h"
 #include "MbEffects.h"
 #include "PayloadTransport.h"
+#include "WledSendQueue.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -889,7 +890,7 @@ static void sendMbRuleOffLegacy(unsigned long fadeMs) {
     bleNotify("{\"type\":\"ble_event\",\"event\":\"ftb_fallback\",\"presetId\":\"" +
               mbFadeToBlackPresetId + "\"}");
   }
-  sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
+  wledSendQueueEnqueue(injectWledTransition("{\"on\":false}", fadeMs));
 }
 
 static void beginMbRuleDip(unsigned long fadeMs) {
@@ -910,7 +911,7 @@ static void beginMbRuleDip(unsigned long fadeMs) {
   }
   int ledmapId = (int)(segMap["ledmap"] | 0);
   String body = buildSolidBlackPayloadForSegMap(segMap, ledmapId);
-  sendToWLED(injectWledTransition(body, fadeMs));
+  wledSendQueueEnqueue(injectWledTransition(body, fadeMs));
   mbRulePhase = MB_RULE_DIP;
   mbRulePhaseDeadlineMs = millis() + (fadeMs > 0 ? fadeMs : 1);
   sdRuleLoggerWrite("lifecycle", "\"transition\":\"ON_TO_DIP\"");
@@ -1722,6 +1723,8 @@ void applyMatchedRule(const JsonObject& rule, const uint8_t* payload, size_t ple
   // fails silently and is redundant once on is in the apply body.
   String body = preparePresetApplyPayload(wledJson);
   // Fail fast under scan load — long POST timeouts starve bleCmdQueue.
+  // TODO(async-wled): this gates setOverride / lifecycle on HTTP success, so it
+  // stays synchronous this pass. Convert once apply can complete via callback.
   bool ok = sendToWLED(
     injectWledTransition(body, startTransMs, hasStartTr ? blendingStyle : -1),
     1200, 0);

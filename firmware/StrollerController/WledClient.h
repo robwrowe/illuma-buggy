@@ -1,6 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
+/** Serializes loop()-side and WledSendTask HTTPClient use (ESP32 HTTP is not reentrant). */
+void wledHttpMutexInit();
 bool sendToWLED(const String& jsonBody, int timeoutMs = 2000, int retries = 0);
 bool sendToWLEDForBleEffect(const String& jsonBody);
 bool sendToWLEDForBleSolid(const String& jsonBody);

@@ -29,6 +29,7 @@
 #include "SdRuleLogger.h"
 #include "StatusDisplay.h"
 #include "EmbeddedRules.h"
+#include "WledSendQueue.h"
 #include <ArduinoJson.h>
 
 void setup() {
@@ -189,6 +190,7 @@ void setup() {
   }
 
   payloadTransportInit();
+  wledSendQueueInit();
 
   // Create command queue (10 slots)
   cmdQueue = xQueueCreate(10, sizeof(PendingCmd));

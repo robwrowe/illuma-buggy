@@ -2,12 +2,27 @@
 #include "Globals.h"
 #include "StatusDisplay.h"
 
+static SemaphoreHandle_t wledHttpMux = nullptr;
+
+void wledHttpMutexInit() {
+  if (!wledHttpMux) wledHttpMux = xSemaphoreCreateMutex();
+}
+
+static void wledHttpLock() {
+  if (wledHttpMux) xSemaphoreTake(wledHttpMux, portMAX_DELAY);
+}
+
+static void wledHttpUnlock() {
+  if (wledHttpMux) xSemaphoreGive(wledHttpMux);
+}
+
 bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[WLED] WiFi not connected");
     statusDisplaySetWledOk(false);
     return false;
   }
+  wledHttpLock();
   HTTPClient http;
   http.begin("http://" + wledIp + ":" + String(wledPort) + "/json/state");
   http.addHeader("Content-Type", "application/json");
@@ -17,6 +32,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     code = http.POST(jsonBody);
     if (code == 200) {
       http.end();
+      wledHttpUnlock();
       statusDisplaySetWledOk(true);
       return true;
     }
@@ -27,6 +43,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     Serial.printf("[WLED]   body: %s\n", jsonBody.c_str());
   }
   http.end();
+  wledHttpUnlock();
   statusDisplaySetWledOk(false);
   return false;
 }
@@ -70,6 +87,7 @@ String getFromWLED(const String& path, int timeoutMs) {
     statusDisplaySetWledOk(false);
     return "";
   }
+  wledHttpLock();
   HTTPClient http;
   http.begin("http://" + wledIp + ":" + String(wledPort) + path);
   http.setTimeout(timeoutMs > 0 ? timeoutMs : 5000);
@@ -83,6 +101,7 @@ String getFromWLED(const String& path, int timeoutMs) {
     statusDisplaySetWledOk(false);
   }
   http.end();
+  wledHttpUnlock();
   return body;
 }
 
