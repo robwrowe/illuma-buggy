@@ -36,6 +36,9 @@ import {
   columnConstancy,
   columnHasBitView,
   decodeBitGroupValue,
+  encodeBitGroupValue,
+  customBitFieldMax,
+  bitRangeLabel,
   normalizeCustomBitFields,
   shiftRowIndexMap,
   toggleBitCellMap,
@@ -54,40 +57,81 @@ import {
 
 const DEFAULT_TAIL_RAW = '58 F4 48 82 D1 46 02 08 D0 65 00';
 
-const NIBBLE_FIELDS = {
-  hi: { bitStart: 4, bitCount: 4, label: 'Hi', range: 'b7:4' },
-  lo: { bitStart: 0, bitCount: 4, label: 'Lo', range: 'b3:0' },
-};
-
 const MAX_NIBBLE_SPECS = 16;
 
+function clampBitStart(n) {
+  return Math.max(0, Math.min(7, Number(n) || 0));
+}
+
+function clampBitCount(bitStart, bitCount) {
+  const start = clampBitStart(bitStart);
+  return Math.max(1, Math.min(8 - start, Number(bitCount) || 1));
+}
+
+function bitsFromLegacyWhich(which) {
+  return which === 'lo' ? { bitStart: 0, bitCount: 4 } : { bitStart: 4, bitCount: 4 };
+}
+
 function defaultNibbleSpecs() {
-  return [{ id: 'n0', byteIdx: 0, which: 'hi' }];
+  return [{ id: 'n0', byteIdx: 0, bitStart: 4, bitCount: 4 }];
 }
 
 function normalizeNibbleSpecs(list) {
   if (!Array.isArray(list) || !list.length) return [];
-  return list.slice(0, MAX_NIBBLE_SPECS).map((s, i) => ({
-    id: typeof s?.id === 'string' && s.id ? s.id : `n${i}`,
-    byteIdx: Math.max(0, Number(s?.byteIdx) || 0),
-    which: s?.which === 'lo' ? 'lo' : 'hi',
-  }));
-}
-
-function nibbleFieldFor(which) {
-  return NIBBLE_FIELDS[which] || NIBBLE_FIELDS.hi;
+  return list.slice(0, MAX_NIBBLE_SPECS).map((s, i) => {
+    let bitStart = s?.bitStart;
+    let bitCount = s?.bitCount;
+    if ((bitStart == null || bitCount == null) && s?.which) {
+      const migrated = bitsFromLegacyWhich(s.which);
+      bitStart = bitStart ?? migrated.bitStart;
+      bitCount = bitCount ?? migrated.bitCount;
+    }
+    bitStart = clampBitStart(bitStart);
+    bitCount = clampBitCount(bitStart, bitCount ?? 4);
+    return {
+      id: typeof s?.id === 'string' && s.id ? s.id : `n${i}`,
+      byteIdx: Math.max(0, Number(s?.byteIdx) || 0),
+      bitStart,
+      bitCount,
+    };
+  });
 }
 
 function nibbleSpecLabel(spec) {
-  const f = nibbleFieldFor(spec.which);
-  return `${f.label}[${spec.byteIdx}]`;
+  return `[${spec.byteIdx}] ${bitRangeLabel(spec.bitStart, spec.bitCount)}`;
 }
 
 function nibbleDec(bytes, spec) {
   const byteIdx = Number(spec.byteIdx) || 0;
   if (!bytes || byteIdx >= bytes.length) return null;
-  const f = nibbleFieldFor(spec.which);
-  return decodeBitGroupValue(bytes[byteIdx], f.bitStart, f.bitCount);
+  return decodeBitGroupValue(bytes[byteIdx], spec.bitStart, spec.bitCount);
+}
+
+function nibbleSpecKey(spec) {
+  return `${spec.byteIdx}:${spec.bitStart}:${spec.bitCount}`;
+}
+
+function nextNibblePlacement(specs, tailMaxLen) {
+  const last = specs[specs.length - 1];
+  const maxByte = Math.max(0, (Number(tailMaxLen) || 1) - 1);
+  if (!last) return { byteIdx: 0, bitStart: 4, bitCount: 4 };
+  const nextByte = (Number(last.byteIdx) || 0) + 1;
+  if (nextByte <= maxByte) {
+    return { byteIdx: nextByte, bitStart: last.bitStart, bitCount: last.bitCount };
+  }
+  const byteIdx = Math.min(Number(last.byteIdx) || 0, maxByte);
+  const used = new Set(specs.filter((s) => s.byteIdx === byteIdx).map(nibbleSpecKey));
+  const candidates = [
+    { byteIdx, bitStart: 0, bitCount: 4 },
+    { byteIdx, bitStart: 4, bitCount: 4 },
+    { byteIdx, bitStart: 0, bitCount: 8 },
+    { byteIdx, bitStart: 0, bitCount: 2 },
+    { byteIdx, bitStart: 2, bitCount: 2 },
+    { byteIdx, bitStart: 4, bitCount: 2 },
+    { byteIdx, bitStart: 6, bitCount: 2 },
+  ];
+  return candidates.find((c) => !used.has(nibbleSpecKey(c)))
+    || { byteIdx, bitStart: last.bitStart, bitCount: last.bitCount };
 }
 
 function origHexListFromRaw(raw) {
@@ -479,6 +523,18 @@ export function WandLabTailBuilderTab({
     patchTailBytes(rowIdx, nextBytes);
   };
 
+  const patchNibbleDec = (rowIdx, spec, value) => {
+    const row = displayTails[rowIdx];
+    if (!row) return;
+    const byteIdx = Number(spec.byteIdx) || 0;
+    if (byteIdx >= row.bytes.length) return;
+    patchTailByte(
+      rowIdx,
+      byteIdx,
+      encodeBitGroupValue(row.bytes[byteIdx], spec.bitStart, spec.bitCount, Number(value) || 0),
+    );
+  };
+
   const resetRow = (idx) => {
     const row = displayTails[idx];
     if (!row || !rowIsDirty(idx)) return;
@@ -647,25 +703,40 @@ export function WandLabTailBuilderTab({
 
   const patchNibbleSpec = (id, patch) => {
     setNibbleSpecs((prev) =>
-      normalizeNibbleSpecs(prev).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      normalizeNibbleSpecs(prev).map((s) => {
+        if (s.id !== id) return s;
+        const next = { ...s, ...patch };
+        next.byteIdx = Math.max(0, Number(next.byteIdx) || 0);
+        next.bitStart = clampBitStart(next.bitStart);
+        next.bitCount = clampBitCount(next.bitStart, next.bitCount);
+        return next;
+      }),
     );
   };
 
-  const addNibbleSpec = (byteIdx = 0, which = 'hi') => {
+  const addNibbleSpec = (byteIdx = 0, bitStart = 4, bitCount = 4) => {
     setNibbleSpecs((prev) => {
       const list = normalizeNibbleSpecs(prev);
       if (list.length >= MAX_NIBBLE_SPECS) return list;
-      if (list.some((s) => s.byteIdx === byteIdx && s.which === which)) return list;
-      return [...list, { id: generateId(), byteIdx, which }];
+      return [
+        ...list,
+        {
+          id: generateId(),
+          byteIdx: Math.max(0, Number(byteIdx) || 0),
+          bitStart: clampBitStart(bitStart),
+          bitCount: clampBitCount(bitStart, bitCount),
+        },
+      ];
     });
   };
 
   const addNibbleFromColumn = (byteIdx) => {
-    const hasHi = specs.some((s) => s.byteIdx === byteIdx && s.which === 'hi');
-    const hasLo = specs.some((s) => s.byteIdx === byteIdx && s.which === 'lo');
-    if (!hasHi) addNibbleSpec(byteIdx, 'hi');
-    else if (!hasLo) addNibbleSpec(byteIdx, 'lo');
-    else onStatus?.(`Both nibbles already added for byte ${byteIdx}`);
+    const onByte = specs.filter((s) => s.byteIdx === byteIdx);
+    const keys = new Set(onByte.map(nibbleSpecKey));
+    if (!keys.has(`${byteIdx}:4:4`)) addNibbleSpec(byteIdx, 4, 4);
+    else if (!keys.has(`${byteIdx}:0:4`)) addNibbleSpec(byteIdx, 0, 4);
+    else if (!keys.has(`${byteIdx}:0:8`)) addNibbleSpec(byteIdx, 0, 8);
+    else addNibbleSpec(byteIdx, 0, 4);
   };
 
   const removeNibbleSpec = (id) => {
@@ -781,29 +852,44 @@ export function WandLabTailBuilderTab({
       </Group>
       {displayTails.length > 0 && (
         <Stack gap={4}>
-          {specs.map((spec, si) => {
-            return (
+          {specs.map((spec, si) => (
               <Group key={spec.id} gap={6} wrap="wrap" align="flex-end">
                 <NumberInput
                   size="xs"
-                  label={si === 0 ? 'Nibble byte' : undefined}
+                  label={si === 0 ? 'Byte' : undefined}
                   min={0}
                   max={Math.max(0, tailMaxLen - 1)}
                   clampBehavior="strict"
                   value={spec.byteIdx}
                   onChange={(v) => patchNibbleSpec(spec.id, { byteIdx: Number(v) || 0 })}
-                  w={88}
+                  w={72}
                   styles={{ input: { fontFamily: 'monospace' } }}
                 />
-                <SegmentedControl
+                <NumberInput
                   size="xs"
-                  value={spec.which}
-                  onChange={(which) => patchNibbleSpec(spec.id, { which })}
-                  data={[
-                    { value: 'hi', label: `Hi ${NIBBLE_FIELDS.hi.range}` },
-                    { value: 'lo', label: `Lo ${NIBBLE_FIELDS.lo.range}` },
-                  ]}
+                  label={si === 0 ? 'Start' : undefined}
+                  min={0}
+                  max={7}
+                  clampBehavior="strict"
+                  value={spec.bitStart}
+                  onChange={(v) => patchNibbleSpec(spec.id, { bitStart: Number(v) || 0 })}
+                  w={64}
+                  styles={{ input: { fontFamily: 'monospace' } }}
                 />
+                <NumberInput
+                  size="xs"
+                  label={si === 0 ? 'Bits' : undefined}
+                  min={1}
+                  max={8 - spec.bitStart}
+                  clampBehavior="strict"
+                  value={spec.bitCount}
+                  onChange={(v) => patchNibbleSpec(spec.id, { bitCount: Number(v) || 1 })}
+                  w={64}
+                  styles={{ input: { fontFamily: 'monospace' } }}
+                />
+                <Text size="xs" c="dimmed" ff="monospace" pb={6}>
+                  {bitRangeLabel(spec.bitStart, spec.bitCount)}
+                </Text>
                 <Button
                   size="compact-xs"
                   variant="subtle"
@@ -822,27 +908,18 @@ export function WandLabTailBuilderTab({
                   </Text>
                 )}
               </Group>
-            );
-          })}
+          ))}
           <Group gap={6} wrap="wrap">
             <Button
               size="compact-xs"
               variant="default"
               disabled={specs.length >= MAX_NIBBLE_SPECS}
               onClick={() => {
-                const used = new Set(specs.map((s) => `${s.byteIdx}:${s.which}`));
-                let byteIdx = specs.length ? specs[specs.length - 1].byteIdx : 0;
-                let which = 'hi';
-                if (used.has(`${byteIdx}:hi`) && !used.has(`${byteIdx}:lo`)) {
-                  which = 'lo';
-                } else if (used.has(`${byteIdx}:hi`) && used.has(`${byteIdx}:lo`)) {
-                  byteIdx = Math.min(byteIdx + 1, Math.max(0, tailMaxLen - 1));
-                  which = used.has(`${byteIdx}:hi`) ? 'lo' : 'hi';
-                }
-                addNibbleSpec(byteIdx, which);
+                const next = nextNibblePlacement(specs, tailMaxLen);
+                addNibbleSpec(next.byteIdx, next.bitStart, next.bitCount);
               }}
             >
-              + Nibble
+              + Field
             </Button>
             <Button
               size="compact-xs"
@@ -927,8 +1004,8 @@ export function WandLabTailBuilderTab({
                   {specs.map((spec) => (
                     <Table.Th
                       key={spec.id}
-                      w={52}
-                      title={`${nibbleFieldFor(spec.which).label} nibble (${nibbleFieldFor(spec.which).range}) of byte ${spec.byteIdx}`}
+                      w={72}
+                      title={`byte ${spec.byteIdx} ${bitRangeLabel(spec.bitStart, spec.bitCount)}`}
                     >
                       <Text size="xs" ff="monospace">
                         {nibbleSpecLabel(spec)}
@@ -996,13 +1073,28 @@ export function WandLabTailBuilderTab({
                           {t.bytes.length}
                         </Text>
                       </Table.Td>
-                      {specs.map((spec) => (
-                        <Table.Td key={spec.id}>
-                          <Text size="sm" ff="monospace" fw={600}>
-                            {nibbleDec(t.bytes, spec) ?? '—'}
-                          </Text>
-                        </Table.Td>
-                      ))}
+                      {specs.map((spec) => {
+                        const dec = nibbleDec(t.bytes, spec);
+                        return (
+                          <Table.Td key={spec.id} p={4} onClick={(e) => e.stopPropagation()}>
+                            {dec == null ? (
+                              <Text size="xs" c="dimmed" ff="monospace">—</Text>
+                            ) : (
+                              <NumberInput
+                                size="xs"
+                                min={0}
+                                max={customBitFieldMax(spec.bitCount)}
+                                clampBehavior="strict"
+                                allowDecimal={false}
+                                value={dec}
+                                onChange={(v) => patchNibbleDec(i, spec, v)}
+                                w={72}
+                                styles={{ input: { fontFamily: 'monospace', textAlign: 'center', paddingInline: 4 } }}
+                              />
+                            )}
+                          </Table.Td>
+                        );
+                      })}
                       <Table.Td>
                         <Group gap={4} wrap="nowrap">
                           <Button
