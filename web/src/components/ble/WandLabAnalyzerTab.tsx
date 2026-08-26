@@ -14,23 +14,29 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
+  BIT_COL_PX,
   BYTE_TAG_KINDS,
+  HEX_COL_PX,
   bitAgreementAcross,
-  bitPatternToParamDetail,
   buildAnalyzerStateFromPackets,
+  cellHasBitView,
   columnConstancy,
+  columnHasBitView,
   createEmptyColorDetail,
   createEmptyParamDetail,
   deserializeByteTags,
   effectiveTag,
   loadBitPatterns,
   looksLikeByteTagsSheetPaste,
+  normalizeCustomBitFields,
   normalizeParamGroups,
   parseAnalyzerInput,
   parseByteTagsSheetPaste,
   saveBitPatterns,
-  scanPatternAcrossRows,
-  scanPatternOnRow,
+  asIndexList,
+  asIndexMap,
+  toggleBitCellMap,
+  toggleBitColumn,
 } from '../../lib/ble/byteAnalyzer';
 import { hexToBytes, bytesToHex } from '../../lib/ble/e9Decode';
 import { byteToBitString, hasCompanyIdPrefix, stripCompanyId } from '../../lib/ble/wandSimClient';
@@ -38,6 +44,7 @@ import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { AnalyzerFindingForm } from './AnalyzerFindingForm';
+import { BitColumnHeader, ByteBitCell } from './ByteBitCell';
 import { BitGridEditor } from './BitGridEditor';
 
 function nextGroupId(existingGroupIds) {
@@ -316,7 +323,6 @@ function AnalyzerRow({
   detailPopover,
   existingGroupIds,
   existingParamNames,
-  onCellClick,
   onDetailConfirm,
   onDetailCancel,
   onSend,
@@ -324,10 +330,13 @@ function AnalyzerRow({
   onLog,
   onRemove,
   tagKindMeta,
-  compareMode,
   compareSelection = [],
   patterns = [],
   onPatternsChange,
+  bitColumns = [],
+  bitCells,
+  onToggleBits,
+  customFields = [],
 }) {
   const [hovered, setHovered] = useState(false);
   const hoverHandlers = {
@@ -382,50 +391,21 @@ function AnalyzerRow({
         const byte = i < row.bytes.length ? row.bytes[i] : null;
         const popoverOpen = detailPopover?.rowId === row.id && detailPopover?.index === i;
         const cmpIdx = compareSelection.findIndex((s) => s.rowId === row.id && s.index === i);
+        const showBits = byte != null && cellHasBitView(bitColumns, bitCells, row.id, i);
         return (
           <Popover key={i} opened={popoverOpen} withArrow position="bottom">
             <Popover.Target>
-              <Box
-                {...hoverHandlers}
-                onClick={() => byte != null && onCellClick(i)}
-                style={{
-                  cursor: byte != null ? 'pointer' : 'default',
-                  textAlign: 'center',
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                  padding: '4px 0',
-                  borderRadius: 4,
-                  position: 'relative',
-                  opacity: byte == null ? 0.3 : 1,
-                  background:
-                    rowBg ||
-                    (meta ? `var(--mantine-color-${meta.color}-light)` : 'var(--surface2)'),
-                  outline: cmpIdx >= 0 ? '2px solid var(--mantine-color-pink-6)' : undefined,
-                  outlineOffset: cmpIdx >= 0 ? -1 : undefined,
-                  border: hovered
-                    ? '1px solid var(--mantine-color-blue-4)'
-                    : '1px solid var(--border)',
-                }}
-              >
-                {byte != null ? (byte & 0xff).toString(16).padStart(2, '0').toUpperCase() : '··'}
-                <TagSuffix tag={tag} />
-                {cmpIdx >= 0 && (
-                  <Text
-                    span
-                    size="xs"
-                    fw={700}
-                    c="pink"
-                    style={{
-                      position: 'absolute',
-                      top: -6,
-                      right: -2,
-                      fontSize: 8,
-                      lineHeight: 1,
-                    }}
-                  >
-                    {cmpIdx + 1}
-                  </Text>
-                )}
+              <Box {...hoverHandlers} style={{ background: rowBg, borderRadius: 4 }}>
+                <ByteBitCell
+                  byteValue={byte ?? 0}
+                  empty={byte == null}
+                  showBits={showBits}
+                  onToggleBits={() => byte != null && onToggleBits(row.id, i)}
+                  tagColor={meta?.color}
+                  suffix={<TagSuffix tag={tag} />}
+                  compareMark={cmpIdx >= 0 ? cmpIdx + 1 : null}
+                  customFields={customFields}
+                />
               </Box>
             </Popover.Target>
             {popoverOpen && detailPopover.kind === 'param' && (
@@ -481,6 +461,7 @@ export function WandLabAnalyzerTab({
   session = EMPTY_ANALYZER_SESSION,
   onSessionChange,
   simIp: _simIp,
+  customBitFields = [],
 }) {
   const pasteText = session.pasteText ?? '';
   const rows = session.rows ?? [];
@@ -502,9 +483,8 @@ export function WandLabAnalyzerTab({
   const [newRowMsg, setNewRowMsg] = useState('');
   const [compareMode, setCompareMode] = useWandLabUiState('analyzer.compareMode', false);
   const [compareSelection, setCompareSelection] = useWandLabUiState('analyzer.compareSelection', []);
-  const [patternScanOn, setPatternScanOn] = useWandLabUiState('analyzer.patternScan', false);
-  const [scanPatternId, setScanPatternId] = useWandLabUiState('analyzer.scanPatternId', '');
-  const [scanRowId, setScanRowId] = useWandLabUiState('analyzer.scanRowId', 'all');
+  const [bitCells, setBitCells] = useWandLabUiState('analyzer.bitCells', () => ({}));
+  const [bitColumns, setBitColumns] = useWandLabUiState('analyzer.bitColumns', () => []);
   const [patterns, setPatternsState] = useState(loadBitPatterns);
 
   const setPatterns = (next) => {
@@ -595,6 +575,21 @@ export function WandLabAnalyzerTab({
 
   const maxLen = useMemo(() => rows.reduce((m, r) => Math.max(m, r.bytes.length), 0), [rows]);
   const constancy = useMemo(() => columnConstancy(rows), [rows]);
+  const customFields = useMemo(() => normalizeCustomBitFields(customBitFields), [customBitFields]);
+  const hexColPx = customFields.length ? 52 : HEX_COL_PX;
+  const bitColTemplate = useMemo(() => {
+    const cols = Array.from({ length: maxLen }, (_, i) =>
+      columnHasBitView(bitColumns, bitCells, i) ? `${BIT_COL_PX}px` : `${hexColPx}px`,
+    );
+    return `10.5rem ${cols.join(' ')}`.trim();
+  }, [maxLen, bitColumns, bitCells, hexColPx]);
+  const bitGridMinWidth = useMemo(() => {
+    let w = 168;
+    for (let i = 0; i < maxLen; i++) {
+      w += columnHasBitView(bitColumns, bitCells, i) ? BIT_COL_PX + 2 : hexColPx + 2;
+    }
+    return w;
+  }, [maxLen, bitColumns, bitCells, hexColPx]);
 
   const existingGroupIds = useMemo(() => {
     const ids = new Set();
@@ -731,7 +726,6 @@ export function WandLabAnalyzerTab({
         const list = Array.isArray(prev) ? prev : [];
         const idx = list.findIndex((s) => s.rowId === rowId && s.index === index);
         if (idx >= 0) return list.filter((_, i) => i !== idx);
-        if (list.length >= 8) return list;
         return [...list, { rowId, index }];
       });
       return;
@@ -809,19 +803,27 @@ export function WandLabAnalyzerTab({
     return bitAgreementAcross(vals);
   }, [compareEntries]);
 
-  const scanPattern = patterns.find((p) => p.id === scanPatternId) || patterns[0] || null;
-  const scanRow = scanRowId === 'all' ? null : rows.find((r) => r.id === scanRowId);
-  const scanPreview = useMemo(() => {
-    if (!patternScanOn || !scanPattern) return null;
-    if (scanRow) return { kind: 'row', cells: scanPatternOnRow(scanRow.bytes, scanPattern) };
-    return { kind: 'all', cells: scanPatternAcrossRows(rows, scanPattern) };
-  }, [patternScanOn, scanPattern, scanRow, rows]);
+  const flipColumn = (index) => {
+    const next = toggleBitColumn(bitColumns, bitCells, index);
+    setBitColumns(next.bitColumns);
+    setBitCells(next.bitCells);
+  };
 
-  const commitScanOffset = (index) => {
-    if (!scanPattern) return;
-    const rowId = scanRow ? scanRow.id : null;
-    applyTag(rowId, index, { kind: 'param', detail: bitPatternToParamDetail(scanPattern) });
-    onStatus?.(`Applied "${scanPattern.name}" at byte[${index}]${rowId ? '' : ' (all rows)'}`);
+  const selectColumnForCompare = (index) => {
+    const col = Number(index);
+    const next = rows
+      .filter((r) => col < (r.bytes?.length || 0))
+      .map((r) => ({ rowId: r.id, index: col }));
+    setCompareSelection((prev) => {
+      const list = Array.isArray(prev) ? prev : [];
+      const atCol = list.filter((s) => Number(s.index) === col);
+      const complete =
+        next.length > 0 &&
+        atCol.length === next.length &&
+        atCol.length === list.length &&
+        next.every((n) => atCol.some((s) => s.rowId === n.rowId));
+      return complete ? [] : next;
+    });
   };
 
   return (
@@ -831,8 +833,8 @@ export function WandLabAnalyzerTab({
         <Text span ff="monospace">
           byte_tags
         </Text>{' '}
-        tab (with header) to reload tags for editing. Click a column header to tag across every row;
-        click a cell to override one packet. Click an assigned cell again to clear it.
+        tab (with header) to reload tags for editing. Click a cell to flip hex ↔ bits. Click a
+        column header to flip the whole column.
       </Text>
 
       <Textarea
@@ -944,15 +946,18 @@ export function WandLabAnalyzerTab({
         </Button>
         <Button
           size="compact-xs"
-          variant={patternScanOn ? 'filled' : 'outline'}
-          color="cyan"
-          onClick={() => setPatternScanOn((v) => !v)}
+          variant="default"
+          disabled={!(asIndexList(bitColumns).length || Object.keys(asIndexMap(bitCells)).length)}
+          onClick={() => {
+            setBitColumns([]);
+            setBitCells({});
+          }}
         >
-          Pattern scan
+          Reset cells
         </Button>
         {compareMode && (
           <Text size="xs" c="dimmed">
-            Click cells to compare (max 8). Indices can differ per row.
+            Click cells to compare. Click a column header to compare that byte across all rows.
           </Text>
         )}
       </Group>
@@ -967,171 +972,75 @@ export function WandLabAnalyzerTab({
               Clear
             </Button>
           </Group>
-          {compareBits && (
-            <Group gap={4} mb={6} wrap="nowrap">
-              <Text size="xs" c="dimmed" ff="monospace" w={90}>bits</Text>
-              {compareBits.map((b) => (
-                <Text key={b.bitIdx} size="xs" ta="center" ff="monospace" w={16} c="dimmed">{b.bitIdx}</Text>
-              ))}
-            </Group>
-          )}
-          {compareEntries.map((e) => {
-            const delta = e.byte != null && e.firstVal != null && e.i > 0 ? e.byte - e.firstVal : null;
-            const xor = e.byte != null && e.firstVal != null && e.i > 0 ? e.byte ^ e.firstVal : null;
-            const shortId = String(e.rowId || '').replace(/^row-/, '').slice(0, 8);
-            return (
-              <Group key={`${e.rowId}-${e.index}`} gap={8} wrap="wrap" mb={2}>
-                <Text size="xs" fw={700} c="pink" w={24}>#{e.i + 1}</Text>
-                <Text size="xs" ff="monospace">row{shortId}[{e.index}]</Text>
-                {e.byte != null && (
-                  <>
-                    <Text size="xs" ff="monospace">0x{(e.byte).toString(16).padStart(2, '0').toUpperCase()}</Text>
-                    <Text size="xs" ff="monospace">{e.byte}</Text>
-                    <Text size="xs" ff="monospace">{byteToBitString(e.byte)}</Text>
-                  </>
-                )}
-                {delta != null && (
-                  <Text size="xs" c="dimmed">
-                    {delta === 0
-                      ? 'Δ vs #1: same'
-                      : `Δ vs #1: ${delta > 0 ? '+' : ''}${delta} dec, XOR ${byteToBitString(xor)}`}
-                  </Text>
-                )}
-                {compareBits && e.byte != null && (
-                  <Group gap={4} wrap="nowrap">
-                    {compareBits.map((b) => (
-                      <Text key={b.bitIdx} size="xs" ta="center" ff="monospace" w={16} c={b.agree ? 'teal' : 'orange'}>
-                        {(e.byte >> b.bitIdx) & 1}
+          <ScrollArea type="auto" mah={320}>
+            <Box
+              style={{
+                display: 'grid',
+                gridTemplateColumns: compareBits
+                  ? '1.6rem 8.6rem 2.6rem 2rem 5.2rem repeat(8, 1.15rem) minmax(10rem, auto)'
+                  : '1.6rem 8.6rem 2.6rem 2rem 5.2rem minmax(10rem, auto)',
+                columnGap: 8,
+                rowGap: 4,
+                alignItems: 'center',
+                minWidth: 720,
+              }}
+            >
+              {compareBits && (
+                <>
+                  <Text size="xs" c="dimmed" ff="monospace" style={{ gridColumn: '1 / 6' }}>bits</Text>
+                  {compareBits.map((b) => (
+                    <Text key={`h-${b.bitIdx}`} size="xs" ta="center" ff="monospace" c="dimmed">{b.bitIdx}</Text>
+                  ))}
+                  <Box />
+                </>
+              )}
+              {compareEntries.map((e) => {
+                const delta = e.byte != null && e.firstVal != null && e.i > 0 ? e.byte - e.firstVal : null;
+                const xor = e.byte != null && e.firstVal != null && e.i > 0 ? e.byte ^ e.firstVal : null;
+                const shortId = String(e.rowId || '').replace(/^row-/, '').slice(0, 8);
+                return (
+                  <Box key={`${e.rowId}-${e.index}`} style={{ display: 'contents' }}>
+                    <Text size="xs" fw={700} c="pink">#{e.i + 1}</Text>
+                    <Text size="xs" ff="monospace">row{shortId}[{e.index}]</Text>
+                    <Text size="xs" ff="monospace">
+                      {e.byte != null ? `0x${(e.byte).toString(16).padStart(2, '0').toUpperCase()}` : '—'}
+                    </Text>
+                    <Text size="xs" ff="monospace">{e.byte != null ? e.byte : ''}</Text>
+                    <Text size="xs" ff="monospace">{e.byte != null ? byteToBitString(e.byte) : ''}</Text>
+                    {(compareBits || []).map((b) => (
+                      <Text
+                        key={`${e.rowId}-${e.index}-${b.bitIdx}`}
+                        size="xs"
+                        ta="center"
+                        ff="monospace"
+                        c={e.byte == null ? 'dimmed' : b.agree ? 'teal' : 'orange'}
+                      >
+                        {e.byte == null ? '·' : (e.byte >> b.bitIdx) & 1}
                       </Text>
                     ))}
-                  </Group>
-                )}
-              </Group>
-            );
-          })}
-          {compareBits && (
-            <Group gap={4} wrap="nowrap" mt={4}>
-              <Text size="xs" c="dimmed" ff="monospace" w={90}>agree</Text>
-              {compareBits.map((b) => (
-                <Text key={b.bitIdx} size="xs" ta="center" ff="monospace" w={16} c={b.agree ? 'teal' : 'orange'}>
-                  {b.agree ? '═' : '·'}
-                </Text>
-              ))}
-            </Group>
-          )}
-        </Box>
-      )}
-
-      {patternScanOn && (
-        <Box p="sm" style={{ border: '1px solid var(--mantine-color-cyan-6)', borderRadius: 8 }}>
-          <Group gap="xs" align="flex-end" wrap="wrap" mb={8}>
-            <Text size="xs" fw={600}>Pattern scan</Text>
-            <Box style={{ minWidth: 160 }}>
-              <SearchableSelect
-                size="xs"
-                value={scanPattern?.id || ''}
-                allowEmpty={false}
-                onChange={setScanPatternId}
-                options={patterns.map((p) => ({ value: p.id, label: p.name || p.id, searchText: p.name }))}
-              />
-            </Box>
-            <Box style={{ minWidth: 140 }}>
-              <SearchableSelect
-                size="xs"
-                value={scanRowId}
-                allowEmpty={false}
-                onChange={setScanRowId}
-                options={[
-                  { value: 'all', label: 'All rows', searchText: 'all' },
-                  ...rows.map((r, i) => ({ value: r.id, label: `row ${i + 1}`, searchText: r.id })),
-                ]}
-              />
-            </Box>
-          </Group>
-          {scanPreview?.kind === 'row' && (
-            <ScrollArea type="auto">
-              <Box
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: `4rem repeat(${scanPreview.cells.length}, 52px)`,
-                  gap: 2,
-                  minWidth: 64 + scanPreview.cells.length * 54,
-                }}
-              >
-                <Text size="xs" c="dimmed">idx</Text>
-                {scanPreview.cells.map((c) => (
-                  <Text key={`i${c.index}`} size="xs" ta="center" ff="monospace" c="dimmed">{c.index}</Text>
-                ))}
-                <Text size="xs" c="dimmed">val</Text>
-                {scanPreview.cells.map((c) => (
-                  <Box
-                    key={`v${c.index}`}
-                    onClick={() => commitScanOffset(c.index)}
-                    style={{
-                      cursor: 'pointer',
-                      textAlign: 'center',
-                      fontFamily: 'monospace',
-                      fontSize: 10,
-                      padding: '4px 0',
-                      borderRadius: 4,
-                      background: 'var(--surface2)',
-                      border: '1px solid var(--border)',
-                    }}
-                    title="Click to commit this pattern here"
-                  >
-                    {(c.byte).toString(16).padStart(2, '0').toUpperCase()}
+                    <Text size="xs" c="dimmed">
+                      {delta == null
+                        ? ''
+                        : delta === 0
+                          ? 'Δ vs #1: same'
+                          : `Δ vs #1: ${delta > 0 ? '+' : ''}${delta} dec, XOR ${byteToBitString(xor)}`}
+                    </Text>
                   </Box>
-                ))}
-                {(scanPattern?.groups || []).map((g) => (
-                  <Box key={`g-${g.name}-${g.bitStart}`} style={{ display: 'contents' }}>
-                    <Text size="xs" c="dimmed">{g.name || '·'}</Text>
-                    {scanPreview.cells.map((c) => {
-                      const f = c.fields.find((x) => x.name === g.name && x.bitStart === g.bitStart);
-                      return (
-                        <Text key={`${g.name}-${g.bitStart}-${c.index}`} size="xs" ta="center" ff="monospace">
-                          {f ? f.value : '—'}
-                        </Text>
-                      );
-                    })}
-                  </Box>
-                ))}
-              </Box>
-            </ScrollArea>
-          )}
-          {scanPreview?.kind === 'all' && (
-            <ScrollArea type="auto">
-              <Group gap={6} wrap="nowrap">
-                {scanPreview.cells.map((c) => {
-                  const score = (c.fieldStats || []).reduce((s, f) => s + f.distinctCount, 0);
-                  return (
-                    <Box
-                      key={c.index}
-                      onClick={() => commitScanOffset(c.index)}
-                      style={{
-                        cursor: 'pointer',
-                        minWidth: 52,
-                        textAlign: 'center',
-                        padding: 4,
-                        borderRadius: 4,
-                        background: 'var(--surface2)',
-                        border: '1px solid var(--border)',
-                      }}
-                      title="Click to commit this pattern on all rows at this index"
-                    >
-                      <Text size="xs" c="dimmed">[{c.index}]</Text>
-                      {(c.fieldStats || []).map((f) => (
-                        <Text key={f.name} size="xs" ff="monospace">{f.name}×{f.distinctCount}</Text>
-                      ))}
-                      <Text size="xs" c="dimmed">{score} distinct</Text>
-                    </Box>
-                  );
-                })}
-              </Group>
-            </ScrollArea>
-          )}
-          <Text size="xs" c="dimmed" mt={6}>
-            Preview only — click a column to stamp the pattern as a param/bitgroups tag.
-          </Text>
+                );
+              })}
+              {compareBits && (
+                <>
+                  <Text size="xs" c="dimmed" ff="monospace" style={{ gridColumn: '1 / 6' }}>agree</Text>
+                  {compareBits.map((b) => (
+                    <Text key={`a-${b.bitIdx}`} size="xs" ta="center" ff="monospace" c={b.agree ? 'teal' : 'orange'}>
+                      {b.agree ? '═' : '·'}
+                    </Text>
+                  ))}
+                  <Box />
+                </>
+              )}
+            </Box>
+          </ScrollArea>
         </Box>
       )}
 
@@ -1140,9 +1049,10 @@ export function WandLabAnalyzerTab({
           <Box
             style={{
               display: 'grid',
-              gridTemplateColumns: `10.5rem repeat(${maxLen}, 34px)`,
+              gridTemplateColumns: bitColTemplate,
               gap: 2,
-              minWidth: 168 + maxLen * 36,
+              minWidth: bitGridMinWidth,
+              alignItems: 'start',
             }}
           >
             <Box />
@@ -1151,31 +1061,30 @@ export function WandLabAnalyzerTab({
               const meta = tag ? tagKindMeta(tag.kind) : null;
               const c = constancy[i];
               const popoverOpen = detailPopover?.rowId == null && detailPopover?.index === i;
+              const showBits = columnHasBitView(bitColumns, bitCells, i);
               return (
                 <Popover key={i} opened={popoverOpen} withArrow position="bottom">
                   <Popover.Target>
                     <Tooltip
-                      label={`byte[${i}] · ${c?.distinctCount ?? 0} distinct value(s) across ${c?.coverage ?? 0} row(s)`}
+                      label={
+                        compareMode
+                          ? `Click to compare byte[${i}] across all ${rows.length} row(s)`
+                          : `Click to flip column ${i} hex ↔ bits · ${c?.distinctCount ?? 0} distinct value(s)`
+                      }
                     >
-                      <Box
-                        onClick={() => handleClick(null, i)}
-                        style={{
-                          cursor: 'pointer',
-                          textAlign: 'center',
-                          fontSize: 10,
-                          fontFamily: 'monospace',
-                          padding: '4px 0',
-                          borderRadius: 4,
-                          background: meta
-                            ? `var(--mantine-color-${meta.color}-light)`
-                            : 'var(--surface2)',
-                          border: c?.constant
-                            ? '1px solid var(--mantine-color-teal-6)'
-                            : '1px solid var(--border)',
-                        }}
-                      >
-                        {i}
-                        <TagSuffix tag={tag} />
+                      <Box>
+                        <BitColumnHeader
+                          index={i}
+                          showBits={showBits}
+                          constant={!!c?.constant}
+                          tagColor={meta?.color}
+                          onClick={() => {
+                            if (compareMode) selectColumnForCompare(i);
+                            else flipColumn(i);
+                          }}
+                        >
+                          <TagSuffix tag={tag} />
+                        </BitColumnHeader>
                       </Box>
                     </Tooltip>
                   </Popover.Target>
@@ -1218,7 +1127,6 @@ export function WandLabAnalyzerTab({
                 detailPopover={detailPopover}
                 existingGroupIds={existingGroupIds}
                 existingParamNames={existingParamNames}
-                onCellClick={(i) => handleClick(row.id, i)}
                 onDetailConfirm={confirmDetailPopover}
                 onDetailCancel={() => setDetailPopover(null)}
                 onSend={() => onSendPacket?.(row.bytes)}
@@ -1226,10 +1134,19 @@ export function WandLabAnalyzerTab({
                 onLog={() => setLoggingRowId(row.id)}
                 onRemove={() => removeRow(row.id)}
                 tagKindMeta={tagKindMeta}
-                compareMode={compareMode}
                 compareSelection={Array.isArray(compareSelection) ? compareSelection : []}
                 patterns={patterns}
                 onPatternsChange={setPatterns}
+                bitColumns={bitColumns}
+                bitCells={bitCells}
+                customFields={customFields}
+                onToggleBits={(rowId, index) => {
+                  if (compareMode) {
+                    handleClick(rowId, index);
+                    return;
+                  }
+                  setBitCells((prev) => toggleBitCellMap(prev, rowId, index));
+                }}
               />
             ))}
           </Box>

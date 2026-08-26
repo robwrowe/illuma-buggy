@@ -14,16 +14,26 @@ import { SearchableSelect } from '../shared/SearchableSelect';
 import { mbPaletteOptions } from '../../lib/ble/mbConstants';
 import {
   decodeTimingByte,
-  timingByteFromEditFields,
-  timingByteToEditFields,
+  encodeTimingByte,
 } from '../../lib/ble/e9Decode';
 import { decodeMbColorMaskByte, encodeMbColorMaskByte, decodeMb6BitChannelFields, encodeMb6BitChannel } from '../../lib/ble/mbPayloads';
-import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
+import {
+  NIBBLE_CUSTOM_BIT_FIELDS,
+  bitRangeLabel,
+  customBitFieldMax,
+  decodeBitGroupValue,
+  encodeBitGroupValue,
+  normalizeCustomBitFields,
+} from '../../lib/ble/byteAnalyzer';
+import { generateId } from '../../lib/utils';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
+import { byteToBitString } from '../../lib/ble/wandSimClient';
+import { ClickableBitStrip } from './ByteBitCell';
 
 const EDIT_MODES = [
   { value: 'binary', label: 'Bin' },
   { value: 'timing', label: 'Time' },
+  { value: 'custom', label: 'Custom' },
   { value: 'maskColor', label: 'C+M' },
   { value: 'color6', label: '6bit' },
 ];
@@ -59,109 +69,191 @@ function ByteValueReadout({ byteValue }) {
 }
 
 function BinaryByteEditor({ byteIndex, byteValue, onChange }) {
-  const [draft, setDraft] = useState('');
-
-  useEffect(() => {
-    if (byteIndex == null || byteValue == null) {
-      setDraft('');
-      return;
-    }
-    setDraft(byteToBitString(byteValue));
-  }, [byteIndex, byteValue]);
-
-  const commit = (bits) => {
-    const val = parseBitStringToByte(bits);
-    if (val != null) onChange(byteIndex, val);
-  };
-
-  const handleChange = (e) => {
-    const clean = e.target.value.replace(/[^01]/g, '').slice(0, 8);
-    setDraft(clean);
-    if (clean.length === 8) commit(clean);
-  };
-
-  const handleBlur = () => {
-    if (!draft.length) return;
-    const padded = draft.padStart(8, '0');
-    setDraft(padded);
-    commit(padded);
-  };
-
   return (
-    <Group gap={6} align="flex-end" wrap="nowrap">
-      <TextInput
-        label="Bits"
-        value={draft}
-        onChange={handleChange}
-        onBlur={handleBlur}
-        size="xs"
-        ff="monospace"
-        placeholder="10100000"
-        w={96}
-        styles={{ input: { paddingInline: 6 } }}
+    <Stack gap={6}>
+      <ClickableBitStrip
+        byteValue={byteValue}
+        onByteChange={(v) => onChange(byteIndex, v)}
       />
-      <Text size="xs" ff="monospace" c="dimmed" pb={4}>
+      <Text size="xs" ff="monospace" c="dimmed">
         0x{(byteValue & 0xff).toString(16).padStart(2, '0').toUpperCase()}
       </Text>
-    </Group>
+    </Stack>
   );
 }
 
 function TimingByteEditor({ byteIndex, byteValue, onChange }) {
-  const [fields, setFields] = useState(() => timingByteToEditFields(byteValue));
+  const decoded = decodeTimingByte(byteValue);
 
-  useEffect(() => {
-    setFields(timingByteToEditFields(byteValue));
-  }, [byteIndex, byteValue]);
-
-  const applyFields = (next) => {
-    setFields(next);
-    onChange(byteIndex, timingByteFromEditFields(next));
+  const patch = (next) => {
+    onChange(byteIndex, encodeTimingByte({
+      t: decoded.t,
+      fadeBits: decoded.fadeBits,
+      scaler: decoded.scaler,
+      extended: decoded.extended,
+      ...next,
+    }));
   };
 
-  const decoded = decodeTimingByte(byteValue);
+  return (
+    <Stack gap={6}>
+      <Group gap={6} align="flex-start" wrap="wrap" grow>
+        <Field label="On time" style={{ marginBottom: 0, flex: '1 1 72px' }}>
+          <NumberInput
+            size="xs"
+            min={0}
+            max={15}
+            step={1}
+            clampBehavior="strict"
+            value={decoded.t}
+            onChange={(v) => patch({ t: Math.max(0, Math.min(15, Number(v) || 0)) })}
+          />
+        </Field>
+        <Field label="Fade time" style={{ marginBottom: 0, flex: '1 1 72px' }}>
+          <NumberInput
+            size="xs"
+            min={0}
+            max={3}
+            step={1}
+            clampBehavior="strict"
+            value={decoded.fadeBits}
+            onChange={(v) => patch({ fadeBits: Math.max(0, Math.min(3, Number(v) || 0)) })}
+          />
+        </Field>
+      </Group>
+      <Text size="xs" c="dimmed">
+        On time is bits 3–0 (0–15). Fade time is bits 5–4 (0–3).
+      </Text>
+    </Stack>
+  );
+}
+
+function CustomBitFieldsConfig({ fields, onChange }) {
+  const list = normalizeCustomBitFields(fields);
+
+  const patchField = (id, patch) => {
+    onChange(list.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const setRange = (id, hi, lo) => {
+    const a = Math.max(0, Math.min(7, Number(hi) || 0));
+    const b = Math.max(0, Math.min(7, Number(lo) || 0));
+    const bitStart = Math.min(a, b);
+    const bitCount = Math.abs(a - b) + 1;
+    patchField(id, { bitStart, bitCount });
+  };
 
   return (
     <Stack gap={4}>
-      <ByteValueReadout byteValue={byteValue} />
-      <Group gap={6} align="flex-start" wrap="wrap" grow>
-        <Field label="On (s)" style={{ marginBottom: 0, flex: '1 1 72px' }}>
+      <Group justify="space-between" gap={4} wrap="nowrap">
+        <Text size="xs" c="dimmed" fw={600}>
+          Custom bit fields
+        </Text>
+        <Group gap={4} wrap="nowrap">
+          <Button
+            size="compact-xs"
+            variant="default"
+            onClick={() => onChange(NIBBLE_CUSTOM_BIT_FIELDS.map((f) => ({ ...f, id: generateId() })))}
+          >
+            Two nibbles
+          </Button>
+          <Button
+            size="compact-xs"
+            variant="default"
+            onClick={() => onChange([
+              ...list,
+              { id: generateId(), name: `f${list.length + 1}`, bitStart: 0, bitCount: 4 },
+            ])}
+          >
+            + Field
+          </Button>
+        </Group>
+      </Group>
+      {list.length === 0 && (
+        <Text size="xs" c="dimmed">
+          Add fields (e.g. bits 7–4 and 3–0) to edit them as decimals. Analyze and Tail show the same decimals.
+        </Text>
+      )}
+      {list.map((f) => {
+        const hi = f.bitStart + f.bitCount - 1;
+        const lo = f.bitStart;
+        return (
+          <Group key={f.id} gap={4} wrap="nowrap" align="flex-end">
+            <TextInput
+              size="xs"
+              label="Name"
+              value={f.name}
+              onChange={(e) => patchField(f.id, { name: e.currentTarget.value })}
+              w={64}
+              styles={{ input: { paddingInline: 6 } }}
+            />
+            <NumberInput
+              size="xs"
+              label="Hi bit"
+              min={0}
+              max={7}
+              value={hi}
+              onChange={(v) => setRange(f.id, v, lo)}
+              w={58}
+            />
+            <NumberInput
+              size="xs"
+              label="Lo bit"
+              min={0}
+              max={7}
+              value={lo}
+              onChange={(v) => setRange(f.id, hi, v)}
+              w={58}
+            />
+            <Text size="xs" c="dimmed" ff="monospace" pb={6}>
+              {bitRangeLabel(f.bitStart, f.bitCount)}
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="red"
+              onClick={() => onChange(list.filter((x) => x.id !== f.id))}
+            >
+              ✕
+            </Button>
+          </Group>
+        );
+      })}
+    </Stack>
+  );
+}
+
+function CustomByteEditor({ byteIndex, byteValue, onChange, fields }) {
+  const list = normalizeCustomBitFields(fields);
+
+  return (
+    <Stack gap={6}>
+      <ClickableBitStrip
+        byteValue={byteValue}
+        onByteChange={(v) => onChange(byteIndex, v)}
+        groups={list}
+      />
+      {list.map((f) => (
+        <Field
+          key={f.id}
+          label={`${f.name || 'field'} (${bitRangeLabel(f.bitStart, f.bitCount)})`}
+          style={{ marginBottom: 0 }}
+        >
           <NumberInput
             size="xs"
             min={0}
-            step={0.1}
-            decimalScale={2}
-            value={fields.onSec}
-            onChange={(v) => applyFields({ ...fields, onSec: Number(v) || 0 })}
+            max={customBitFieldMax(f.bitCount)}
+            clampBehavior="strict"
+            value={decodeBitGroupValue(byteValue, f.bitStart, f.bitCount)}
+            onChange={(v) => onChange(
+              byteIndex,
+              encodeBitGroupValue(byteValue, f.bitStart, f.bitCount, Number(v) || 0),
+            )}
           />
         </Field>
-        <Field label="Fade (s)" style={{ marginBottom: 0, flex: '1 1 72px' }}>
-          <NumberInput
-            size="xs"
-            min={0}
-            step={0.1}
-            decimalScale={2}
-            value={fields.fadeSec}
-            onChange={(v) => applyFields({ ...fields, fadeSec: Number(v) || 0 })}
-          />
-        </Field>
-      </Group>
-      <Group gap="xs">
-        <Checkbox
-          size="xs"
-          label="3×"
-          checked={fields.scaler}
-          onChange={(e) => applyFields({ ...fields, scaler: e.currentTarget.checked })}
-        />
-        <Checkbox
-          size="xs"
-          label="Ext"
-          checked={fields.extended}
-          onChange={(e) => applyFields({ ...fields, extended: e.currentTarget.checked })}
-        />
-      </Group>
-      <Text size="xs" c="dimmed" ff="monospace">
-        t={decoded.t} fade={decoded.fadeBits}
+      ))}
+      <Text size="xs" ff="monospace" c="dimmed">
+        0x{(byteValue & 0xff).toString(16).padStart(2, '0').toUpperCase()}
       </Text>
     </Stack>
   );
@@ -262,7 +354,16 @@ function Color6BitByteEditor({ byteIndex, byteValue, onChange }) {
   );
 }
 
-function ByteEditorCard({ byteIndex, byteValue, origValue, editMode, onEditModeChange, onChange, onReset }) {
+function ByteEditorCard({
+  byteIndex,
+  byteValue,
+  origValue,
+  editMode,
+  onEditModeChange,
+  onChange,
+  onReset,
+  customFields,
+}) {
   const modified = origValue != null && (byteValue & 0xff) !== (origValue & 0xff);
   return (
     <Stack gap={6} p={8} style={CARD_STYLE}>
@@ -302,6 +403,14 @@ function ByteEditorCard({ byteIndex, byteValue, origValue, editMode, onEditModeC
       {editMode === 'timing' && (
         <TimingByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
       )}
+      {editMode === 'custom' && (
+        <CustomByteEditor
+          byteIndex={byteIndex}
+          byteValue={byteValue}
+          onChange={onChange}
+          fields={customFields}
+        />
+      )}
       {editMode === 'maskColor' && (
         <MaskColorByteEditor byteIndex={byteIndex} byteValue={byteValue} onChange={onChange} />
       )}
@@ -312,20 +421,34 @@ function ByteEditorCard({ byteIndex, byteValue, origValue, editMode, onEditModeC
   );
 }
 
-export function WandLabByteBitsEditor({ selections, onChange, onReset }) {
+export function WandLabByteBitsEditor({
+  selections,
+  onChange,
+  onReset,
+  customBitFields = [],
+  onCustomBitFieldsChange,
+}) {
   const [editModes, setEditModes] = useWandLabUiState('byteEditModes', () => ({}));
 
   if (!selections?.length) return null;
 
   const setMode = (index, mode) => {
+    if (mode === 'custom' && onCustomBitFieldsChange && !normalizeCustomBitFields(customBitFields).length) {
+      onCustomBitFieldsChange(NIBBLE_CUSTOM_BIT_FIELDS.map((f) => ({ ...f, id: generateId() })));
+    }
     setEditModes((prev) => ({ ...prev, [index]: mode }));
   };
+
+  const anyCustom = selections.some(({ index }) => (editModes[index] ?? 'binary') === 'custom');
 
   return (
     <Stack gap="xs">
       <Text size="xs" c="dimmed" fw={600} tt="uppercase">
         {selections.length === 1 ? 'Byte editor' : 'Selected byte editors'}
       </Text>
+      {anyCustom && onCustomBitFieldsChange && (
+        <CustomBitFieldsConfig fields={customBitFields} onChange={onCustomBitFieldsChange} />
+      )}
       <Group gap="xs" align="stretch" wrap="wrap">
         {selections.map(({ index, value, origValue }) => (
           <ByteEditorCard
@@ -337,6 +460,7 @@ export function WandLabByteBitsEditor({ selections, onChange, onReset }) {
             onEditModeChange={(mode) => setMode(index, mode)}
             onChange={onChange}
             onReset={onReset}
+            customFields={customBitFields}
           />
         ))}
       </Group>

@@ -232,6 +232,50 @@ export function decodeBitGroupValue(byteValue, bitStart, bitCount) {
   return ((Number(byteValue) & 0xff) >> start) & mask;
 }
 
+/** Write `value` into bits `[bitStart, bitStart+bitCount)` of a byte; other bits stay put. */
+export function encodeBitGroupValue(byteValue, bitStart, bitCount, value) {
+  const count = Math.max(0, Math.min(8, Number(bitCount) || 0));
+  const start = Math.max(0, Math.min(7, Number(bitStart) || 0));
+  if (count <= 0) return Number(byteValue) & 0xff;
+  const mask = count >= 8 ? 0xff : ((1 << count) - 1);
+  const shifted = (mask << start) & 0xff;
+  const packed = (Number(value) & mask) << start;
+  return ((Number(byteValue) & 0xff & ~shifted) | packed) & 0xff;
+}
+
+export function customBitFieldMax(bitCount) {
+  const count = Math.max(0, Math.min(8, Number(bitCount) || 0));
+  if (count <= 0) return 0;
+  if (count >= 8) return 255;
+  return (1 << count) - 1;
+}
+
+export const NIBBLE_CUSTOM_BIT_FIELDS = [
+  { id: 'hi', name: 'hi', bitStart: 4, bitCount: 4 },
+  { id: 'lo', name: 'lo', bitStart: 0, bitCount: 4 },
+];
+
+export function normalizeCustomBitFields(fields) {
+  if (!Array.isArray(fields)) return [];
+  return fields.map((f, i) => {
+    const bitStart = Math.max(0, Math.min(7, Number(f.bitStart) || 0));
+    const bitCount = Math.max(1, Math.min(8 - bitStart, Number(f.bitCount) || 1));
+    return {
+      id: typeof f.id === 'string' && f.id ? f.id : `f${i}`,
+      name: typeof f.name === 'string' ? f.name : '',
+      bitStart,
+      bitCount,
+    };
+  });
+}
+
+/** Compact `12 / 3` readout for custom bit fields on a byte. */
+export function formatCustomBitDecimals(byteValue, fields) {
+  const list = normalizeCustomBitFields(fields);
+  if (!list.length) return '';
+  return list.map((f) => decodeBitGroupValue(byteValue, f.bitStart, f.bitCount)).join(' / ');
+}
+
 export function bitGroupsOverlap(groups, candidate) {
   const c0 = Number(candidate.bitStart) || 0;
   const c1 = c0 + (Number(candidate.bitCount) || 0);
@@ -240,6 +284,147 @@ export function bitGroupsOverlap(groups, candidate) {
     const g1 = g0 + (Number(g.bitCount) || 0);
     return c0 < g1 && c1 > g0;
   });
+}
+
+export const BIT_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
+export const BIT_FIELD_COLORS = ['cyan', 'lime', 'pink', 'indigo', 'red', 'violet', 'grape', 'teal'];
+export const HEX_COL_PX = 36;
+export const BIT_COL_PX = 112;
+
+export function bitFieldColor(i) {
+  return BIT_FIELD_COLORS[i % BIT_FIELD_COLORS.length];
+}
+
+export function bitRangeLabel(bitStart, bitCount) {
+  const count = Number(bitCount) || 0;
+  const start = Number(bitStart) || 0;
+  if (count <= 0) return '—';
+  if (count === 1) return `b${start}`;
+  return `b${start + count - 1}:${start}`;
+}
+
+export function groupIndexForBit(groups, bitIdx) {
+  return (groups || []).findIndex((g) => {
+    const start = Number(g.bitStart) || 0;
+    const count = Number(g.bitCount) || 0;
+    return bitIdx >= start && bitIdx < start + count;
+  });
+}
+
+export function asIndexList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(Number).filter((n) => Number.isFinite(n));
+}
+
+export function asIndexMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const next = {};
+  Object.entries(value).forEach(([k, v]) => {
+    const list = asIndexList(v);
+    if (list.length) next[k] = list;
+  });
+  return next;
+}
+
+export function columnHasBitView(bitColumns, bitCells, index) {
+  if (asIndexList(bitColumns).includes(index)) return true;
+  return Object.values(asIndexMap(bitCells)).some((list) => asIndexList(list).includes(index));
+}
+
+export function cellHasBitView(bitColumns, bitCells, rowKey, index) {
+  if (asIndexList(bitColumns).includes(index)) return true;
+  return asIndexList(asIndexMap(bitCells)[rowKey]).includes(index);
+}
+
+export function toggleIndexList(list, index) {
+  const set = new Set(asIndexList(list));
+  if (set.has(index)) set.delete(index);
+  else set.add(index);
+  return [...set].sort((a, b) => a - b);
+}
+
+export function toggleBitCellMap(bitCells, rowKey, index) {
+  const next = { ...asIndexMap(bitCells) };
+  const list = toggleIndexList(next[rowKey], index);
+  if (list.length) next[rowKey] = list;
+  else delete next[rowKey];
+  return next;
+}
+
+/** Flip every cell in a column between hex and bits. */
+export function toggleBitColumn(bitColumns, bitCells, index) {
+  const showing = columnHasBitView(bitColumns, bitCells, index);
+  if (showing) {
+    const nextCells = {};
+    Object.entries(asIndexMap(bitCells)).forEach(([k, list]) => {
+      const filtered = asIndexList(list).filter((i) => i !== index);
+      if (filtered.length) nextCells[k] = filtered;
+    });
+    return {
+      bitColumns: asIndexList(bitColumns).filter((c) => c !== index),
+      bitCells: nextCells,
+    };
+  }
+  return {
+    bitColumns: toggleIndexList(bitColumns, index),
+    bitCells: asIndexMap(bitCells),
+  };
+}
+
+export function toggleAllBitsInRow(bitCells, rowKey, byteCount, turnOn) {
+  const next = { ...asIndexMap(bitCells) };
+  if (!turnOn) delete next[rowKey];
+  else next[rowKey] = Array.from({ length: Math.max(0, byteCount) }, (_, i) => i);
+  return next;
+}
+
+export function effectiveBitFields({ columnLayouts, cellLayouts, rowKey, index, tag }) {
+  const rowMap = cellLayouts?.[rowKey] || {};
+  const cell = rowMap[index] ?? rowMap[String(index)];
+  if (Array.isArray(cell) && cell.length) return cell;
+  const col = columnLayouts?.[index] ?? columnLayouts?.[String(index)];
+  if (Array.isArray(col) && col.length) return col;
+  if (tag?.kind === 'param') {
+    const groups = normalizeParamGroups(tag.detail);
+    if (groups.length) return groups;
+  }
+  return [];
+}
+
+export function setLayoutAt(layouts, key, groups) {
+  const next = { ...(layouts || {}) };
+  if (!groups?.length) delete next[key];
+  else next[key] = groups;
+  return next;
+}
+
+export function setCellLayoutAt(cellLayouts, rowKey, index, groups) {
+  const next = { ...(cellLayouts || {}) };
+  const row = { ...(next[rowKey] || {}) };
+  const k = String(index);
+  if (!groups?.length) delete row[k];
+  else row[k] = groups;
+  if (Object.keys(row).length) next[rowKey] = row;
+  else delete next[rowKey];
+  return next;
+}
+
+/** Shift row-index keys when inserting a tail/packet row at `insertAt`. */
+export function shiftRowIndexMap(map, insertAt, copyFrom = null) {
+  const src = map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+  const next = {};
+  Object.entries(src).forEach(([k, v]) => {
+    const i = Number(k);
+    if (!Number.isFinite(i)) {
+      next[k] = v;
+      return;
+    }
+    next[String(i >= insertAt ? i + 1 : i)] = v;
+  });
+  if (copyFrom != null && src[String(copyFrom)] != null) {
+    next[String(insertAt)] = src[String(copyFrom)];
+  }
+  return next;
 }
 
 /** Per-bit agreement across a set of byte values — for compare-mode bit view. */

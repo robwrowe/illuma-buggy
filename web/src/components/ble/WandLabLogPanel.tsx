@@ -386,6 +386,7 @@ export function WandLabLogPanel({
             'paste',
             'sequence',
             'burst',
+            'tail-builder',
           ].map((v) => ({ value: v, label: v, searchText: v }))}
         />
         <Button size="compact-xs" variant="default" onClick={onExport}>Export</Button>

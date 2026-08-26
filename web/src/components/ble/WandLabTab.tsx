@@ -105,6 +105,7 @@ export function WandLabTab({ data, update }) {
   const [sweepLivePayload, setSweepLivePayload] = useState<any>(null);
   const [analyzerImportSeed, setAnalyzerImportSeed] = useState<any>(null);
   const [analyzerSession, setAnalyzerSession] = useWandLabUiState('analyzer.session', () => ({ ...EMPTY_ANALYZER_SESSION }));
+  const [customBitFields, setCustomBitFields] = useWandLabUiState('lab.customBitFields', () => []);
   const [logCollapsed, setLogCollapsed] = useWandLabUiState('log.collapsed', false);
 
   const palOpts = mbPaletteOptions();
@@ -239,7 +240,7 @@ export function WandLabTab({ data, update }) {
     await sendBytes(b);
   };
 
-  const addLogEntry = ({ note: logNote, presetKey: pk, snapshot: snapOverride, bytes: bytesOverride }: any = {}) => {
+  const addLogEntry = ({ note: logNote, presetKey: pk, snapshot: snapOverride, bytes: bytesOverride, forceNew }: any = {}) => {
     const logBytes = bytesOverride
       ? parseHexToBytes(bytesOverride)
       : (sweepLivePayload ?? bytes);
@@ -248,7 +249,7 @@ export function WandLabTab({ data, update }) {
     const hex = snap.kind === 'single' ? snap.bytes : (snap.packets?.[0]?.bytes || '');
     const derivedOp = deriveOpcodeFromHex(hex);
     const opcode = (findingForm.opcodeOverride || derivedOp || '').trim();
-    const isEdit = !!editingLogId;
+    const isEdit = !forceNew && !!editingLogId;
     const prevEntry = isEdit ? (lab.log || []).find((e) => e.id === editingLogId) : null;
     const createdAt = prevEntry?.createdAt || prevEntry?.ts || Date.now();
     const notes = (logNote ?? findingForm.notes ?? '').trim();
@@ -679,6 +680,8 @@ export function WandLabTab({ data, update }) {
                   }))}
                   onChange={patchByte}
                   onReset={resetByte}
+                  customBitFields={customBitFields}
+                  onCustomBitFieldsChange={setCustomBitFields}
                 />
 
                 <WandLabSweepPanel
@@ -720,6 +723,45 @@ export function WandLabTab({ data, update }) {
                 onStatus={setStatus}
                 onSendPacket={sendBytes}
                 onLoadToByteEditor={(arr) => { setByteArray(arr, 'tail-builder'); setLabTab('bytes'); }}
+                customBitFields={customBitFields}
+                onSendToAnalyzer={(tails) => {
+                  const now = Date.now();
+                  const packets = (tails || [])
+                    .filter((t) => t?.bytes?.length)
+                    .map((t, i) => ({
+                      id: `tail-${now}-${i}`,
+                      hex: bytesToHex(t.bytes),
+                      bytes: [...t.bytes],
+                    }));
+                  if (!packets.length) {
+                    setStatus('No tails to send to Analyze');
+                    return;
+                  }
+                  setAnalyzerImportSeed({
+                    key: `tail-${now}`,
+                    strip8301: false,
+                    packets,
+                  });
+                  setLabTab('analyze');
+                }}
+                onLogTail={(pkt, meta) => {
+                  if (!pkt?.bytes?.length) return;
+                  const hex = bytesToHex(pkt.bytes);
+                  const n = meta?.rowCount || 1;
+                  const i = (meta?.rowIdx ?? 0) + 1;
+                  addLogEntry({
+                    presetKey: 'tail-builder',
+                    forceNew: true,
+                    snapshot: {
+                      kind: 'single',
+                      presetKey: 'tail-builder',
+                      bytes: hex,
+                      origBytes: hex,
+                    },
+                  });
+                  setLogCollapsed(false);
+                  setStatus(`Logged tail ${i}/${n} in observation log`);
+                }}
               />
             </Tabs.Panel>
 
@@ -747,6 +789,7 @@ export function WandLabTab({ data, update }) {
                 onImportSeedConsumed={() => setAnalyzerImportSeed(null)}
                 session={analyzerSession}
                 onSessionChange={setAnalyzerSession}
+                customBitFields={customBitFields}
               />
             </Tabs.Panel>
           </Tabs>
