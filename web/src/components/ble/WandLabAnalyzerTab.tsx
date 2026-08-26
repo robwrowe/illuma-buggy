@@ -28,7 +28,6 @@ import {
   effectiveTag,
   loadBitPatterns,
   looksLikeByteTagsSheetPaste,
-  normalizeCustomBitFields,
   normalizeParamGroups,
   parseAnalyzerInput,
   parseByteTagsSheetPaste,
@@ -336,7 +335,6 @@ function AnalyzerRow({
   bitColumns = [],
   bitCells,
   onToggleBits,
-  customFields = [],
 }) {
   const [hovered, setHovered] = useState(false);
   const hoverHandlers = {
@@ -404,7 +402,6 @@ function AnalyzerRow({
                   tagColor={meta?.color}
                   suffix={<TagSuffix tag={tag} />}
                   compareMark={cmpIdx >= 0 ? cmpIdx + 1 : null}
-                  customFields={customFields}
                 />
               </Box>
             </Popover.Target>
@@ -461,7 +458,6 @@ export function WandLabAnalyzerTab({
   session = EMPTY_ANALYZER_SESSION,
   onSessionChange,
   simIp: _simIp,
-  customBitFields = [],
 }) {
   const pasteText = session.pasteText ?? '';
   const rows = session.rows ?? [];
@@ -575,21 +571,19 @@ export function WandLabAnalyzerTab({
 
   const maxLen = useMemo(() => rows.reduce((m, r) => Math.max(m, r.bytes.length), 0), [rows]);
   const constancy = useMemo(() => columnConstancy(rows), [rows]);
-  const customFields = useMemo(() => normalizeCustomBitFields(customBitFields), [customBitFields]);
-  const hexColPx = customFields.length ? 52 : HEX_COL_PX;
   const bitColTemplate = useMemo(() => {
     const cols = Array.from({ length: maxLen }, (_, i) =>
-      columnHasBitView(bitColumns, bitCells, i) ? `${BIT_COL_PX}px` : `${hexColPx}px`,
+      columnHasBitView(bitColumns, bitCells, i) ? `${BIT_COL_PX}px` : `${HEX_COL_PX}px`,
     );
     return `10.5rem ${cols.join(' ')}`.trim();
-  }, [maxLen, bitColumns, bitCells, hexColPx]);
+  }, [maxLen, bitColumns, bitCells]);
   const bitGridMinWidth = useMemo(() => {
     let w = 168;
     for (let i = 0; i < maxLen; i++) {
-      w += columnHasBitView(bitColumns, bitCells, i) ? BIT_COL_PX + 2 : hexColPx + 2;
+      w += columnHasBitView(bitColumns, bitCells, i) ? BIT_COL_PX + 2 : HEX_COL_PX + 2;
     }
     return w;
-  }, [maxLen, bitColumns, bitCells, hexColPx]);
+  }, [maxLen, bitColumns, bitCells]);
 
   const existingGroupIds = useMemo(() => {
     const ids = new Set();
@@ -1139,7 +1133,6 @@ export function WandLabAnalyzerTab({
                 onPatternsChange={setPatterns}
                 bitColumns={bitColumns}
                 bitCells={bitCells}
-                customFields={customFields}
                 onToggleBits={(rowId, index) => {
                   if (compareMode) {
                     handleClick(rowId, index);

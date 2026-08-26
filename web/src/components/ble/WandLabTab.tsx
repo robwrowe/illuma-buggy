@@ -723,7 +723,6 @@ export function WandLabTab({ data, update }) {
                 onStatus={setStatus}
                 onSendPacket={sendBytes}
                 onLoadToByteEditor={(arr) => { setByteArray(arr, 'tail-builder'); setLabTab('bytes'); }}
-                customBitFields={customBitFields}
                 onSendToAnalyzer={(tails) => {
                   const now = Date.now();
                   const packets = (tails || [])
@@ -789,7 +788,6 @@ export function WandLabTab({ data, update }) {
                 onImportSeedConsumed={() => setAnalyzerImportSeed(null)}
                 session={analyzerSession}
                 onSessionChange={setAnalyzerSession}
-                customBitFields={customBitFields}
               />
             </Tabs.Panel>
           </Tabs>

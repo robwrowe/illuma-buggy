@@ -12,10 +12,6 @@ import {
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import { mbPaletteOptions } from '../../lib/ble/mbConstants';
-import {
-  decodeTimingByte,
-  encodeTimingByte,
-} from '../../lib/ble/e9Decode';
 import { decodeMbColorMaskByte, encodeMbColorMaskByte, decodeMb6BitChannelFields, encodeMb6BitChannel } from '../../lib/ble/mbPayloads';
 import {
   NIBBLE_CUSTOM_BIT_FIELDS,
@@ -29,6 +25,7 @@ import { generateId } from '../../lib/utils';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 import { byteToBitString } from '../../lib/ble/wandSimClient';
 import { ClickableBitStrip } from './ByteBitCell';
+import { TimingByteFields } from './TimingByteFields';
 
 const EDIT_MODES = [
   { value: 'binary', label: 'Bin' },
@@ -83,48 +80,11 @@ function BinaryByteEditor({ byteIndex, byteValue, onChange }) {
 }
 
 function TimingByteEditor({ byteIndex, byteValue, onChange }) {
-  const decoded = decodeTimingByte(byteValue);
-
-  const patch = (next) => {
-    onChange(byteIndex, encodeTimingByte({
-      t: decoded.t,
-      fadeBits: decoded.fadeBits,
-      scaler: decoded.scaler,
-      extended: decoded.extended,
-      ...next,
-    }));
-  };
-
   return (
-    <Stack gap={6}>
-      <Group gap={6} align="flex-start" wrap="wrap" grow>
-        <Field label="On time" style={{ marginBottom: 0, flex: '1 1 72px' }}>
-          <NumberInput
-            size="xs"
-            min={0}
-            max={15}
-            step={1}
-            clampBehavior="strict"
-            value={decoded.t}
-            onChange={(v) => patch({ t: Math.max(0, Math.min(15, Number(v) || 0)) })}
-          />
-        </Field>
-        <Field label="Fade time" style={{ marginBottom: 0, flex: '1 1 72px' }}>
-          <NumberInput
-            size="xs"
-            min={0}
-            max={3}
-            step={1}
-            clampBehavior="strict"
-            value={decoded.fadeBits}
-            onChange={(v) => patch({ fadeBits: Math.max(0, Math.min(3, Number(v) || 0)) })}
-          />
-        </Field>
-      </Group>
-      <Text size="xs" c="dimmed">
-        On time is bits 3–0 (0–15). Fade time is bits 5–4 (0–3).
-      </Text>
-    </Stack>
+    <TimingByteFields
+      byteValue={byteValue}
+      onChange={(v) => onChange(byteIndex, v)}
+    />
   );
 }
 
@@ -171,7 +131,7 @@ function CustomBitFieldsConfig({ fields, onChange }) {
       </Group>
       {list.length === 0 && (
         <Text size="xs" c="dimmed">
-          Add fields (e.g. bits 7–4 and 3–0) to edit them as decimals. Analyze and Tail show the same decimals.
+          Add fields (e.g. bits 7–4 and 3–0) to edit them as decimals.
         </Text>
       )}
       {list.map((f) => {

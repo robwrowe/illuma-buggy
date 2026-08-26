@@ -21,11 +21,6 @@ import { generateId } from '../../lib/utils';
 import { DEFAULT_MB_WLED_COLORS, mbPaletteOptions } from '../../lib/ble/mbConstants';
 import { decodeMbColorMaskByte } from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
-import {
-  decodeTimingByte,
-  timingByteFromEditFields,
-  timingByteToEditFields,
-} from '../../lib/ble/e9Decode';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 import {
   BIT_COL_PX,
@@ -39,12 +34,12 @@ import {
   encodeBitGroupValue,
   customBitFieldMax,
   bitRangeLabel,
-  normalizeCustomBitFields,
   shiftRowIndexMap,
   toggleBitCellMap,
   toggleBitColumn,
 } from '../../lib/ble/byteAnalyzer';
 import { BitColumnHeader, ByteBitCell } from './ByteBitCell';
+import { TimingByteFields } from './TimingByteFields';
 import {
   TAIL_BUILDER_COLOR_FORMATS,
   assembleTailPayload,
@@ -179,71 +174,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function TailTimingEditor({ timingByte, onChange }) {
-  const [fields, setFields] = useState(() => timingByteToEditFields(timingByte));
-
-  useEffect(() => {
-    setFields(timingByteToEditFields(timingByte));
-  }, [timingByte]);
-
-  const applyFields = (next) => {
-    setFields(next);
-    onChange(timingByteFromEditFields(next));
-  };
-
-  const decoded = decodeTimingByte(timingByte);
-  const hex = (timingByte & 0xff).toString(16).padStart(2, '0').toUpperCase();
-
-  return (
-    <Stack gap={4}>
-      <Group gap={8} align="flex-end">
-        <Text size="sm" ff="monospace" fw={600}>
-          0x{hex}
-        </Text>
-        <Text size="xs" c="dimmed" ff="monospace">
-          t={decoded.t} fade={decoded.fadeBits}
-        </Text>
-      </Group>
-      <Group gap={6} align="flex-start" wrap="wrap" grow>
-        <Field label="On (s)" style={{ marginBottom: 0, flex: '1 1 72px' }}>
-          <NumberInput
-            size="xs"
-            min={0}
-            step={0.1}
-            decimalScale={2}
-            value={fields.onSec}
-            onChange={(v) => applyFields({ ...fields, onSec: Number(v) || 0 })}
-          />
-        </Field>
-        <Field label="Fade (s)" style={{ marginBottom: 0, flex: '1 1 72px' }}>
-          <NumberInput
-            size="xs"
-            min={0}
-            step={0.1}
-            decimalScale={2}
-            value={fields.fadeSec}
-            onChange={(v) => applyFields({ ...fields, fadeSec: Number(v) || 0 })}
-          />
-        </Field>
-      </Group>
-      <Group gap="xs">
-        <Checkbox
-          size="xs"
-          label="3×"
-          checked={fields.scaler}
-          onChange={(e) => applyFields({ ...fields, scaler: e.currentTarget.checked })}
-        />
-        <Checkbox
-          size="xs"
-          label="Ext"
-          checked={fields.extended}
-          onChange={(e) => applyFields({ ...fields, extended: e.currentTarget.checked })}
-        />
-      </Group>
-    </Stack>
-  );
-}
-
 function parseHexByte(raw) {
   const t = String(raw || '')
     .trim()
@@ -361,7 +291,6 @@ export function WandLabTailBuilderTab({
   onLoadToByteEditor,
   onSendToAnalyzer,
   onLogTail,
-  customBitFields = [],
 }) {
   const [timingByte, setTimingByte] = useWandLabUiState('tail.timingByte', 0x0f);
   const [colorFormat, setColorFormat] = useWandLabUiState('tail.colorFormat', '0f');
@@ -445,8 +374,6 @@ export function WandLabTailBuilderTab({
     [displayTails],
   );
   const showSameHighlight = highlightSame && displayTails.length > 1;
-  const customFields = normalizeCustomBitFields(customBitFields);
-  const hexColPx = customFields.length ? 52 : HEX_COL_PX;
   const tailBytes = activeTail?.bytes ?? [];
   const specs = normalizeNibbleSpecs(nibbleSpecs);
   const nibbleByteSet = useMemo(() => new Set(specs.map((s) => s.byteIdx)), [specs]);
@@ -966,7 +893,7 @@ export function WandLabTailBuilderTab({
                     return (
                       <Table.Th
                         key={i}
-                        w={columnHasBitView(bitColumns, bitCells, i) ? BIT_COL_PX : hexColPx}
+                        w={columnHasBitView(bitColumns, bitCells, i) ? BIT_COL_PX : HEX_COL_PX}
                         p={4}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1063,7 +990,6 @@ export function WandLabTailBuilderTab({
                               tagColor={
                                 showSameHighlight && !!constancy[bi]?.constant ? 'teal' : undefined
                               }
-                              customFields={customFields}
                             />
                           </Table.Td>
                         );
@@ -1166,7 +1092,7 @@ export function WandLabTailBuilderTab({
       <Collapse expanded={!!assemblyOpen} keepMounted={false}>
         <Stack gap="md">
           <Field label="Timing byte">
-            <TailTimingEditor timingByte={timingByte} onChange={setTimingByte} />
+            <TimingByteFields byteValue={timingByte} onChange={setTimingByte} />
           </Field>
 
           <Field label="Color format">
