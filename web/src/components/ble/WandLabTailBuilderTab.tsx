@@ -313,6 +313,7 @@ export function WandLabTailBuilderTab({
   const [vibration, setVibration] = useWandLabUiState('tail.vibration', null);
   const [envelope, setEnvelope] = useWandLabUiState('tail.envelope', 'e1');
   const [copyMsg, setCopyMsg] = useState('');
+  const [packetCopyMsg, setPacketCopyMsg] = useState('');
   const [nibbleCopyMsg, setNibbleCopyMsg] = useState('');
   const [nibbleSpecs, setNibbleSpecs] = useWandLabUiState('tail.nibbleSpecs', defaultNibbleSpecs);
   const sendAllGen = useRef(0);
@@ -602,6 +603,42 @@ export function WandLabTailBuilderTab({
     }
   };
 
+  const assembledPacketHex = (bytes) => (assembleForTail(bytes || []).hex || '').toUpperCase();
+
+  const copyHexToClipboard = async (text, okStatus, setMsg) => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setMsg?.('Copied');
+      onStatus?.(okStatus);
+      if (setMsg) setTimeout(() => setMsg(''), 1500);
+    } catch {
+      onStatus?.('Clipboard copy failed');
+    }
+  };
+
+  const handleCopyPackets = async () => {
+    const lines = displayTails.map((t) => assembledPacketHex(t.bytes)).filter(Boolean);
+    if (!lines.length) return;
+    await copyHexToClipboard(
+      lines.join('\n'),
+      lines.length === 1 ? 'Copied 1 assembled packet' : `Copied ${lines.length} assembled packets`,
+      setPacketCopyMsg,
+    );
+  };
+
+  const handleCopyRowPacket = async (idx) => {
+    const tail = displayTails[idx];
+    if (!tail) return;
+    const hex = assembledPacketHex(tail.bytes);
+    if (!hex) {
+      onStatus?.('Nothing to copy — assembled packet is empty');
+      return;
+    }
+    setSelectedTailIdx(idx);
+    await copyHexToClipboard(hex, `Copied assembled packet ${idx + 1}/${displayTails.length}`);
+  };
+
   const handleCopyNibbleDecimals = async () => {
     if (!displayTails.length || !specs.length) return;
     const header = specs.map(nibbleSpecLabel).join('\t');
@@ -775,6 +812,15 @@ export function WandLabTailBuilderTab({
           }}
         >
           Send to Analyze
+        </Button>
+        <Button
+          size="compact-xs"
+          variant="default"
+          disabled={!displayTails.length}
+          title="Copy assembled packets (envelope + timing + colors + tail), one compact hex line each"
+          onClick={() => void handleCopyPackets()}
+        >
+          {packetCopyMsg || 'Copy packets'}
         </Button>
       </Group>
       {displayTails.length > 0 && (
@@ -1069,6 +1115,17 @@ export function WandLabTailBuilderTab({
                             }}
                           >
                             Log
+                          </Button>
+                          <Button
+                            size="compact-xs"
+                            variant="default"
+                            title="Copy this assembled packet as compact hex"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleCopyRowPacket(i);
+                            }}
+                          >
+                            Copy
                           </Button>
                         </Group>
                       </Table.Td>
