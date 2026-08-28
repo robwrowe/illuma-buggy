@@ -9,6 +9,7 @@ import {
   NumberInput,
   SegmentedControl,
   Stack,
+  Switch,
   Table,
   Text,
   Textarea,
@@ -295,6 +296,10 @@ export function WandLabTailBuilderTab({
   const [timingByte, setTimingByte] = useWandLabUiState('tail.timingByte', 0x0f);
   const [colorFormat, setColorFormat] = useWandLabUiState('tail.colorFormat', '0f');
   const [colorCount, setColorCount] = useWandLabUiState('tail.colorCount', 2);
+  const [maskFollowsColorCount, setMaskFollowsColorCount] = useWandLabUiState(
+    'tail.maskFollowsColorCount',
+    true,
+  );
   const [colors, setColors] = useWandLabUiState('tail.colors', () => defaultColors(2));
   const [tailRaw, setTailRaw] = useWandLabUiState('tail.raw', DEFAULT_TAIL_RAW);
   const [enteredRaw, setEnteredRaw] = useWandLabUiState('tail.enteredRaw', DEFAULT_TAIL_RAW);
@@ -321,6 +326,11 @@ export function WandLabTailBuilderTab({
   const palOpts = mbPaletteOptions();
   const isRgb = colorFormat === 'd2';
   const activeColors = colors.slice(0, colorCount);
+  const colorsForPacket = useMemo(() => {
+    if (!maskFollowsColorCount) return activeColors;
+    const mask = Math.max(0, Math.min(7, colorCount));
+    return activeColors.map((c) => ({ ...c, mask }));
+  }, [activeColors, maskFollowsColorCount, colorCount]);
 
   const parsedList = useMemo(() => parseTailList(tailRaw), [tailRaw]);
   const displayTails = useMemo(
@@ -382,7 +392,7 @@ export function WandLabTailBuilderTab({
   const assembled = assembleTailPayload({
     timingByte,
     colorFormat,
-    colors: activeColors,
+    colors: colorsForPacket,
     tailBytes,
     vibration,
     envelope,
@@ -392,14 +402,14 @@ export function WandLabTailBuilderTab({
     assembleTailPayload({
       timingByte,
       colorFormat,
-      colors: activeColors,
+      colors: colorsForPacket,
       tailBytes: bytes,
       vibration,
       envelope,
     });
 
   const setColorCountSafe = (n) => {
-    const count = Math.max(1, Math.min(5, n));
+    const count = Math.max(1, Math.min(7, n));
     setColorCount(count);
     setColors((prev) => {
       if (prev.length >= count) return prev;
@@ -413,7 +423,10 @@ export function WandLabTailBuilderTab({
 
   const applyPaletteByte = (idx, byte) => {
     const decoded = decodeMbColorMaskByte(byte);
-    patchColor(idx, { paletteIdx: decoded.palette, mask: decoded.mask });
+    patchColor(idx, {
+      paletteIdx: decoded.palette,
+      ...(maskFollowsColorCount ? {} : { mask: decoded.mask }),
+    });
   };
 
   const setFormat = (fmt) => {
@@ -1165,21 +1178,33 @@ export function WandLabTailBuilderTab({
             />
           </Field>
 
-          <Field label="Color count">
-            <SegmentedControl
-              size="xs"
-              value={String(colorCount)}
-              onChange={(v) => setColorCountSafe(parseInt(v, 10))}
-              data={['1', '2', '3', '4', '5']}
-            />
-          </Field>
+          <Group gap="md" align="flex-end" wrap="wrap">
+            <Field label="Color count" style={{ marginBottom: 0 }}>
+              <SegmentedControl
+                size="xs"
+                value={String(colorCount)}
+                onChange={(v) => setColorCountSafe(parseInt(v, 10))}
+                data={['1', '2', '3', '4', '5', '6', '7']}
+              />
+            </Field>
+            {!isRgb && (
+              <Switch
+                size="xs"
+                label="Mask = color count"
+                checked={maskFollowsColorCount}
+                onChange={(e) => setMaskFollowsColorCount(e.currentTarget.checked)}
+                title="When on, every color slot’s mask is set to the selected color count (1–7)"
+              />
+            )}
+          </Group>
 
           <Stack gap="sm">
             {activeColors.map((c, idx) => {
+              const packetColor = colorsForPacket[idx] || c;
               const swatch = isRgb
                 ? `rgb(${Number(c.r ?? 0)}, ${Number(c.g ?? 0)}, ${Number(c.b ?? 0)})`
                 : DEFAULT_MB_WLED_COLORS[c.paletteIdx ?? 0] || '#000';
-              const paletteByte = encodeTailColorByte(c);
+              const paletteByte = encodeTailColorByte(packetColor);
               return (
                 <Stack
                   key={idx}
@@ -1243,7 +1268,8 @@ export function WandLabTailBuilderTab({
                           size="xs"
                           min={0}
                           max={7}
-                          value={c.mask ?? 0}
+                          disabled={maskFollowsColorCount}
+                          value={packetColor.mask ?? 0}
                           onChange={(v) =>
                             patchColor(idx, { mask: Math.max(0, Math.min(7, Number(v) || 0)) })
                           }
