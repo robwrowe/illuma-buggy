@@ -93,6 +93,9 @@ Re-classify existing CSVs after tweaking thresholds (no board/camera):
 python -m wave_classifier report-only \
   --xlsx ../../Op_Codes_Captured.xlsx \
   --min-template-correlation 0.55
+
+python -m wave_classifier report-only --cards \
+  --xlsx ../../Op_Codes_Captured.xlsx
 ```
 
 Hex from `Op_Codes_Captured.xlsx`'s `Hex` column is sent to `POST /show`
@@ -205,13 +208,21 @@ beside it. Gitignored.
 
 `reports/triage-<timestamp>.csv` — every trial, machine-readable, including
 per-zone waveform/blend columns, `zone_layout`, `zone_relationship`,
-`outer_chase_direction`, `zone_relationship_status`, and estimated
-period/frequency/amplitude/cycle count.
+`outer_chase_direction`, `zone_relationship_status`, estimated
+period/frequency/amplitude/cycle count, and metadata-card columns
+(`effect_pattern`, `zone_model`, `color_transition`, `cycle_time_ms`,
+`sync_status`, `fade_curve`, `notes_matched_terms`, `notes_vs_measured_agreement`).
+
+`reports/metadata-cards-<timestamp>.md` — one card per trial (pattern, zone
+model, cuts vs fade, cycle time, sync/async, fade curve, notes match). Emitted
+only with `run --cards` / `report-only --cards`. Every trial, not just flagged
+ones. Gitignored.
 
 `reports/review-needed-<timestamp>.md` — disagreements (including
-`zone_relationship_status == disagree`), capture failures, inconsistent
-repeats, and low-confidence rows, grouped by xlsx **sheet** then
-`effect_label`. Multi-zone entries include a per-zone breakdown table.
+`zone_relationship_status == disagree` and `notes_vs_measured_agreement ==
+disagree`), capture failures, inconsistent repeats, and low-confidence rows,
+grouped by xlsx **sheet** then `effect_label`. Multi-zone entries include a
+per-zone breakdown table.
 Evidence tables are shaped to paste into
 `docs/ble-packets-details/findings/_template.md`.
 
@@ -285,3 +296,7 @@ Capture timing: `settle_margin_ms` (default 500), `gap_seconds` (default 1.5).
    the already-confirmed F-2026-08-17-01 (style-flag bit 6) and F-2026-08-26-01
    (speed bits[6:4]) as high-separation candidates — if it doesn't, tune ranking
    before trusting unknown positions.
+10. `report-only --cards` — every trial gets a metadata card; single-zone rows
+    show `sync_status = n/a (single zone)`; a strobe-labeled async row warns;
+    brightness-flat rows still show `fade_curve` from R/G/B when those exist.
+

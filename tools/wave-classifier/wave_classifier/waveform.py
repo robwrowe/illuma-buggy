@@ -214,3 +214,103 @@ def classify_rgb(
             min_template_correlation=min_template_correlation,
         ),
     }
+
+
+@dataclass
+class CycleSummary:
+    period_ms: float | None = None
+    cycle_count_observed: float | None = None
+    source_zone: str = ""
+    source_channel: str = ""
+    confidence: float | None = None
+
+
+_OUTER_ZONES = ("topLeft", "bottomLeft", "bottomRight", "topRight", "outer")
+_CHANNELS = ("brightness", "r", "g", "b")
+
+
+def _period_usable(wr: WaveformResult | None) -> bool:
+    return bool(
+        wr is not None
+        and wr.estimated_period_ms
+        and wr.estimated_period_ms > 0
+        and wr.waveform_class not in {"flat"}
+    )
+
+
+def _pick_channel_for_zone(
+    results: dict,
+    zone: str,
+) -> tuple:
+    bri = results.get((zone, "brightness"))
+    if _period_usable(bri) and bri.waveform_class != "irregular":
+        return "brightness", bri
+    colored = []
+    for ch in ("r", "g", "b"):
+        wr = results.get((zone, ch))
+        if _period_usable(wr) and wr.waveform_class != "irregular":
+            colored.append((ch, wr))
+    if colored:
+        return max(colored, key=lambda pair: pair[1].confidence)
+    if _period_usable(bri):
+        return "brightness", bri
+    for ch in ("r", "g", "b"):
+        wr = results.get((zone, ch))
+        if _period_usable(wr):
+            return ch, wr
+    return None, None
+
+
+def summarize_cycle_time(
+    results_by_zone_channel: dict,
+    primary_zone: str,
+    *,
+    prefer_outer: bool = False,
+) -> CycleSummary:
+    """One trial-level cycle time, with the zone/channel it came from.
+
+    Brightness first (more robust than a single hue). For a five-corner chase,
+    prefer an outer-ring period over center — the chase's full cycle is the
+    ring traversal, not the center LED's own blink.
+    """
+    zones_present = []
+    seen = set()
+    preferred = []
+    if prefer_outer:
+        preferred.extend(_OUTER_ZONES)
+    if primary_zone == "outer":
+        preferred.extend(_OUTER_ZONES)
+    preferred.append(primary_zone)
+    for z in list(preferred) + [z for z, _ch in results_by_zone_channel]:
+        if z not in seen and any((z, ch) in results_by_zone_channel for ch in _CHANNELS):
+            zones_present.append(z)
+            seen.add(z)
+
+    def as_summary(zone: str, ch: str, wr: WaveformResult) -> CycleSummary:
+        return CycleSummary(
+            period_ms=wr.estimated_period_ms,
+            cycle_count_observed=wr.cycle_count_observed,
+            source_zone=zone,
+            source_channel=ch,
+            confidence=wr.confidence,
+        )
+
+    if prefer_outer:
+        outer_hits = []
+        for z in _OUTER_ZONES:
+            ch, wr = _pick_channel_for_zone(results_by_zone_channel, z)
+            if wr is not None:
+                outer_hits.append(as_summary(z, ch, wr))
+        if outer_hits:
+            return max(outer_hits, key=lambda s: s.confidence or 0.0)
+
+    best = None
+    for z in zones_present:
+        ch, wr = _pick_channel_for_zone(results_by_zone_channel, z)
+        if wr is None:
+            continue
+        cand = as_summary(z, ch, wr)
+        if best is None or (cand.confidence or 0.0) > (best.confidence or 0.0):
+            best = cand
+    return best or CycleSummary(source_zone=primary_zone or "all", source_channel="brightness")
+

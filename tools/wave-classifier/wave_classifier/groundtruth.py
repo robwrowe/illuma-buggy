@@ -36,6 +36,8 @@ VOCAB_TERMS = (
     "cross fade",
     "cross-saw",
     "cross saw",
+    "hard cut",
+    "hard-cut",
     "shimmer",
     "chase",
     "pulse",
@@ -44,17 +46,22 @@ VOCAB_TERMS = (
     "flicker",
     "strobe",
     "glow",
+    "circle",
+    "cycle",
+    "unique",
     "ping-pong",
     "pingpong",
     "blend",
     "inner",
     "outer",
+    "five-zone",
+    "five zone",
+    "5-zone",
     "downward",
     "upward",
     "sync",
     "async",
     "solid",
-    "twinkle",
 )
 
 BYTE_N_RE = re.compile(r"\bbyte\s*(\d+)\b", re.I)
@@ -193,6 +200,47 @@ def extract_vocabulary(notes: list[str]) -> list[tuple[str, int]]:
     for m in N_ZONE_RE.finditer(blob):
         counts[f"{m.group(1)}-zone"] += 1
     return counts.most_common()
+
+
+def find_vocab_terms(text: str, vocabulary: list | tuple | None = None) -> list[str]:
+    """Terms from the shared VOCAB_TERMS list present in one short string.
+
+    Longest-first so `async` wins over `sync`. Word-boundary for single tokens.
+    """
+    blob = (text or "").lower()
+    if not blob.strip():
+        return []
+    terms = list(vocabulary) if vocabulary is not None else list(VOCAB_TERMS)
+    found: list[str] = []
+    seen: set[str] = set()
+    for term in sorted(set(terms), key=len, reverse=True):
+        if not term:
+            continue
+        if " " in term or "-" in term:
+            hit = term in blob
+        else:
+            hit = re.search(r"\b" + re.escape(term) + r"\b", blob) is not None
+        if hit and term not in seen:
+            found.append(term)
+            seen.add(term)
+    for m in N_ZONE_RE.finditer(blob):
+        label = f"{m.group(1)}-zone"
+        if label not in seen:
+            found.append(label)
+            seen.add(label)
+    return found
+
+
+def match_trial_notes(trial, vocabulary: list | None = None) -> list[str]:
+    """Keyword hits in this trial's own description/notes — not a corpus scan."""
+    parts = []
+    desc = getattr(trial, "description", None)
+    if desc:
+        parts.append(str(desc))
+    for note in getattr(trial, "notes", None) or []:
+        if note:
+            parts.append(str(note))
+    return find_vocab_terms("\n".join(parts), vocabulary)
 
 
 def extract_byte_hypotheses(notes: list[str]) -> list[dict[str, str]]:

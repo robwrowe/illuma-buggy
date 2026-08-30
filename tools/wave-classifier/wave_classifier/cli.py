@@ -267,6 +267,11 @@ def _add_classify_args(p: argparse.ArgumentParser) -> None:
         default=None,
         help="Relative error vs xlsx Cycle Length that flips status to disagree (default 0.25)",
     )
+    p.add_argument(
+        "--cards",
+        action="store_true",
+        help="Also write reports/metadata-cards-<timestamp>.md (every trial, not just flagged)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -493,8 +498,10 @@ def _write_and_summarize(
     review_threshold: float,
     unfiled: list[dict[str, str]] | None = None,
     min_group: int = 3,
+    emit_cards: bool = False,
 ) -> int:
     from .discover import discover_candidates, write_discovered_patterns
+    from .metadata_card import write_metadata_cards_markdown
 
     CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -524,6 +531,13 @@ def _write_and_summarize(
     )
     print(f"wrote {csv_path}")
     print(f"wrote {md_path}")
+
+    if emit_cards:
+        cards_path = REPORTS_DIR / f"metadata-cards-{stamp}.md"
+        cards = [getattr(r, "card", None) for r in reports]
+        cards = [c for c in cards if c is not None]
+        write_metadata_cards_markdown(cards_path, cards, generated_at=stamp)
+        print(f"wrote {cards_path}")
 
     candidates = discover_candidates(reports, min_group=min_group, unfiled_hypotheses=unfiled)
     disc_path = REPORTS_DIR / f"discovered-patterns-{stamp}.md"
@@ -679,9 +693,14 @@ def cmd_run(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
         min_template_correlation=min_corr,
         capture_results=by_hex,
         cycle_tolerance_pct=cycle,
+        review_threshold=review,
     )
     return _write_and_summarize(
-        reports, review_threshold=review, unfiled=unfiled, min_group=min_group
+        reports,
+        review_threshold=review,
+        unfiled=unfiled,
+        min_group=min_group,
+        emit_cards=bool(getattr(args, "cards", False)),
     )
 
 
@@ -697,9 +716,14 @@ def cmd_report_only(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
         noise_floor_pct=noise,
         min_template_correlation=min_corr,
         cycle_tolerance_pct=cycle,
+        review_threshold=review,
     )
     return _write_and_summarize(
-        reports, review_threshold=review, unfiled=unfiled, min_group=min_group
+        reports,
+        review_threshold=review,
+        unfiled=unfiled,
+        min_group=min_group,
+        emit_cards=bool(getattr(args, "cards", False)),
     )
 
 

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .blend import BlendResult, ZoneRelationship, analyze_blend, analyze_zone_relationship, infer_effect_label, labels_agree
 from .capture import find_capture_csvs, parse_capture_stem, read_samples_csv
+from .metadata_card import attach_metadata_card, card_csv_fields
 from .waveform import WaveformResult, classify_rgb
 from .xlsx_loader import TrialRow, TrialSet, fs_safe
 from .zones import FIVE_CORNER_IDS, primary_zone_name, resolve_zone_layout
@@ -73,6 +74,7 @@ class TrialReport:
     outer_chase_direction: str | None = None
     zone_relationship_status: str = "unlabeled"
     primary_zone: str = "all"
+    card: object | None = None
 
 
 def _classify_csv(
@@ -127,6 +129,7 @@ def classify_trial(
     capture_status: str = "ok",
     capture_error: str | None = None,
     cycle_tolerance_pct: float = 0.25,
+    review_threshold: float = 0.6,
 ) -> TrialReport:
     notes = list(trial.notes)
     zl = resolve_zone_layout(trial)
@@ -161,12 +164,14 @@ def classify_trial(
         primary_zone=primary_zone_name(trial, zl.layout),
     )
     if capture_status != "ok" or not csv_paths:
-        return TrialReport(
+        report = TrialReport(
             **empty,
             status="capture_failed",
             capture_status=capture_status if csv_paths or capture_status != "ok" else "missing_csv",
             re_run_recommended=True,
         )
+        attach_metadata_card(report, review_threshold=review_threshold)
+        return report
 
     by_zone: dict[str, list[Path]] = defaultdict(list)
     source_safe = fs_safe(trial.capture_source_row_id or trial.row_id)
@@ -275,7 +280,7 @@ def classify_trial(
     blend = pick_zr.blend if pick_zr else None
     conf = pick_zr.confidence if pick_zr else 0.0
     n_rep = max((z.n_repeats for z in zone_results.values()), default=0)
-    return TrialReport(
+    report = TrialReport(
         trial=trial,
         inferred_label=pick_label,
         waveform_class_r=waves["r"].waveform_class if waves else None,
@@ -301,6 +306,8 @@ def classify_trial(
         zone_relationship_status=zstatus,
         primary_zone=primary,
     )
+    attach_metadata_card(report, review_threshold=review_threshold)
+    return report
 
 
 def build_reports(
@@ -311,6 +318,7 @@ def build_reports(
     min_template_correlation: float,
     capture_results: dict[str, object] | None = None,
     cycle_tolerance_pct: float = 0.25,
+    review_threshold: float = 0.6,
 ) -> list[TrialReport]:
     """Classify every trial row. Duplicate hex rows reuse the source capture."""
     reports: list[TrialReport] = []
@@ -339,6 +347,7 @@ def build_reports(
                 capture_status=cap_status,
                 capture_error=cap_error,
                 cycle_tolerance_pct=cycle_tolerance_pct,
+                review_threshold=review_threshold,
             )
         )
     return reports
@@ -380,6 +389,15 @@ CSV_COLUMNS = [
     "outer_chase_direction",
     "zone_relationship_status",
     "notes",
+    "effect_pattern",
+    "effect_pattern_source",
+    "zone_model",
+    "color_transition",
+    "cycle_time_ms",
+    "sync_status",
+    "fade_curve",
+    "notes_matched_terms",
+    "notes_vs_measured_agreement",
 ] + [
     col
     for z in PER_ZONE_NAMES
@@ -436,6 +454,7 @@ def trial_report_to_dict(r: TrialReport, *, capture_paths: list[Path] | None = N
         "notes": list(r.notes),
         "capture_csv_paths": [str(p) for p in (capture_paths or [])],
     }
+    row.update(card_csv_fields(getattr(r, "card", None)))
     for z, zr in r.zone_results.items():
         w = zr.waveforms
         row[f"waveform_class_r_{z}"] = w["r"].waveform_class
@@ -493,6 +512,7 @@ def write_triage_csv(path: Path, reports: list[TrialReport]) -> None:
                 "zone_relationship_status": r.zone_relationship_status,
                 "notes": "; ".join(r.notes),
             }
+            row.update(card_csv_fields(getattr(r, "card", None)))
             for z, zr in r.zone_results.items():
                 w = zr.waveforms
                 row[f"waveform_class_r_{z}"] = w["r"].waveform_class
@@ -512,6 +532,9 @@ def _needs_review(r: TrialReport, review_threshold: float) -> bool:
     if r.status in REVIEW_STATUSES:
         return True
     if r.zone_relationship_status == "disagree":
+        return True
+    card = getattr(r, "card", None)
+    if card is not None and getattr(card, "notes_vs_measured_agreement", "") == "disagree":
         return True
     if r.status == "unlabeled" and r.confidence < review_threshold:
         return True
@@ -543,8 +566,8 @@ def write_review_markdown(
         "`op_code` is shown as a display label only (length-byte artifact, not a behavior family).",
         "",
         f"Flagged {len(flagged)} of {len(reports)} rows "
-        f"(status in disagree / capture_failed / inconsistent_repeats, or confidence "
-        f"< {review_threshold}).",
+        f"(status in disagree / capture_failed / inconsistent_repeats, notes-vs-measured "
+        f"disagree, or confidence < {review_threshold}).",
         "",
     ]
 
