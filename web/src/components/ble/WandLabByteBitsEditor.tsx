@@ -316,6 +316,7 @@ function Color6BitByteEditor({ byteIndex, byteValue, onChange }) {
 
 function ByteEditorCard({
   byteIndex,
+  label,
   byteValue,
   origValue,
   editMode,
@@ -329,7 +330,7 @@ function ByteEditorCard({
     <Stack gap={6} p={8} style={CARD_STYLE}>
       <Group justify="space-between" align="center" wrap="nowrap" gap={4}>
         <Text size="xs" fw={700} ff="monospace">
-          [{byteIndex}]
+          [{label ?? byteIndex}]
           {modified ? (
             <Text span size="xs" c="dimmed" ff="monospace"> ←0x{(origValue & 0xff).toString(16).padStart(2, '0').toUpperCase()}</Text>
           ) : null}
@@ -410,10 +411,11 @@ export function WandLabByteBitsEditor({
         <CustomBitFieldsConfig fields={customBitFields} onChange={onCustomBitFieldsChange} />
       )}
       <Group gap="xs" align="stretch" wrap="wrap">
-        {selections.map(({ index, value, origValue }) => (
+        {selections.map(({ index, value, origValue, label }) => (
           <ByteEditorCard
             key={index}
             byteIndex={index}
+            label={label}
             byteValue={value}
             origValue={origValue}
             editMode={editModes[index] ?? 'binary'}

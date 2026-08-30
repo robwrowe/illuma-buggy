@@ -163,6 +163,93 @@ export function tailBytesToDisplayHex(bytes) {
     .join(' ');
 }
 
+export function isPartEnabled(partEnabled, id) {
+  return !partEnabled || partEnabled[id] !== false;
+}
+
+/** Envelope byte: `e1` / `e2` or a 1–2 digit hex string. */
+export function envelopeByte(envelope) {
+  const raw = String(envelope ?? 'e1').replace(/^0x/i, '').trim().toLowerCase();
+  if (raw === 'e2') return 0xe2;
+  if (raw === 'e1' || raw === '') return 0xe1;
+  const n = parseInt(raw, 16);
+  return Number.isFinite(n) ? n & 0xff : 0xe1;
+}
+
+function applyPartOverrides(parts, overrides) {
+  if (!overrides || typeof overrides !== 'object') return parts;
+  return parts.map((p) => {
+    const v = overrides[p.id];
+    if (v == null) return p;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return p;
+    return { ...p, byte: n & 0xff, baseByte: p.byte };
+  });
+}
+
+export function tailPartId(index) {
+  return `t${index}`;
+}
+
+export function colorPartIds(index, format) {
+  if (format === 'd2') return [`c${index}.55`, `c${index}.r`, `c${index}.g`, `c${index}.b`];
+  return [`c${index}`];
+}
+
+/**
+ * Ordered labeled bytes for the assembled packet (before include-filters).
+ * `sub` is a placeholder; assembleTailPayload fills it from the kept length.
+ */
+export function buildTailPayloadParts({
+  timingByte,
+  colorFormat,
+  colors,
+  tailBytes,
+  vibration = null,
+  envelope = 'e1',
+}) {
+  const envByte = envelopeByte(envelope);
+  const tb = Number(timingByte) & 0xff;
+  const formatByte = parseInt(String(colorFormat), 16) & 0xff;
+  const parts = [
+    { id: 'env', role: 'env', label: 'env', byte: envByte, editable: true },
+    { id: 'envPad', role: 'fixed', label: 'pad', byte: 0x00, editable: false },
+    { id: 'e9', role: 'fixed', label: 'E9', byte: 0xe9, editable: false },
+    { id: 'sub', role: 'len', label: 'len', byte: 0, editable: false },
+    { id: 'pad', role: 'fixed', label: 'pad', byte: 0x00, editable: false },
+    { id: 'tb', role: 'timing', label: 'TB', byte: tb, editable: true },
+    { id: 'fmt', role: 'format', label: 'fmt', byte: formatByte, editable: true },
+  ];
+  const list = Array.isArray(colors) ? colors : [];
+  if (colorFormat === 'd2') {
+    list.forEach((c, i) => {
+      parts.push({ id: `c${i}.55`, role: 'color', colorIdx: i, label: `c${i}`, byte: 0x55, editable: false });
+      parts.push({ id: `c${i}.r`, role: 'color', colorIdx: i, label: 'R', byte: Number(c.r ?? 0) & 0xff, editable: true });
+      parts.push({ id: `c${i}.g`, role: 'color', colorIdx: i, label: 'G', byte: Number(c.g ?? 0) & 0xff, editable: true });
+      parts.push({ id: `c${i}.b`, role: 'color', colorIdx: i, label: 'B', byte: Number(c.b ?? 0) & 0xff, editable: true });
+    });
+  } else {
+    list.forEach((c, i) => {
+      parts.push({
+        id: `c${i}`,
+        role: 'color',
+        colorIdx: i,
+        label: `c${i}`,
+        byte: encodeTailColorByte(c),
+        editable: true,
+      });
+    });
+  }
+  const tail = Array.isArray(tailBytes) ? tailBytes.map((b) => b & 0xff) : [];
+  tail.forEach((b, i) => {
+    parts.push({ id: tailPartId(i), role: 'tail', tailIdx: i, label: `[${i}]`, byte: b, editable: true });
+  });
+  if (vibration != null) {
+    parts.push({ id: 'vib', role: 'vib', label: 'vib', byte: mbVibByte(vibration), editable: true });
+  }
+  return parts;
+}
+
 /**
  * Assemble the full on-air payload (envelope + opcode + length + TB +
  * format byte + color block + tail + optional vibration).
@@ -173,14 +260,11 @@ export function tailBytesToDisplayHex(bytes) {
  * subOpcode is derived: it equals the byte count after the sub-opcode byte
  * (confirmed `total_len_bytes = sub_opcode + 2`).
  *
- * @param {object} opts
- * @param {number} opts.timingByte
- * @param {string} opts.colorFormat
- * @param {TailBuilderColor[]} opts.colors
- * @param {number[]} opts.tailBytes
- * @param {number|null} [opts.vibration]
- * @param {'e1'|'e2'} [opts.envelope]
- * @returns {{ bytes: number[], hex: string, subOpcode: number, subOpcodeHex: string, warnings: string[] }}
+ * `partEnabled` maps part id → false to omit that byte without deleting its
+ * source value. Missing keys are included.
+ * `partOverrides` maps part id → byte, applied after length is derived.
+ *
+ * @returns {{ bytes: number[], hex: string, subOpcode: number, subOpcodeHex: string, warnings: string[], parts: object[], kept: object[] }}
  */
 export function assembleTailPayload({
   timingByte,
@@ -189,37 +273,47 @@ export function assembleTailPayload({
   tailBytes,
   vibration = null,
   envelope = 'e1',
+  partEnabled = null,
+  partOverrides = null,
 }) {
   const warnings = [];
-  const colorBlock = buildColorBlockBytes(colorFormat, colors);
-  const tail = Array.isArray(tailBytes) ? tailBytes.map((b) => b & 0xff) : [];
-  const vibByte = vibration == null ? [] : [mbVibByte(vibration)];
-
-  const formatByte = parseInt(colorFormat, 16) & 0xff;
-  const tb = Number(timingByte) & 0xff;
-
-  const afterSubOpcode = [0x00, tb, formatByte, ...colorBlock, ...tail, ...vibByte];
-  const subOpcode = afterSubOpcode.length & 0xff;
+  let parts = buildTailPayloadParts({
+    timingByte,
+    colorFormat,
+    colors,
+    tailBytes,
+    vibration,
+    envelope,
+  });
+  const withLen = parts.filter((p) => p.id === 'sub' || isPartEnabled(partEnabled, p.id));
+  const subAt = withLen.findIndex((p) => p.id === 'sub');
+  const subOpcode = subAt >= 0 ? (withLen.length - subAt - 1) & 0xff : 0;
+  const partSub = parts.findIndex((p) => p.id === 'sub');
+  if (partSub >= 0) {
+    parts[partSub] = { ...parts[partSub], byte: subOpcode };
+  }
+  parts = applyPartOverrides(parts, partOverrides);
+  const kept = parts.filter((p) => isPartEnabled(partEnabled, p.id));
 
   if (subOpcode > 0x1f) {
     warnings.push(
-      `Derived sub-opcode 0x${subOpcode.toString(16).toUpperCase()} is unusually large `
+      `Derived sub-opcode 0x${subOpcode.toString(16).padStart(2, '0').toUpperCase()} is unusually large `
         + '(known captures top out around 0x14/20 bytes) — double check the tail length.',
     );
   }
-  if (!colors?.length) {
+  if (!kept.some((p) => p.role === 'color')) {
     warnings.push('No colors selected — color block is empty.');
   }
-  if (!tail.length) {
+  if (!kept.some((p) => p.role === 'tail')) {
     warnings.push('Tail is empty — packet will end right after the color block.');
   }
 
-  const envByte = envelope === 'e2' ? 0xe2 : 0xe1;
-  const bytes = [envByte, 0x00, 0xe9, subOpcode, ...afterSubOpcode];
-
+  const bytes = kept.map((p) => p.byte & 0xff);
   return {
     bytes,
     hex: bytes.map((b) => (b & 0xff).toString(16).padStart(2, '0')).join(''),
+    parts,
+    kept,
     subOpcode,
     subOpcodeHex: subOpcode.toString(16).padStart(2, '0').toUpperCase(),
     warnings,

@@ -15,6 +15,7 @@ import {
   Textarea,
   TextInput,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
@@ -41,17 +42,23 @@ import {
 } from '../../lib/ble/byteAnalyzer';
 import { BitColumnHeader, ByteBitCell } from './ByteBitCell';
 import { TimingByteFields } from './TimingByteFields';
+import { WandLabByteBitsEditor } from './WandLabByteBitsEditor';
 import {
   TAIL_BUILDER_COLOR_FORMATS,
   assembleTailPayload,
+  colorPartIds,
   encodeTailColorByte,
+  isPartEnabled,
   omitConsecutiveDuplicateTails,
   parseTailBytes,
   parseTailList,
   tailBytesToDisplayHex,
+  tailPartId,
 } from '../../lib/ble/tailBuilder';
 
 const DEFAULT_TAIL_RAW = '58 F4 48 82 D1 46 02 08 D0 65 00';
+
+const MAX_TAIL_BYTES = 48;
 
 const MAX_NIBBLE_SPECS = 16;
 
@@ -285,6 +292,57 @@ function ColorSwatchBox({ background }) {
   );
 }
 
+function hexByte(n) {
+  return (Number(n) & 0xff).toString(16).padStart(2, '0').toUpperCase();
+}
+
+function PayloadPartChip({ part, included, selected, onSelect, onToggleInclude }) {
+  return (
+    <Group
+      gap={4}
+      wrap="nowrap"
+      px={6}
+      py={4}
+      style={{
+        borderRadius: 6,
+        border: selected ? '2px solid var(--primary)' : '1px solid var(--border)',
+        background: selected
+          ? 'color-mix(in srgb, var(--primary) 14%, var(--surface2))'
+          : 'var(--surface2)',
+        opacity: included ? 1 : 0.42,
+        textDecoration: included ? 'none' : 'line-through',
+      }}
+    >
+      <Checkbox
+        size="xs"
+        checked={included}
+        onChange={(e) => onToggleInclude(e.currentTarget.checked)}
+        title={included ? 'Omit from packet (keeps value)' : 'Include in packet'}
+        styles={{ input: { cursor: 'pointer' } }}
+      />
+      <UnstyledButton
+        onClick={(e) => {
+          if (e.altKey || e.metaKey) {
+            onToggleInclude(!included);
+            return;
+          }
+          onSelect();
+        }}
+        title="Click to edit. Alt/⌘-click to include or omit."
+      >
+        <Stack gap={0} align="center">
+          <Text size="xs" c="dimmed" lh={1.2} tt="uppercase" style={{ fontSize: 10 }}>
+            {part.label}
+          </Text>
+          <Text size="xs" fw={700} ff="monospace" lh={1.3}>
+            {hexByte(part.byte)}
+          </Text>
+        </Stack>
+      </UnstyledButton>
+    </Group>
+  );
+}
+
 export function WandLabTailBuilderTab({
   simIp,
   onStatus,
@@ -321,6 +379,10 @@ export function WandLabTailBuilderTab({
   const [packetCopyMsg, setPacketCopyMsg] = useState('');
   const [nibbleCopyMsg, setNibbleCopyMsg] = useState('');
   const [nibbleSpecs, setNibbleSpecs] = useWandLabUiState('tail.nibbleSpecs', defaultNibbleSpecs);
+  const [partEnabled, setPartEnabled] = useWandLabUiState('tail.partEnabled', () => ({}));
+  const [partOverrides, setPartOverrides] = useWandLabUiState('tail.partOverrides', () => ({}));
+  const [selectedPartId, setSelectedPartId] = useWandLabUiState('tail.selectedPartId', 'tb');
+  const [customBitFields, setCustomBitFields] = useWandLabUiState('tail.customBitFields', () => []);
   const sendAllGen = useRef(0);
 
   const palOpts = mbPaletteOptions();
@@ -380,6 +442,7 @@ export function WandLabTailBuilderTab({
     () => displayTails.reduce((m, t) => Math.max(m, t.bytes?.length || 0), 0),
     [displayTails],
   );
+  const byteColCount = Math.min(MAX_TAIL_BYTES, Math.max(1, tailMaxLen + (tailMaxLen < MAX_TAIL_BYTES ? 1 : 0)));
   const constancy = useMemo(
     () => (displayTails.length > 1 ? columnConstancy(displayTails) : []),
     [displayTails],
@@ -396,6 +459,8 @@ export function WandLabTailBuilderTab({
     tailBytes,
     vibration,
     envelope,
+    partEnabled,
+    partOverrides,
   });
 
   const assembleForTail = (bytes) =>
@@ -406,6 +471,8 @@ export function WandLabTailBuilderTab({
       tailBytes: bytes,
       vibration,
       envelope,
+      partEnabled,
+      partOverrides,
     });
 
   const setColorCountSafe = (n) => {
@@ -428,6 +495,125 @@ export function WandLabTailBuilderTab({
       ...(maskFollowsColorCount ? {} : { mask: decoded.mask }),
     });
   };
+
+  const setPartIncluded = (id, included) => {
+    setPartEnabled((prev) => {
+      const next = { ...(prev || {}) };
+      if (included) delete next[id];
+      else next[id] = false;
+      return next;
+    });
+  };
+
+  const setIdsIncluded = (ids, included) => {
+    setPartEnabled((prev) => {
+      const next = { ...(prev || {}) };
+      ids.forEach((id) => {
+        if (included) delete next[id];
+        else next[id] = false;
+      });
+      return next;
+    });
+  };
+
+  const colorSlotIncluded = (idx) =>
+    colorPartIds(idx, colorFormat).every((id) => isPartEnabled(partEnabled, id));
+
+  const includeAllParts = () => setPartEnabled({});
+
+  const applyPartByte = (id, value) => {
+    const v = Number(value) & 0xff;
+    if (id === 'env') {
+      setEnvelope(v === 0xe2 ? 'e2' : v === 0xe1 ? 'e1' : v.toString(16).padStart(2, '0'));
+      setPartOverrides((prev) => {
+        const next = { ...(prev || {}) };
+        delete next.env;
+        return next;
+      });
+      return;
+    }
+    if (id === 'tb') {
+      setTimingByte(v);
+      return;
+    }
+    if (id === 'fmt') {
+      setFormat(v.toString(16).padStart(2, '0'));
+      return;
+    }
+    if (id === 'vib') {
+      if ((v & 0xf0) === 0xb0) {
+        setVibration(v & 0x0f);
+        setPartOverrides((prev) => {
+          const next = { ...(prev || {}) };
+          delete next.vib;
+          return next;
+        });
+      } else {
+        setPartOverrides((prev) => ({ ...(prev || {}), vib: v }));
+      }
+      return;
+    }
+    const colorMatch = /^c(\d+)$/.exec(id);
+    if (colorMatch) {
+      applyPaletteByte(Number(colorMatch[1]), v);
+      return;
+    }
+    const rgbMatch = /^c(\d+)\.([rgb])$/.exec(id);
+    if (rgbMatch) {
+      patchColor(Number(rgbMatch[1]), { [rgbMatch[2]]: v });
+      return;
+    }
+    const tailMatch = /^t(\d+)$/.exec(id);
+    if (tailMatch) {
+      patchTailByte(safeIdx, Number(tailMatch[1]), v);
+      return;
+    }
+    setPartOverrides((prev) => ({ ...(prev || {}), [id]: v }));
+  };
+
+  const resetPartByte = (id) => {
+    const colorMatch = /^c(\d+)$/.exec(id);
+    const rgbMatch = /^c(\d+)\.([rgb])$/.exec(id);
+    const tailMatch = /^t(\d+)$/.exec(id);
+    if (tailMatch) {
+      const origBytes = parseTailBytes(origHexForDisplayIndex(safeIdx));
+      const bi = Number(tailMatch[1]);
+      if (bi < origBytes.length) patchTailByte(safeIdx, bi, origBytes[bi]);
+      return;
+    }
+    if (colorMatch || rgbMatch) return;
+    setPartOverrides((prev) => {
+      const next = { ...(prev || {}) };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const omittedCount = (assembled.parts || []).filter((p) => !isPartEnabled(partEnabled, p.id)).length;
+  const selectedPart =
+    (assembled.parts || []).find((p) => p.id === selectedPartId) || assembled.parts?.[0] || null;
+  const selectedOrig =
+    selectedPart == null
+      ? null
+      : selectedPart.baseByte != null
+        ? selectedPart.baseByte
+        : selectedPart.role === 'tail'
+          ? parseTailBytes(origHexForDisplayIndex(safeIdx))[selectedPart.tailIdx]
+          : selectedPart.byte;
+
+  const formatOptions = TAIL_BUILDER_COLOR_FORMATS.some((o) => o.value === colorFormat)
+    ? TAIL_BUILDER_COLOR_FORMATS
+    : [
+        ...TAIL_BUILDER_COLOR_FORMATS,
+        { value: colorFormat, label: `0x${String(colorFormat).toUpperCase()} — custom` },
+      ];
+  const envelopeControlData = [
+    { value: 'e1', label: 'E1' },
+    { value: 'e2', label: 'E2' },
+    ...(envelope === 'e1' || envelope === 'e2'
+      ? []
+      : [{ value: envelope, label: String(envelope).toUpperCase() }]),
+  ];
 
   const setFormat = (fmt) => {
     setColorFormat(fmt);
@@ -460,8 +646,17 @@ export function WandLabTailBuilderTab({
   const patchTailByte = (rowIdx, byteIdx, value) => {
     const row = displayTails[rowIdx];
     if (!row) return;
-    const nextBytes = row.bytes.map((b, i) => (i === byteIdx ? value & 0xff : b));
+    if (byteIdx < 0 || byteIdx >= MAX_TAIL_BYTES) return;
+    const nextBytes = [...row.bytes];
+    while (nextBytes.length <= byteIdx) nextBytes.push(0);
+    nextBytes[byteIdx] = value & 0xff;
     patchTailBytes(rowIdx, nextBytes);
+  };
+
+  const appendTailByte = (rowIdx, value = 0) => {
+    const row = displayTails[rowIdx];
+    if (!row || row.bytes.length >= MAX_TAIL_BYTES) return;
+    patchTailBytes(rowIdx, [...row.bytes, value & 0xff]);
   };
 
   const patchNibbleDec = (rowIdx, spec, value) => {
@@ -921,7 +1116,7 @@ export function WandLabTailBuilderTab({
       )}
       <Text size="xs" c="dimmed">
         {valueMode === 'cells'
-          ? 'Click a cell to flip hex ↔ bits. Click a column header to flip the whole column. Alt/⌘-click a header to add a nibble column. Log writes that assembled tail into the observation log.'
+          ? 'Click a cell to flip hex ↔ bits. Click ·· or + / + byte to append 0x00. Click a column header to flip the whole column. Alt/⌘-click a header to add a nibble column. Log writes that assembled tail into the observation log.'
           : 'One hex tail per line. Reset all restores the last pasted or typed list.'}
       </Text>
       {valueMode === 'text' && (
@@ -945,14 +1140,36 @@ export function WandLabTailBuilderTab({
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th w={36}>#</Table.Th>
-                  {Array.from({ length: tailMaxLen }).map((_, i) => {
+                  {Array.from({ length: byteColCount }).map((_, i) => {
+                    const isAddCol = i >= tailMaxLen;
+                    if (isAddCol) {
+                      return (
+                        <Table.Th key="add-byte" w={HEX_COL_PX} p={4} style={{ minWidth: HEX_COL_PX }}>
+                          <Button
+                            size="compact-xs"
+                            variant="default"
+                            disabled={!displayTails.length}
+                            title="Append 0x00 to the selected row"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              appendTailByte(safeIdx);
+                            }}
+                          >
+                            +
+                          </Button>
+                        </Table.Th>
+                      );
+                    }
                     const c = constancy[i];
                     const isSame = showSameHighlight && !!c?.constant;
                     const isNibbleCol = nibbleByteSet.has(i);
+                    const colIncluded = isPartEnabled(partEnabled, tailPartId(i));
+                    const showColBits = columnHasBitView(bitColumns, bitCells, i);
+                    const colW = showColBits ? BIT_COL_PX : HEX_COL_PX;
                     return (
                       <Table.Th
                         key={i}
-                        w={columnHasBitView(bitColumns, bitCells, i) ? BIT_COL_PX : HEX_COL_PX}
+                        w={colW}
                         p={4}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -964,25 +1181,40 @@ export function WandLabTailBuilderTab({
                         }}
                         style={{
                           cursor: 'pointer',
+                          opacity: colIncluded ? 1 : 0.42,
+                          minWidth: colW,
                           boxShadow: isNibbleCol ? 'inset 0 -2px 0 var(--mantine-color-cyan-6)' : undefined,
                         }}
                       >
-                        <Tooltip
-                          label={
-                            displayTails.length > 1
-                              ? `byte[${i}] · ${c?.distinctCount ?? 0} distinct value(s) across ${c?.coverage ?? 0} row(s) · Alt/⌘-click to add a nibble column`
-                              : `Click to flip column ${i}. Alt/⌘-click to add a nibble column`
-                          }
-                        >
-                          <Box>
-                            <BitColumnHeader
-                              index={i}
-                              showBits={columnHasBitView(bitColumns, bitCells, i)}
-                              constant={isSame}
-                              tagColor={isNibbleCol ? 'cyan' : isSame ? 'teal' : undefined}
-                            />
-                          </Box>
-                        </Tooltip>
+                        <Stack gap={2} align="stretch">
+                          <Checkbox
+                            size="xs"
+                            checked={colIncluded}
+                            title={colIncluded ? 'Omit this tail byte from the packet (keeps the value)' : 'Include this tail byte'}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              setPartIncluded(tailPartId(i), e.currentTarget.checked);
+                            }}
+                            styles={{ root: { alignSelf: 'center' } }}
+                          />
+                          <Tooltip
+                            label={
+                              displayTails.length > 1
+                                ? `byte[${i}] · ${c?.distinctCount ?? 0} distinct value(s) across ${c?.coverage ?? 0} row(s) · Alt/⌘-click to add a nibble column`
+                                : `Click to flip column ${i}. Alt/⌘-click to add a nibble column`
+                            }
+                          >
+                            <Box w="100%">
+                              <BitColumnHeader
+                                index={i}
+                                showBits={columnHasBitView(bitColumns, bitCells, i)}
+                                constant={isSame}
+                                tagColor={isNibbleCol ? 'cyan' : isSame ? 'teal' : undefined}
+                              />
+                            </Box>
+                          </Tooltip>
+                        </Stack>
                       </Table.Th>
                     );
                   })}
@@ -1029,19 +1261,38 @@ export function WandLabTailBuilderTab({
                           </Badge>
                         )}
                       </Table.Td>
-                      {Array.from({ length: tailMaxLen }).map((_, bi) => {
+                      {Array.from({ length: byteColCount }).map((_, bi) => {
                         const byte = bi < t.bytes.length ? t.bytes[bi] : null;
                         const showBits =
                           byte != null && cellHasBitView(bitColumns, bitCells, rowKey, bi);
+                        const colIncluded = isPartEnabled(partEnabled, tailPartId(bi));
+                        const isAddCol = bi >= tailMaxLen;
                         return (
-                          <Table.Td key={bi} p={4}>
+                          <Table.Td
+                            key={bi}
+                            p={4}
+                            style={{
+                              opacity: isAddCol || colIncluded ? 1 : 0.42,
+                              minWidth: showBits ? BIT_COL_PX : HEX_COL_PX,
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedTailIdx(i);
+                              if (byte != null) setSelectedPartId(tailPartId(bi));
+                            }}
+                          >
                             <ByteBitCell
                               byteValue={byte ?? 0}
                               empty={byte == null}
                               showBits={showBits}
-                              onToggleBits={() =>
-                                setBitCells((prev) => toggleBitCellMap(prev, rowKey, bi))
-                              }
+                              onToggleBits={() => {
+                                if (byte == null) {
+                                  patchTailByte(i, bi, 0);
+                                  setSelectedPartId(tailPartId(bi));
+                                  return;
+                                }
+                                setBitCells((prev) => toggleBitCellMap(prev, rowKey, bi));
+                              }}
                               editable
                               onByteChange={
                                 byte != null ? (v) => patchTailByte(i, bi, v) : undefined
@@ -1106,6 +1357,18 @@ export function WandLabTailBuilderTab({
                           </Button>
                           <Button
                             size="compact-xs"
+                            variant="default"
+                            disabled={t.bytes.length >= MAX_TAIL_BYTES}
+                            title="Append 0x00 to this tail"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              appendTailByte(i);
+                            }}
+                          >
+                            + byte
+                          </Button>
+                          <Button
+                            size="compact-xs"
                             variant="light"
                             color="teal"
                             disabled={!simIp || sendingAll}
@@ -1151,6 +1414,63 @@ export function WandLabTailBuilderTab({
         </Stack>
       )}
 
+      <Stack gap={6}>
+        <Group justify="space-between" align="flex-end" wrap="wrap" gap={6}>
+          <Text size="xs" fw={600} tt="uppercase" c="dimmed">
+            Packet bytes
+          </Text>
+          {omittedCount > 0 && (
+            <Button size="compact-xs" variant="default" onClick={includeAllParts}>
+              Include all ({omittedCount} off)
+            </Button>
+          )}
+        </Group>
+        <Text size="xs" c="dimmed">
+          Uncheck a byte to leave it out of send/copy without deleting it. Click a byte to edit it
+          with the same tools as the byte editor. Alt/⌘-click a chip to toggle include.
+        </Text>
+        <Group gap={6} wrap="wrap">
+          {(assembled.parts || []).map((part) => (
+            <PayloadPartChip
+              key={part.id}
+              part={part}
+              included={isPartEnabled(partEnabled, part.id)}
+              selected={selectedPart?.id === part.id}
+              onSelect={() => setSelectedPartId(part.id)}
+              onToggleInclude={(on) => setPartIncluded(part.id, on)}
+            />
+          ))}
+        </Group>
+        <Text size="sm" ff="monospace" style={{ wordBreak: 'break-all' }}>
+          {tailBytesToDisplayHex(assembled.bytes) || '(empty)'}
+        </Text>
+        <Text size="xs" ff="monospace" c="dimmed">
+          Derived sub-opcode: 0x{assembled.subOpcodeHex} (on-air {assembled.bytes.length} bytes
+          {omittedCount ? `, ${omittedCount} omitted` : ''})
+        </Text>
+        {assembled.warnings.map((w) => (
+          <Text key={w} size="xs" c="yellow.6">
+            {w}
+          </Text>
+        ))}
+        {selectedPart && (
+          <WandLabByteBitsEditor
+            selections={[
+              {
+                index: selectedPart.id,
+                label: selectedPart.label,
+                value: selectedPart.byte,
+                origValue: selectedOrig,
+              },
+            ]}
+            onChange={applyPartByte}
+            onReset={resetPartByte}
+            customBitFields={customBitFields}
+            onCustomBitFieldsChange={setCustomBitFields}
+          />
+        )}
+      </Stack>
+
       <Button
         size="compact-xs"
         variant={assemblyOpen ? 'filled' : 'default'}
@@ -1162,7 +1482,13 @@ export function WandLabTailBuilderTab({
       <Collapse expanded={!!assemblyOpen} keepMounted={false}>
         <Stack gap="md">
           <Field label="Timing byte">
-            <TimingByteFields byteValue={timingByte} onChange={setTimingByte} />
+            <TimingByteFields
+              byteValue={timingByte}
+              onChange={(v) => {
+                setTimingByte(v);
+                setSelectedPartId('tb');
+              }}
+            />
           </Field>
 
           <Field label="Color format">
@@ -1170,7 +1496,7 @@ export function WandLabTailBuilderTab({
               value={colorFormat}
               allowEmpty={false}
               onChange={(v) => setFormat(v || '0f')}
-              options={TAIL_BUILDER_COLOR_FORMATS.map((o) => ({
+              options={formatOptions.map((o) => ({
                 value: o.value,
                 label: o.label,
                 searchText: o.label,
@@ -1214,6 +1540,7 @@ export function WandLabTailBuilderTab({
                     border: '1px solid var(--border)',
                     borderRadius: 6,
                     background: 'var(--surface2)',
+                    opacity: colorSlotIncluded(idx) ? 1 : 0.5,
                   }}
                 >
                   <Group gap="xs" align="center">
@@ -1221,6 +1548,15 @@ export function WandLabTailBuilderTab({
                       Color {idx + 1}
                     </Text>
                     <ColorSwatchBox background={swatch} />
+                    <Switch
+                      size="xs"
+                      label="In packet"
+                      checked={colorSlotIncluded(idx)}
+                      onChange={(e) =>
+                        setIdsIncluded(colorPartIds(idx, colorFormat), e.currentTarget.checked)
+                      }
+                      title="Omit this color’s bytes from the packet without deleting the slot"
+                    />
                   </Group>
                   {isRgb ? (
                     <Stack gap={6}>
@@ -1297,10 +1633,7 @@ export function WandLabTailBuilderTab({
               size="xs"
               value={envelope}
               onChange={setEnvelope}
-              data={[
-                { value: 'e1', label: 'E1' },
-                { value: 'e2', label: 'E2' },
-              ]}
+              data={envelopeControlData}
             />
           </Field>
 

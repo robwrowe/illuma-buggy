@@ -134,6 +134,7 @@ export function ByteBitCell({
     textAlign: 'center' as const,
     fontSize: 10,
     fontFamily: 'monospace',
+    width: '100%',
     padding: showBits ? '3px 2px 2px' : '4px 0',
     borderRadius: 4,
     position: 'relative' as const,
@@ -148,7 +149,15 @@ export function ByteBitCell({
   };
 
   if (empty) {
-    return <Box style={cellStyle} title={title}>··</Box>;
+    return (
+      <Box
+        style={cellStyle}
+        onClick={() => onToggleBits?.()}
+        title={title || 'Click to add a 0x00 byte'}
+      >
+        ··
+      </Box>
+    );
   }
 
   const customSuffix = customFields?.length
@@ -259,6 +268,7 @@ export function BitColumnHeader({
         textAlign: 'center',
         fontSize: 10,
         fontFamily: 'monospace',
+        width: '100%',
         padding: showBits ? '3px 2px 2px' : '4px 0',
         borderRadius: 4,
         background: tagColor
