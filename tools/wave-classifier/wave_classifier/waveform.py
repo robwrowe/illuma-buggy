@@ -22,6 +22,10 @@ class WaveformResult:
     dt_ms: float | None = None
     n_samples: int = 0
     scores: dict[str, float] | None = None
+    estimated_period_ms: float | None = None
+    estimated_frequency_hz: float | None = None
+    estimated_amplitude: float = 0.0
+    cycle_count_observed: float | None = None
 
 
 def resample_series(
@@ -111,17 +115,21 @@ def classify_channel(
 ) -> WaveformResult:
     t_u, v_u, dt_ms = resample_series(t_ms, values)
     n = int(v_u.size)
+    duration_ms = float(t_u[-1] - t_u[0]) if n >= 2 else 0.0
+    amp0 = float(np.ptp(values)) if values.size else 0.0
     if n < 8 or dt_ms <= 0:
         return WaveformResult(
             waveform_class="irregular",
             confidence=0.0,
             freq_hz=None,
-            amplitude=float(np.ptp(values)) if values.size else 0.0,
+            amplitude=amp0,
             dt_ms=dt_ms or None,
             n_samples=n,
+            estimated_amplitude=amp0,
         )
 
     # Percentile span, not raw ptp — a few noisy samples shouldn't defeat "flat".
+    # Captured *before* unit-amplitude scaling so intensity is still available.
     amplitude = float(np.percentile(v_u, 95) - np.percentile(v_u, 5))
     if amplitude < noise_floor_pct * full_scale:
         return WaveformResult(
@@ -131,9 +139,12 @@ def classify_channel(
             amplitude=amplitude,
             dt_ms=dt_ms,
             n_samples=n,
+            estimated_amplitude=amplitude,
         )
 
     freq = estimate_freq_hz(t_u, v_u)
+    period_ms = (1000.0 / freq) if freq and freq > 0 else None
+    cycles = (duration_ms / period_ms) if period_ms and period_ms > 0 else None
     if freq is None or freq <= 0:
         return WaveformResult(
             waveform_class="irregular",
@@ -142,6 +153,7 @@ def classify_channel(
             amplitude=amplitude,
             dt_ms=dt_ms,
             n_samples=n,
+            estimated_amplitude=amplitude,
         )
 
     t_s = (t_u - t_u[0]) / 1000.0
@@ -168,6 +180,10 @@ def classify_channel(
         dt_ms=dt_ms,
         n_samples=n,
         scores=scores,
+        estimated_period_ms=period_ms,
+        estimated_frequency_hz=freq,
+        estimated_amplitude=amplitude,
+        cycle_count_observed=cycles,
     )
 
 

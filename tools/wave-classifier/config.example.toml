@@ -6,9 +6,25 @@ base_url = "http://illuma-wandsim.local"
 
 [capture]
 device_index = 0
-roi = [0, 0, 100, 100]       # set via `select-roi`, overwritten on save
 settle_margin_ms = 500       # extra grab time after hold_ms to cover /show dispatch latency
 gap_seconds = 1.5            # pause between trials so the light actually stops
+
+# Named ROI sets per zone layout. Run `select-rois --zone-layout <layout>` to fill these
+# from the webcam. Layouts are independent — re-running select-rois overwrites that
+# layout only. Do not share boxes across layouts; the physical framing differs.
+[capture.rois.single]
+all = [0, 0, 100, 100]
+
+[capture.rois.five-corner]
+topLeft     = [0, 0, 60, 60]
+bottomLeft  = [0, 0, 60, 60]
+bottomRight = [0, 0, 60, 60]
+topRight    = [0, 0, 60, 60]
+center      = [0, 0, 60, 60]
+
+[capture.rois.inner-outer]
+center = [0, 0, 60, 60]
+outer  = [0, 0, 200, 200]
 
 [classify]
 # Amplitude below this fraction of the 0–255 channel range is treated as no-signal ("flat").
@@ -17,3 +33,9 @@ noise_floor_pct = 0.03
 min_template_correlation = 0.6
 # Rows with confidence below this land in review-needed-*.md even if they "agree".
 review_confidence_threshold = 0.6
+# Measured period vs xlsx Cycle Length: flag as disagree above this relative error.
+cycle_tolerance_pct = 0.25
+
+[discover]
+# Minimum trials per bit-group value before a candidate is surfaced.
+min_group = 3

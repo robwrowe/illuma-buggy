@@ -10,25 +10,40 @@ not a finding — reports live under tools/wave-classifier/reports/ only.
 from __future__ import annotations
 
 import csv
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .blend import BlendResult, analyze_blend, labels_agree
-from .capture import find_capture_csvs, read_samples_csv
+from .blend import BlendResult, ZoneRelationship, analyze_blend, analyze_zone_relationship, labels_agree
+from .capture import find_capture_csvs, parse_capture_stem, read_samples_csv
 from .waveform import WaveformResult, classify_rgb
-from .xlsx_loader import TrialRow, TrialSet
+from .xlsx_loader import TrialRow, TrialSet, fs_safe
+from .zones import FIVE_CORNER_IDS, primary_zone_name, resolve_zone_layout
 
 REVIEW_STATUSES = {"disagree", "capture_failed", "inconsistent_repeats"}
+ZONE_NAMES = ["all", "center", "outer"] + list(FIVE_CORNER_IDS)
 
 
 @dataclass
 class RepeatClassification:
     path: Path
+    zone: str
     waveforms: dict[str, WaveformResult]
     blend: BlendResult
     inferred_label: str
     confidence: float
+
+
+@dataclass
+class ZoneResult:
+    zone: str
+    inferred_label: str
+    waveforms: dict[str, WaveformResult]
+    blend: BlendResult
+    confidence: float
+    n_repeats: int
+    inconsistent: bool = False
 
 
 @dataclass
@@ -49,6 +64,14 @@ class TrialReport:
     notes: list[str] = field(default_factory=list)
     repeats: list[RepeatClassification] = field(default_factory=list)
     freq_hz: float | None = None
+    zone_layout: str = "single"
+    zone_layout_assumed: bool = False
+    zone_layout_downgraded: bool = False
+    zone_results: dict[str, ZoneResult] = field(default_factory=dict)
+    zone_relationship: str = "single_zone"
+    outer_chase_direction: str | None = None
+    zone_relationship_status: str = "unlabeled"
+    primary_zone: str = "all"
 
 
 def _classify_csv(
@@ -73,6 +96,7 @@ def _classify_csv(
         conf = max(conf, float(waves[dominant].confidence))
     return RepeatClassification(
         path=path,
+        zone="all",
         waveforms=waves,
         blend=blend,
         inferred_label=blend.inferred_label,
@@ -101,95 +125,168 @@ def classify_trial(
     min_template_correlation: float,
     capture_status: str = "ok",
     capture_error: str | None = None,
+    cycle_tolerance_pct: float = 0.25,
 ) -> TrialReport:
     notes = list(trial.notes)
+    zl = resolve_zone_layout(trial)
+    if trial.zone_layout_downgraded:
+        notes.append("zone_layout_downgraded: captured as inner-outer (five-corner ROIs missing)")
     if trial.duplicate_count > 1:
         notes.append(
             f"same capture used for {trial.duplicate_count} labeled rows "
             f"(source {trial.capture_source_row_id})"
         )
+    if trial.envelope_assumed:
+        notes.append("envelope_assumed")
     if capture_error:
         notes.append(capture_error)
 
+    empty = dict(
+        trial=trial,
+        inferred_label=None,
+        waveform_class_r=None,
+        waveform_class_g=None,
+        waveform_class_b=None,
+        waveform_class_brightness=None,
+        is_blend=None,
+        blend_style=None,
+        confidence=0.0,
+        n_repeats=0,
+        notes=notes,
+        zone_layout=zl.layout,
+        zone_layout_assumed=zl.assumed,
+        zone_layout_downgraded=trial.zone_layout_downgraded,
+        zone_relationship="single_zone" if zl.layout == "single" else "independent",
+        primary_zone=primary_zone_name(trial, zl.layout),
+    )
     if capture_status != "ok" or not csv_paths:
-        status = "capture_failed"
         return TrialReport(
-            trial=trial,
-            inferred_label=None,
-            waveform_class_r=None,
-            waveform_class_g=None,
-            waveform_class_b=None,
-            waveform_class_brightness=None,
-            is_blend=None,
-            blend_style=None,
-            confidence=0.0,
-            status=status,
+            **empty,
+            status="capture_failed",
             capture_status=capture_status if csv_paths or capture_status != "ok" else "missing_csv",
-            n_repeats=0,
             re_run_recommended=True,
-            notes=notes,
         )
 
-    repeats = [
-        _classify_csv(
-            p,
-            noise_floor_pct=noise_floor_pct,
-            min_template_correlation=min_template_correlation,
-        )
-        for p in csv_paths
-    ]
-    labels = [r.inferred_label for r in repeats]
-    unique_labels = {lab.lower() for lab in labels}
+    by_zone: dict[str, list[Path]] = defaultdict(list)
+    source_safe = fs_safe(trial.capture_source_row_id or trial.row_id)
+    for p in csv_paths:
+        zone, _rep = parse_capture_stem(p.stem, trial.row_id_safe)
+        if zone == "all" and p.stem != trial.row_id_safe and not p.stem.startswith(trial.row_id_safe + "__"):
+            zone, _rep = parse_capture_stem(p.stem, source_safe)
+        by_zone[zone].append(p)
 
-    if len(repeats) > 1 and len(unique_labels) > 1:
-        notes.append("inconsistent_repeats: " + ", ".join(f"{p.path.name}={p.inferred_label}" for p in repeats))
-        pick = repeats[0]
-        return TrialReport(
-            trial=trial,
-            inferred_label=pick.inferred_label,
-            waveform_class_r=pick.waveforms["r"].waveform_class,
-            waveform_class_g=pick.waveforms["g"].waveform_class,
-            waveform_class_b=pick.waveforms["b"].waveform_class,
-            waveform_class_brightness=pick.waveforms["brightness"].waveform_class,
-            is_blend=pick.blend.is_blend,
-            blend_style=pick.blend.blend_style,
-            confidence=sum(r.confidence for r in repeats) / len(repeats),
-            status="inconsistent_repeats",
-            capture_status="ok",
-            n_repeats=len(repeats),
-            re_run_recommended=True,
-            notes=notes,
-            repeats=repeats,
-            freq_hz=pick.waveforms["brightness"].freq_hz,
+    zone_results: dict[str, ZoneResult] = {}
+    all_repeats: list[RepeatClassification] = []
+    any_inconsistent = False
+    for zone, paths in by_zone.items():
+        classified = []
+        for p in paths:
+            item = _classify_csv(
+                p,
+                noise_floor_pct=noise_floor_pct,
+                min_template_correlation=min_template_correlation,
+            )
+            item.zone = zone
+            classified.append(item)
+            all_repeats.append(item)
+        labs = [c.inferred_label for c in classified]
+        inconsistent = len({x.lower() for x in labs}) > 1 and len(classified) > 1
+        if inconsistent:
+            any_inconsistent = True
+            notes.append(f"inconsistent_repeats zone={zone}: " + ", ".join(f"{c.path.name}={c.inferred_label}" for c in classified))
+        pick_lab = _majority_label(labs) or labs[0]
+        pick = next(c for c in classified if c.inferred_label == pick_lab)
+        zone_results[zone] = ZoneResult(
+            zone=zone,
+            inferred_label=pick_lab,
+            waveforms=pick.waveforms,
+            blend=pick.blend,
+            confidence=sum(c.confidence for c in classified) / len(classified),
+            n_repeats=len(classified),
+            inconsistent=inconsistent,
         )
 
-    pick_label = _majority_label(labels) or labels[0]
-    pick = next(r for r in repeats if r.inferred_label == pick_label)
-    mean_conf = sum(r.confidence for r in repeats) / len(repeats)
+    primary = primary_zone_name(trial, zl.layout)
+    if primary == "outer":
+        outer_labs = [zone_results[z].inferred_label for z in FIVE_CORNER_IDS[:-1] if z in zone_results]
+        pick_label = _majority_label(outer_labs) or (outer_labs[0] if outer_labs else "unclassified")
+        pick_zone = next((z for z in FIVE_CORNER_IDS[:-1] if z in zone_results), next(iter(zone_results), "all"))
+        pick_zr = zone_results.get(pick_zone)
+    else:
+        pick_zr = zone_results.get(primary) or zone_results.get("all") or next(iter(zone_results.values()), None)
+        pick_label = pick_zr.inferred_label if pick_zr else "unclassified"
+
+    series = {}
+    for zone, zr in zone_results.items():
+        path = by_zone[zone][0]
+        t, r, g, b = read_samples_csv(path)
+        series[zone] = (t, (r + g + b) / 3.0)
+    zrel = analyze_zone_relationship(series, "five-corner" if zl.layout == "five-corner" else zl.layout)
 
     labeled = trial.effect_label
-    if labeled:
+    if any_inconsistent:
+        status = "inconsistent_repeats"
+    elif labeled:
         status = "agree" if labels_agree(pick_label, labeled) else "disagree"
     else:
         status = "unlabeled"
 
+    hint = trial.zone_layout_hint
+    sync = (hint.sync or "").strip().upper()
+    rel = zrel.zone_relationship
+    if not sync or zl.layout == "single":
+        zstatus = "unlabeled" if zl.layout != "single" else "unlabeled"
+        if zl.layout == "single":
+            zstatus = "unlabeled"
+    elif sync in {"Y", "YES"}:
+        zstatus = "agree" if rel == "synchronized" else "disagree"
+    elif sync in {"N", "NO"}:
+        zstatus = "agree" if rel in {"async", "independent"} else "disagree"
+    else:
+        zstatus = "unlabeled"
+
+    period = pick_zr.waveforms["brightness"].estimated_period_ms if pick_zr else None
+    labeled_cycle = hint.cycle_length
+    if labeled_cycle and period and period > 0:
+        labeled_ms = labeled_cycle if labeled_cycle > 20 else labeled_cycle * 1000.0
+        diff = abs(period - labeled_ms) / labeled_ms
+        if diff > cycle_tolerance_pct:
+            notes.append(
+                f"numeric-tolerance disagreement: measured period {period:.0f}ms vs labeled "
+                f"cycle length {labeled_ms:.0f}ms ({diff:.0%} > {cycle_tolerance_pct:.0%})"
+            )
+            if status == "agree":
+                status = "disagree"
+
+    waves = pick_zr.waveforms if pick_zr else None
+    blend = pick_zr.blend if pick_zr else None
+    conf = pick_zr.confidence if pick_zr else 0.0
+    n_rep = max((z.n_repeats for z in zone_results.values()), default=0)
     return TrialReport(
         trial=trial,
         inferred_label=pick_label,
-        waveform_class_r=pick.waveforms["r"].waveform_class,
-        waveform_class_g=pick.waveforms["g"].waveform_class,
-        waveform_class_b=pick.waveforms["b"].waveform_class,
-        waveform_class_brightness=pick.waveforms["brightness"].waveform_class,
-        is_blend=pick.blend.is_blend,
-        blend_style=pick.blend.blend_style,
-        confidence=mean_conf,
+        waveform_class_r=waves["r"].waveform_class if waves else None,
+        waveform_class_g=waves["g"].waveform_class if waves else None,
+        waveform_class_b=waves["b"].waveform_class if waves else None,
+        waveform_class_brightness=waves["brightness"].waveform_class if waves else None,
+        is_blend=blend.is_blend if blend else None,
+        blend_style=blend.blend_style if blend else None,
+        confidence=conf,
         status=status,
         capture_status="ok",
-        n_repeats=len(repeats),
-        re_run_recommended=status == "disagree",
+        n_repeats=n_rep,
+        re_run_recommended=status in {"disagree", "inconsistent_repeats"} or zstatus == "disagree",
         notes=notes,
-        repeats=repeats,
-        freq_hz=pick.waveforms["brightness"].freq_hz,
+        repeats=all_repeats,
+        freq_hz=waves["brightness"].freq_hz if waves else None,
+        zone_layout=zl.layout,
+        zone_layout_assumed=zl.assumed,
+        zone_layout_downgraded=trial.zone_layout_downgraded,
+        zone_results=zone_results,
+        zone_relationship=rel,
+        outer_chase_direction=zrel.outer_chase_direction,
+        zone_relationship_status=zstatus,
+        primary_zone=primary,
     )
 
 
@@ -200,6 +297,7 @@ def build_reports(
     noise_floor_pct: float,
     min_template_correlation: float,
     capture_results: dict[str, object] | None = None,
+    cycle_tolerance_pct: float = 0.25,
 ) -> list[TrialReport]:
     """Classify every trial row. Duplicate hex rows reuse the source capture."""
     reports: list[TrialReport] = []
@@ -227,20 +325,25 @@ def build_reports(
                 min_template_correlation=min_template_correlation,
                 capture_status=cap_status,
                 capture_error=cap_error,
+                cycle_tolerance_pct=cycle_tolerance_pct,
             )
         )
     return reports
 
 
+PER_ZONE_NAMES = ["all", "outer"] + list(FIVE_CORNER_IDS)
+
 CSV_COLUMNS = [
     "row_id",
     "sheet",
+    "source_sheet_kind",
     "op_code",
     "hex_full",
     "location",
     "show",
     "effect_label",
     "inferred_label",
+    "primary_zone",
     "waveform_class_r",
     "waveform_class_g",
     "waveform_class_b",
@@ -257,50 +360,91 @@ CSV_COLUMNS = [
     "length_byte",
     "color_count",
     "vibration_byte",
+    "zone_layout",
+    "zone_layout_assumed",
+    "zone_layout_downgraded",
+    "zone_relationship",
+    "outer_chase_direction",
+    "zone_relationship_status",
     "notes",
+] + [
+    col
+    for z in PER_ZONE_NAMES
+    for col in (
+        f"waveform_class_r_{z}",
+        f"waveform_class_g_{z}",
+        f"waveform_class_b_{z}",
+        f"is_blend_{z}",
+        f"blend_style_{z}",
+        f"estimated_period_ms_{z}",
+        f"estimated_frequency_hz_{z}",
+        f"estimated_amplitude_{z}",
+        f"cycle_count_observed_{z}",
+    )
 ]
 
 
 def write_triage_csv(path: Path, reports: list[TrialReport]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         writer.writeheader()
         for r in reports:
             t = r.trial
-            writer.writerow(
-                {
-                    "row_id": t.row_id,
-                    "sheet": t.sheet,
-                    "op_code": t.op_code or "",
-                    "hex_full": t.hex_full,
-                    "location": t.location or "",
-                    "show": t.show or "",
-                    "effect_label": t.effect_label or "",
-                    "inferred_label": r.inferred_label or "",
-                    "waveform_class_r": r.waveform_class_r or "",
-                    "waveform_class_g": r.waveform_class_g or "",
-                    "waveform_class_b": r.waveform_class_b or "",
-                    "is_blend": "" if r.is_blend is None else str(r.is_blend).lower(),
-                    "blend_style": r.blend_style or "",
-                    "confidence": f"{r.confidence:.4f}",
-                    "status": r.status,
-                    "tail_bytes_summary": t.tail_bytes_summary(),
-                    "waveform_class_brightness": r.waveform_class_brightness or "",
-                    "freq_hz": "" if r.freq_hz is None else f"{r.freq_hz:.4f}",
-                    "capture_status": r.capture_status,
-                    "n_repeats": r.n_repeats,
-                    "re_run_recommended": str(r.re_run_recommended).lower(),
-                    "length_byte": "" if t.length_byte is None else t.length_byte,
-                    "color_count": "" if t.color_count is None else t.color_count,
-                    "vibration_byte": t.vibration_byte or "",
-                    "notes": "; ".join(r.notes),
-                }
-            )
+            row = {
+                "row_id": t.row_id,
+                "sheet": t.sheet,
+                "source_sheet_kind": t.source_sheet_kind,
+                "op_code": t.op_code or "",
+                "hex_full": t.hex_full,
+                "location": t.location or "",
+                "show": t.show or "",
+                "effect_label": t.effect_label or "",
+                "inferred_label": r.inferred_label or "",
+                "primary_zone": r.primary_zone,
+                "waveform_class_r": r.waveform_class_r or "",
+                "waveform_class_g": r.waveform_class_g or "",
+                "waveform_class_b": r.waveform_class_b or "",
+                "is_blend": "" if r.is_blend is None else str(r.is_blend).lower(),
+                "blend_style": r.blend_style or "",
+                "confidence": f"{r.confidence:.4f}",
+                "status": r.status,
+                "tail_bytes_summary": t.tail_bytes_summary(),
+                "waveform_class_brightness": r.waveform_class_brightness or "",
+                "freq_hz": "" if r.freq_hz is None else f"{r.freq_hz:.4f}",
+                "capture_status": r.capture_status,
+                "n_repeats": r.n_repeats,
+                "re_run_recommended": str(r.re_run_recommended).lower(),
+                "length_byte": "" if t.length_byte is None else t.length_byte,
+                "color_count": "" if t.color_count is None else t.color_count,
+                "vibration_byte": t.vibration_byte or "",
+                "zone_layout": r.zone_layout,
+                "zone_layout_assumed": str(r.zone_layout_assumed).lower(),
+                "zone_layout_downgraded": str(r.zone_layout_downgraded).lower(),
+                "zone_relationship": r.zone_relationship,
+                "outer_chase_direction": r.outer_chase_direction or "",
+                "zone_relationship_status": r.zone_relationship_status,
+                "notes": "; ".join(r.notes),
+            }
+            for z, zr in r.zone_results.items():
+                w = zr.waveforms
+                row[f"waveform_class_r_{z}"] = w["r"].waveform_class
+                row[f"waveform_class_g_{z}"] = w["g"].waveform_class
+                row[f"waveform_class_b_{z}"] = w["b"].waveform_class
+                row[f"is_blend_{z}"] = str(zr.blend.is_blend).lower()
+                row[f"blend_style_{z}"] = zr.blend.blend_style or ""
+                bri = w["brightness"]
+                row[f"estimated_period_ms_{z}"] = "" if not bri.estimated_period_ms else f"{bri.estimated_period_ms:.1f}"
+                row[f"estimated_frequency_hz_{z}"] = "" if not bri.estimated_frequency_hz else f"{bri.estimated_frequency_hz:.4f}"
+                row[f"estimated_amplitude_{z}"] = f"{bri.estimated_amplitude:.2f}"
+                row[f"cycle_count_observed_{z}"] = "" if bri.cycle_count_observed is None else f"{bri.cycle_count_observed:.2f}"
+            writer.writerow(row)
 
 
 def _needs_review(r: TrialReport, review_threshold: float) -> bool:
     if r.status in REVIEW_STATUSES:
+        return True
+    if r.zone_relationship_status == "disagree":
         return True
     if r.status == "unlabeled" and r.confidence < review_threshold:
         return True
@@ -386,14 +530,28 @@ def write_review_markdown(
                 tail = r.trial.tail_bytes_summary() or "(none)"
                 extra = "; ".join(r.notes) if r.notes else "—"
                 lines += [
-                    f"**`{r.trial.row_id}`** — waveform R/G/B/brightness: "
-                    f"{r.waveform_class_r}/{r.waveform_class_g}/{r.waveform_class_b}/"
-                    f"{r.waveform_class_brightness}; blend={r.is_blend} style={r.blend_style or '—'}",
+                    f"**`{r.trial.row_id}`** — layout `{r.zone_layout}` "
+                    f"{'(assumed) ' if r.zone_layout_assumed else ''}"
+                    f"primary={r.primary_zone} zone_rel={r.zone_relationship} "
+                    f"({r.zone_relationship_status}) chase={r.outer_chase_direction or '—'}",
                     "",
                     f"- Tail (context, not decoded): `{tail}`",
                     f"- Notes: {extra}",
                     "",
                 ]
+                if r.zone_results and r.zone_layout != "single":
+                    lines += [
+                        "| Zone | waveform | blend | conf | period_ms |",
+                        "|---|---|---|---|---|",
+                    ]
+                    for z, zr in r.zone_results.items():
+                        bri = zr.waveforms["brightness"]
+                        lines.append(
+                            f"| `{z}` | {bri.waveform_class} | {zr.blend.blend_style or zr.inferred_label} | "
+                            f"{zr.confidence:.2f} | "
+                            f"{'' if not bri.estimated_period_ms else f'{bri.estimated_period_ms:.0f}'} |"
+                        )
+                    lines.append("")
 
     path.write_text("\n".join(lines), encoding="utf-8")
     return len(flagged)
@@ -406,9 +564,15 @@ def summarize(reports: list[TrialReport]) -> dict[str, int]:
         "unlabeled": 0,
         "capture_failed": 0,
         "inconsistent_repeats": 0,
+        "zone_rel_agree": 0,
+        "zone_rel_disagree": 0,
+        "zone_rel_unlabeled": 0,
     }
     for r in reports:
         counts[r.status] = counts.get(r.status, 0) + 1
+        key = f"zone_rel_{r.zone_relationship_status}"
+        if key in counts:
+            counts[key] += 1
     return counts
 
 

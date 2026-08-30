@@ -32,6 +32,9 @@ XLSX_EFFECT_VOCAB = (
     "Unique",
     "Circle",
     "Glow",
+    "Solid",
+    "SW Twinkle",
+    "Flicker Chase",
 )
 
 IN_PHASE_DEG = 25.0
@@ -210,3 +213,103 @@ def labels_agree(inferred: str | None, labeled: str | None) -> bool:
     if not inferred or not labeled:
         return False
     return inferred.strip().lower() == labeled.strip().lower()
+
+
+@dataclass
+class ZoneRelationship:
+    zone_relationship: str
+    outer_chase_direction: str | None = None
+    lag_ms: float | None = None
+    correlation: float | None = None
+    phase_deg: float | None = None
+
+
+def analyze_zone_relationship(
+    series_by_zone: dict[str, tuple[np.ndarray, np.ndarray]],
+    layout: str,
+) -> ZoneRelationship:
+    """Cross-zone phase: center vs outer-mean (five-corner) or center vs outer.
+
+    series_by_zone maps zone name → (t_ms, brightness).
+    """
+    if layout == "single" or len(series_by_zone) < 2:
+        return ZoneRelationship("single_zone")
+
+    outer_ids = ["topLeft", "bottomLeft", "bottomRight", "topRight"]
+    if layout == "inner-outer":
+        if "center" not in series_by_zone or "outer" not in series_by_zone:
+            return ZoneRelationship("independent")
+        t, a = series_by_zone["center"]
+        _, b = series_by_zone["outer"]
+        n = min(len(a), len(b))
+        a, b = np.asarray(a[:n], float), np.asarray(b[:n], float)
+        t_u, a_u, dt = resample_series(t[:n], a)
+        _, b_u, _ = resample_series(t[:n], b)
+        n = min(len(a_u), len(b_u))
+        lag, corr = _xcorr_lag_ms(a_u[:n], b_u[:n], dt)
+        return _classify_rel(lag, corr, None, dt, a_u[:n])
+
+    if "center" not in series_by_zone:
+        return ZoneRelationship("independent")
+    t, center = series_by_zone["center"]
+    outer_series = [series_by_zone[z][1] for z in outer_ids if z in series_by_zone]
+    if not outer_series:
+        return ZoneRelationship("independent")
+    n = min(len(center), *(len(s) for s in outer_series))
+    outer_mean = np.mean(np.stack([np.asarray(s[:n], float) for s in outer_series], axis=0), axis=0)
+    t_u, c_u, dt = resample_series(t[:n], np.asarray(center[:n], float))
+    _, o_u, _ = resample_series(t[:n], outer_mean)
+    n2 = min(len(c_u), len(o_u))
+    lag, corr = _xcorr_lag_ms(c_u[:n2], o_u[:n2], dt)
+    direction = _outer_chase_direction(series_by_zone, dt)
+    return _classify_rel(lag, corr, direction, dt, c_u[:n2])
+
+
+def _classify_rel(lag_ms, corr, direction, dt, series) -> ZoneRelationship:
+    freq = None
+    from .waveform import estimate_freq_hz
+
+    t = np.arange(len(series)) * (dt if dt else 1.0)
+    freq = estimate_freq_hz(t, series)
+    phase = None
+    if freq and freq > 0:
+        phase = _wrap_deg(360.0 * lag_ms / (1000.0 / freq))
+    if corr >= 0.7 and (phase is None or abs(phase) < IN_PHASE_DEG):
+        rel = "synchronized"
+    elif corr >= 0.4:
+        rel = "async"
+    else:
+        rel = "independent"
+    return ZoneRelationship(
+        zone_relationship=rel,
+        outer_chase_direction=direction,
+        lag_ms=lag_ms,
+        correlation=corr,
+        phase_deg=phase,
+    )
+
+
+def _outer_chase_direction(series_by_zone, dt) -> str | None:
+    order = ["topLeft", "bottomLeft", "bottomRight", "topRight"]
+    present = [z for z in order if z in series_by_zone]
+    if len(present) < 3:
+        return None
+    # Lag of each corner vs the first; sort by lag to get a lead order.
+    t0, s0 = series_by_zone[present[0]]
+    lags = {present[0]: 0.0}
+    for z in present[1:]:
+        t, s = series_by_zone[z]
+        n = min(len(s0), len(s))
+        _, a, dt2 = resample_series(t0[:n], np.asarray(s0[:n], float))
+        _, b, _ = resample_series(t[:n], np.asarray(s[:n], float))
+        n2 = min(len(a), len(b))
+        lag, corr = _xcorr_lag_ms(a[:n2], b[:n2], dt2 or dt)
+        if corr < 0.35:
+            return None
+        lags[z] = lag
+    ranked = sorted(present, key=lambda z: lags[z])
+    # Require strictly increasing lags (a chase, not a tie).
+    vals = [lags[z] for z in ranked]
+    if any(b - a < 5 for a, b in zip(vals, vals[1:])):
+        return None
+    return "→".join(ranked)

@@ -130,43 +130,89 @@ class Camera:
 
 
 def pick_roi(device_index: int = 0) -> tuple[int, int, int, int]:
-    """Live preview; SPACE freezes a frame and opens cv2.selectROI."""
+    """Back-compat: pick the `all` ROI for the single layout."""
+    rois = pick_rois("single", device_index)
+    return rois["all"]
+
+
+def pick_rois(layout: str, device_index: int = 0) -> dict[str, tuple[int, int, int, int]]:
+    """Pick one ROI per zone in `layout`, then show a composite preview."""
+    from .zones import zone_names_for_layout
+
     cv2 = _cv2()
+    names = zone_names_for_layout(layout)
+    rois: dict[str, tuple[int, int, int, int]] = {}
     with Camera(device_index) as cam:
-        assert cam.cap is not None
-        print("Live preview: press SPACE to freeze and drag an ROI, or Q to cancel.")
-        frozen = None
-        while True:
-            frame = cam.grab()
-            if frame is None:
-                raise CameraError("camera returned no frames")
-            preview = frame.copy()
-            cv2.putText(
-                preview,
-                "SPACE=select ROI  Q=quit",
-                (12, 28),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 255),
-                2,
-                cv2.LINE_AA,
+        frozen = _freeze_frame(cam, cv2)
+        for name in names:
+            x, y, w, h = cv2.selectROI(
+                f"Select ROI: {name}",
+                frozen,
+                showCrosshair=True,
+                fromCenter=False,
             )
-            cv2.imshow("wave-classifier preview", preview)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), ord("Q"), 27):
-                cv2.destroyAllWindows()
-                raise CameraError("ROI selection cancelled")
-            if key in (ord(" "), 13):
-                frozen = frame
-                break
-        cv2.destroyWindow("wave-classifier preview")
-        x, y, w, h = cv2.selectROI("Select LED ROI", frozen, showCrosshair=True, fromCenter=False)
+            cv2.destroyWindow(f"Select ROI: {name}")
+            if w <= 0 or h <= 0:
+                raise CameraError(f"empty ROI for {name} — drag a rectangle around that LED")
+            rois[name] = (int(x), int(y), int(w), int(h))
+            print(f"ROI {name}: x={int(x)} y={int(y)} w={int(w)} h={int(h)}")
+        _warn_overlaps(rois)
+        composite = frozen.copy()
+        colors = [(0, 255, 255), (0, 255, 0), (255, 0, 0), (255, 0, 255), (0, 128, 255)]
+        for i, (name, (x, y, w, h)) in enumerate(rois.items()):
+            c = colors[i % len(colors)]
+            cv2.rectangle(composite, (x, y), (x + w, y + h), c, 2)
+            cv2.putText(composite, name, (x, max(12, y - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1, cv2.LINE_AA)
+        cv2.imshow("ROI composite — any key to save, Q to cancel", composite)
+        key = cv2.waitKey(0) & 0xFF
         cv2.destroyAllWindows()
-        if w <= 0 or h <= 0:
-            raise CameraError("empty ROI — drag a rectangle around the lit patch")
-        roi = (int(x), int(y), int(w), int(h))
-        print(f"saved ROI: x={roi[0]} y={roi[1]} w={roi[2]} h={roi[3]}")
-        return roi
+        if key in (ord("q"), ord("Q"), 27):
+            raise CameraError("ROI selection cancelled at composite preview")
+    return rois
+
+
+def _freeze_frame(cam: Camera, cv2):
+    print("Live preview: press SPACE to freeze, then drag each zone ROI. Q cancels.")
+    while True:
+        frame = cam.grab()
+        if frame is None:
+            raise CameraError("camera returned no frames")
+        preview = frame.copy()
+        cv2.putText(
+            preview,
+            "SPACE=freeze  Q=quit",
+            (12, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.imshow("wave-classifier preview", preview)
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord("q"), ord("Q"), 27):
+            cv2.destroyAllWindows()
+            raise CameraError("ROI selection cancelled")
+        if key in (ord(" "), 13):
+            cv2.destroyWindow("wave-classifier preview")
+            return frame
+
+
+def _warn_overlaps(rois: dict[str, tuple[int, int, int, int]]) -> None:
+    names = list(rois)
+    for i, a in enumerate(names):
+        for b in names[i + 1 :]:
+            if _rects_overlap(rois[a], rois[b]):
+                print(
+                    f"warning: ROI {a} overlaps {b} — expected for a wide `outer` box; "
+                    "otherwise re-run select-rois so each box lands on one LED"
+                )
+
+
+def _rects_overlap(a, b) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
 
 
 def write_samples_csv(path: Path, rows: list[tuple[float, float, float, float]]) -> None:
@@ -195,17 +241,24 @@ def read_samples_csv(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np
     )
 
 
-def capture_file_path(captures_dir: Path, trial: TrialRow, repeat_index: int | None = None) -> Path:
-    name = trial.row_id_safe if repeat_index is None else f"{trial.row_id_safe}__r{repeat_index}"
-    return captures_dir / trial.sheet_safe / f"{name}.csv"
+def capture_file_path(
+    captures_dir: Path,
+    trial: TrialRow,
+    zone_name: str = "all",
+    repeat_index: int | None = None,
+) -> Path:
+    parts = [trial.row_id_safe, zone_name]
+    if repeat_index is not None:
+        parts.append(f"r{repeat_index}")
+    return captures_dir / trial.sheet_safe / ("__".join(parts) + ".csv")
 
 
-def _grab_until(
+def _grab_until_zones(
     cam: Camera,
-    roi: tuple[int, int, int, int],
+    rois: dict[str, tuple[int, int, int, int]],
     duration_ms: float,
-) -> list[tuple[float, float, float, float]]:
-    samples: list[tuple[float, float, float, float]] = []
+) -> dict[str, list[tuple[float, float, float, float]]]:
+    samples: dict[str, list[tuple[float, float, float, float]]] = {n: [] for n in rois}
     start = time.monotonic()
     deadline = start + duration_ms / 1000.0
     while time.monotonic() < deadline:
@@ -213,9 +266,38 @@ def _grab_until(
         now = time.monotonic()
         if frame is None:
             continue
-        r, g, b = _mean_rgb(frame, roi)
-        samples.append(((now - start) * 1000.0, r, g, b))
+        t_ms = (now - start) * 1000.0
+        for name, roi in rois.items():
+            r, g, b = _mean_rgb(frame, roi)
+            samples[name].append((t_ms, r, g, b))
     return samples
+
+
+class MissingRoiSet(Exception):
+    def __init__(self, layouts: list[str]):
+        self.layouts = layouts
+        cmds = " ; ".join(f"python -m wave_classifier select-rois --zone-layout {lay}" for lay in layouts)
+        super().__init__(
+            "no saved ROI set for layout(s): "
+            + ", ".join(layouts)
+            + f" — run: {cmds}"
+        )
+
+
+def rois_for_layout(cfg_rois: dict, layout: str) -> dict[str, tuple[int, int, int, int]] | None:
+    """Look up [capture.rois.<layout>] ; fall back to legacy capture.roi as single.all."""
+    if not cfg_rois:
+        return None
+    block = cfg_rois.get(layout)
+    if isinstance(block, dict) and block:
+        out = {}
+        for name, val in block.items():
+            try:
+                out[name] = _roi_tuple(val)
+            except (TypeError, ValueError, CameraError):
+                return None
+        return out or None
+    return None
 
 
 def capture_trial(
@@ -224,39 +306,48 @@ def capture_trial(
     trial: TrialRow,
     *,
     captures_dir: Path,
-    roi: tuple[int, int, int, int],
+    rois: dict[str, tuple[int, int, int, int]],
     hold_ms: int,
     settle_margin_ms: int,
     repeat_index: int | None = None,
-) -> tuple[Path | None, str, int, bool, str | None]:
+    resume: bool = False,
+) -> tuple[list[Path], str, int, bool, str | None]:
     from .wandsim_client import WandSimError, show_single, stop, wait_show_started
 
-    path = capture_file_path(captures_dir, trial, repeat_index)
+    paths_expected = [capture_file_path(captures_dir, trial, z, repeat_index) for z in rois]
+    if resume and all(p.is_file() for p in paths_expected):
+        return paths_expected, "ok", 0, True, "resume: skipped (per-zone CSVs already present)"
+
     show_started = False
     try:
         stop(session.base_url)
         show_single(session.base_url, trial.hex_full, hold_ms)
         show_started = wait_show_started(session.base_url)
-        samples = _grab_until(cam, roi, hold_ms + settle_margin_ms)
+        samples = _grab_until_zones(cam, rois, hold_ms + settle_margin_ms)
     except WandSimError as exc:
-        return None, "wandsim_error", 0, False, str(exc)
+        return [], "wandsim_error", 0, False, str(exc)
     except CameraError as exc:
-        return None, "camera_error", 0, False, str(exc)
+        return [], "camera_error", 0, False, str(exc)
     finally:
         try:
             stop(session.base_url)
         except Exception:
             pass
 
-    if len(samples) < 8:
-        return None, "too_few_frames", len(samples), show_started, f"only {len(samples)} frames"
-    write_samples_csv(path, samples)
-    if cam.measured_fps is None and samples:
-        elapsed = (samples[-1][0] - samples[0][0]) / 1000.0
-        if elapsed > 0:
-            cam.measured_fps = (len(samples) - 1) / elapsed
+    n_frames = min((len(v) for v in samples.values()), default=0)
+    if n_frames < 8:
+        return [], "too_few_frames", n_frames, show_started, f"only {n_frames} frames"
+    paths: list[Path] = []
+    for zone, rows in samples.items():
+        path = capture_file_path(captures_dir, trial, zone, repeat_index)
+        write_samples_csv(path, rows)
+        paths.append(path)
+        if cam.measured_fps is None and rows:
+            elapsed = (rows[-1][0] - rows[0][0]) / 1000.0
+            if elapsed > 0:
+                cam.measured_fps = (len(rows) - 1) / elapsed
     note = None if show_started else "showActive never confirmed; captured anyway (steps=1)"
-    return path, "ok", len(samples), show_started, note
+    return paths, "ok", n_frames, show_started, note
 
 
 def run_captures(
@@ -265,31 +356,52 @@ def run_captures(
     base_url: str,
     captures_dir: Path,
     device_index: int,
-    roi,
+    rois_by_layout: dict[str, dict[str, tuple[int, int, int, int]]],
     hold_ms: int,
     settle_margin_ms: int,
     gap_seconds: float,
     repeats: int,
     target_fps: float | None = None,
+    resume: bool = False,
     on_trial: Callable[[int, int, TrialRow], None] | None = None,
 ) -> list[CaptureResult]:
     from .wandsim_client import WandSimSession
+    from .zones import resolve_zone_layout, zone_names_for_layout
 
-    roi_t = _roi_tuple(roi)
     results: list[CaptureResult] = []
     n = len(trial_rows)
+    probe_rois = next(iter(rois_by_layout.values()), {"all": (0, 0, 32, 32)})
     with Camera(device_index, target_fps=target_fps) as cam, WandSimSession(base_url) as session:
-        if cam.measured_fps is None:
-            # One short grab to log fps before the first /show.
-            probe = _grab_until(cam, roi_t, 400)
-            if len(probe) >= 2:
-                elapsed = (probe[-1][0] - probe[0][0]) / 1000.0
-                if elapsed > 0:
-                    cam.measured_fps = (len(probe) - 1) / elapsed
-                    print(f"measured fps: {cam.measured_fps:.1f}")
+        probe = _grab_until_zones(cam, {k: probe_rois[k] for k in list(probe_rois)[:1]}, 400)
+        rows = next(iter(probe.values()), [])
+        if len(rows) >= 2:
+            elapsed = (rows[-1][0] - rows[0][0]) / 1000.0
+            if elapsed > 0:
+                cam.measured_fps = (len(rows) - 1) / elapsed
+                print(f"measured fps: {cam.measured_fps:.1f}")
         for i, trial in enumerate(trial_rows):
             if on_trial:
                 on_trial(i, n, trial)
+            zl = resolve_zone_layout(trial)
+            layout = zl.layout
+            downgraded = False
+            rois = rois_by_layout.get(layout)
+            if rois is None and layout == "five-corner" and rois_by_layout.get("inner-outer"):
+                print(
+                    f"warning: {trial.row_id} needs five-corner ROIs; falling back to inner-outer "
+                    "(zone_layout_downgraded). Prefer select-rois --zone-layout five-corner."
+                )
+                layout = "inner-outer"
+                rois = rois_by_layout["inner-outer"]
+                downgraded = True
+                trial.zone_layout_downgraded = True
+            if rois is None:
+                raise MissingRoiSet([zl.layout])
+            needed = set(zone_names_for_layout(layout))
+            if not needed.issubset(rois.keys()):
+                missing = sorted(needed - set(rois.keys()))
+                raise MissingRoiSet([f"{layout} (missing {missing})"])
+            use = {k: rois[k] for k in zone_names_for_layout(layout)}
             paths: list[Path] = []
             n_frames: list[int] = []
             last_status = "ok"
@@ -298,22 +410,22 @@ def run_captures(
             try:
                 for r in range(repeats):
                     repeat_index = r if repeats > 1 else None
-                    path, status, frames, started, err = capture_trial(
+                    pths, status, frames, started, err = capture_trial(
                         cam,
                         session,
                         trial,
                         captures_dir=captures_dir,
-                        roi=roi_t,
+                        rois=use,
                         hold_ms=hold_ms,
                         settle_margin_ms=settle_margin_ms,
                         repeat_index=repeat_index,
+                        resume=resume,
                     )
                     last_status = status
                     last_error = err
                     show_started = show_started or started
                     n_frames.append(frames)
-                    if path is not None:
-                        paths.append(path)
+                    paths.extend(pths)
                     if r + 1 < repeats:
                         time.sleep(gap_seconds)
             except KeyboardInterrupt:
@@ -347,31 +459,43 @@ def run_captures(
     return results
 
 
+def parse_capture_stem(stem: str, row_id_safe: str) -> tuple[str, int | None]:
+    """Return (zone_name, repeat_index) from a capture filename stem."""
+    if stem == row_id_safe:
+        return "all", None
+    prefix = row_id_safe + "__"
+    if not stem.startswith(prefix):
+        return "all", None
+    rest = stem[len(prefix):]
+    parts = rest.split("__")
+    zone = "all"
+    rep = None
+    if parts and parts[-1].startswith("r") and parts[-1][1:].isdigit():
+        rep = int(parts[-1][1:])
+        parts = parts[:-1]
+    if parts:
+        zone = parts[0]
+    return zone, rep
+
+
 def find_capture_csvs(captures_dir: Path, trial: TrialRow) -> list[Path]:
-    """Match `row_id.csv` and `row_id__rN.csv` for report-only."""
+    """Match per-zone CSVs, plus legacy single-file names from the original spec."""
     folder = captures_dir / trial.sheet_safe
-    if not folder.is_dir():
-        # Duplicates may have been captured under the first sheet's folder.
-        if trial.capture_source_row_id and trial.capture_source_row_id != trial.row_id:
-            source_safe = fs_safe(trial.capture_source_row_id)
-            found = sorted(captures_dir.glob(f"*/{source_safe}.csv")) + sorted(
-                captures_dir.glob(f"*/{source_safe}__r*.csv")
-            )
-            return _dedupe_paths(found)
-        return []
-    single = folder / f"{trial.row_id_safe}.csv"
-    repeats = sorted(folder.glob(f"{trial.row_id_safe}__r*.csv"))
-    if repeats:
-        return repeats
-    if single.is_file():
-        return [single]
-    if trial.capture_source_row_id and trial.capture_source_row_id != trial.row_id:
-        source_safe = fs_safe(trial.capture_source_row_id)
-        found = sorted(captures_dir.glob(f"*/{source_safe}.csv")) + sorted(
-            captures_dir.glob(f"*/{source_safe}__r*.csv")
-        )
-        return _dedupe_paths(found)
-    return []
+    source_safe = fs_safe(trial.capture_source_row_id or trial.row_id)
+    keys = {trial.row_id_safe, source_safe}
+    found: list[Path] = []
+    search_dirs = [folder] if folder.is_dir() else []
+    if not search_dirs or source_safe != trial.row_id_safe:
+        search_dirs = list(captures_dir.glob("*")) if captures_dir.is_dir() else []
+    for d in search_dirs:
+        if not d.is_dir():
+            continue
+        for p in d.glob("*.csv"):
+            for key in keys:
+                if p.stem == key or p.stem.startswith(key + "__"):
+                    found.append(p)
+                    break
+    return _dedupe_paths(sorted(found))
 
 
 def _dedupe_paths(paths: list[Path]) -> list[Path]:

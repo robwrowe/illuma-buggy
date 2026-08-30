@@ -24,7 +24,8 @@ DISNEY_ID = 0xE9
 VIB_HIGH_NIBBLE = 0xB
 TAIL_COL_COUNT = 17  # T00 .. T16
 
-# Closed effect vocabulary from the xlsx INSTRUCTIONS sheet (display only here).
+# Closed effect vocabulary from the xlsx INSTRUCTIONS sheet, plus labels from
+# the second labeled sheet (Solid / SW Twinkle / Flicker Chase).
 XLSX_EFFECT_LABELS = (
     "Chase",
     "Shimmer",
@@ -38,7 +39,15 @@ XLSX_EFFECT_LABELS = (
     "Unique",
     "Circle",
     "Glow",
+    "Solid",
+    "SW Twinkle",
+    "Flicker Chase",
 )
+
+SOURCE_OP_CODES_CAPTURED = "op_codes_captured"
+SOURCE_SECOND_LABELED = "second_labeled_sheet"
+SOURCE_KEYED_NOTES = "groundtruth_keyed_notes"
+SOURCE_BUILDER = "builder"
 
 
 def normalize_hex(value: str) -> str:
@@ -54,6 +63,25 @@ def hex_to_bytes(value: str) -> bytes:
     return bytes.fromhex(h)
 
 
+def ensure_hex_full(hex_str: str) -> tuple[str, bool]:
+    """Return (8301-prefixed hex, envelope_assumed).
+
+    Payload-only E9-leading rows get 8301E100 prepended so POST /show can
+    take them. /send is not used for capture: it blocks for the hold time,
+    so the webcam would start after the effect had already ended.
+    """
+    h = normalize_hex(hex_str)
+    if not h:
+        return "", False
+    if h.startswith("8301"):
+        return h, False
+    if h.startswith("E1") or h.startswith("E2"):
+        return "8301" + h, False
+    if h.startswith("E9"):
+        return "8301E100" + h, True
+    return "8301E100" + h, True
+
+
 def _norm_header(value: Any) -> str:
     return re.sub(r"[^a-z0-9#]+", "", str(value or "").strip().lower())
 
@@ -65,6 +93,22 @@ def _cell_str(value: Any) -> str | None:
         value = int(value)
     text = str(value).strip()
     return text if text else None
+
+
+def _cell_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace("%", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def _cell_int(value: Any) -> int | None:
@@ -90,6 +134,17 @@ def _cell_int(value: Any) -> int | None:
 
 def fs_safe(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "row"
+
+
+@dataclass
+class ZoneLayoutHint:
+    five_zones: str | None = None
+    sync: str | None = None
+    layout: str | None = None
+    direction: str | None = None
+    n_zones: int | None = None
+    cycle_length: float | None = None
+    n_cycles: float | None = None
 
 
 @dataclass
@@ -215,6 +270,10 @@ class TrialRow:
     capture_source_row_id: str | None = None
     duplicate_count: int = 1
     decoded: DecodedPacket | None = None
+    zone_layout_hint: ZoneLayoutHint = field(default_factory=ZoneLayoutHint)
+    source_sheet_kind: str = SOURCE_OP_CODES_CAPTURED
+    envelope_assumed: bool = False
+    zone_layout_downgraded: bool = False
 
     @property
     def sheet_safe(self) -> str:
@@ -238,12 +297,19 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "f2": ("f2", "colorformat2", "fmt2"),
     "effect": ("effect", "effectlabel", "label"),
     "description": ("description", "desc", "notes"),
-    "hex": ("hex", "hexfull", "payload", "advertisement"),
+    "hex": ("hex", "hexfull", "payload", "advertisement", "effectivecode"),
     "location": ("location", "loc", "park"),
     "show": ("show", "showname"),
     "date": ("date", "captured", "capturedat"),
     "start": ("start", "tailstart", "tailstartindex"),
     "vib": ("vib", "vibration", "vibrationbyte"),
+    "five_zones": ("5zones", "fivezones", "5zone"),
+    "sync": ("sync",),
+    "layout": ("layout",),
+    "direction": ("direction", "dir"),
+    "n_zones": ("ofzones", "numzones", "nzones", "zones", "#ofzones"),
+    "cycle_length": ("cyclelength", "cyclelen"),
+    "n_cycles": ("ofcycles", "ncycles", "cycles", "#ofcycles"),
 }
 
 
@@ -269,6 +335,8 @@ def _find_header_row(rows: Iterable[tuple[int, tuple[Any, ...]]]) -> tuple[int, 
         if "hex" in norms and ("effect" in norms or "opcode" in norms or "op_code" in norms):
             return row_index, headers
         if "hex" in norms and "#" in norms:
+            return row_index, headers
+        if "effectivecode" in norms and "effect" in norms:
             return row_index, headers
     return None
 
@@ -344,6 +412,24 @@ def _parse_trial(sheet: str, row_index: int, values: tuple[Any, ...], colmap: di
             continue
         tail_bytes.append((t_i, raw))
 
+    color_count = _cell_int(_get(values, colmap, "color_count"))
+    if not tail_bytes:
+        tail_bytes = tail_bytes_from_decoded(decoded, color_count)
+
+    hint = ZoneLayoutHint(
+        five_zones=_cell_str(_get(values, colmap, "five_zones")),
+        sync=_cell_str(_get(values, colmap, "sync")),
+        layout=_cell_str(_get(values, colmap, "layout")),
+        direction=_cell_str(_get(values, colmap, "direction")),
+        n_zones=_cell_int(_get(values, colmap, "n_zones")),
+        cycle_length=_cell_float(_get(values, colmap, "cycle_length")),
+        n_cycles=_cell_float(_get(values, colmap, "n_cycles")),
+    )
+
+    full, env_assumed = ensure_hex_full(hex_raw)
+    if env_assumed:
+        notes.append("envelope_assumed: prepended 8301E100 (payload-only hex)")
+
     return TrialRow(
         sheet=sheet,
         row_id=f"{sheet}:{row_index}",
@@ -351,13 +437,13 @@ def _parse_trial(sheet: str, row_index: int, values: tuple[Any, ...], colmap: di
         op_code=_cell_str(_get(values, colmap, "opcode")),
         length_byte=length_byte,
         derived_payload_length=derived,
-        color_count=_cell_int(_get(values, colmap, "color_count")),
+        color_count=color_count,
         color_format_1=_cell_str(_get(values, colmap, "f1")),
         color_format_2=_cell_str(_get(values, colmap, "f2")),
         effect_label=effect,
         description=_cell_str(_get(values, colmap, "description")),
-        hex_full=hex_raw,
-        hex_key=hex_key,
+        hex_full=hex_raw if not env_assumed else full,
+        hex_key=full,
         location=_cell_str(_get(values, colmap, "location")),
         show=_cell_str(_get(values, colmap, "show")),
         date=_cell_str(_get(values, colmap, "date")),
@@ -366,6 +452,8 @@ def _parse_trial(sheet: str, row_index: int, values: tuple[Any, ...], colmap: di
         vibration_byte=vib_xlsx,
         notes=notes,
         decoded=decoded,
+        zone_layout_hint=hint,
+        envelope_assumed=env_assumed,
     )
 
 
@@ -435,19 +523,27 @@ def load_trials(xlsx_path: str | Path) -> TrialSet:
                 if row.hex_key not in seen_hex:
                     trials.append(row)
                     seen_hex.add(row.hex_key)
+
+        consumed = set(efx_names)
+        if unique_name:
+            consumed.add(unique_name)
+        for name in wb.sheetnames:
+            if name in consumed:
+                continue
+            extra = _iter_sheet_trials(wb[name], name)
+            if not extra:
+                continue
+            # Header-detected second labeled sheet (Effective Code / Effect / Description).
+            if extra[0].envelope_assumed or extra[0].source_sheet_kind == SOURCE_SECOND_LABELED:
+                for row in extra:
+                    row.source_sheet_kind = SOURCE_SECOND_LABELED
+                    if not row.tail_bytes and row.decoded:
+                        row.tail_bytes = tail_bytes_from_decoded(row.decoded, row.color_count)
+                    trials.append(row)
     finally:
         wb.close()
 
-    by_hex: dict[str, list[TrialRow]] = {}
-    for t in trials:
-        by_hex.setdefault(t.hex_key, []).append(t)
-    for group in by_hex.values():
-        source = group[0].row_id
-        for t in group:
-            t.capture_source_row_id = source
-            t.duplicate_count = len(group)
-
-    return TrialSet(trials=trials, by_hex=by_hex)
+    return _retag(trials)
 
 
 def filter_trials(
@@ -475,7 +571,141 @@ def filter_trials(
                 break
         allowed = set(unique_keys)
         trials = [t for t in trials if t.hex_key in allowed]
+    return _retag(trials)
+
+
+def _retag(trials: list[TrialRow]) -> TrialSet:
     by_hex: dict[str, list[TrialRow]] = {}
     for t in trials:
         by_hex.setdefault(t.hex_key, []).append(t)
+    for group in by_hex.values():
+        source = group[0].row_id
+        for t in group:
+            t.capture_source_row_id = source
+            t.duplicate_count = len(group)
     return TrialSet(trials=trials, by_hex=by_hex)
+
+
+def merge_trial_sources(*sets: TrialSet) -> TrialSet:
+    """Concatenate sources; capture once per hex_key, keep every labeled row."""
+    trials: list[TrialRow] = []
+    for s in sets:
+        if s is None:
+            continue
+        trials.extend(s.trials)
+    return _retag(trials)
+
+
+def tail_bytes_from_decoded(decoded: DecodedPacket, color_count: int | None) -> list[tuple[int, str]]:
+    """Post-color-block bytes (minus vib) as T00.. pairs. Used when the sheet has no T columns."""
+    after = decoded.after_company_id
+    if not after:
+        return []
+    i = 0
+    if after and after[0] in ENV_BYTES:
+        i = 1
+        if i < len(after) and after[i] == 0x00:
+            i += 1
+    if i < len(after) and after[i] == DISNEY_ID:
+        i += 1
+    if i < len(after):
+        i += 1  # len
+    if i < len(after) and after[i] == 0x00:
+        i += 1
+    if i < len(after):
+        i += 1  # tb
+    fmt = after[i] if i < len(after) else None
+    if i < len(after):
+        i += 1
+    rest = list(after[i:])
+    if decoded.vibration_byte is not None and rest and rest[-1] == decoded.vibration_byte:
+        rest = rest[:-1]
+    n_color = 1 if color_count is None else max(int(color_count), 0)
+    if fmt in (0x0F, 0x0E):
+        rest = rest[n_color:]
+    elif fmt == 0xD2:
+        consumed = 0
+        colors = 0
+        target = n_color if color_count is not None else 99
+        while consumed + 4 <= len(rest) and rest[consumed] == 0x55 and colors < target:
+            consumed += 4
+            colors += 1
+        rest = rest[consumed:]
+    return [(idx, f"{b:02X}") for idx, b in enumerate(rest)]
+
+
+def trial_from_dict(data: dict[str, Any], *, source_kind: str = SOURCE_BUILDER) -> TrialRow:
+    hex_raw = str(data.get("hex_full") or data.get("hex") or "")
+    full, env_assumed = ensure_hex_full(hex_raw)
+    decoded = decode_hex_structure(full or hex_raw)
+    raw_tail = data.get("tail_bytes") or []
+    tail: list[tuple[int, str]] = []
+    for item in raw_tail:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            tail.append((int(item[0]), str(item[1])))
+        elif isinstance(item, dict):
+            tail.append((int(item.get("index", 0)), str(item.get("hex", ""))))
+    if not tail and decoded:
+        tail = tail_bytes_from_decoded(decoded, data.get("color_count"))
+    hint_raw = data.get("zone_layout_hint") or {}
+    hint = ZoneLayoutHint(
+        five_zones=hint_raw.get("five_zones"),
+        sync=hint_raw.get("sync"),
+        layout=hint_raw.get("layout"),
+        direction=hint_raw.get("direction"),
+        n_zones=hint_raw.get("n_zones"),
+        cycle_length=hint_raw.get("cycle_length"),
+        n_cycles=hint_raw.get("n_cycles"),
+    ) if isinstance(hint_raw, dict) else ZoneLayoutHint()
+    notes = list(data.get("notes") or [])
+    if env_assumed:
+        notes.append("envelope_assumed: prepended 8301E100 (payload-only hex)")
+    sheet = str(data.get("sheet") or "builder")
+    row_index = int(data.get("row_index") or 0)
+    return TrialRow(
+        sheet=sheet,
+        row_id=str(data.get("row_id") or f"{sheet}:{row_index}"),
+        row_index=row_index,
+        op_code=data.get("op_code"),
+        length_byte=data.get("length_byte") if data.get("length_byte") is not None else decoded.length_byte,
+        derived_payload_length=data.get("derived_payload_length") if data.get("derived_payload_length") is not None else decoded.derived_payload_length,
+        color_count=data.get("color_count"),
+        color_format_1=data.get("color_format_1"),
+        color_format_2=data.get("color_format_2"),
+        effect_label=data.get("effect_label"),
+        description=data.get("description"),
+        hex_full=full if env_assumed else hex_raw,
+        hex_key=full,
+        location=data.get("location"),
+        show=data.get("show"),
+        date=data.get("date"),
+        tail_start_index=data.get("tail_start_index"),
+        tail_bytes=tail,
+        vibration_byte=data.get("vibration_byte"),
+        notes=notes,
+        decoded=decoded,
+        zone_layout_hint=hint,
+        source_sheet_kind=str(data.get("source_sheet_kind") or source_kind),
+        envelope_assumed=env_assumed or bool(data.get("envelope_assumed")),
+    )
+
+
+def load_builder_trials(path: str | Path) -> TrialSet:
+    """Load one JSON object, a JSON array, or a directory of *.json TrialRow records."""
+    import json
+
+    p = Path(path)
+    files: list[Path] = []
+    if p.is_dir():
+        files = sorted(p.glob("*.json"))
+    elif p.is_file():
+        files = [p]
+    else:
+        files = sorted(Path().glob(str(path)))
+    trials: list[TrialRow] = []
+    for f in files:
+        data = json.loads(f.read_text(encoding="utf-8"))
+        rows = data if isinstance(data, list) else [data]
+        for row in rows:
+            trials.append(trial_from_dict(row, source_kind=SOURCE_BUILDER))
+    return _retag(trials)
