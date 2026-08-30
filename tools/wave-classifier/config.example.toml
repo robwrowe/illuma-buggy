@@ -1,0 +1,19 @@
+[wandsim]
+# Or the board's printed IP. WiFi/IP is not persisted across WandSimulator reboots —
+# re-run `wifi <ssid> <password>` on the board after every power cycle. No default
+# IP is hardcoded in the tool; this hostname is an example only.
+base_url = "http://illuma-wandsim.local"
+
+[capture]
+device_index = 0
+roi = [0, 0, 100, 100]       # set via `select-roi`, overwritten on save
+settle_margin_ms = 500       # extra grab time after hold_ms to cover /show dispatch latency
+gap_seconds = 1.5            # pause between trials so the light actually stops
+
+[classify]
+# Amplitude below this fraction of the 0–255 channel range is treated as no-signal ("flat").
+noise_floor_pct = 0.03
+# Template vs. observed Pearson correlation must clear this, else class = "irregular".
+min_template_correlation = 0.6
+# Rows with confidence below this land in review-needed-*.md even if they "agree".
+review_confidence_threshold = 0.6

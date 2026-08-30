@@ -14,3 +14,9 @@ firmware/**/*.bin      # compiled artifacts
 
 # Local rules seed for scripts/embed_rules.py (generated EmbeddedRules.h stays tracked as placeholder)
 firmware/StrollerController/embedded_rules.json
+
+# Webcam waveform classifier — raw captures and generated reports
+tools/wave-classifier/captures/
+tools/wave-classifier/reports/
+tools/wave-classifier/.venv/
+tools/wave-classifier/**/__pycache__/
