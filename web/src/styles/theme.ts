@@ -6,10 +6,11 @@ import {
   Input,
   Paper,
   SegmentedControl,
+  Table,
   type CSSVariablesResolver,
   type VariantColorsResolver,
 } from '@mantine/core';
-import { darkColors } from './tokens';
+import { darkColors, lightColors } from './tokens';
 
 const variantColorResolver: VariantColorsResolver = (input) => {
   const defaultResolvedColors = defaultVariantColorsResolver(input);
@@ -88,7 +89,7 @@ export const appTheme = createTheme({
     }),
     Paper: Paper.extend({
       styles: {
-        root: { backgroundColor: 'var(--mantine-color-dark-9)', borderColor: 'var(--primary)' },
+        root: { backgroundColor: 'var(--surface)', borderColor: 'var(--primary)' },
       },
     }),
     Input: Input.extend({
@@ -107,7 +108,19 @@ export const appTheme = createTheme({
     }),
     SegmentedControl: SegmentedControl.extend({
       defaultProps: { color: 'violet.6' },
-      styles: { root: { backgroundColor: 'var(--mantine-color-violet-9)' } },
+      styles: {
+        root: {
+          backgroundColor: 'light-dark(var(--mantine-color-violet-1), var(--mantine-color-violet-9))',
+        },
+      },
+    }),
+    Table: Table.extend({
+      styles: {
+        table: {
+          '--table-striped-color': 'var(--table-stripe)',
+          '--table-highlight-on-hover-color': 'var(--table-hover)',
+        },
+      },
     }),
   },
   variantColorResolver,
@@ -116,13 +129,23 @@ export const appTheme = createTheme({
 export const cssVariablesResolver: CSSVariablesResolver = (_theme) => {
   return {
     variables: {},
-    light: {},
+    light: {
+      '--mantine-color-body': lightColors.background,
+      '--mantine-color-text': lightColors.textPrimary,
+      '--mantine-color-dimmed': lightColors.textSecondary,
+      '--mantine-color-anchor': lightColors.primary,
+      '--mantine-color-surface': lightColors.surface,
+      '--table-striped-color': '#ddd6fe',
+      '--table-highlight-on-hover-color': '#c4b5fd',
+    },
     dark: {
       '--mantine-color-body': darkColors.background,
       '--mantine-color-text': darkColors.textPrimary,
       '--mantine-color-dimmed': darkColors.textSecondary,
       '--mantine-color-anchor': darkColors.primary,
       '--mantine-color-surface': darkColors.surfaceAlt,
+      '--table-striped-color': '#2a2a48',
+      '--table-highlight-on-hover-color': '#32325a',
     },
   };
-}
+};

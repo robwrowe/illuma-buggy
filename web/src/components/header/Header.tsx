@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Box,
   Burger,
   Button,
@@ -11,11 +12,32 @@ import {
   Stack,
   Tabs,
   Title,
+  Tooltip,
+  useComputedColorScheme,
+  useMantineColorScheme,
 } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import classes from './HeaderTabs.module.css';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { APP_TABS, tabFromPathname } from '../../lib/routes';
+
+function ColorSchemeToggle() {
+  const { setColorScheme } = useMantineColorScheme();
+  const computed = useComputedColorScheme('dark');
+  const next = computed === 'dark' ? 'light' : 'dark';
+  return (
+    <Tooltip label={next === 'light' ? 'Light theme' : 'Dark theme'}>
+      <ActionIcon
+        variant="default"
+        size="md"
+        onClick={() => setColorScheme(next)}
+        aria-label="Toggle color scheme"
+      >
+        {computed === 'dark' ? '☀' : '☾'}
+      </ActionIcon>
+    </Tooltip>
+  );
+}
 
 export function HeaderTabs({
   openProfiles,
@@ -38,6 +60,7 @@ export function HeaderTabs({
 
   const headerActions = (
     <>
+      <ColorSchemeToggle />
       <Button size="xs" onClick={() => { close(); setShowBoardSync(true); }}>
         📡 Board
       </Button>

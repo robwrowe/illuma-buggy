@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Stack, Text } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { useNavigate } from 'react-router-dom';
 import { normalizePreset } from '../../lib/ble/mbMapping';
 import { duplicateTaggedName, itemMatchesTagFilter } from '../../lib/tags';
@@ -24,6 +25,7 @@ export function PresetsTab({ data, update }) {
   const [ptab, setPtab] = useState('effect');
   const [search, setSearch] = useState('');
   const [activeTag, setActiveTag] = useState<any>(null);
+  const [sortMode, setSortMode] = useLocalStorage({ key: 'illuma-preset-sort', defaultValue: 'az' });
   const [showCapture, setShowCapture] = useState(false);
   const [captureOpts, setCaptureOpts] = useState(() => ({ ...DEFAULT_WLED_CAPTURE_OPTS }));
   const [captureUpdateMemory, setCaptureUpdateMemory] = useState(true);
@@ -34,10 +36,22 @@ export function PresetsTab({ data, update }) {
   const segmentMaps = data.mbMapping?.segmentMaps || [];
   const mb = data.mbMapping;
 
-  const filteredPresets = useMemo(
-    () => (data.presets || []).filter((p) => itemMatchesTagFilter(p, search, activeTag)),
-    [data.presets, search, activeTag],
-  );
+  const filteredPresets = useMemo(() => {
+    const list = (data.presets || []).filter((p) => itemMatchesTagFilter(p, search, activeTag));
+    const byName = (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+    const byCreated = (a, b) => (a.createdAt || 0) - (b.createdAt || 0);
+    switch (sortMode) {
+      case 'za':
+        return [...list].sort((a, b) => byName(b, a));
+      case 'old':
+        return [...list].sort(byCreated);
+      case 'new':
+        return [...list].sort((a, b) => byCreated(b, a));
+      case 'az':
+      default:
+        return [...list].sort(byName);
+    }
+  }, [data.presets, search, activeTag, sortMode]);
 
   const wled = usePresetWled(data, sel);
 
@@ -163,6 +177,8 @@ export function PresetsTab({ data, update }) {
             onDuplicate={duplicatePreset}
             onTest={wled.testPreset}
             onOpenShotBox={() => navigate('/shotbox')}
+            sortMode={sortMode}
+            onSortModeChange={setSortMode}
           />
         }
         detail={

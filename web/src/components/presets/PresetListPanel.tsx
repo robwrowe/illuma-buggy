@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Group, Paper, ScrollArea, Stack, Text, TextInput } from '@mantine/core';
+import { ActionIcon, Box, Group, Paper, ScrollArea, Select, Stack, Text, TextInput } from '@mantine/core';
 import { TagChipRow } from '../shared/TagChipRow';
 import { TagFilterBar } from '../shared/TagFilterBar';
 import { AppButton } from '../shared/styles';
@@ -23,6 +23,8 @@ export function PresetListPanel({
   onDuplicate,
   onTest,
   onOpenShotBox,
+  sortMode,
+  onSortModeChange,
 }) {
   return (
     <Box
@@ -115,6 +117,20 @@ export function PresetListPanel({
         activeTag={activeTag}
         onActiveTagChange={onActiveTagChange}
       />
+      <Box px="sm" pb="xs" style={{ borderBottom: '1px solid var(--border)' }}>
+        <Select
+          size="xs"
+          value={sortMode}
+          onChange={(v) => onSortModeChange(v || 'az')}
+          allowDeselect={false}
+          data={[
+            { value: 'az', label: 'A → Z' },
+            { value: 'za', label: 'Z → A' },
+            { value: 'old', label: 'Oldest → Newest' },
+            { value: 'new', label: 'Newest → Oldest' },
+          ]}
+        />
+      </Box>
 
       <ScrollArea style={{ flex: 1 }}>
         {presets.length === 0 && (

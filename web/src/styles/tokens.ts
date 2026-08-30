@@ -23,6 +23,25 @@ export const darkColors = {
   header: '#0a0a0f',
 };
 
+export const lightColors = {
+  background: '#f4f4f8',
+  surface: '#ffffff',
+  surfaceAlt: '#e8e8f0',
+  border: '#dddde8',
+  borderFocus: '#c0c0d0',
+  primary: '#7c3aed',
+  primaryDim: '#7c3aed22',
+  success: '#16a34a',
+  warning: '#d97706',
+  danger: '#dc2626',
+  indoor: '#2563eb',
+  textPrimary: '#0a0a1a',
+  textSecondary: '#4a4a6a',
+  textMuted: '#9090b0',
+  tabBar: '#ffffff',
+  header: '#ffffff',
+};
+
 /** @deprecated Prefer darkColors — kept for var(--surface) etc. in map/sidebar */
 export const colors = {
   bg: darkColors.background,
