@@ -1,12 +1,8 @@
-"""Two-channel phase / crossover detection for Cross-saw vs Cross-fade.
+"""Two-channel phase / crossover detection and spatial effect inference.
 
-Does not try to be a general clustering system. Maps onto the xlsx INSTRUCTIONS
-sheet vocabulary where the evidence is clean; otherwise returns "unclassified"
-with the raw numbers attached.
-
-xlsx labels used here: Cross-saw, Cross-fade, Strobe, Pulse, Chase, Shimmer.
-Pulse vs Heartbeat is a style-flag bit (F-2026-08-17-01), not something a
-webcam brightness trace reliably separates — those stay conservative.
+Maps onto the living effect vocabulary (Chase / Strobe / Shimmer / …). Chase is
+spatial — LEDs follow in order — so a per-zone square cut is *not* enough to
+call Strobe. Pulse vs Heartbeat stays conservative (style-flag bit).
 """
 
 from __future__ import annotations
@@ -183,6 +179,129 @@ def analyze_blend(
     )
 
 
+def duty_cycle(values: np.ndarray) -> float:
+    """Fraction of samples at/above the mid of the 10–90 percentile span."""
+    v = np.asarray(values, dtype=float)
+    if v.size == 0:
+        return 0.0
+    lo, hi = float(np.percentile(v, 10)), float(np.percentile(v, 90))
+    if hi - lo < 1e-6:
+        return 1.0
+    return float(np.mean(v >= (lo + hi) / 2.0))
+
+
+def staggered_zone_order(
+    series_by_zone: dict,
+    names: list,
+    *,
+    min_span_ms: float = 40.0,
+) -> list | None:
+    """Peak-brightness order across zones.
+
+    Strobe: all zones peak together (span < min_span_ms). Chase: peaks walk.
+    Uses the brightest sample in the window — good enough for one-or-two cycles.
+    """
+    peaks = []
+    for z in names:
+        if z not in series_by_zone:
+            continue
+        t_ms, series = series_by_zone[z]
+        t_arr = np.asarray(t_ms, dtype=float)
+        s_arr = np.asarray(series, dtype=float)
+        if s_arr.size < 8:
+            continue
+        i = int(np.argmax(s_arr))
+        peaks.append((z, float(t_arr[i])))
+    if len(peaks) < 3:
+        return None
+    span = max(p[1] for p in peaks) - min(p[1] for p in peaks)
+    if span < min_span_ms:
+        return None
+    return [z for z, _ in sorted(peaks, key=lambda p: p[1])]
+
+
+def infer_effect_label(
+    *,
+    layout: str,
+    zrel: ZoneRelationship,
+    zone_wave: dict,
+    zone_blend: dict,
+    series_by_zone: dict,
+) -> tuple:
+    """Map multi-zone evidence onto the living effect vocabulary.
+
+    Chase is spatial (LEDs follow in order). Each LED of a chase is a square
+    cut — the same shape as Strobe — so a per-zone square must not win when
+    peaks walk around the corners.
+
+    Returns (label, notes, chase_direction).
+    """
+    notes: list[str] = []
+    corners = [z for z in ("topLeft", "bottomLeft", "bottomRight", "topRight") if z in zone_wave]
+    energetic = [z for z, w in zone_wave.items() if w != "flat"]
+    energetic_corners = [z for z in corners if z in energetic]
+    direction = zrel.outer_chase_direction
+
+    blends = [lab for lab in zone_blend.values() if lab in {"Cross-saw", "Cross-fade"}]
+    if blends and len(blends) >= max(1, (len(zone_blend) + 1) // 2):
+        maj = max(set(blends), key=blends.count)
+        return maj, notes, direction
+
+    order_names = energetic_corners if len(energetic_corners) >= 3 else energetic
+    peak_order = staggered_zone_order(series_by_zone, order_names)
+    if not direction and peak_order and len(peak_order) >= 3:
+        direction = "→".join(peak_order)
+        notes.append(f"chase order from peak times: {direction}")
+
+    center_w = zone_wave.get("center")
+    if direction and len(energetic_corners) >= 4:
+        if center_w in {"sawtooth", "sine", "triangle"}:
+            notes.append("Circle: outer chase + inner continuous waveform")
+            return "Circle", notes, direction
+        return "Chase", notes, direction
+    if direction and 2 <= len(energetic_corners) <= 3:
+        notes.append("Cycle: chase-like but not all outer regions energetic")
+        return "Cycle", notes, direction
+
+    if zrel.zone_relationship == "antiphase":
+        return "Shimmer", notes, direction
+    if layout == "inner-outer" and zrel.zone_relationship == "async":
+        notes.append("inner/outer async — Cycle (not a 5-region Chase)")
+        return "Cycle", notes, direction
+
+    waves = [zone_wave[z] for z in energetic] or list(zone_wave.values())
+    if not waves:
+        return "unclassified", notes, direction
+    maj_w = max(set(waves), key=waves.count)
+    duties = [
+        duty_cycle(series_by_zone[z][1])
+        for z in energetic
+        if z in series_by_zone
+    ]
+    mean_duty = float(np.mean(duties)) if duties else 0.5
+    sync = zrel.zone_relationship in {"synchronized", "single_zone"} or layout == "single"
+
+    if maj_w == "square":
+        if mean_duty >= 0.72:
+            return "Flicker", notes, direction
+        if sync:
+            if layout == "single":
+                notes.append(
+                    "single-zone square: Strobe and Chase look the same on one LED — "
+                    "capture five-corner to separate"
+                )
+            else:
+                notes.append("synchronized square cuts — Strobe (peaks did not walk)")
+            return "Strobe", notes, direction
+        notes.append("async square zones without a stable chase order")
+        return "unclassified", notes, direction
+    if maj_w == "sawtooth":
+        return "Pulse", notes, direction
+    if maj_w in {"sine", "triangle"}:
+        return "Glow", notes, direction
+    return "unclassified", notes, direction
+
+
 def _infer_label(
     *,
     is_blend: bool,
@@ -190,6 +309,7 @@ def _infer_label(
     wave: str,
     is_antiphase: bool,
 ) -> str:
+    """Per-ROI guess. Trial-level label comes from infer_effect_label()."""
     if is_blend and blend_style in {"Cross-saw", "Cross-fade"}:
         return blend_style
     if is_antiphase:
@@ -198,14 +318,14 @@ def _infer_label(
         return "unclassified"
     if wave == "flat":
         return "unclassified"
-    # Brightness-only effects (Pulse / Heartbeat / Strobe / Chase hitting one ROI).
-    # Pulse vs Heartbeat is a style-flag bit, not a webcam-shape distinction.
+    # Square on one LED is Strobe *or* Chase passing through — do not call it
+    # Chase (that used to map sawtooth→Chase, which is Pulse / Cross-saw).
     if wave == "square":
         return "Strobe"
     if wave == "sawtooth":
-        return "Chase"
-    if wave in {"sine", "triangle"}:
         return "Pulse"
+    if wave in {"sine", "triangle"}:
+        return "Glow"
     return "unclassified"
 
 
@@ -274,7 +394,9 @@ def _classify_rel(lag_ms, corr, direction, dt, series) -> ZoneRelationship:
     phase = None
     if freq and freq > 0:
         phase = _wrap_deg(360.0 * lag_ms / (1000.0 / freq))
-    if corr >= 0.7 and (phase is None or abs(phase) < IN_PHASE_DEG):
+    if corr <= -0.5:
+        rel = "antiphase"
+    elif corr >= 0.7 and (phase is None or abs(phase) < IN_PHASE_DEG):
         rel = "synchronized"
     elif corr >= 0.4:
         rel = "async"

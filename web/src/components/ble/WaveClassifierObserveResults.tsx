@@ -7,6 +7,7 @@ import { Table, Text } from '@mantine/core';
 export function WaveClassifierObserveResults({
   reports = [],
   reportCsv,
+  reportMd,
   emptyLabel = 'No observe results yet.',
 }) {
   if (!reports.length) {
@@ -16,11 +17,13 @@ export function WaveClassifierObserveResults({
       </Text>
     );
   }
+  const fileLine = reportMd || reportCsv;
   return (
     <>
-    {reportCsv ? (
+    {fileLine ? (
       <Text size="xs" c="dimmed" ff="monospace" mb={4}>
-        {reportCsv}
+        {fileLine}
+        {reportMd ? ' — paste this markdown into Claude' : ''}
       </Text>
     ) : null}
     <Table.ScrollContainer minWidth={480}>
@@ -45,6 +48,7 @@ export function WaveClassifierObserveResults({
               r.zone_relationship && r.zone_relationship !== 'single_zone'
                 ? r.zone_relationship
                 : null,
+              r.outer_chase_direction ? `chase ${r.outer_chase_direction}` : null,
             ].filter(Boolean).join(' · ');
             return (
               <Table.Tr key={`${key}-${i}`}>

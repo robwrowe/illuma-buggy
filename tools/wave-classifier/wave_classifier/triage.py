@@ -10,12 +10,13 @@ not a finding — reports live under tools/wave-classifier/reports/ only.
 from __future__ import annotations
 
 import csv
+import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .blend import BlendResult, ZoneRelationship, analyze_blend, analyze_zone_relationship, labels_agree
+from .blend import BlendResult, ZoneRelationship, analyze_blend, analyze_zone_relationship, infer_effect_label, labels_agree
 from .capture import find_capture_csvs, parse_capture_stem, read_samples_csv
 from .waveform import WaveformResult, classify_rgb
 from .xlsx_loader import TrialRow, TrialSet, fs_safe
@@ -222,6 +223,18 @@ def classify_trial(
         t, r, g, b = read_samples_csv(path)
         series[zone] = (t, (r + g + b) / 3.0)
     zrel = analyze_zone_relationship(series, "five-corner" if zl.layout == "five-corner" else zl.layout)
+
+    spatial_label, spatial_notes, chase_dir = infer_effect_label(
+        layout=zl.layout,
+        zrel=zrel,
+        zone_wave={z: zr.waveforms["brightness"].waveform_class for z, zr in zone_results.items()},
+        zone_blend={z: zr.blend.inferred_label for z, zr in zone_results.items()},
+        series_by_zone=series,
+    )
+    notes.extend(spatial_notes)
+    if chase_dir and not zrel.outer_chase_direction:
+        zrel.outer_chase_direction = chase_dir
+    pick_label = spatial_label
 
     labeled = trial.effect_label
     if any_inconsistent:
@@ -609,6 +622,97 @@ def write_review_markdown(
 
     path.write_text("\n".join(lines), encoding="utf-8")
     return len(flagged)
+
+
+# Living effect vocabulary — keep in sync with the Wand Lab / xlsx legend.
+EFFECT_VOCAB_TABLE = """\
+| Effect | What it looks like |
+|---|---|
+| Chase | Lights follow in order |
+| Shimmer | Lights cut on & off synchronously (one zone on, other zone off) |
+| Flicker | Predominantly on, brief dim — candle-like |
+| Pulse | Cut on & fade off |
+| Cycle | Like a chase, but not all five regions |
+| Strobe | Cuts on & off (zones together) |
+| Heartbeat | Fade on, dim, fade to 100%, fade out, wait a beat, repeat |
+| Cross-saw | Two colors: fade A→B, then cut back to A |
+| Cross-fade | Two colors: smoothly ramps A↔B |
+| Unique | Hard to describe; most likely programmatic |
+| Circle | Outer chases with a tail to the background; inner sawtooth background→chase |
+| Glow | Lights fade in & out |
+"""
+
+
+def write_claude_markdown(path: Path, reports: list[TrialReport], *, generated_at: str) -> None:
+    """Self-contained markdown for pasting into another model. Not a finding."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = [
+        f"# Wave-classifier observe report — {generated_at}",
+        "",
+        "Webcam-inferred labels. **Triage aid, not a finding.** Chase is spatial "
+        "(LEDs follow in order); a single LED of a chase is a square cut, which is "
+        "the same local shape as Strobe. Do not treat `inferred_label` as opcode truth.",
+        "",
+        "## Effect vocabulary",
+        "",
+        EFFECT_VOCAB_TABLE.strip(),
+        "",
+        f"{len(reports)} trial(s).",
+        "",
+    ]
+    for i, r in enumerate(reports, start=1):
+        t = r.trial
+        lines += [
+            f"## {i}. `{t.row_id}` — **{r.inferred_label or 'unclassified'}**",
+            "",
+            f"- hex_full: `{t.hex_full}`",
+            f"- confidence: {r.confidence:.2f}  ·  status: `{r.status}`  ·  capture: `{r.capture_status}`",
+            f"- zone_layout: `{r.zone_layout}`  ·  relationship: `{r.zone_relationship}`  "
+            f"·  chase: `{r.outer_chase_direction or '—'}`",
+            f"- brightness class (primary `{r.primary_zone}`): `{r.waveform_class_brightness or '—'}`  "
+            f"·  R/G/B: `{r.waveform_class_r or '—'}` / `{r.waveform_class_g or '—'}` / `{r.waveform_class_b or '—'}`",
+            f"- period: {'' if not r.freq_hz else f'{1000.0 / r.freq_hz:.0f} ms'}  "
+            f"·  freq_hz: {r.freq_hz if r.freq_hz is not None else '—'}",
+            f"- blend: {r.blend_style or ('yes' if r.is_blend else 'no')}",
+            "",
+        ]
+        if r.zone_results:
+            lines += [
+                "| Zone | Brightness | R | G | B | Blend | Period ms | Amp |",
+                "|---|---|---|---|---|---|---|---|",
+            ]
+            for z, zr in r.zone_results.items():
+                w = zr.waveforms
+                bri = w["brightness"]
+                period = "" if not bri.estimated_period_ms else f"{bri.estimated_period_ms:.0f}"
+                amp = f"{bri.estimated_amplitude:.1f}" if bri.estimated_amplitude else "—"
+                lines.append(
+                    f"| `{z}` | {bri.waveform_class} | {w['r'].waveform_class} | "
+                    f"{w['g'].waveform_class} | {w['b'].waveform_class} | "
+                    f"{zr.blend.blend_style or zr.inferred_label} | {period} | {amp} |"
+                )
+            lines.append("")
+        if r.notes:
+            lines += ["Notes:", ""]
+            for n in r.notes:
+                lines.append(f"- {n}")
+            lines.append("")
+        lines.append("")
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def write_observe_bundle(reports_dir: Path, reports: list[TrialReport]) -> dict:
+    """CSV + Claude markdown + JSON. Returns path strings keyed csv/md/json."""
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    stamp = timestamp_slug()
+    csv_path = reports_dir / f"observe-{stamp}.csv"
+    md_path = reports_dir / f"observe-{stamp}.md"
+    json_path = reports_dir / f"observe-{stamp}.json"
+    write_triage_csv(csv_path, reports)
+    write_claude_markdown(md_path, reports, generated_at=stamp)
+    payload = [trial_report_to_dict(r) for r in reports]
+    json_path.write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    return {"csv": csv_path, "md": md_path, "json": json_path}
 
 
 def summarize(reports: list[TrialReport]) -> dict[str, int]:

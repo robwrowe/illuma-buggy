@@ -65,6 +65,7 @@ export function BitGridEditor({
   const [observing, setObserving] = useState(false);
   const [observeReports, setObserveReports] = useState([]);
   const [observeReportCsv, setObserveReportCsv] = useState('');
+  const [observeReportMd, setObserveReportMd] = useState('');
 
   const selected = useMemo(() => {
     if (!drag) return null;
@@ -192,6 +193,7 @@ export function BitGridEditor({
       }));
       setObserveReports(reports);
       setObserveReportCsv(res?.report_csv || '');
+      setObserveReportMd(res?.report_md || '');
     } catch (e) {
       setError(e.message || 'Sweep observe failed');
     } finally {
@@ -376,7 +378,7 @@ export function BitGridEditor({
         </Button>
       </Tooltip>
       {(observing || observeReports.length > 0) && (
-        <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} />
+        <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />
       )}
     </Stack>
   );

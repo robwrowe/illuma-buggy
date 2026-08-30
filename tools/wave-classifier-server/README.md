@@ -62,7 +62,7 @@ Then `cd web && npm run dev`. Wand Lab's Simulator IP field is the board;
 | POST | `/build` | Single-tail `build_payload()` |
 | POST | `/build-batch` | `parse_tail_block()` + loop `build_payload()` (no files) |
 | POST | `/show` | `wandsim_client.show_single()` + best-effort `stop()` |
-| POST | `/observe` | Capture + classify ≤10 payloads (blocking). Writes `reports/observe-*.csv`. 409 if no ROI. 400 if >10 (use the CLI). |
+| POST | `/observe` | Capture + classify ≤10 payloads (blocking). Writes `reports/observe-*.{csv,md,json}`. Paste the `.md` into Claude. 409 if no ROI. 400 if >10 (use the CLI). |
 | POST | `/discover` | Rank bit-position candidates from existing `captures/` |
 
 `/observe` does not pick ROIs. If the requested `zone_layout` has no saved

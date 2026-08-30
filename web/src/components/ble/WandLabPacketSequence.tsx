@@ -53,6 +53,7 @@ export function WandLabPacketSequence({
   const [observing, setObserving] = useState(false);
   const [observeReports, setObserveReports] = useState([]);
   const [observeReportCsv, setObserveReportCsv] = useState('');
+  const [observeReportMd, setObserveReportMd] = useState('');
   const [observeWhileSending, setObserveWhileSending] = useState(false);
 
   const validPackets = useMemo(
@@ -151,8 +152,9 @@ export function WandLabPacketSequence({
           .then((res) => {
             setObserveReports(res?.reports || []);
             setObserveReportCsv(res?.report_csv || '');
-            const csvNote = res?.report_csv ? ` → ${res.report_csv}` : '';
-            onStatus?.(`Observe-while-sending: ${res?.reports?.length || 0} results${csvNote}`);
+            setObserveReportMd(res?.report_md || '');
+            const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
+            onStatus?.(`Observe-while-sending: ${res?.reports?.length || 0} results${fileNote}`);
           })
           .catch((e) => onStatus?.(e.message || 'Observe failed'))
           .finally(() => setObserving(false));
@@ -436,8 +438,9 @@ export function WandLabPacketSequence({
                 }));
                 setObserveReports(reports);
                 setObserveReportCsv(res?.report_csv || '');
-                const csvNote = res?.report_csv ? ` → ${res.report_csv}` : '';
-                onStatus?.(`Observe sequence done — ${reports.length} result${reports.length === 1 ? '' : 's'}${csvNote}`);
+                setObserveReportMd(res?.report_md || '');
+                const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
+                onStatus?.(`Observe sequence done — ${reports.length} result${reports.length === 1 ? '' : 's'}${fileNote}`);
               } catch (e) {
                 onStatus?.(e.message || 'Observe sequence failed');
               } finally {
@@ -475,7 +478,7 @@ export function WandLabPacketSequence({
       {(observing || observeReports.length > 0) && (
         <Stack gap={4}>
           <Text size="xs" fw={600} tt="uppercase" c="dimmed">Observe results</Text>
-          <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} />
+          <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />
         </Stack>
       )}
     </Stack>

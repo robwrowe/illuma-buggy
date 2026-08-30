@@ -35,9 +35,8 @@ from wave_classifier.payload_builder import (  # noqa: E402
 from wave_classifier.triage import (  # noqa: E402
     build_reports,
     classify_trial,
-    timestamp_slug,
     trial_report_to_dict,
-    write_triage_csv,
+    write_observe_bundle,
 )
 from wave_classifier.xlsx_loader import ZoneLayoutHint, load_trials, trial_from_dict  # noqa: E402
 
@@ -255,13 +254,13 @@ def api_observe(body: ObserveBody):
         )
         report_objs.append(report)
         reports.append(trial_report_to_dict(report, capture_paths=paths))
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    csv_path = REPORTS_DIR / f"observe-{timestamp_slug()}.csv"
-    write_triage_csv(csv_path, report_objs)
+    paths_out = write_observe_bundle(REPORTS_DIR, report_objs)
     return {
         "reports": reports,
         "count": len(reports),
-        "report_csv": str(csv_path),
+        "report_csv": str(paths_out["csv"]),
+        "report_md": str(paths_out["md"]),
+        "report_json": str(paths_out["json"]),
         "captures_dir": str(CAPTURES_DIR / "observe"),
     }
 

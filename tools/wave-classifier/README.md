@@ -198,6 +198,11 @@ optical setup.
 
 ## What the reports are (and aren't)
 
+`reports/observe-<timestamp>.md` — Wand Lab Observe output, meant to paste into
+another model. Includes the effect vocabulary, hex, inferred label, zone
+relationship / chase order, and a per-zone table. `.csv` and `.json` sit
+beside it. Gitignored.
+
 `reports/triage-<timestamp>.csv` — every trial, machine-readable, including
 per-zone waveform/blend columns, `zone_layout`, `zone_relationship`,
 `outer_chase_direction`, `zone_relationship_status`, and estimated
@@ -234,6 +239,14 @@ Pulse vs Heartbeat is a style-flag bit
 ([F-2026-08-17-01](../../docs/ble-packets-details/findings/F-2026-08-17-01-pulse-heartbeat-style-flag.md)),
 not something a webcam brightness trace reliably separates. Expect those two
 labels to collide; that's a review row, not a classifier bug.
+
+Chase vs Strobe: each LED of a chase is a square on/off, the same local shape
+as a strobe. Trial-level `inferred_label` uses peak order across five-corner
+ROIs. Observe with `--zone-layout five-corner` (Wand Lab segmented control).
+A single-ROI capture cannot tell them apart.
+
+Wand Lab Observe writes `reports/observe-*.md` (paste into Claude), plus `.csv`
+and `.json`. Those directories are gitignored.
 
 ## Config knobs
 
