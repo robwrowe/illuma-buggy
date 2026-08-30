@@ -384,6 +384,60 @@ CSV_COLUMNS = [
 ]
 
 
+def trial_report_to_dict(r: TrialReport, *, capture_paths: list[Path] | None = None) -> dict:
+    """JSON/CSV-shaped view of a TrialReport (same fields as CSV_COLUMNS)."""
+    t = r.trial
+    row = {
+        "row_id": t.row_id,
+        "sheet": t.sheet,
+        "source_sheet_kind": t.source_sheet_kind,
+        "op_code": t.op_code or "",
+        "hex_full": t.hex_full,
+        "location": t.location or "",
+        "show": t.show or "",
+        "effect_label": t.effect_label or "",
+        "inferred_label": r.inferred_label or "",
+        "primary_zone": r.primary_zone,
+        "waveform_class_r": r.waveform_class_r or "",
+        "waveform_class_g": r.waveform_class_g or "",
+        "waveform_class_b": r.waveform_class_b or "",
+        "is_blend": None if r.is_blend is None else r.is_blend,
+        "blend_style": r.blend_style or "",
+        "confidence": round(r.confidence, 4),
+        "status": r.status,
+        "tail_bytes_summary": t.tail_bytes_summary(),
+        "waveform_class_brightness": r.waveform_class_brightness or "",
+        "freq_hz": r.freq_hz,
+        "capture_status": r.capture_status,
+        "n_repeats": r.n_repeats,
+        "re_run_recommended": r.re_run_recommended,
+        "length_byte": t.length_byte,
+        "color_count": t.color_count,
+        "vibration_byte": t.vibration_byte or "",
+        "zone_layout": r.zone_layout,
+        "zone_layout_assumed": r.zone_layout_assumed,
+        "zone_layout_downgraded": r.zone_layout_downgraded,
+        "zone_relationship": r.zone_relationship,
+        "outer_chase_direction": r.outer_chase_direction or "",
+        "zone_relationship_status": r.zone_relationship_status,
+        "notes": list(r.notes),
+        "capture_csv_paths": [str(p) for p in (capture_paths or [])],
+    }
+    for z, zr in r.zone_results.items():
+        w = zr.waveforms
+        row[f"waveform_class_r_{z}"] = w["r"].waveform_class
+        row[f"waveform_class_g_{z}"] = w["g"].waveform_class
+        row[f"waveform_class_b_{z}"] = w["b"].waveform_class
+        row[f"is_blend_{z}"] = zr.blend.is_blend
+        row[f"blend_style_{z}"] = zr.blend.blend_style or ""
+        bri = w["brightness"]
+        row[f"estimated_period_ms_{z}"] = bri.estimated_period_ms
+        row[f"estimated_frequency_hz_{z}"] = bri.estimated_frequency_hz
+        row[f"estimated_amplitude_{z}"] = bri.estimated_amplitude
+        row[f"cycle_count_observed_{z}"] = bri.cycle_count_observed
+    return row
+
+
 def write_triage_csv(path: Path, reports: list[TrialReport]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as fh:

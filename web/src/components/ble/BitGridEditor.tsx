@@ -1,13 +1,17 @@
 import { useMemo, useRef, useState } from 'react';
-import { Box, Button, Group, Stack, Text, TextInput } from '@mantine/core';
+import { Box, Button, Group, Stack, Text, TextInput, Tooltip } from '@mantine/core';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import {
   TIMING_BYTE_BIT_PRESET,
   bitGroupsOverlap,
   bitPatternToParamDetail,
   decodeBitGroupValue,
+  encodeBitGroupValue,
 } from '../../lib/ble/byteAnalyzer';
-import { byteToBitString } from '../../lib/ble/wandSimClient';
+import { byteToBitString, payloadToShowHex } from '../../lib/ble/wandSimClient';
+import { observe } from '../../lib/ble/waveClassifierClient';
+import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
+import { WaveClassifierObserveResults } from './WaveClassifierObserveResults';
 
 const BIT_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
 const GROUP_COLORS = ['cyan', 'lime', 'pink', 'indigo', 'red', 'violet', 'grape', 'teal'];
@@ -45,6 +49,9 @@ export function BitGridEditor({
   showTimingPreset = true,
   patterns = [],
   onPatternsChange,
+  payloadBytes = null,
+  byteIndex = null,
+  tailIndex = null,
 }) {
   const value = Number(byteValue) & 0xff;
   const bitStr = byteToBitString(value);
@@ -54,6 +61,10 @@ export function BitGridEditor({
   const [patternId, setPatternId] = useState(patterns[0]?.id || '');
   const [saveName, setSaveName] = useState('');
   const dragging = useRef(false);
+  const wc = useWaveClassifierBackend();
+  const [observing, setObserving] = useState(false);
+  const [observeReports, setObserveReports] = useState([]);
+  const [observeReportCsv, setObserveReportCsv] = useState('');
 
   const selected = useMemo(() => {
     if (!drag) return null;
@@ -134,6 +145,58 @@ export function BitGridEditor({
     setSaveName('');
     setPatternId(next[next.length - 1].id);
     setError('');
+  };
+
+  const sweepGroup = groups.length === 1 ? groups[0] : null;
+  const sweepValueCount = sweepGroup ? (1 << (Number(sweepGroup.bitCount) || 1)) : 0;
+  const canSweep = !!(
+    sweepGroup
+    && sweepValueCount <= 10
+    && Array.isArray(payloadBytes)
+    && payloadBytes.length
+    && Number.isInteger(byteIndex)
+    && byteIndex >= 0
+    && byteIndex < payloadBytes.length
+  );
+  const sweepDisabledReason = !wc.available
+    ? wc.disabledTip
+    : groups.length !== 1
+      ? 'Select a single bit-group to sweep'
+      : sweepValueCount > 10
+        ? `This group has ${sweepValueCount} values — use the CLI build-batch path for large sweeps`
+        : !canSweep
+          ? 'No full payload is loaded for this byte — open a capture row cell'
+          : '';
+
+  const handleSweepObserve = async () => {
+    if (!canSweep || !wc.available || !sweepGroup) return;
+    const bitCount = Number(sweepGroup.bitCount) || 1;
+    const max = (1 << bitCount) - 1;
+    const payloads = [];
+    for (let v = 0; v <= max; v++) {
+      const next = [...payloadBytes];
+      next[byteIndex] = encodeBitGroupValue(next[byteIndex], sweepGroup.bitStart, bitCount, v);
+      payloads.push({
+        hex_full: payloadToShowHex(next).toUpperCase(),
+        label: `0x${v.toString(16).padStart(2, '0')}`,
+        tail_index: tailIndex,
+      });
+    }
+    setObserving(true);
+    try {
+      const res = await observe(wc.baseUrl, { payloads, hold_ms: 4000 });
+      const reports = (res?.reports || []).map((r, i) => ({
+        ...r,
+        sweep_value: payloads[i]?.label,
+        effect_label: payloads[i]?.label,
+      }));
+      setObserveReports(reports);
+      setObserveReportCsv(res?.report_csv || '');
+    } catch (e) {
+      setError(e.message || 'Sweep observe failed');
+    } finally {
+      setObserving(false);
+    }
   };
 
   const patternOpts = patterns.map((p) => ({
@@ -299,6 +362,21 @@ export function BitGridEditor({
         <Text size="xs" c="dimmed">
           Drag (or shift-click) adjacent bits, name them, then Add group. Ungrouped bits stay dim.
         </Text>
+      )}
+      <Tooltip label={sweepDisabledReason || 'Sweep this group through every value and observe'}>
+        <Button
+          size="compact-xs"
+          variant="light"
+          color="violet"
+          loading={observing}
+          disabled={!wc.available || !canSweep || observing}
+          onClick={() => void handleSweepObserve()}
+        >
+          Sweep this group & Observe
+        </Button>
+      </Tooltip>
+      {(observing || observeReports.length > 0) && (
+        <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} />
       )}
     </Stack>
   );

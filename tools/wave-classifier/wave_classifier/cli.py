@@ -177,6 +177,29 @@ class _ColorEventAction(argparse.Action):
         events.append((option_string, values))
 
 
+def _add_build_common_args(p: argparse.ArgumentParser) -> None:
+    """Shared timing/color/vib/envelope/--show flags for `build` and `build-batch`."""
+    p.add_argument("--timing-byte", required=True, help="Timing byte, hex (0x64) or decimal (100)")
+    p.add_argument("--color-format", required=True, help="0f | 0e | d2")
+    p.add_argument(
+        "--color",
+        nargs="+",
+        action=_ColorEventAction,
+        help="Repeatable. 0f/0e: palette index. d2: R G B. Pair with --mask for 0f/0e.",
+    )
+    p.add_argument(
+        "--mask",
+        action=_ColorEventAction,
+        help="0-7 mask applying to the most recently seen --color (0f/0e only)",
+    )
+    p.add_argument("--vibration", default=None, help="Optional 0-15 (hex or decimal); omit for no vib byte")
+    p.add_argument("--envelope", default="e1", help="e1 (default), e2, or a 1-2 digit hex byte")
+    p.add_argument("--show", action="store_true", help="Broadcast via WandSimulator /show after building")
+    p.add_argument("--base-url", default=None, help="Required with --show")
+    p.add_argument("--hold-ms", type=int, default=4000)
+    p.add_argument("--config", type=Path, default=None)
+
+
 def _add_shared_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--config",
@@ -332,21 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     build = sub.add_parser("build", help="Assemble a full advertisement from a tail (Python port of Wand Lab)")
     build.add_argument("--tail", required=True, help="Tail hex (spaced, packed, or 0x-prefixed tokens)")
-    build.add_argument("--timing-byte", required=True, help="Timing byte, hex (0x64) or decimal (100)")
-    build.add_argument("--color-format", required=True, help="0f | 0e | d2")
-    build.add_argument(
-        "--color",
-        nargs="+",
-        action=_ColorEventAction,
-        help="Repeatable. 0f/0e: palette index. d2: R G B. Pair with --mask for 0f/0e.",
-    )
-    build.add_argument(
-        "--mask",
-        action=_ColorEventAction,
-        help="0-7 mask applying to the most recently seen --color (0f/0e only)",
-    )
-    build.add_argument("--vibration", default=None, help="Optional 0-15 (hex or decimal); omit for no vib byte")
-    build.add_argument("--envelope", default="e1", help="e1 (default), e2, or a 1-2 digit hex byte")
+    _add_build_common_args(build)
     build.add_argument("--label", default=None, help="Optional effect_label when emitting a trial row")
     build.add_argument(
         "--emit-trial-row",
@@ -354,10 +363,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Write a TrialRow JSON record so `run --builder-trials` can capture/classify it",
     )
-    build.add_argument("--show", action="store_true", help="Broadcast via WandSimulator /show after building")
-    build.add_argument("--base-url", default=None, help="Required with --show")
-    build.add_argument("--hold-ms", type=int, default=4000)
-    build.add_argument("--config", type=Path, default=None)
+
+    batch = sub.add_parser(
+        "build-batch",
+        help="Assemble many tails (one per line) against one shared timing/color set",
+    )
+    src = batch.add_mutually_exclusive_group(required=True)
+    src.add_argument("--tails-file", type=Path, help="File with one tail per line (TSV/spaces/0x tokens)")
+    src.add_argument("--tails-stdin", action="store_true", help="Read the tail block from stdin (paste, then Ctrl-D)")
+    _add_build_common_args(batch)
+    batch.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Directory for one TrialRow JSON per tail (for `run --builder-trials`)",
+    )
+    batch.add_argument(
+        "--label-prefix",
+        default=None,
+        help="If set, effect_label is {prefix}-{line:03d} so the sweep groups in triage.csv",
+    )
+    batch.add_argument(
+        "--sheet-name",
+        default="builder-batch",
+        help="TrialRow sheet field (default builder-batch)",
+    )
+    batch.add_argument(
+        "--gap-seconds",
+        type=float,
+        default=1.5,
+        help="Pause between --show broadcasts (default 1.5)",
+    )
 
     return parser
 
@@ -729,23 +765,53 @@ def _colors_from_events(fmt: str, events: list[tuple[str | None, Any]]) -> list[
     return colors
 
 
+def _resolve_build_common(args: argparse.Namespace) -> dict[str, Any]:
+    """Shared color/timing/vibration resolution for `build` and `build-batch`."""
+    fmt = str(args.color_format).lower().replace("0x", "")
+    events = getattr(args, "color_events", None) or []
+    colors = _colors_from_events(fmt, events)
+    vib = None if args.vibration is None else parse_intish(args.vibration)
+    return {
+        "timing_byte": parse_intish(args.timing_byte),
+        "color_format": fmt,
+        "colors": colors,
+        "vibration": vib,
+        "envelope": args.envelope,
+    }
+
+
+def _broadcast_built(cfg: dict[str, Any], args: argparse.Namespace, hex_full: str) -> int:
+    base_url = args.base_url or _cfg_get(cfg, "wandsim", "base_url", None)
+    if not base_url:
+        print("error: --show requires --base-url (or [wandsim] base_url)", file=sys.stderr)
+        return 2
+    from .wandsim_client import show_single, stop
+    import time
+
+    show_single(base_url, hex_full, args.hold_ms)
+    time.sleep(max(0, args.hold_ms) / 1000.0)
+    try:
+        stop(base_url)
+    except Exception:
+        pass
+    return 0
+
+
+def _format_tail_span(tail: list[int]) -> str:
+    if not tail:
+        return "(empty)"
+    hex_s = " ".join(f"{b:02X}" for b in tail)
+    last = len(tail) - 1
+    return f"T00-T{last:02d} {hex_s}"
+
+
 def cmd_build(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
     from .payload_builder import build_payload, parse_tail_bytes, trial_row_from_built
     from .xlsx_loader import decode_hex_structure
 
-    fmt = str(args.color_format).lower().replace("0x", "")
-    events = getattr(args, "color_events", None) or []
-    colors = _colors_from_events(fmt, events)
+    common = _resolve_build_common(args)
     tail = parse_tail_bytes(args.tail)
-    vib = None if args.vibration is None else parse_intish(args.vibration)
-    built = build_payload(
-        tail_bytes=tail,
-        timing_byte=parse_intish(args.timing_byte),
-        color_format=fmt,
-        colors=colors,
-        vibration=vib,
-        envelope=args.envelope,
-    )
+    built = build_payload(tail_bytes=tail, **common)
     decoded = decode_hex_structure(built.hex_full)
     print(f"hex_full {built.hex_full}")
     print(f"hex      {built.hex}")
@@ -756,34 +822,80 @@ def cmd_build(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
             f"(derived={decoded.derived_payload_length} actual={decoded.actual_payload_length})",
             file=sys.stderr,
         )
-    if vib is not None and decoded.vibration_nibble != (vib & 0x0F):
+    if common["vibration"] is not None and decoded.vibration_nibble != (common["vibration"] & 0x0F):
         print("warning: round-trip vibration byte did not match", file=sys.stderr)
     for w in built.warnings:
         print(f"warning: {w}", file=sys.stderr)
 
     if args.emit_trial_row:
-        rec = trial_row_from_built(built, tail_bytes=tail, label=args.label, vibration=vib)
+        rec = trial_row_from_built(
+            built, tail_bytes=tail, label=args.label, vibration=common["vibration"]
+        )
         args.emit_trial_row.parent.mkdir(parents=True, exist_ok=True)
         args.emit_trial_row.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8")
         print(f"wrote {args.emit_trial_row}")
 
     if args.show:
-        base_url = args.base_url or _cfg_get(cfg, "wandsim", "base_url", None)
-        if not base_url:
-            print("error: --show requires --base-url (or [wandsim] base_url)", file=sys.stderr)
-            return 2
-        from .wandsim_client import show_single, stop
+        code = _broadcast_built(cfg, args, built.hex_full)
+        if code:
+            return code
+        print(f"show {args.hold_ms}ms → {args.base_url or _cfg_get(cfg, 'wandsim', 'base_url', '')}")
+    return 0
 
-        show_single(base_url, built.hex_full, args.hold_ms)
-        print(f"show {args.hold_ms}ms → {base_url}")
-        # Leave it running for hold_ms; caller can /stop. Best-effort stop after.
-        import time
 
-        time.sleep(max(0, args.hold_ms) / 1000.0)
-        try:
-            stop(base_url)
-        except Exception:
-            pass
+def cmd_build_batch(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
+    from .payload_builder import build_payload, parse_tail_block, trial_row_from_built, built_short_id
+    from .xlsx_loader import fs_safe
+
+    if args.tails_stdin:
+        raw = sys.stdin.read()
+    else:
+        raw = args.tails_file.read_text(encoding="utf-8-sig")
+    tails, skipped = parse_tail_block(raw)
+    n_blank = sum(1 for ln in raw.splitlines() if not ln.strip())
+    common = _resolve_build_common(args)
+    out_dir: Path = args.out_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sheet = args.sheet_name or "builder-batch"
+    n = len(tails)
+    for i, tail in enumerate(tails, start=1):
+        built = build_payload(tail_bytes=tail, **common)
+        label = None
+        if args.label_prefix:
+            label = f"{args.label_prefix}-{i:03d}"
+        rec = trial_row_from_built(
+            built,
+            tail_bytes=tail,
+            label=label,
+            sheet=sheet,
+            vibration=common["vibration"],
+            row_index=i,
+        )
+        short = rec.get("short_id") or built_short_id(built)
+        path = out_dir / f"{fs_safe(sheet)}__{short}.json"
+        path.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8")
+        warn = f"  warning: {'; '.join(built.warnings)}" if built.warnings else ""
+        span = _format_tail_span(tail)
+        print(
+            f"[{i:03d}/{n}] {span:<40} → hex_full {built.hex_full[:22]}…  "
+            f"len=0x{built.length_byte:02X}  ok{warn}"
+        )
+        if args.show:
+            code = _broadcast_built(cfg, args, built.hex_full)
+            if code:
+                return code
+            if i < n:
+                import time
+
+                time.sleep(max(0.0, float(args.gap_seconds)))
+    skipped_n = len(skipped) + n_blank
+    print(f"wrote {n} trial rows to {out_dir}")
+    skip_note = f"skipped {len(skipped)} unparseable line(s): {skipped}" if skipped else f"skipped {skipped_n} blank/unparseable lines"
+    if skipped:
+        print(skip_note)
+    else:
+        print(f"skipped {skipped_n} blank/unparseable lines")
+    print(f"next: python -m wave_classifier run --builder-trials {out_dir} --base-url <url>")
     return 0
 
 
@@ -804,6 +916,8 @@ def main(argv: list[str] | None = None) -> None:
             code = cmd_groundtruth(args, cfg)
         elif args.cmd == "build":
             code = cmd_build(args, cfg)
+        elif args.cmd == "build-batch":
+            code = cmd_build_batch(args, cfg)
         else:
             parser.print_help()
             code = 2

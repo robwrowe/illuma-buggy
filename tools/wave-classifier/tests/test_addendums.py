@@ -334,6 +334,125 @@ def test_sine_classify():
     assert result.cycle_count_observed is not None
 
 
+def test_parse_tail_block_and_skip():
+    from wave_classifier.payload_builder import parse_tail_block
+
+    block = (
+        "0x30\t0x7B\t0x00\n"
+        "0x30\t0x7B\t0x02\n"
+        "zzzz\n"
+        "0x30\t0x7B\t0x07\n"
+        "\n"
+        "0x48\t0xA5\t0xD1\t0x65\t0x40\t0x03\n"
+        "0x59\t0x0A\t0x01\t0x48\t0xAE\n"
+        "0xA4\t0xB5\t0xB2\t0x30\t0x7B\t0x40\n"
+    )
+    tails, skipped = parse_tail_block(block)
+    assert skipped == [3]
+    assert len(tails) == 6
+    assert tails[0] == [0x30, 0x7B, 0x00]
+    assert tails[3] == [0x48, 0xA5, 0xD1, 0x65, 0x40, 0x03]
+    assert len(tails[4]) == 5
+    assert len(tails[5]) == 6
+
+
+def test_build_batch_cli_round_trip():
+    from wave_classifier.cli import main
+    from wave_classifier.xlsx_loader import load_builder_trials
+
+    block = (
+        "0x30\t0x7B\t0x00\n"
+        "0x30\t0x7B\t0x02\n"
+        "0x30\t0x7B\t0x07\n"
+        "0x48\t0xA5\t0xD1\t0x65\t0x40\t0x03\n"
+        "0x59\t0x0A\t0x01\t0x48\t0xAE\n"
+        "0xA4\t0xB5\t0xB2\t0x30\t0x7B\t0x40\n"
+        "zzzz\n"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "sweep"
+        tails_path = Path(tmp) / "tails.tsv"
+        tails_path.write_text(block, encoding="utf-8")
+        argv = [
+            "build-batch",
+            "--tails-file",
+            str(tails_path),
+            "--timing-byte",
+            "0x64",
+            "--color-format",
+            "0f",
+            "--color",
+            "0x12",
+            "--mask",
+            "0",
+            "--color",
+            "0x04",
+            "--mask",
+            "0",
+            "--out-dir",
+            str(out),
+            "--label-prefix",
+            "chase-speed-sweep",
+        ]
+        try:
+            main(argv)
+        except SystemExit as exc:
+            assert exc.code == 0, exc
+        files = sorted(out.glob("*.json"))
+        assert len(files) == 6
+        ts = load_builder_trials(out)
+        assert len(ts.trials) == 6
+        assert all(t.hex_key.startswith("8301") for t in ts.trials)
+        assert all(t.decoded and t.decoded.length_mismatch is False for t in ts.trials)
+        labels = {t.effect_label for t in ts.trials}
+        assert any(lab and lab.startswith("chase-speed-sweep-") for lab in labels)
+
+        # Second run with one tail changed: only that file's content should change.
+        first_hashes = {p.name: p.read_bytes() for p in files}
+        block2 = block.replace("0x30\t0x7B\t0x02", "0x30\t0x7B\t0x03")
+        tails_path.write_text(block2, encoding="utf-8")
+        try:
+            main(argv)
+        except SystemExit as exc:
+            assert exc.code == 0, exc
+        files2 = sorted(out.glob("*.json"))
+        second = {p.name: p.read_bytes() for p in files2}
+        changed = [n for n, b in second.items() if first_hashes.get(n) != b]
+        # The edited tail gets a new hash filename; old 0x02 file may remain.
+        new_names = set(second) - set(first_hashes)
+        gone = set(first_hashes) - set(second)
+        assert new_names or changed, "expected the edited tail to produce a different file"
+        # Unchanged tails keep identical bytes under the same filename.
+        shared = set(first_hashes) & set(second)
+        identical = [n for n in shared if first_hashes[n] == second[n]]
+        assert len(identical) >= 4
+
+
+def test_build_batch_dry_run_via_run():
+    from wave_classifier.cli import main
+
+    block = "0x30 0x7B 0x00\n0x30 0x7B 0x02\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "sweep"
+        tails_path = Path(tmp) / "tails.txt"
+        tails_path.write_text(block, encoding="utf-8")
+        try:
+            main([
+                "build-batch",
+                "--tails-file", str(tails_path),
+                "--timing-byte", "0x64",
+                "--color-format", "0f",
+                "--color", "0x12",
+                "--out-dir", str(out),
+            ])
+        except SystemExit as exc:
+            assert exc.code == 0
+        try:
+            main(["run", "--builder-trials", str(out), "--dry-run"])
+        except SystemExit as exc:
+            assert exc.code == 0
+
+
 def main() -> None:
     tests = [
         test_zone_names,
@@ -351,6 +470,9 @@ def main() -> None:
         test_xlsx_rebuild_if_present,
         test_cli_help_fast,
         test_cli_build_print,
+        test_parse_tail_block_and_skip,
+        test_build_batch_cli_round_trip,
+        test_build_batch_dry_run_via_run,
     ]
     failed = 0
     for fn in tests:

@@ -22,8 +22,10 @@ import { SearchableSelect } from '../shared/SearchableSelect';
 import { generateId } from '../../lib/utils';
 import { DEFAULT_MB_WLED_COLORS, mbPaletteOptions } from '../../lib/ble/mbConstants';
 import { decodeMbColorMaskByte } from '../../lib/ble/mbPayloads';
-import { byteToBitString, parseBitStringToByte } from '../../lib/ble/wandSimClient';
+import { byteToBitString, parseBitStringToByte, payloadToShowHex } from '../../lib/ble/wandSimClient';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
+import { observe, buildBatch } from '../../lib/ble/waveClassifierClient';
+import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
 import {
   BIT_COL_PX,
   HEX_COL_PX,
@@ -43,6 +45,7 @@ import {
 import { BitColumnHeader, ByteBitCell } from './ByteBitCell';
 import { TimingByteFields } from './TimingByteFields';
 import { WandLabByteBitsEditor } from './WandLabByteBitsEditor';
+import { WaveClassifierObserveResults } from './WaveClassifierObserveResults';
 import {
   TAIL_BUILDER_COLOR_FORMATS,
   assembleTailPayload,
@@ -384,6 +387,12 @@ export function WandLabTailBuilderTab({
   const [selectedPartId, setSelectedPartId] = useWandLabUiState('tail.selectedPartId', 'tb');
   const [customBitFields, setCustomBitFields] = useWandLabUiState('tail.customBitFields', () => []);
   const sendAllGen = useRef(0);
+  const wc = useWaveClassifierBackend();
+  const [observing, setObserving] = useState(false);
+  const [observeReports, setObserveReports] = useState([]);
+  const [observeReportCsv, setObserveReportCsv] = useState('');
+  const [observeZoneLayout, setObserveZoneLayout] = useWandLabUiState('tail.observeZoneLayout', 'single');
+  const [observePreview, setObservePreview] = useWandLabUiState('tail.observePreview', false);
 
   const palOpts = mbPaletteOptions();
   const isRgb = colorFormat === 'd2';
@@ -734,6 +743,79 @@ export function WandLabTailBuilderTab({
     const n = displayTails.length;
     const label = n > 1 ? `Sent tail ${safeIdx + 1}/${n}` : undefined;
     await sendAssembled(assembled.bytes, label);
+  };
+
+  const hexFullForBytes = (bytes) => payloadToShowHex(bytes || []).toUpperCase();
+
+  const runObserve = async (payloads, statusPrefix) => {
+    if (!wc.available) {
+      onStatus?.(wc.disabledTip);
+      return;
+    }
+    if (!payloads.length) {
+      onStatus?.('Nothing to observe');
+      return;
+    }
+    setObserving(true);
+    onStatus?.(`${statusPrefix} (${payloads.length})…`);
+    try {
+      const res = await observe(wc.baseUrl, {
+        payloads,
+        hold_ms: sendWaitMs,
+        zone_layout: observeZoneLayout,
+      });
+      const reports = (res?.reports || []).map((r, i) => ({
+        ...r,
+        effect_label: r.effect_label || payloads[i]?.label || `#${i + 1}`,
+      }));
+      setObserveReports(reports);
+      setObserveReportCsv(res?.report_csv || '');
+      const csvNote = res?.report_csv ? ` → ${res.report_csv}` : '';
+      onStatus?.(`${statusPrefix} done — ${reports.length} result${reports.length === 1 ? '' : 's'}${csvNote}`);
+    } catch (e) {
+      onStatus?.(e.message || 'Observe failed');
+    } finally {
+      setObserving(false);
+    }
+  };
+
+  const handleObserve = () => {
+    if (!assembled.bytes.length) return;
+    void runObserve(
+      [{ hex_full: hexFullForBytes(assembled.bytes), label: `tail-${safeIdx + 1}` }],
+      'Observe',
+    );
+  };
+
+  const handleObserveAll = async () => {
+    const payloads = displayTails.map((t, i) => {
+      const pkt = assembleForTail(t.bytes || []);
+      return {
+        hex_full: hexFullForBytes(pkt.bytes),
+        label: `tail-${i + 1}`,
+      };
+    }).filter((p) => p.hex_full);
+    if (observePreview) {
+      try {
+        const preview = await buildBatch(wc.baseUrl, {
+          tails_text: displayTails.map((t) => t.displayHex || t.hex || '').join('\n'),
+          timing_byte: timingByte,
+          color_format: colorFormat,
+          colors: colorsForPacket.map((c) => (
+            isRgb
+              ? { r: c.r ?? 0, g: c.g ?? 0, b: c.b ?? 0 }
+              : { palette_idx: c.paletteIdx ?? c.palette_idx ?? 0, mask: c.mask ?? 0 }
+          )),
+          vibration,
+          envelope,
+        });
+        onStatus?.(`Preview: ${preview.count} built, skipped ${preview.skipped_line_numbers?.length || 0}`);
+      } catch (e) {
+        onStatus?.(e.message || 'Build-batch preview failed');
+        return;
+      }
+    }
+    await runObserve(payloads, 'Build & Observe All');
   };
 
   const handleSendRow = async (idx) => {
@@ -1662,6 +1744,17 @@ export function WandLabTailBuilderTab({
             >
               Send{displayTails.length > 1 ? ` #${safeIdx + 1}` : ''}
             </Button>
+            <Tooltip label={wc.available ? 'Capture + classify this assembled payload' : wc.disabledTip}>
+              <Button
+                variant="light"
+                color="violet"
+                onClick={handleObserve}
+                loading={observing}
+                disabled={!wc.available || assembled.bytes.length === 0 || observing}
+              >
+                Observe
+              </Button>
+            </Tooltip>
             {displayTails.length > 1 && (
               <>
                 <Button
@@ -1704,6 +1797,41 @@ export function WandLabTailBuilderTab({
               {copyMsg || 'Copy hex'}
             </Button>
           </Group>
+          <Group gap="xs" wrap="wrap" align="flex-end">
+            <SegmentedControl
+              size="xs"
+              value={observeZoneLayout}
+              onChange={setObserveZoneLayout}
+              data={[
+                { value: 'single', label: 'single' },
+                { value: 'five-corner', label: 'five-corner' },
+                { value: 'inner-outer', label: 'inner-outer' },
+              ]}
+            />
+            <Tooltip label={wc.available ? 'Assemble every pasted tail and observe' : wc.disabledTip}>
+              <Button
+                variant="light"
+                color="violet"
+                onClick={() => void handleObserveAll()}
+                loading={observing}
+                disabled={!wc.available || !displayTails.length || observing}
+              >
+                Build & Observe All
+              </Button>
+            </Tooltip>
+            <Switch
+              size="xs"
+              label="Preview hex first"
+              checked={observePreview}
+              onChange={(e) => setObservePreview(e.currentTarget.checked)}
+            />
+          </Group>
+          {(observing || observeReports.length > 0) && (
+            <Stack gap={4}>
+              <Text size="xs" fw={600} tt="uppercase" c="dimmed">Observe results</Text>
+              <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} />
+            </Stack>
+          )}
         </Stack>
       </Collapse>
     </Stack>

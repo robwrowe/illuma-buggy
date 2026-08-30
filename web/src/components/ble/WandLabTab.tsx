@@ -38,6 +38,7 @@ import { WandLabPacketSequence } from './WandLabPacketSequence';
 import { WandLabQuickCommands } from './WandLabQuickCommands';
 import { WandLabShowPanel } from './WandLabShowPanel';
 import { SweepByteIndex, WandLabSweepPanel } from './WandLabSweepPanel';
+import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
 import { WandLabByteBitsEditor } from './WandLabByteBitsEditor';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
 
@@ -82,6 +83,7 @@ export function WandLabTab({ data, update }) {
   }, [section, navigate]);
 
   const lab = data.wandLab || DEFAULT_DATA.wandLab;
+  const wcBackend = useWaveClassifierBackend();
   const mb = data.mbMapping || DEFAULT_MB_MAPPING;
   const [presetKey, setPresetKey] = useWandLabUiState('editor.presetKey', 'rainbow');
   const [bytes, setBytes] = useWandLabUiState('editor.bytes', () => [...SW_FX_PRESET_BYTES.rainbow]);
@@ -493,6 +495,17 @@ export function WandLabTab({ data, update }) {
             value={lab.simIp || ''}
             placeholder="illuma-wandsim.local (or IP address)"
             onChange={(e) => update({ wandLab: { ...lab, simIp: e.target.value.trim() } })}
+          />
+          <TextInput
+            label="Wave-classifier backend"
+            value={wcBackend.baseUrl}
+            placeholder="http://localhost:8420"
+            description={
+              wcBackend.available
+                ? 'Backend reachable — Observe is enabled in Tail Builder, Packet Sequence, and Analyzer.'
+                : wcBackend.disabledTip
+            }
+            onChange={(e) => wcBackend.setBaseUrl(e.target.value.trim() || 'http://localhost:8420')}
           />
 
           {status && <Text size="xs" c="dimmed">{status}</Text>}

@@ -1,0 +1,19 @@
+[project]
+name = "wave-classifier"
+version = "0.1.0"
+description = "Webcam waveform classifier for Illuma Buggy WandSimulator trials"
+requires-python = ">=3.9"
+dependencies = [
+    "opencv-python",
+    "numpy",
+    "scipy",
+    "openpyxl",
+    "requests",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["wave_classifier*"]

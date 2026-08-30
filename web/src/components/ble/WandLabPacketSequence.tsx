@@ -10,18 +10,23 @@ import {
   Text,
   Textarea,
   TextInput,
+  Tooltip,
 } from '@mantine/core';
 import { omitConsecutiveDuplicatePackets, parsePasteToPackets, SHEETS_CAPTURE_HEADER } from '../../lib/ble/captureImport';
 import {
   buildShowBodyFromPackets,
   bytesToHex,
   parseHexToBytes,
+  payloadToShowHex,
   sendHex,
   startShow,
 } from '../../lib/ble/wandSimClient';
 import { useShowProgress } from '../../hooks/useShowProgress';
 import { generateId } from '../../lib/utils';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
+import { observe } from '../../lib/ble/waveClassifierClient';
+import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
+import { WaveClassifierObserveResults } from './WaveClassifierObserveResults';
 
 function emptyPacket() {
   return { id: generateId(), bytes: [], waitMs: 1000, label: '' };
@@ -44,6 +49,11 @@ export function WandLabPacketSequence({
   const [stepping, setStepping] = useState(false);
   const { progress, startPolling, stop } = useShowProgress(simIp);
   const running = progress?.active;
+  const wc = useWaveClassifierBackend();
+  const [observing, setObserving] = useState(false);
+  const [observeReports, setObserveReports] = useState([]);
+  const [observeReportCsv, setObserveReportCsv] = useState('');
+  const [observeWhileSending, setObserveWhileSending] = useState(false);
 
   const validPackets = useMemo(
     () => packets.filter((p) => p.bytes?.length),
@@ -131,6 +141,22 @@ export function WandLabPacketSequence({
       await startShow(ip, body);
       setLastSentId(null);
       onStatus?.(`Queued ${valid.length} packet${valid.length === 1 ? '' : 's'} via /show`);
+      if (observeWhileSending && wc.available) {
+        const payloads = valid.map((p, i) => ({
+          hex_full: payloadToShowHex(p.bytes).toUpperCase(),
+          label: p.label || `packet-${i + 1}`,
+        }));
+        setObserving(true);
+        observe(wc.baseUrl, { payloads, hold_ms: defaultWaitMs })
+          .then((res) => {
+            setObserveReports(res?.reports || []);
+            setObserveReportCsv(res?.report_csv || '');
+            const csvNote = res?.report_csv ? ` → ${res.report_csv}` : '';
+            onStatus?.(`Observe-while-sending: ${res?.reports?.length || 0} results${csvNote}`);
+          })
+          .catch((e) => onStatus?.(e.message || 'Observe failed'))
+          .finally(() => setObserving(false));
+      }
       startPolling((st) => {
         if (st && !st.showActive) {
           const done = st.showStep >= valid.length;
@@ -217,6 +243,8 @@ export function WandLabPacketSequence({
         timed /show lines (<Text span ff="monospace">1000 8301…</Text>),
         or one hex string per line. Wait times come from <Text span ff="monospace">board_ts</Text> / timestamps or defaults.
         Use <strong>Step next</strong> to send one packet at a time via /send, or queue the full timed /show.
+        <strong> Observe sequence</strong> re-broadcasts those packets and measures them with the webcam
+        classifier (it does not trust the original capture labels).
         With consecutive-dedupe on, back-to-back identical payloads are collapsed and their waits are summed (A…A B → A B); the same packet can still appear later after a different one.
       </Text>
 
@@ -384,6 +412,48 @@ export function WandLabPacketSequence({
         >
           Reset step
         </Button>
+        <Tooltip label={wc.available ? 'Re-broadcast and classify each packet' : wc.disabledTip}>
+          <Button
+            variant="light"
+            color="violet"
+            loading={observing}
+            disabled={!wc.available || observing || !validPackets.length}
+            onClick={async () => {
+              const payloads = validPackets.map((p, i) => ({
+                hex_full: payloadToShowHex(p.bytes).toUpperCase(),
+                label: p.label || `packet-${i + 1}`,
+              }));
+              setObserving(true);
+              onStatus?.(`Observe sequence (${payloads.length})…`);
+              try {
+                const res = await observe(wc.baseUrl, {
+                  payloads,
+                  hold_ms: defaultWaitMs,
+                });
+                const reports = (res?.reports || []).map((r, i) => ({
+                  ...r,
+                  effect_label: r.effect_label || payloads[i]?.label,
+                }));
+                setObserveReports(reports);
+                setObserveReportCsv(res?.report_csv || '');
+                const csvNote = res?.report_csv ? ` → ${res.report_csv}` : '';
+                onStatus?.(`Observe sequence done — ${reports.length} result${reports.length === 1 ? '' : 's'}${csvNote}`);
+              } catch (e) {
+                onStatus?.(e.message || 'Observe sequence failed');
+              } finally {
+                setObserving(false);
+              }
+            }}
+          >
+            Observe sequence
+          </Button>
+        </Tooltip>
+        <Checkbox
+          size="xs"
+          label="capture while sending"
+          checked={observeWhileSending}
+          onChange={(e) => setObserveWhileSending(e.currentTarget.checked)}
+        />
         {progress && (
           <Text size="xs" c="dimmed">
             {progress.active
@@ -402,6 +472,12 @@ export function WandLabPacketSequence({
           </Text>
         )}
       </Group>
+      {(observing || observeReports.length > 0) && (
+        <Stack gap={4}>
+          <Text size="xs" fw={600} tt="uppercase" c="dimmed">Observe results</Text>
+          <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} />
+        </Stack>
+      )}
     </Stack>
   );
 }

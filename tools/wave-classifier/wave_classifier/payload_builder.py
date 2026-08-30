@@ -11,6 +11,7 @@ hex_full (8301 + payload) is what wandsim_client.show_single() wants.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -85,6 +86,26 @@ def parse_tail_bytes(raw: str | bytes | list[int]) -> list[int]:
     if len(space_tokens) > 1 and all(one_token(t) is not None for t in space_tokens):
         return [one_token(t) for t in space_tokens]  # type: ignore[misc]
     return list(hex_to_bytes(trimmed))
+
+
+def parse_tail_block(raw: str) -> tuple[list[list[int]], list[int]]:
+    """One tail per non-blank line. Reuses parse_tail_bytes() per line.
+
+    Blank/whitespace-only lines are skipped silently. A non-blank line with no
+    parseable bytes is dropped (not fatal); its 1-indexed line number is
+    returned in skipped_line_numbers so the caller can warn.
+    """
+    tails: list[list[int]] = []
+    skipped: list[int] = []
+    for i, line in enumerate(str(raw or "").splitlines(), start=1):
+        if not line.strip():
+            continue
+        parsed = parse_tail_bytes(line)
+        if not parsed:
+            skipped.append(i)
+            continue
+        tails.append(parsed)
+    return tails, skipped
 
 
 def _color_parts(color_format: str, colors: list[dict[str, int]]) -> list[dict[str, Any]]:
@@ -179,9 +200,15 @@ def trial_row_from_built(
     label: str | None = None,
     sheet: str = "builder",
     vibration: int | None = None,
+    row_index: int = 0,
 ) -> dict[str, Any]:
-    """JSON-serializable TrialRow-shaped record for --emit-trial-row."""
-    short = normalize_hex(built.hex)[:12] or "tail"
+    """JSON-serializable TrialRow-shaped record for --emit-trial-row.
+
+    Filename/row_id short id is a 12-char sha1 of hex_full so two tails that
+    share the same envelope/timing/color prefix still get distinct files.
+    """
+    digest = hashlib.sha1(normalize_hex(built.hex_full).encode("ascii")).hexdigest()[:12]
+    short = digest or "tail"
     tail_pairs = [(i, f"{b:02X}") for i, b in enumerate(tail_bytes)]
     color_idxs = {p.get("colorIdx") for p in built.parts if p.get("role") == "color"}
     vib_hex = None
@@ -192,7 +219,7 @@ def trial_row_from_built(
     return {
         "sheet": sheet,
         "row_id": f"{sheet}:{short}",
-        "row_index": 0,
+        "row_index": row_index,
         "op_code": None,
         "length_byte": built.length_byte,
         "derived_payload_length": built.length_byte + 2,
@@ -211,4 +238,21 @@ def trial_row_from_built(
         "vibration_byte": vib_hex,
         "source_sheet_kind": "builder",
         "notes": list(built.warnings),
+        "short_id": short,
+    }
+
+
+def built_short_id(built: BuiltPayload) -> str:
+    return hashlib.sha1(normalize_hex(built.hex_full).encode("ascii")).hexdigest()[:12]
+
+
+def built_payload_to_json(built: BuiltPayload) -> dict[str, Any]:
+    """JSON-safe BuiltPayload (omits raw bytes)."""
+    return {
+        "hex_full": built.hex_full,
+        "hex": built.hex,
+        "length_byte": built.length_byte,
+        "length_byte_hex": built.length_byte_hex,
+        "parts": built.parts,
+        "warnings": list(built.warnings),
     }

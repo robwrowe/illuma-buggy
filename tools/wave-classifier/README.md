@@ -148,6 +148,35 @@ python -m wave_classifier build ... --label "hyp-chase" --emit-trial-row builder
 python -m wave_classifier run --builder-trials builder/ --base-url http://illuma-wandsim.local
 ```
 
+## Batch a pasted tail sweep
+
+`build-batch` takes one tail per line (tab- or space-separated, `0x` tokens
+fine, mixed lengths expected) and builds each against one shared timing byte
+and color set. Output is a directory of `TrialRow` JSON files for
+`run --builder-trials`:
+
+```bash
+python -m wave_classifier build-batch \
+  --tails-file sweep.tsv \
+  --timing-byte 0x64 \
+  --color-format 0f \
+  --color 0x12 --mask 0 \
+  --color 0x04 --mask 0 \
+  --out-dir builder_trials/sweep-2026-08-30 \
+  --label-prefix chase-speed-sweep
+
+python -m wave_classifier run \
+  --builder-trials builder_trials/sweep-2026-08-30 \
+  --base-url http://illuma-wandsim.local
+```
+
+`--tails-stdin` reads a paste from stdin (Ctrl-D to finish). `--show` broadcasts
+each built tail in sequence without capturing. Bad lines are skipped with their
+line numbers; the rest of the batch still builds.
+
+Wand Lab can drive the same pipeline through a local backend — see
+[`tools/wave-classifier-server/README.md`](../wave-classifier-server/README.md).
+
 ## Webcam auto-exposure / auto-white-balance actively fights this tool
 
 A 30 fps webcam is plenty to separate a linear ramp+reset (sawtooth) from a

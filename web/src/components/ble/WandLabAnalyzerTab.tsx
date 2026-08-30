@@ -62,6 +62,9 @@ function ParamDetailPopover({
   byteValue = 0,
   patterns = [],
   onPatternsChange,
+  payloadBytes = null,
+  byteIndex = null,
+  tailIndex = null,
 }) {
   const initialGroups = normalizeParamGroups(initialDetail);
   const defaultMode = initialDetail?.mode === 'bitgroups' || initialGroups.length > 1
@@ -117,6 +120,9 @@ function ParamDetailPopover({
               showTimingPreset
               patterns={patterns}
               onPatternsChange={onPatternsChange}
+              payloadBytes={payloadBytes}
+              byteIndex={byteIndex}
+              tailIndex={tailIndex}
             />
             <Group justify="flex-end" gap={6}>
               <Button size="compact-xs" variant="default" onClick={onCancel}>
@@ -416,6 +422,9 @@ function AnalyzerRow({
                 onPatternsChange={onPatternsChange}
                 onCancel={onDetailCancel}
                 onConfirm={onDetailConfirm}
+                payloadBytes={row.bytes}
+                byteIndex={i}
+                tailIndex={i}
               />
             )}
             {popoverOpen && detailPopover.kind === 'color' && (
@@ -1094,6 +1103,9 @@ export function WandLabAnalyzerTab({
                       onPatternsChange={setPatterns}
                       onCancel={() => setDetailPopover(null)}
                       onConfirm={confirmDetailPopover}
+                      payloadBytes={rows[0]?.bytes}
+                      byteIndex={i}
+                      tailIndex={i}
                     />
                   )}
                   {popoverOpen && detailPopover.kind === 'color' && (
