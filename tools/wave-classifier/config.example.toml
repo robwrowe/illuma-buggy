@@ -8,6 +8,9 @@ base_url = "http://illuma-wandsim.local"
 device_index = 0
 settle_margin_ms = 500       # extra grab time after hold_ms to cover /show dispatch latency
 gap_seconds = 1.5            # pause between trials so the light actually stops
+calibrate_black_flash_ms = 200   # E905 black before each palette index during calibrate-palette
+off_confirm_timeout_ms = 2000    # max wait for camera to confirm LEDs are off
+off_max_brightness = 25          # peak ROI brightness treated as "off"
 
 # Named ROI sets per zone layout. Run `select-rois --zone-layout <layout>` to fill these
 # from the webcam. Layouts are independent — re-running select-rois overwrites that

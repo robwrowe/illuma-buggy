@@ -18,6 +18,12 @@ STATUS_TIMEOUT_S = 2.0
 STOP_TIMEOUT_S = 3.0
 SHOW_POLL_S = 1.5
 SHOW_POLL_INTERVAL_S = 0.05
+SHOW_POST_TIMEOUT_S = 8.0  # /show returns immediately — not hold_ms
+CONNECT_TIMEOUT_S = 3.0
+
+
+def _request_timeout(read_s: float = STATUS_TIMEOUT_S) -> tuple[float, float]:
+    return (CONNECT_TIMEOUT_S, read_s)
 
 
 class WandSimError(Exception):
@@ -35,7 +41,7 @@ def compact_hex(hex_full: str) -> str:
 
 
 def get_status(base_url: str, timeout: float = STATUS_TIMEOUT_S) -> dict[str, Any]:
-    resp = requests.get(_join(base_url, "/status"), timeout=timeout)
+    resp = requests.get(_join(base_url, "/status"), timeout=_request_timeout(timeout))
     resp.raise_for_status()
     data = resp.json()
     if not isinstance(data, dict):
@@ -43,8 +49,8 @@ def get_status(base_url: str, timeout: float = STATUS_TIMEOUT_S) -> dict[str, An
     return data
 
 
-def stop(base_url: str) -> dict[str, Any]:
-    resp = requests.post(_join(base_url, "/stop"), timeout=STOP_TIMEOUT_S)
+def stop(base_url: str, timeout: float = STOP_TIMEOUT_S) -> dict[str, Any]:
+    resp = requests.post(_join(base_url, "/stop"), timeout=_request_timeout(timeout))
     resp.raise_for_status()
     data = resp.json() if resp.content else {"ok": True}
     if isinstance(data, dict) and data.get("ok") is False:
@@ -55,19 +61,18 @@ def stop(base_url: str) -> dict[str, Any]:
 def show_single(base_url: str, hex_full: str, hold_ms: int) -> dict[str, Any]:
     """POST /show with a single `<holdMs> <hex>` line. Full hex, 8301 included.
 
-    HTTP timeout is hold_ms/1000 + 3 even though /show returns immediately —
-    a wedged board should not hang the client forever, but slow WiFi still fits.
+    /show returns immediately; playback is async on the board. HTTP timeout is
+    only for the round-trip (not hold_ms).
     """
     hex_compact = compact_hex(hex_full)
     if not hex_compact:
         raise WandSimError("empty hex; nothing to send")
     body = f"{int(hold_ms)} {hex_compact}"
-    timeout = max(hold_ms / 1000.0 + 3.0, 6.0)
     resp = requests.post(
         _join(base_url, "/show"),
         data=body.encode("utf-8"),
         headers={"Content-Type": "text/plain"},
-        timeout=timeout,
+        timeout=_request_timeout(SHOW_POST_TIMEOUT_S),
     )
     if resp.status_code >= 400:
         try:
@@ -106,6 +111,14 @@ def send_black_flash(base_url: str, duration_ms: int = 150) -> dict[str, Any]:
     return show_single(base_url, built.hex_full, ms)
 
 
+def ping_wandsim(base_url: str, timeout: float = 5.0) -> dict[str, Any]:
+    """GET /status — fail fast with a clear error if the board is unreachable."""
+    st = get_status(base_url, timeout=timeout)
+    if not st.get("ok", True):
+        raise WandSimError(f"WandSimulator /status not ok: {st!r}", st)
+    return st
+
+
 def wait_show_started(base_url: str, timeout_s: float = SHOW_POLL_S) -> bool:
     """Poll GET /status until showActive, or timeout. Returns whether it started."""
     deadline = time.monotonic() + timeout_s
@@ -116,6 +129,21 @@ def wait_show_started(base_url: str, timeout_s: float = SHOW_POLL_S) -> bool:
             time.sleep(SHOW_POLL_INTERVAL_S)
             continue
         if status.get("showActive"):
+            return True
+        time.sleep(SHOW_POLL_INTERVAL_S)
+    return False
+
+
+def wait_show_idle(base_url: str, timeout_s: float = SHOW_POLL_S) -> bool:
+    """Poll GET /status until showActive is false, or timeout."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            status = get_status(base_url)
+        except (requests.RequestException, ValueError, WandSimError):
+            time.sleep(SHOW_POLL_INTERVAL_S)
+            continue
+        if not status.get("showActive"):
             return True
         time.sleep(SHOW_POLL_INTERVAL_S)
     return False
@@ -137,7 +165,9 @@ class WandSimSession:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is KeyboardInterrupt:
+            return
         try:
-            stop(self.base_url)
+            stop(self.base_url, timeout=0.75)
         except Exception:
             pass

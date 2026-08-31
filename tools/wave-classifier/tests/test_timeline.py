@@ -98,12 +98,15 @@ def test_three_color_no_force_mix():
     assert blend.nearest_expected_idx == 2
 
 
+def test_solid_palette_payload_uses_e905():
+    assert build_solid_palette_payload(0).hex == "E100E90500090E00B0"
+    assert build_solid_palette_payload(28).hex == "E100E90500090E1CB0"
+
+
 def test_solid_black_payload_is_palette_29():
     built = build_solid_palette_payload(29)
-    assert built.hex_full.startswith("8301E1")
-    raw = bytes.fromhex(built.hex)
-    assert 0x1D in raw
-    assert built.hex_full.endswith("1D1D1D1D1D") or raw[-5:] == bytes([0x1D] * 5)
+    assert built.hex == "E100E90500090E1DB0"
+    assert built.hex_full == "8301E100E90500090E1DB0"
 
 
 def test_brightness_is_max_channel():
@@ -159,6 +162,7 @@ def main() -> None:
         test_blend_endpoints_and_midpoint,
         test_blend_far_from_line_keeps_fraction,
         test_three_color_no_force_mix,
+        test_solid_palette_payload_uses_e905,
         test_solid_black_payload_is_palette_29,
         test_brightness_is_max_channel,
         test_timeline_report_two_color_table,

@@ -108,7 +108,7 @@ export function SweepQueuePanel({
       expected_colors: it.expected_colors,
     }));
     setRunning(true);
-    onStatus?.(`Run Sweep (${payloads.length})…`);
+    onStatus?.('Run Sweep — if Calibrate is on, WandSim runs 29 palette solids first…');
     try {
       const hold = Math.max(500, Number(holdMs) || DEFAULT_OBSERVE_HOLD_MS);
       const res = await observe(wc.baseUrl, {

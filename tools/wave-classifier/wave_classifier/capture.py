@@ -324,6 +324,59 @@ def _grab_until_zones(
     return out
 
 
+def confirm_zones_off(
+    cam: Camera,
+    rois: dict[str, tuple[int, int, int, int]],
+    *,
+    max_brightness: float = 25.0,
+    timeout_ms: float = 4000.0,
+    poll_ms: float = 33.0,
+    consecutive: int = 3,
+    baseline_peak: float | None = None,
+    baseline_margin: float = 12.0,
+) -> bool:
+    """True when every ROI stays dark enough for *consecutive* frames.
+
+    When *baseline_peak* is set (from a black-flash grab), uses
+    ``baseline_peak + baseline_margin`` instead of the absolute *max_brightness*.
+    """
+    from .timeline import brightness_of
+
+    ceiling = (
+        float(baseline_peak) + float(baseline_margin)
+        if baseline_peak is not None
+        else float(max_brightness)
+    )
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    streak = 0
+    while time.monotonic() < deadline:
+        frame = cam.grab()
+        if frame is None:
+            time.sleep(poll_ms / 1000.0)
+            continue
+        peak = max(brightness_of(*_mean_rgb(frame, roi)) for roi in rois.values())
+        if peak <= ceiling:
+            streak += 1
+            if streak >= consecutive:
+                return True
+        else:
+            streak = 0
+        time.sleep(poll_ms / 1000.0)
+    return False
+
+
+def peak_brightness_in_samples(
+    samples: dict[str, list[tuple[float, float, float, float]]],
+) -> float | None:
+    from .timeline import brightness_of
+
+    peaks: list[float] = []
+    for rows in samples.values():
+        for _, r, g, b in rows:
+            peaks.append(brightness_of(r, g, b))
+    return max(peaks) if peaks else None
+
+
 class MissingRoiSet(Exception):
     def __init__(self, layouts: list[str]):
         self.layouts = layouts
@@ -460,13 +513,14 @@ def run_captures(
             five = rois_by_layout.get("five-corner")
             if not five:
                 raise MissingRoiSet(["five-corner"])
-            print("calibrating palette 0–28 (five-corner)…")
+            print("calibrating palette 0–28 (five-corner) — 29 E905 solids via WandSim; may take a few minutes…")
             cal = run_palette_calibration(
                 base_url=base_url,
                 five_corner_rois=five,
                 settle_margin_ms=settle_margin_ms,
                 cam=cam,
                 session=session,
+                black_flash_ms=black_flash_ms if black_flash_ms > 0 else 200,
                 on_index=lambda i, n, idx: print(f"  palette {idx} ({i + 1}/{n})"),
             )
             print(f"wrote {cal.path}  source={cal.source}")

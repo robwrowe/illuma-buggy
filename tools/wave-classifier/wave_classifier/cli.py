@@ -513,6 +513,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="calibration.toml path (default: tools/wave-classifier/calibration.toml)",
     )
+    calp.add_argument(
+        "--black-flash-ms",
+        type=int,
+        default=None,
+        help="E905 black flash before each palette (default 200)",
+    )
+    calp.add_argument(
+        "--off-confirm-timeout-ms",
+        type=int,
+        default=None,
+        help="Max wait for camera to confirm LEDs off (default 4000)",
+    )
+    calp.add_argument(
+        "--off-max-brightness",
+        type=float,
+        default=None,
+        help="Peak ROI brightness treated as off (default 25)",
+    )
 
     return parser
 
@@ -920,12 +938,20 @@ def cmd_report_only(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
             _cfg_get(cfg, "capture", "device_index", 0)
         )
         settle = int(_cfg_get(cfg, "capture", "settle_margin_ms", 500))
+        black_ms = _black_flash_ms(args)
+        if black_ms <= 0:
+            black_ms = int(_cfg_get(cfg, "capture", "calibrate_black_flash_ms", 200))
+        off_timeout = int(_cfg_get(cfg, "capture", "off_confirm_timeout_ms", 2000))
+        off_bri = float(_cfg_get(cfg, "capture", "off_max_brightness", 25))
         run_palette_calibration(
             base_url=base_url,
             five_corner_rois=five,
             device_index=device,
             settle_margin_ms=settle,
             macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
+            black_flash_ms=black_ms,
+            off_confirm_timeout_ms=off_timeout,
+            off_max_brightness=off_bri,
             on_index=lambda i, n, idx: print(f"  palette {idx} ({i + 1}/{n})"),
         )
     do_timeline = bool(getattr(args, "timeline", False))
@@ -979,6 +1005,21 @@ def cmd_calibrate_palette(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
         raise MissingRoiSet(["five-corner"])
     device = args.device_index if args.device_index is not None else int(_cfg_get(cfg, "capture", "device_index", 0))
     settle = int(_cfg_get(cfg, "capture", "settle_margin_ms", 500))
+    black_ms = (
+        int(args.black_flash_ms)
+        if args.black_flash_ms is not None
+        else int(_cfg_get(cfg, "capture", "calibrate_black_flash_ms", 200))
+    )
+    off_timeout = (
+        int(args.off_confirm_timeout_ms)
+        if args.off_confirm_timeout_ms is not None
+        else int(_cfg_get(cfg, "capture", "off_confirm_timeout_ms", 2000))
+    )
+    off_bri = (
+        float(args.off_max_brightness)
+        if args.off_max_brightness is not None
+        else float(_cfg_get(cfg, "capture", "off_max_brightness", 25))
+    )
     cal = run_palette_calibration(
         base_url=base_url,
         five_corner_rois=five,
@@ -986,7 +1027,9 @@ def cmd_calibrate_palette(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
         settle_margin_ms=settle,
         macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
         dest=args.out,
-        on_index=lambda i, n, idx: print(f"[{i + 1}/{n}] palette {idx}"),
+        black_flash_ms=black_ms,
+        off_confirm_timeout_ms=off_timeout,
+        off_max_brightness=off_bri,
     )
     print(f"wrote {cal.path}")
     print("\n".join(calibration_diff_lines(cal)))

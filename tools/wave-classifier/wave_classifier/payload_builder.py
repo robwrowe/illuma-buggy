@@ -246,27 +246,76 @@ def built_short_id(built: BuiltPayload) -> str:
     return hashlib.sha1(normalize_hex(built.hex_full).encode("ascii")).hexdigest()[:12]
 
 
+def build_mb_single_payload(
+    palette_idx: int,
+    *,
+    mask: int = 0,
+    timing: int = 0x09,
+    vibration: int = 0,
+    envelope: str = "e1",
+) -> BuiltPayload:
+    """E905 single palette — Python port of mbPayloads.ts buildMbSingle().
+
+    Example: palette 0 → ``E100E90500090E00B0``; palette 28 → ``…0E1CB0``.
+    """
+    env = envelope_byte(envelope)
+    timing_b = int(timing) & 0xFF
+    pal = int(palette_idx) & 0x1F
+    m = int(mask) & 0xFF
+
+    parts: list[dict[str, Any]] = [
+        {"id": "env", "role": "env", "byte": env},
+        {"id": "envPad", "role": "fixed", "byte": 0x00},
+        {"id": "e9", "role": "fixed", "byte": 0xE9},
+        {"id": "sub", "role": "len", "byte": 0x05},
+        {"id": "pad", "role": "fixed", "byte": 0x00},
+        {"id": "tb", "role": "timing", "byte": timing_b},
+    ]
+    if m > 7 or (m & 0xF8):
+        parts.append({"id": "mask", "role": "mask", "byte": m})
+        parts.append({"id": "pal", "role": "color", "colorIdx": 0, "byte": pal})
+    else:
+        parts.append({"id": "filler", "role": "fixed", "byte": 0x0E})
+        parts.append({
+            "id": "maskPal",
+            "role": "color",
+            "colorIdx": 0,
+            "byte": encode_color_byte(pal, m),
+        })
+    parts.append({"id": "vib", "role": "vib", "byte": mb_vib_byte(vibration)})
+
+    raw = bytes(p["byte"] & 0xFF for p in parts)
+    payload_hex = raw.hex().upper()
+    full = bytes(COMPANY_ID) + raw
+    return BuiltPayload(
+        bytes=raw,
+        hex=payload_hex,
+        hex_full=full.hex().upper(),
+        length_byte=0x05,
+        length_byte_hex="05",
+        parts=parts,
+        warnings=[],
+    )
+
+
 def build_solid_palette_payload(
     palette_idx: int,
     *,
     n_zones: int = 5,
     envelope: str = "e1",
-    timing_byte: int = 0x01,
+    timing_byte: int = 0x09,
+    mask: int = 0,
 ) -> BuiltPayload:
-    """Static all-zones solid: 0F, empty tail, one palette index repeated.
+    """Static all-LEDs solid via E905. Used for palette calibration and black flash (29).
 
-    Matches field-note solids like `E909 00 01 0F A4 A4 A4 A4 A4` (without vib).
-    Used for palette calibration and the pre-trial black flash (index 29).
+    ``n_zones`` is kept for call-site compatibility but ignored — E905 lights all LEDs
+    from one palette index (see Wand Lab ``buildMbSingle`` / ``mbsweep``).
     """
-    n = max(1, int(n_zones))
-    idx = int(palette_idx) & 0x1F
-    colors = [{"palette_idx": idx, "mask": 0} for _ in range(n)]
-    return build_payload(
-        tail_bytes=[],
-        timing_byte=int(timing_byte) & 0xFF,
-        color_format="0f",
-        colors=colors,
-        vibration=None,
+    del n_zones  # E909/0F multi-slot solids are not what the wand renders for calibration.
+    return build_mb_single_payload(
+        palette_idx,
+        mask=mask,
+        timing=timing_byte,
         envelope=envelope,
     )
 
