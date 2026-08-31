@@ -38,6 +38,7 @@ import { WandLabPacketSequence } from './WandLabPacketSequence';
 import { WandLabQuickCommands } from './WandLabQuickCommands';
 import { WandLabShowPanel } from './WandLabShowPanel';
 import { SweepByteIndex, WandLabSweepPanel } from './WandLabSweepPanel';
+import { SweepQueuePanel } from './SweepQueuePanel';
 import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
 import { WandLabByteBitsEditor } from './WandLabByteBitsEditor';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
@@ -506,6 +507,12 @@ export function WandLabTab({ data, update }) {
                 : wcBackend.disabledTip
             }
             onChange={(e) => wcBackend.setBaseUrl(e.target.value.trim() || 'http://localhost:8420')}
+          />
+
+          <SweepQueuePanel
+            simIp={lab.simIp}
+            labTab={labTab}
+            onStatus={setStatus}
           />
 
           {status && <Text size="xs" c="dimmed">{status}</Text>}

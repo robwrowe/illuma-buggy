@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 SERVER_DIR = Path(__file__).resolve().parent
@@ -52,6 +53,41 @@ app.add_middleware(
 )
 
 OBSERVE_MAX_PAYLOADS = 10
+
+# One logical Observe run may span several ≤10-payload HTTP calls. Process-local
+# only — this is a single-operator LAN bench tool (one uvicorn process).
+_PENDING_RUNS: Dict[str, list] = {}
+
+
+def accumulate_observe_run(pending, run_id, seq, total, report_objs):
+    """Append this chunk. Returns ('pending', acc) or ('write', acc) for the last chunk."""
+    acc = pending.setdefault(run_id, [])
+    acc.extend(report_objs)
+    last_chunk = total is None or (seq is not None and int(seq) >= int(total))
+    if last_chunk:
+        return "write", pending.pop(run_id)
+    return "pending", acc
+
+
+def discard_observe_run(pending, run_id):
+    if run_id:
+        pending.pop(run_id, None)
+
+
+def safe_report_path(filename: str, reports_dir: Path = REPORTS_DIR) -> Path:
+    """Resolve a report basename inside reports_dir. Rejects traversal."""
+    name = (filename or "").strip()
+    if not name or name != Path(name).name or ".." in name:
+        raise HTTPException(400, "invalid filename")
+    root = reports_dir.resolve()
+    path = (root / name).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise HTTPException(400, "invalid filename") from None
+    if not path.is_file():
+        raise HTTPException(404, "report not found")
+    return path
 
 
 def _cfg():
@@ -119,6 +155,7 @@ class ObservePayload(BaseModel):
     label: Optional[str] = None
     tail_index: Optional[int] = None
     color_count: Optional[int] = None
+    expected_colors: Optional[List[Dict[str, Any]]] = None
 
 
 class ObserveBody(BaseModel):
@@ -129,6 +166,9 @@ class ObserveBody(BaseModel):
     # classify inner/outer vs five-corner — those share 2-color sawtooth.
     zone_layout: Optional[str] = "auto"
     base_url: Optional[str] = None
+    run_id: Optional[str] = None
+    run_seq: Optional[int] = None  # 1-indexed chunk number
+    run_total_chunks: Optional[int] = None
 
 
 @app.get("/health")
@@ -176,118 +216,162 @@ def api_show(body: ShowBody):
 def api_observe(body: ObserveBody):
     from wave_classifier.capture import MissingRoiSet, run_captures
 
-    if len(body.payloads) > OBSERVE_MAX_PAYLOADS:
-        raise HTTPException(
-            400,
-            f"{len(body.payloads)} payloads exceeds /observe's small-batch limit "
-            f"({OBSERVE_MAX_PAYLOADS}). Use `python -m wave_classifier run --builder-trials` "
-            "for large sweeps (resumable, --repeat).",
-        )
-    if not body.payloads:
-        raise HTTPException(400, "payloads is empty")
-    cfg = _cfg()
-    rois_by_layout = rois_from_config(cfg)
-    requested = (body.zone_layout or "auto").strip().lower()
-    auto_layout = requested not in {"single", "five-corner", "inner-outer"}
-    if auto_layout:
-        layout = preferred_capture_layout(rois_by_layout).layout
-    else:
-        layout = requested
-    if layout not in rois_by_layout and not (
-        layout == "five-corner" and "inner-outer" in rois_by_layout
-    ):
-        raise HTTPException(
-            409,
-            f"no ROI configured for zone_layout={layout} — run "
-            f"`python -m wave_classifier select-rois --zone-layout {layout}` first",
-        )
-    url = _wandsim_url(body.base_url)
-    capture = cfg.get("capture") or {}
-    classify = cfg.get("classify") or {}
-    device = int(capture.get("device_index", 0))
-    settle = int(capture.get("settle_margin_ms", 500))
-    gap = float(capture.get("gap_seconds", 1.5))
-    noise = float(classify.get("noise_floor_pct", 0.03))
-    min_corr = float(classify.get("min_template_correlation", 0.6))
-
-    trials = []
-    for i, p in enumerate(body.payloads):
-        hint = ZoneLayoutHint()
-        if layout == "five-corner":
-            hint.five_zones = "Y"
-        elif layout == "inner-outer":
-            hint.layout = "Inner/Outer"
-        else:
-            hint.five_zones = "N"
-        rec = {
-            "sheet": "observe",
-            "row_id": p.label or f"observe:{i + 1}",
-            "row_index": i + 1,
-            "hex_full": p.hex_full,
-            "effect_label": p.label,
-            "source_sheet_kind": "builder",
-        }
-        if p.color_count is not None:
-            rec["color_count"] = int(p.color_count)
-        row = trial_from_dict(rec, source_kind="builder")
-        row.zone_layout_hint = hint
-        if auto_layout:
-            row.notes.append(
-                f"zone_layout_auto: captured as {layout} (richest configured ROIs; "
-                "not a packet classification of inner/outer vs five-corner)"
-            )
-        trials.append(row)
-
+    run_id = (body.run_id or "").strip() or None
     try:
-        cap_results = run_captures(
-            trials,
-            base_url=url,
-            captures_dir=CAPTURES_DIR,
-            device_index=device,
-            rois_by_layout=rois_by_layout,
-            hold_ms=body.hold_ms,
-            settle_margin_ms=settle,
-            gap_seconds=gap,
-            repeats=max(1, body.repeat),
-            macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
-        )
-    except MissingRoiSet as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except WandSimError as exc:
-        raise HTTPException(
-            502,
-            f"{exc} — check Wand Lab Simulator IP (sent as base_url) and that the board is on WiFi.",
-        ) from exc
+        if len(body.payloads) > OBSERVE_MAX_PAYLOADS:
+            raise HTTPException(
+                400,
+                f"{len(body.payloads)} payloads exceeds /observe's small-batch limit "
+                f"({OBSERVE_MAX_PAYLOADS}). Use `python -m wave_classifier run --builder-trials` "
+                "for large sweeps (resumable, --repeat).",
+            )
+        if not body.payloads:
+            raise HTTPException(400, "payloads is empty")
+        cfg = _cfg()
+        rois_by_layout = rois_from_config(cfg)
+        requested = (body.zone_layout or "auto").strip().lower()
+        auto_layout = requested not in {"single", "five-corner", "inner-outer"}
+        if auto_layout:
+            layout = preferred_capture_layout(rois_by_layout).layout
+        else:
+            layout = requested
+        if layout not in rois_by_layout and not (
+            layout == "five-corner" and "inner-outer" in rois_by_layout
+        ):
+            raise HTTPException(
+                409,
+                f"no ROI configured for zone_layout={layout} — run "
+                f"`python -m wave_classifier select-rois --zone-layout {layout}` first",
+            )
+        url = _wandsim_url(body.base_url)
+        capture = cfg.get("capture") or {}
+        classify = cfg.get("classify") or {}
+        device = int(capture.get("device_index", 0))
+        settle = int(capture.get("settle_margin_ms", 500))
+        gap = float(capture.get("gap_seconds", 1.5))
+        noise = float(classify.get("noise_floor_pct", 0.03))
+        min_corr = float(classify.get("min_template_correlation", 0.6))
 
-    by_hex = {r.trial.hex_key: r for r in cap_results}
-    report_objs = []
-    reports = []
-    for trial in trials:
-        cr = by_hex.get(trial.hex_key)
-        paths = list(getattr(cr, "csv_paths", None) or [])
-        status = getattr(cr, "capture_status", "ok") if cr else "missing_csv"
-        err = getattr(cr, "error", None) if cr else None
-        report = classify_trial(
-            trial,
-            paths,
-            noise_floor_pct=noise,
-            min_template_correlation=min_corr,
-            capture_status=status,
-            capture_error=err,
-        )
-        report_objs.append(report)
-        reports.append(trial_report_to_dict(report, capture_paths=paths))
-    paths_out = write_observe_bundle(REPORTS_DIR, report_objs)
-    return {
-        "reports": reports,
-        "count": len(reports),
-        "report_csv": str(paths_out["csv"]),
-        "report_md": str(paths_out["md"]),
-        "report_json": str(paths_out["json"]),
-        "captures_dir": str(CAPTURES_DIR / "observe"),
-        "capture_layout": layout,
-        "capture_layout_auto": auto_layout,
-    }
+        trials = []
+        for i, p in enumerate(body.payloads):
+            hint = ZoneLayoutHint()
+            if layout == "five-corner":
+                hint.five_zones = "Y"
+            elif layout == "inner-outer":
+                hint.layout = "Inner/Outer"
+            else:
+                hint.five_zones = "N"
+            rec = {
+                "sheet": "observe",
+                "row_id": p.label or f"observe:{i + 1}",
+                "row_index": i + 1,
+                "hex_full": p.hex_full,
+                "effect_label": p.label,
+                "source_sheet_kind": "builder",
+            }
+            if p.color_count is not None:
+                rec["color_count"] = int(p.color_count)
+            if p.expected_colors:
+                rec["expected_colors"] = list(p.expected_colors)
+            row = trial_from_dict(rec, source_kind="builder")
+            row.zone_layout_hint = hint
+            if auto_layout:
+                row.notes.append(
+                    f"zone_layout_auto: captured as {layout} (richest configured ROIs; "
+                    "not a packet classification of inner/outer vs five-corner)"
+                )
+            trials.append(row)
+
+        try:
+            cap_results = run_captures(
+                trials,
+                base_url=url,
+                captures_dir=CAPTURES_DIR,
+                device_index=device,
+                rois_by_layout=rois_by_layout,
+                hold_ms=body.hold_ms,
+                settle_margin_ms=settle,
+                gap_seconds=gap,
+                repeats=max(1, body.repeat),
+                macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
+            )
+        except MissingRoiSet as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except WandSimError as exc:
+            raise HTTPException(
+                502,
+                f"{exc} — check Wand Lab Simulator IP (sent as base_url) and that the board is on WiFi.",
+            ) from exc
+
+        by_hex = {r.trial.hex_key: r for r in cap_results}
+        report_objs = []
+        reports = []
+        for trial in trials:
+            cr = by_hex.get(trial.hex_key)
+            paths = list(getattr(cr, "csv_paths", None) or [])
+            status = getattr(cr, "capture_status", "ok") if cr else "missing_csv"
+            err = getattr(cr, "error", None) if cr else None
+            report = classify_trial(
+                trial,
+                paths,
+                noise_floor_pct=noise,
+                min_template_correlation=min_corr,
+                capture_status=status,
+                capture_error=err,
+            )
+            report_objs.append(report)
+            reports.append(trial_report_to_dict(report, capture_paths=paths))
+
+        extra = {
+            "captures_dir": str(CAPTURES_DIR / "observe"),
+            "capture_layout": layout,
+            "capture_layout_auto": auto_layout,
+        }
+        if run_id:
+            action, accumulated = accumulate_observe_run(
+                _PENDING_RUNS, run_id, body.run_seq, body.run_total_chunks, report_objs
+            )
+            if action == "write":
+                paths_out = write_observe_bundle(REPORTS_DIR, accumulated)
+            else:
+                return {
+                    "reports": reports,
+                    "count": len(reports),
+                    "report_csv": None,
+                    "report_md": None,
+                    "report_json": None,
+                    "run_pending": True,
+                    **extra,
+                }
+        else:
+            paths_out = write_observe_bundle(REPORTS_DIR, report_objs)
+        return {
+            "reports": reports,
+            "count": len(reports),
+            "report_csv": str(paths_out["csv"]),
+            "report_md": str(paths_out["md"]),
+            "report_json": str(paths_out["json"]),
+            "run_pending": False,
+            **extra,
+        }
+    except Exception:
+        discard_observe_run(_PENDING_RUNS, run_id)
+        raise
+
+
+@app.get("/reports/{filename}")
+def api_report(filename: str):
+    path = safe_report_path(filename)
+    suffix = path.suffix.lower()
+    if suffix == ".md":
+        media = "text/markdown"
+    elif suffix == ".csv":
+        media = "text/plain"
+    elif suffix == ".json":
+        media = "application/json"
+    else:
+        media = "text/plain"
+    return FileResponse(path, media_type=media, filename=path.name)
 
 
 @app.post("/discover")

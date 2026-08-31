@@ -218,8 +218,10 @@ Dim room + fixed target + locked exposure is the whole optical setup.
 ## What the reports are (and aren't)
 
 `reports/observe-<timestamp>.md` — Wand Lab Observe output, meant to paste into
-another model. Includes the effect vocabulary, hex, inferred label, zone
-relationship / chase order, and a per-zone table. `.csv` and `.json` sit
+another model. Opens with a comparison table (engine, spatial, mix steps,
+expected colors, cycle) then per-trial hex + zone tables. Mix steps are
+100/0 · 75/25 · 50/50 · 25/75 · 0/100 along Tail Builder / packet colors
+(`discrete_interior` = never 100% either color). `.csv` and `.json` sit
 beside it. Gitignored.
 
 `reports/taxonomy-<timestamp>.md` (and `.csv`) — data-driven clusters of
@@ -277,6 +279,12 @@ ROIs. Observe auto-captures the richest configured ROI set (five-corner when
 present) — do not pick inner/outer vs five-zone in the UI; both are two-color
 sawtooth until the switch bits are known. A single-ROI capture cannot tell
 chase from strobe.
+
+Color mix uses expected RGB from Tail Builder (or D2 / 0F slots on the hex)
+as mix vertices — not webcam min/max, and not R-vs-G channel opposition
+(two similar hues never invert red vs green). Two-color dwell bins:
+100/0, 75/25, 50/50, 25/75, 0/100. A five-step chase that never hits either
+palette color is `discrete_interior`.
 
 Wand Lab Observe writes `reports/observe-*.md` (paste into Claude), plus `.csv`
 and `.json`. Those directories are gitignored.

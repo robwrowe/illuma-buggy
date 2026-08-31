@@ -86,7 +86,7 @@ export async function buildBatch(baseUrl, params) {
 
 /**
  * @param {string} backendUrl classifier server (localhost:8420)
- * @param {{ payloads: {hex_full: string, label?: string, tail_index?: number}[], hold_ms?: number, repeat?: number, zone_layout?: string, base_url?: string, onChunk?: function }} params
+ * @param {{ payloads: {hex_full: string, label?: string, tail_index?: number, color_count?: number, expected_colors?: object[]}[], hold_ms?: number, repeat?: number, zone_layout?: string, base_url?: string, onChunk?: function }} params
  *   `base_url` here is the WandSimulator board URL (same host as Send), not the classifier.
  */
 export async function observe(backendUrl, params) {
@@ -99,13 +99,21 @@ export async function observe(backendUrl, params) {
   if (!chunks.length) {
     throw new Error('payloads is empty');
   }
+  const runId = chunks.length > 1
+    ? `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    : undefined;
   const reports = [];
   let last = null;
   for (let c = 0; c < chunks.length; c++) {
     const chunk = chunks[c];
     params?.onChunk?.(c, chunks.length, chunk.length);
     const timeoutMs = Math.max(120000, chunk.length * (hold + 4000) + 15000);
-    const body = { ...params, payloads: chunk, hold_ms: hold };
+    const body = {
+      ...params,
+      payloads: chunk,
+      hold_ms: hold,
+      ...(runId ? { run_id: runId, run_seq: c + 1, run_total_chunks: chunks.length } : {}),
+    };
     delete body.onChunk;
     last = await jsonFetch(`${trimBase(backendUrl)}/observe`, {
       method: 'POST',
@@ -119,6 +127,40 @@ export async function observe(backendUrl, params) {
     reports,
     count: reports.length,
   };
+}
+
+export function reportFilenameFromPath(path) {
+  const s = String(path || '').trim().replace(/\\/g, '/');
+  if (!s) return '';
+  const parts = s.split('/');
+  return parts[parts.length - 1] || '';
+}
+
+/** Fetch a reports/ file by path or basename (markdown/csv/json text). */
+export async function fetchReport(backendUrl, filenameOrPath) {
+  const name = reportFilenameFromPath(filenameOrPath);
+  if (!name) throw new Error('missing report filename');
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(`${trimBase(backendUrl)}/reports/${encodeURIComponent(name)}`, {
+      signal: ctrl.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let detail = text;
+      try {
+        const data = JSON.parse(text);
+        detail = formatBackendDetail(data?.detail, data?.message || res.statusText);
+      } catch {
+        /* keep text */
+      }
+      throw new Error(detail || `HTTP ${res.status}`);
+    }
+    return text;
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 export async function discover(baseUrl, minGroup = 3) {

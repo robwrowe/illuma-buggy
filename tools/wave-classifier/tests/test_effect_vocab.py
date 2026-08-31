@@ -150,6 +150,8 @@ def test_claude_markdown_includes_vocab_and_hex():
     assert "Lights follow in order" in text
     assert "8301E100DEAD" in text
     assert "**Chase**" in text
+    assert "## Comparison" in text
+    assert "| # | id | engine | spatial | mix | colors | cycle_ms | hex |" in text
 
 
 def main() -> None:

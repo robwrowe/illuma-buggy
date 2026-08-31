@@ -274,6 +274,7 @@ class TrialRow:
     source_sheet_kind: str = SOURCE_OP_CODES_CAPTURED
     envelope_assumed: bool = False
     zone_layout_downgraded: bool = False
+    expected_colors: list = field(default_factory=list)
 
     @property
     def sheet_safe(self) -> str:
@@ -454,6 +455,7 @@ def _parse_trial(sheet: str, row_index: int, values: tuple[Any, ...], colmap: di
         decoded=decoded,
         zone_layout_hint=hint,
         envelope_assumed=env_assumed,
+        expected_colors=infer_expected_colors(decoded, color_count),
     )
 
 
@@ -627,13 +629,54 @@ def infer_color_count(decoded: DecodedPacket) -> int | None:
     """Color slots recoverable from hex. D2 is 0x55 RGB groups; 0F/0E is not unique."""
     fmt, rest = _payload_after_format(decoded)
     if fmt == 0xD2:
-        n = 0
-        i = 0
-        while i + 4 <= len(rest) and rest[i] == 0x55:
-            n += 1
-            i += 4
-        return n if n else None
+        colors, _consumed = _take_d2_colors(rest, None)
+        return len(colors) if colors else None
     return None
+
+
+def _take_d2_colors(rest: list[int], color_count: int | None) -> tuple[list[dict], int]:
+    """Walk D2 color slots: `55 r g b` repeats, or `D2 58 r g b` as a second RGB tag."""
+    out: list[dict] = []
+    i = 0
+    limit = int(color_count) if color_count is not None else 8
+    while i < len(rest) and len(out) < limit:
+        if rest[i] == 0x55 and i + 4 <= len(rest):
+            out.append({
+                "r": int(rest[i + 1]), "g": int(rest[i + 2]), "b": int(rest[i + 3]),
+                "name": "rgb",
+            })
+            i += 4
+            continue
+        if rest[i] == 0xD2 and i + 5 <= len(rest) and rest[i + 1] in (0x55, 0x58):
+            out.append({
+                "r": int(rest[i + 2]), "g": int(rest[i + 3]), "b": int(rest[i + 4]),
+                "name": "rgb",
+            })
+            i += 5
+            continue
+        if rest[i] == 0x58 and i + 4 <= len(rest) and out:
+            out.append({
+                "r": int(rest[i + 1]), "g": int(rest[i + 2]), "b": int(rest[i + 3]),
+                "name": "rgb",
+            })
+            i += 4
+            continue
+        break
+    return out, i
+
+
+def infer_expected_colors(decoded: DecodedPacket, color_count: int | None) -> list[dict]:
+    """Palette / D2 RGB slots from hex. 0F/0E needs color_count to know where the tail starts."""
+    from .palette import palette_entry
+
+    fmt, rest = _payload_after_format(decoded)
+    if fmt == 0xD2:
+        colors, _consumed = _take_d2_colors(rest, color_count)
+        return colors
+    if fmt in (0x0F, 0x0E) and color_count:
+        n = max(0, int(color_count))
+        return [palette_entry(rest[i] & 0x1F) for i in range(min(n, len(rest)))]
+    return []
 
 
 def tail_bytes_from_decoded(decoded: DecodedPacket, color_count: int | None) -> list[tuple[int, str]]:
@@ -643,12 +686,7 @@ def tail_bytes_from_decoded(decoded: DecodedPacket, color_count: int | None) -> 
     if fmt in (0x0F, 0x0E):
         rest = rest[n_color:]
     elif fmt == 0xD2:
-        consumed = 0
-        colors = 0
-        target = n_color if color_count is not None else 99
-        while consumed + 4 <= len(rest) and rest[consumed] == 0x55 and colors < target:
-            consumed += 4
-            colors += 1
+        _colors, consumed = _take_d2_colors(rest, color_count)
         rest = rest[consumed:]
     return [(idx, f"{b:02X}") for idx, b in enumerate(rest)]
 
@@ -669,6 +707,9 @@ def trial_from_dict(data: dict[str, Any], *, source_kind: str = SOURCE_BUILDER) 
         n_colors = infer_color_count(decoded)
     if not tail and decoded:
         tail = tail_bytes_from_decoded(decoded, n_colors)
+    expected = list(data.get("expected_colors") or [])
+    if not expected and decoded:
+        expected = infer_expected_colors(decoded, n_colors)
     hint_raw = data.get("zone_layout_hint") or {}
     hint = ZoneLayoutHint(
         five_zones=hint_raw.get("five_zones"),
@@ -709,6 +750,7 @@ def trial_from_dict(data: dict[str, Any], *, source_kind: str = SOURCE_BUILDER) 
         zone_layout_hint=hint,
         source_sheet_kind=str(data.get("source_sheet_kind") or source_kind),
         envelope_assumed=env_assumed or bool(data.get("envelope_assumed")),
+        expected_colors=expected,
     )
 
 

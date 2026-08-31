@@ -75,6 +75,11 @@ class TrialReport:
     zone_relationship_status: str = "unlabeled"
     primary_zone: str = "all"
     card: object | None = None
+    mix_kind: str = ""
+    mix_steps: str = ""
+    expected_colors_label: str = ""
+    goes_black: bool | None = None
+    hits_endpoints: bool | None = None
 
 
 def _classify_csv(
@@ -82,6 +87,7 @@ def _classify_csv(
     *,
     noise_floor_pct: float,
     min_template_correlation: float,
+    expected_colors: list | None = None,
 ) -> RepeatClassification:
     t, r, g, b = read_samples_csv(path)
     waves = classify_rgb(
@@ -92,7 +98,7 @@ def _classify_csv(
         noise_floor_pct=noise_floor_pct,
         min_template_correlation=min_template_correlation,
     )
-    blend = analyze_blend(t, r, g, b, waves)
+    blend = analyze_blend(t, r, g, b, waves, expected_colors=expected_colors)
     conf = float(waves["brightness"].confidence)
     if blend.is_blend:
         dominant = max(("r", "g", "b"), key=lambda k: waves[k].amplitude)
@@ -191,6 +197,7 @@ def classify_trial(
                 p,
                 noise_floor_pct=noise_floor_pct,
                 min_template_correlation=min_template_correlation,
+                expected_colors=trial.expected_colors,
             )
             item.zone = zone
             classified.append(item)
@@ -278,6 +285,9 @@ def classify_trial(
 
     waves = pick_zr.waveforms if pick_zr else None
     blend = pick_zr.blend if pick_zr else None
+    mix = blend.color_mix if blend else None
+    if mix:
+        notes.extend(mix.notes)
     conf = pick_zr.confidence if pick_zr else 0.0
     n_rep = max((z.n_repeats for z in zone_results.values()), default=0)
     report = TrialReport(
@@ -305,6 +315,11 @@ def classify_trial(
         outer_chase_direction=zrel.outer_chase_direction,
         zone_relationship_status=zstatus,
         primary_zone=primary,
+        mix_kind=mix.mix_kind if mix else "",
+        mix_steps=mix.mix_steps if mix else "",
+        expected_colors_label=mix.expected_label if mix else "",
+        goes_black=mix.goes_black if mix else None,
+        hits_endpoints=mix.hits_endpoints if mix else None,
     )
     attach_metadata_card(report, review_threshold=review_threshold)
     return report
@@ -381,6 +396,12 @@ CSV_COLUMNS = [
     "re_run_recommended",
     "length_byte",
     "color_count",
+    "expected_colors",
+    "mix_kind",
+    "mix_steps",
+    "goes_black",
+    "hits_endpoints",
+    "spatial",
     "vibration_byte",
     "zone_layout",
     "zone_layout_assumed",
@@ -415,6 +436,54 @@ CSV_COLUMNS = [
 ]
 
 
+def spatial_summary(r: TrialReport) -> str:
+    layout = r.zone_layout or "single"
+    if layout == "five-corner":
+        layout = "5-zone"
+    elif layout == "inner-outer":
+        layout = "inner/outer"
+    rel = r.zone_relationship or ""
+    if rel in {"single_zone", ""}:
+        rel = ""
+    bits = [layout]
+    if rel:
+        bits.append(rel)
+    if r.outer_chase_direction:
+        bits.append(r.outer_chase_direction)
+    return " ".join(bits)
+
+
+def cycle_ms(r: TrialReport) -> str:
+    if r.freq_hz and r.freq_hz > 0:
+        return f"{1000.0 / r.freq_hz:.0f}"
+    return ""
+
+
+def comparison_fields(r: TrialReport) -> dict:
+    mix = ""
+    if r.mix_steps:
+        mix = r.mix_steps
+        if r.mix_kind == "discrete_interior":
+            mix += " (never 100%)"
+        if r.goes_black:
+            mix += " · black"
+    elif r.goes_black:
+        mix = "goes black"
+    elif r.blend_style:
+        mix = r.blend_style
+    return {
+        "engine": r.inferred_label or "",
+        "spatial": spatial_summary(r),
+        "mix": mix,
+        "colors": r.expected_colors_label or "",
+        "cycle_ms": cycle_ms(r),
+        "mix_kind": r.mix_kind or "",
+        "mix_steps": r.mix_steps or "",
+        "goes_black": r.goes_black,
+        "hits_endpoints": r.hits_endpoints,
+    }
+
+
 def trial_report_to_dict(r: TrialReport, *, capture_paths: list[Path] | None = None) -> dict:
     """JSON/CSV-shaped view of a TrialReport (same fields as CSV_COLUMNS)."""
     t = r.trial
@@ -444,6 +513,16 @@ def trial_report_to_dict(r: TrialReport, *, capture_paths: list[Path] | None = N
         "re_run_recommended": r.re_run_recommended,
         "length_byte": t.length_byte,
         "color_count": t.color_count,
+        "expected_colors": t.expected_colors or [],
+        "mix_kind": r.mix_kind or "",
+        "mix_steps": r.mix_steps or "",
+        "goes_black": r.goes_black,
+        "hits_endpoints": r.hits_endpoints,
+        "spatial": spatial_summary(r),
+        "mix": comparison_fields(r)["mix"],
+        "engine": r.inferred_label or "",
+        "colors": r.expected_colors_label or "",
+        "cycle_ms": cycle_ms(r),
         "vibration_byte": t.vibration_byte or "",
         "zone_layout": r.zone_layout,
         "zone_layout_assumed": r.zone_layout_assumed,
@@ -503,6 +582,12 @@ def write_triage_csv(path: Path, reports: list[TrialReport]) -> None:
                 "re_run_recommended": str(r.re_run_recommended).lower(),
                 "length_byte": "" if t.length_byte is None else t.length_byte,
                 "color_count": "" if t.color_count is None else t.color_count,
+                "expected_colors": r.expected_colors_label or "",
+                "mix_kind": r.mix_kind or "",
+                "mix_steps": r.mix_steps or "",
+                "goes_black": "" if r.goes_black is None else str(r.goes_black).lower(),
+                "hits_endpoints": "" if r.hits_endpoints is None else str(r.hits_endpoints).lower(),
+                "spatial": spatial_summary(r),
                 "vibration_byte": t.vibration_byte or "",
                 "zone_layout": r.zone_layout,
                 "zone_layout_assumed": str(r.zone_layout_assumed).lower(),
@@ -682,13 +767,35 @@ def write_claude_markdown(path: Path, reports: list[TrialReport], *, generated_a
         "",
         f"{len(reports)} trial(s).",
         "",
+        "## Comparison",
+        "",
+        "Columns match field notes: engine (pattern), spatial (inner/outer vs 5-zone + sync), "
+        "mix steps along expected colors (100/0 = first color, 0/100 = second), cycle. "
+        "`discrete_interior` means the mix never hits 100% of either color.",
+        "",
+        "| # | id | engine | spatial | mix | colors | cycle_ms | hex |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for i, r in enumerate(reports, start=1):
         t = r.trial
+        cmpf = comparison_fields(r)
+        hex_short = (t.hex_full or "")[-24:]
+        lines.append(
+            f"| {i} | `{t.row_id}` | {cmpf['engine'] or '—'} | {cmpf['spatial'] or '—'} | "
+            f"{cmpf['mix'] or '—'} | {cmpf['colors'] or '—'} | {cmpf['cycle_ms'] or '—'} | "
+            f"`…{hex_short}` |"
+        )
+    lines += ["", ""]
+    for i, r in enumerate(reports, start=1):
+        t = r.trial
+        cmpf = comparison_fields(r)
         lines += [
             f"## {i}. `{t.row_id}` — **{r.inferred_label or 'unclassified'}**",
             "",
             f"- hex_full: `{t.hex_full}`",
+            f"- engine: `{cmpf['engine'] or '—'}`  ·  spatial: `{cmpf['spatial'] or '—'}`",
+            f"- colors (expected): `{cmpf['colors'] or '—'}`  ·  mix: `{cmpf['mix'] or '—'}`  "
+            f"·  kind: `{r.mix_kind or '—'}`",
             f"- confidence: {r.confidence:.2f}  ·  status: `{r.status}`  ·  capture: `{r.capture_status}`",
             f"- zone_layout: `{r.zone_layout}`  ·  relationship: `{r.zone_relationship}`  "
             f"·  chase: `{r.outer_chase_direction or '—'}`",

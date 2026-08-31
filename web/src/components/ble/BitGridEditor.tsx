@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Box, Button, Group, Stack, Text, TextInput, Tooltip } from '@mantine/core';
 import { SearchableSelect } from '../shared/SearchableSelect';
 import {
@@ -11,6 +11,7 @@ import {
 import { byteToBitString, payloadToShowHex } from '../../lib/ble/wandSimClient';
 import { observe, wandsimUrlFromIp, DEFAULT_OBSERVE_HOLD_MS } from '../../lib/ble/waveClassifierClient';
 import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
+import { useRegisterSweepQueueAdder, useSweepQueue } from '../../lib/ble/sweepQueue';
 import { WaveClassifierObserveResults } from './WaveClassifierObserveResults';
 
 const BIT_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
@@ -28,6 +29,25 @@ function rangeLabel(bitStart, bitCount) {
 
 function bitsToBinary(value, bitCount) {
   return (Number(value) >>> 0).toString(2).padStart(Math.max(1, bitCount), '0');
+}
+
+function buildSweepPayloads(payloadBytes, byteIndex, tailIndex, sweepGroup) {
+  if (!sweepGroup || !Array.isArray(payloadBytes) || !payloadBytes.length) return [];
+  if (!Number.isInteger(byteIndex) || byteIndex < 0 || byteIndex >= payloadBytes.length) return [];
+  const bitCount = Number(sweepGroup.bitCount) || 1;
+  const bitStart = Number(sweepGroup.bitStart) || 0;
+  const max = (1 << bitCount) - 1;
+  const payloads = [];
+  for (let v = 0; v <= max; v++) {
+    const next = [...payloadBytes];
+    next[byteIndex] = encodeBitGroupValue(next[byteIndex], bitStart, bitCount, v);
+    payloads.push({
+      hex_full: payloadToShowHex(next).toUpperCase(),
+      label: `0x${v.toString(16).padStart(2, '0')}`,
+      tail_index: tailIndex,
+    });
+  }
+  return payloads;
 }
 
 function groupForBit(groups, bitIdx) {
@@ -63,10 +83,12 @@ export function BitGridEditor({
   const [saveName, setSaveName] = useState('');
   const dragging = useRef(false);
   const wc = useWaveClassifierBackend();
+  const sweepQueue = useSweepQueue();
   const [observing, setObserving] = useState(false);
   const [observeReports, setObserveReports] = useState([]);
   const [observeReportCsv, setObserveReportCsv] = useState('');
   const [observeReportMd, setObserveReportMd] = useState('');
+  const [observeReportJson, setObserveReportJson] = useState('');
 
   const selected = useMemo(() => {
     if (!drag) return null;
@@ -151,15 +173,15 @@ export function BitGridEditor({
 
   const sweepGroup = groups.length === 1 ? groups[0] : null;
   const sweepValueCount = sweepGroup ? (1 << (Number(sweepGroup.bitCount) || 1)) : 0;
-  const canSweep = !!(
-    sweepGroup
-    && sweepValueCount <= 10
-    && Array.isArray(payloadBytes)
+  const payloadReady = !!(
+    Array.isArray(payloadBytes)
     && payloadBytes.length
     && Number.isInteger(byteIndex)
     && byteIndex >= 0
     && byteIndex < payloadBytes.length
   );
+  const canQueueSweep = !!(sweepGroup && payloadReady);
+  const canSweep = !!(canQueueSweep && sweepValueCount <= 10);
   const sweepDisabledReason = !simIp
     ? 'Set Simulator IP first — Observe drives the same board as Send'
     : !wc.available
@@ -167,10 +189,33 @@ export function BitGridEditor({
     : groups.length !== 1
       ? 'Select a single bit-group to sweep'
       : sweepValueCount > 10
-        ? `This group has ${sweepValueCount} values — use the CLI build-batch path for large sweeps`
+        ? `This group has ${sweepValueCount} values — Add sweep to queue, then Run Sweep`
         : !canSweep
           ? 'No full payload is loaded for this byte — open a capture row cell'
           : '';
+  const queueDisabledReason = groups.length !== 1
+    ? 'Select a single bit-group to sweep'
+    : !payloadReady
+      ? 'No full payload is loaded for this byte — open a capture row cell'
+      : '';
+
+  const bitProvenance = sweepGroup
+    ? `byte ${byteIndex}, bits[${Number(sweepGroup.bitStart) + Number(sweepGroup.bitCount) - 1}:${Number(sweepGroup.bitStart)}]`
+    : '';
+
+  const handleAddSweepToQueue = useCallback(() => {
+    if (!canQueueSweep || !sweepGroup) return 0;
+    const payloads = buildSweepPayloads(payloadBytes, byteIndex, tailIndex, sweepGroup);
+    if (!payloads.length) return 0;
+    sweepQueue.add(payloads.map((p) => ({
+      ...p,
+      source: 'bit-grid',
+      provenance: bitProvenance,
+    })));
+    setError('');
+    return payloads.length;
+  }, [canQueueSweep, sweepGroup, payloadBytes, byteIndex, tailIndex, sweepQueue, bitProvenance]);
+  useRegisterSweepQueueAdder('analyze', handleAddSweepToQueue);
 
   const handleSweepObserve = async () => {
     if (!canSweep || !sweepGroup) return;
@@ -185,18 +230,7 @@ export function BitGridEditor({
       setError(wc.disabledTip);
       return;
     }
-    const bitCount = Number(sweepGroup.bitCount) || 1;
-    const max = (1 << bitCount) - 1;
-    const payloads = [];
-    for (let v = 0; v <= max; v++) {
-      const next = [...payloadBytes];
-      next[byteIndex] = encodeBitGroupValue(next[byteIndex], sweepGroup.bitStart, bitCount, v);
-      payloads.push({
-        hex_full: payloadToShowHex(next).toUpperCase(),
-        label: `0x${v.toString(16).padStart(2, '0')}`,
-        tail_index: tailIndex,
-      });
-    }
+    const payloads = buildSweepPayloads(payloadBytes, byteIndex, tailIndex, sweepGroup);
     setObserving(true);
     setError('');
     try {
@@ -213,6 +247,7 @@ export function BitGridEditor({
       setObserveReports(reports);
       setObserveReportCsv(res?.report_csv || '');
       setObserveReportMd(res?.report_md || '');
+      setObserveReportJson(res?.report_json || '');
     } catch (e) {
       setError(e.message || 'Sweep observe failed');
     } finally {
@@ -384,22 +419,42 @@ export function BitGridEditor({
           Drag (or shift-click) adjacent bits, name them, then Add group. Ungrouped bits stay dim.
         </Text>
       )}
-      <Tooltip label={sweepDisabledReason || 'Sweep this group through every value and observe'}>
-        <span>
-          <Button
-            size="compact-xs"
-            variant="light"
-            color="violet"
-            loading={observing}
-            disabled={!!sweepDisabledReason || observing}
-            onClick={() => void handleSweepObserve()}
-          >
-            Sweep this group & Observe
-          </Button>
-        </span>
-      </Tooltip>
+      <Group gap={6} wrap="wrap">
+        <Tooltip label={sweepDisabledReason || 'Sweep this group through every value and observe'}>
+          <span>
+            <Button
+              size="compact-xs"
+              variant="light"
+              color="violet"
+              loading={observing}
+              disabled={!!sweepDisabledReason || observing}
+              onClick={() => void handleSweepObserve()}
+            >
+              Sweep this group & Observe
+            </Button>
+          </span>
+        </Tooltip>
+        <Tooltip label={queueDisabledReason || 'Queue every value of this group for a later Run Sweep'}>
+          <span>
+            <Button
+              size="compact-xs"
+              variant="default"
+              disabled={!!queueDisabledReason}
+              onClick={handleAddSweepToQueue}
+            >
+              Add sweep to queue
+            </Button>
+          </span>
+        </Tooltip>
+      </Group>
       {(observing || observeReports.length > 0) && (
-        <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />
+        <WaveClassifierObserveResults
+          reports={observeReports}
+          reportCsv={observeReportCsv}
+          reportMd={observeReportMd}
+          reportJson={observeReportJson}
+          backendUrl={wc.baseUrl}
+        />
       )}
     </Stack>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Button,
@@ -24,6 +24,7 @@ import {
 import { useShowProgress } from '../../hooks/useShowProgress';
 import { generateId } from '../../lib/utils';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
+import { useRegisterSweepQueueAdder, useSweepQueue } from '../../lib/ble/sweepQueue';
 import { observe, wandsimUrlFromIp, DEFAULT_OBSERVE_HOLD_MS } from '../../lib/ble/waveClassifierClient';
 import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
 import { WaveClassifierObserveResults } from './WaveClassifierObserveResults';
@@ -50,16 +51,31 @@ export function WandLabPacketSequence({
   const { progress, startPolling, stop } = useShowProgress(simIp);
   const running = progress?.active;
   const wc = useWaveClassifierBackend();
+  const sweepQueue = useSweepQueue();
   const [observing, setObserving] = useState(false);
   const [observeReports, setObserveReports] = useState([]);
   const [observeReportCsv, setObserveReportCsv] = useState('');
   const [observeReportMd, setObserveReportMd] = useState('');
+  const [observeReportJson, setObserveReportJson] = useState('');
   const [observeWhileSending, setObserveWhileSending] = useState(false);
 
   const validPackets = useMemo(
     () => packets.filter((p) => p.bytes?.length),
     [packets],
   );
+
+  const handleAddSequenceToQueue = useCallback(() => {
+    if (!validPackets.length) return 0;
+    sweepQueue.add(validPackets.map((p, i) => ({
+      hex_full: payloadToShowHex(p.bytes).toUpperCase(),
+      label: p.label || `packet-${i + 1}`,
+      source: 'packet-sequence',
+      provenance: p.label || `packet-${i + 1}`,
+    })));
+    onStatus?.(`Added ${validPackets.length} packet${validPackets.length === 1 ? '' : 's'} to sweep queue`);
+    return validPackets.length;
+  }, [validPackets, sweepQueue, onStatus]);
+  useRegisterSweepQueueAdder('sequence', handleAddSequenceToQueue);
 
   const observeHold = Math.max(DEFAULT_OBSERVE_HOLD_MS, Number(defaultWaitMs) || 0);
 
@@ -93,6 +109,7 @@ export function WandLabPacketSequence({
       setObserveReports(reports);
       setObserveReportCsv(res?.report_csv || '');
       setObserveReportMd(res?.report_md || '');
+      setObserveReportJson(res?.report_json || '');
       const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
       onStatus?.(`${statusPrefix} done — ${reports.length} result${reports.length === 1 ? '' : 's'}${fileNote}`);
     } catch (e) {
@@ -471,6 +488,13 @@ export function WandLabPacketSequence({
             </Button>
           </span>
         </Tooltip>
+        <Button
+          variant="default"
+          disabled={!validPackets.length}
+          onClick={handleAddSequenceToQueue}
+        >
+          Add sequence to sweep queue
+        </Button>
         <Checkbox
           size="xs"
           label="capture while sending"
@@ -498,7 +522,13 @@ export function WandLabPacketSequence({
       {(observing || observeReports.length > 0) && (
         <Stack gap={4}>
           <Text size="xs" fw={600} tt="uppercase" c="dimmed">Observe results</Text>
-          <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />
+          <WaveClassifierObserveResults
+            reports={observeReports}
+            reportCsv={observeReportCsv}
+            reportMd={observeReportMd}
+            reportJson={observeReportJson}
+            backendUrl={wc.baseUrl}
+          />
         </Stack>
       )}
     </Stack>

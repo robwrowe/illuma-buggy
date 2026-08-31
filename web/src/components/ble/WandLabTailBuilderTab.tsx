@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge,
   Box,
@@ -19,11 +19,12 @@ import {
 } from '@mantine/core';
 import { Field } from '../shared/Field';
 import { SearchableSelect } from '../shared/SearchableSelect';
-import { generateId } from '../../lib/utils';
-import { DEFAULT_MB_WLED_COLORS, mbPaletteOptions } from '../../lib/ble/mbConstants';
+import { generateId, hexToRgb } from '../../lib/utils';
+import { DEFAULT_MB_WLED_COLORS, MB_COLOR_NAMES, MB_PALETTE, mbPaletteOptions } from '../../lib/ble/mbConstants';
 import { decodeMbColorMaskByte } from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte, payloadToShowHex } from '../../lib/ble/wandSimClient';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
+import { useRegisterSweepQueueAdder, useSweepQueue } from '../../lib/ble/sweepQueue';
 import {
   observe,
   buildBatch,
@@ -393,10 +394,12 @@ export function WandLabTailBuilderTab({
   const [customBitFields, setCustomBitFields] = useWandLabUiState('tail.customBitFields', () => []);
   const sendAllGen = useRef(0);
   const wc = useWaveClassifierBackend();
+  const sweepQueue = useSweepQueue();
   const [observing, setObserving] = useState(false);
   const [observeReports, setObserveReports] = useState([]);
   const [observeReportCsv, setObserveReportCsv] = useState('');
   const [observeReportMd, setObserveReportMd] = useState('');
+  const [observeReportJson, setObserveReportJson] = useState('');
   const [observePreview, setObservePreview] = useWandLabUiState('tail.observePreview', false);
   const [observeHoldMs, setObserveHoldMs] = useWandLabUiState('tail.observeHoldMs', DEFAULT_OBSERVE_HOLD_MS);
   const [observeError, setObserveError] = useState('');
@@ -754,6 +757,26 @@ export function WandLabTailBuilderTab({
 
   const hexFullForBytes = (bytes) => payloadToShowHex(bytes || []).toUpperCase();
 
+  const expectedColorsForPacket = () => (
+    colorsForPacket
+      .map((c, idx) => ({ c, idx }))
+      .filter(({ idx }) => colorSlotIncluded(idx))
+      .map(({ c }) => {
+        if (isRgb) {
+          return { r: c.r ?? 0, g: c.g ?? 0, b: c.b ?? 0, name: 'rgb' };
+        }
+        const palIdx = c.paletteIdx ?? c.palette_idx ?? 0;
+        const hex = DEFAULT_MB_WLED_COLORS[palIdx] || '#000000';
+        const rgb = hexToRgb(hex.startsWith('#') ? hex : `#${hex}`);
+        const pal = MB_PALETTE[palIdx];
+        return {
+          r: rgb.r, g: rgb.g, b: rgb.b,
+          name: pal?.color || MB_COLOR_NAMES[palIdx] || '',
+          palette_idx: palIdx,
+        };
+      })
+  );
+
   const runObserve = async (payloads, statusPrefix) => {
     setObserveError('');
     const wandsim = wandsimUrlFromIp(simIp);
@@ -782,9 +805,12 @@ export function WandLabTailBuilderTab({
     try {
       const hold = Math.max(500, Number(observeHoldMs) || DEFAULT_OBSERVE_HOLD_MS);
       const nColors = colorsForPacket.filter((_, idx) => colorSlotIncluded(idx)).length;
-      const withColors = payloads.map((p) => (
-        p.color_count != null ? p : { ...p, color_count: nColors }
-      ));
+      const expected = expectedColorsForPacket();
+      const withColors = payloads.map((p) => ({
+        ...p,
+        color_count: p.color_count != null ? p.color_count : nColors,
+        expected_colors: p.expected_colors || expected,
+      }));
       const res = await observe(wc.baseUrl, {
         payloads: withColors,
         hold_ms: hold,
@@ -801,6 +827,7 @@ export function WandLabTailBuilderTab({
       setObserveReports(reports);
       setObserveReportCsv(res?.report_csv || '');
       setObserveReportMd(res?.report_md || '');
+      setObserveReportJson(res?.report_json || '');
       const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
       const layoutNote = res?.capture_layout
         ? ` · captured as ${res.capture_layout}${res.capture_layout_auto ? ' (auto)' : ''}`
@@ -822,6 +849,34 @@ export function WandLabTailBuilderTab({
       'Observe',
     );
   };
+
+  const handleAddToQueue = useCallback(() => {
+    if (!assembled.bytes.length) return 0;
+    const nColors = colorsForPacket.filter((_, idx) => colorSlotIncluded(idx)).length;
+    const tailHex = (activeTail?.displayHex || activeTail?.hex || '').trim();
+    sweepQueue.add({
+      hex_full: hexFullForBytes(assembled.bytes),
+      label: `tail-${safeIdx + 1}`,
+      source: 'tail-builder',
+      provenance: tailHex ? `tail #${safeIdx + 1} ${tailHex}` : `tail #${safeIdx + 1}`,
+      tail_index: safeIdx,
+      color_count: nColors,
+      expected_colors: expectedColorsForPacket(),
+    });
+    onStatus?.(`Added tail #${safeIdx + 1} to sweep queue`);
+    return 1;
+  }, [
+    assembled.bytes,
+    colorsForPacket,
+    partEnabled,
+    colorFormat,
+    isRgb,
+    activeTail,
+    safeIdx,
+    sweepQueue,
+    onStatus,
+  ]);
+  useRegisterSweepQueueAdder('tail', handleAddToQueue);
 
   const handleObserveAll = async () => {
     const payloads = displayTails.map((t, i) => {
@@ -1636,6 +1691,13 @@ export function WandLabTailBuilderTab({
             </Button>
           </span>
         </Tooltip>
+        <Button
+          variant="default"
+          onClick={handleAddToQueue}
+          disabled={assembled.bytes.length === 0}
+        >
+          Add to sweep queue
+        </Button>
         {displayTails.length > 1 && (
           <>
             <Button
@@ -1727,7 +1789,13 @@ export function WandLabTailBuilderTab({
       {(observing || observeReports.length > 0) && (
         <Stack gap={4}>
           <Text size="xs" fw={600} tt="uppercase" c="dimmed">Observe results</Text>
-          <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />
+          <WaveClassifierObserveResults
+            reports={observeReports}
+            reportCsv={observeReportCsv}
+            reportMd={observeReportMd}
+            reportJson={observeReportJson}
+            backendUrl={wc.baseUrl}
+          />
         </Stack>
       )}
 

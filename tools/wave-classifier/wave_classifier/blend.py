@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy import signal
 
+from .color_mix import ColorMixResult, analyze_color_mix
 from .waveform import WaveformResult, _normalize, resample_series
 
 # Closed vocabulary from the xlsx INSTRUCTIONS effect legend.
@@ -56,6 +57,7 @@ class BlendResult:
     chroma_motion: float
     pairs: list[PairPhase] = field(default_factory=list)
     inferred_label: str = "unclassified"
+    color_mix: ColorMixResult | None = None
 
 
 def _wrap_deg(deg: float) -> float:
@@ -93,6 +95,7 @@ def analyze_blend(
     g: np.ndarray,
     b: np.ndarray,
     channels: dict[str, WaveformResult],
+    expected_colors: list | None = None,
 ) -> BlendResult:
     t_u, r_u, dt = resample_series(t_ms, r)
     _, g_u, _ = resample_series(t_ms, g)
@@ -143,13 +146,28 @@ def analyze_blend(
     energetic = [k for k in ("r", "g", "b") if channels[k].waveform_class != "flat"]
     shapes = {channels[k].waveform_class for k in energetic}
 
+    mix = analyze_color_mix(r_u, g_u, b_u, expected_colors)
+
     # Two colors trading brightness: inverted (lag-0 corr < -0.5), a mid-phase
     # offset, or total brightness holding still while chroma moves.
+    # Expected-color mix is the stronger prior when Tail Builder / packet
+    # colors are known — two teals will not oppose R vs G.
     two_color = opposing or constant_brightness_ratio_shift or mid_phase
+    if mix.n_expected >= 2 and mix.mix_kind in {
+        "discrete_endpoints",
+        "discrete_interior",
+        "discrete_partial",
+        "continuous",
+        "multi_blend",
+    }:
+        two_color = True
     is_blend = False
     blend_style = None
     if two_color:
-        if "sawtooth" in shapes:
+        if mix.mix_kind == "discrete_interior":
+            is_blend = True
+            blend_style = "Cross-saw" if "sawtooth" in shapes else "Cross-fade"
+        elif "sawtooth" in shapes:
             is_blend = True
             blend_style = "Cross-saw"
         elif shapes & {"sine", "triangle"}:
@@ -176,6 +194,7 @@ def analyze_blend(
         chroma_motion=chroma_motion,
         pairs=pairs,
         inferred_label=inferred,
+        color_mix=mix,
     )
 
 
