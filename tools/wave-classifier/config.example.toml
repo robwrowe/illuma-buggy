@@ -39,3 +39,14 @@ cycle_tolerance_pct = 0.25
 [discover]
 # Minimum trials per bit-group value before a candidate is surfaced.
 min_group = 3
+
+[taxonomy]
+min_label_purity = 0.6
+min_silhouette = 0.25
+
+# macOS C920 lock via `uvc-util` (brew install uvc-util). gain_for_iso_400 is
+# the raw UVC gain integer that matches Logitech Camera Settings "ISO 400" on
+# THIS unit — not the number 400. Leave null until calibrated (gain step skipped).
+[capture.macos_uvc]
+camera_index = 0
+gain_for_iso_400 = ""

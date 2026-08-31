@@ -23,6 +23,8 @@ cp config.example.toml config.toml # then set [wandsim] base_url
 - Point a Logitech (or any UVC) webcam at a **fixed** wand / LED patch in a
   **dim room**, not daylight. Lock the framing; don't chase the light with the
   camera.
+- `scikit-learn` is required for the `taxonomy` subcommand (clustering). Other
+  commands run without it.
 - Flash and connect WandSimulator per its own [API.md](../../firmware/WandSimulator/API.md)
   (`wifi <ssid> <password>`, then `http://illuma-wandsim.local` or the printed
   IP). WiFi/IP is **not** persisted across board reboots.
@@ -96,6 +98,10 @@ python -m wave_classifier report-only \
 
 python -m wave_classifier report-only --cards \
   --xlsx ../../Op_Codes_Captured.xlsx
+
+# Data-driven taxonomy (clusters measured cards; does not rename the xlsx)
+python -m wave_classifier taxonomy --method agglomerative --k-range 4 20
+python -m wave_classifier taxonomy --method both
 ```
 
 Hex from `Op_Codes_Captured.xlsx`'s `Hex` column is sent to `POST /show`
@@ -187,17 +193,27 @@ smooth rounded peak (sine) on sub-5 Hz effects — **unless the camera is
 riding its own gain**. Auto-exposure and auto-WB reshape the trace into
 something that is no longer the LED's waveform.
 
-`capture.py` attempts to disable both (`CAP_PROP_AUTO_EXPOSURE`,
-`CAP_PROP_AUTO_WB`), reads the values back, and prints a one-line warning if
-the set didn't take:
+On **macOS** with a Logitech C920, OpenCV/AVFoundation cannot lock UVC
+exposure. Install `uvc-util` (`brew install uvc-util`) and run:
+
+```bash
+python -m wave_classifier check-camera-lock
+```
+
+That set-then-gets each control (auto-exposure manual, shutter ≈ 1/60s,
+auto-focus off, focus at the reported minimum). ISO 400 is **not** guessed:
+set ISO 400 in Logitech Camera Settings, read `uvc-util -I 0 -g gain`, and
+put that integer in `[capture.macos_uvc] gain_for_iso_400`. Until then the
+gain step is skipped with a warning.
+
+On Linux, OpenCV `CAP_PROP_AUTO_EXPOSURE` is still attempted; if it does
+not take:
 
 > Auto-exposure could not be disabled on this camera/OS — waveform shape may
 > be distorted by the camera's own gain-adjustment; on Linux try
 > `v4l2-ctl -d /dev/videoN -c auto_exposure=1`
 
-If you see that warning, fix exposure at the OS/driver before trusting
-classifications. Dim room + fixed target + locked exposure is the whole
-optical setup.
+Dim room + fixed target + locked exposure is the whole optical setup.
 
 ## What the reports are (and aren't)
 
@@ -205,6 +221,10 @@ optical setup.
 another model. Includes the effect vocabulary, hex, inferred label, zone
 relationship / chase order, and a per-zone table. `.csv` and `.json` sit
 beside it. Gitignored.
+
+`reports/taxonomy-<timestamp>.md` (and `.csv`) — data-driven clusters of
+measured feature vectors. Candidate names are auto-generated and flagged
+when existing labels are mixed. Does not rename the xlsx. Gitignored.
 
 `reports/triage-<timestamp>.csv` — every trial, machine-readable, including
 per-zone waveform/blend columns, `zone_layout`, `zone_relationship`,

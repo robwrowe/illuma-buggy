@@ -291,6 +291,14 @@ def test_cli_help_fast():
         main(["select-rois", "--help"])
     except SystemExit as exc:
         assert exc.code == 0
+    try:
+        main(["taxonomy", "--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    try:
+        main(["check-camera-lock", "--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
 
 
 def test_nested_toml_rois():
@@ -315,6 +323,29 @@ center = [1, 1, 2, 2]
         rois = rois_from_config(cfg)
         assert rois["single"]["all"] == (1, 2, 3, 4)
         assert rois["five-corner"]["topLeft"] == (10, 20, 30, 40)
+    finally:
+        path.unlink()
+
+
+def test_nested_toml_macos_uvc():
+    from wave_classifier.cli import _load_toml_minimal
+
+    text = """
+[capture]
+device_index = 1
+
+[capture.macos_uvc]
+camera_index = 0
+gain_for_iso_400 = ""
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as fh:
+        fh.write(text)
+        path = Path(fh.name)
+    try:
+        cfg = _load_toml_minimal(path)
+        assert cfg["capture"]["device_index"] == 1
+        assert cfg["capture"]["macos_uvc"]["camera_index"] == 0
+        assert cfg["capture"]["macos_uvc"]["gain_for_iso_400"] == ""
     finally:
         path.unlink()
 
@@ -465,6 +496,7 @@ def main() -> None:
         test_trial_from_built_decode,
         test_zone_relationship_single,
         test_nested_toml_rois,
+        test_nested_toml_macos_uvc,
         test_sine_classify,
         test_groundtruth_payload_only_tsv,
         test_xlsx_rebuild_if_present,

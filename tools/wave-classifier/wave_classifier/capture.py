@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import platform
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,10 +87,50 @@ def _try_disable_auto(cap) -> bool:
     return locked
 
 
+def _try_macos_uvc_lock(device_index: int, macos_uvc: dict | None) -> bool:
+    """Session-once UVC lock. Warn-and-continue if a control doesn't verify."""
+    from .capture_macos_uvc import lock_camera_for_capture, uvc_util_available
+
+    if not uvc_util_available():
+        print(
+            "warning: uvc-util not on PATH — brew install uvc-util "
+            "(OpenCV AE lock on macOS usually cannot drive a C920)"
+        )
+        return False
+    cfg = macos_uvc or {}
+    idx = cfg.get("camera_index")
+    if idx is None:
+        idx = device_index
+    gain = cfg.get("gain_for_iso_400")
+    if gain in (None, "", "null"):
+        gain = None
+    else:
+        gain = int(gain)
+    results = lock_camera_for_capture(int(idx), gain_for_iso_400=gain)
+    any_unmatched = False
+    for r in results:
+        flag = "ok" if r.matched else ("skip" if r.skipped else "MISMATCH")
+        print(
+            f"uvc-util {flag}: {r.control_name} requested={r.requested_value} "
+            f"actual={r.actual_value}"
+        )
+        if r.warning:
+            print(f"warning: {r.warning}")
+        if not r.matched and not r.skipped:
+            any_unmatched = True
+    return not any_unmatched and any(r.matched for r in results)
+
+
 class Camera:
-    def __init__(self, device_index: int = 0, target_fps: float | None = None):
+    def __init__(
+        self,
+        device_index: int = 0,
+        target_fps: float | None = None,
+        macos_uvc: dict | None = None,
+    ):
         self.device_index = device_index
         self.target_fps = target_fps
+        self.macos_uvc = macos_uvc or {}
         self.cap = None
         self.auto_locked = False
         self.measured_fps: float | None = None
@@ -101,7 +142,13 @@ class Camera:
             raise CameraError(f"cannot open camera device_index={self.device_index}")
         if self.target_fps:
             cap.set(cv2.CAP_PROP_FPS, float(self.target_fps))
-        self.auto_locked = _try_disable_auto(cap)
+        self.auto_locked = False
+        if platform.system() == "Darwin":
+            self.auto_locked = _try_macos_uvc_lock(self.device_index, self.macos_uvc)
+            if not self.auto_locked:
+                self.auto_locked = _try_disable_auto(cap)
+        else:
+            self.auto_locked = _try_disable_auto(cap)
         if not self.auto_locked:
             print(f"warning: {AUTO_EXPOSURE_WARNING}")
         # Warm-up so AE/WB (if still on) and USB settle before the first trial.
@@ -364,6 +411,7 @@ def run_captures(
     target_fps: float | None = None,
     resume: bool = False,
     on_trial: Callable[[int, int, TrialRow], None] | None = None,
+    macos_uvc: dict | None = None,
 ) -> list[CaptureResult]:
     from .wandsim_client import WandSimSession
     from .zones import resolve_zone_layout, zone_names_for_layout
@@ -371,7 +419,7 @@ def run_captures(
     results: list[CaptureResult] = []
     n = len(trial_rows)
     probe_rois = next(iter(rois_by_layout.values()), {"all": (0, 0, 32, 32)})
-    with Camera(device_index, target_fps=target_fps) as cam, WandSimSession(base_url) as session:
+    with Camera(device_index, target_fps=target_fps, macos_uvc=macos_uvc) as cam, WandSimSession(base_url) as session:
         probe = _grab_until_zones(cam, {k: probe_rois[k] for k in list(probe_rois)[:1]}, 400)
         rows = next(iter(probe.values()), [])
         if len(rows) >= 2:

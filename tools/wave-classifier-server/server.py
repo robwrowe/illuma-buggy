@@ -232,6 +232,7 @@ def api_observe(body: ObserveBody):
             settle_margin_ms=settle,
             gap_seconds=gap,
             repeats=max(1, body.repeat),
+            macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
         )
     except MissingRoiSet as exc:
         raise HTTPException(409, str(exc)) from exc

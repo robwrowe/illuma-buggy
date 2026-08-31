@@ -1,4 +1,4 @@
-"""CLI: `python -m wave_classifier run|select-rois|report-only|build|groundtruth`."""
+"""CLI: `python -m wave_classifier run|select-rois|report-only|taxonomy|check-camera-lock|build|groundtruth`."""
 
 from __future__ import annotations
 
@@ -400,6 +400,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pause between --show broadcasts (default 1.5)",
     )
 
+    tax = sub.add_parser(
+        "taxonomy",
+        help="Cluster measured feature vectors into a data-driven effect taxonomy",
+    )
+    _add_shared_args(tax)
+    _add_source_args(tax)
+    _add_classify_args(tax)
+    tax.add_argument("--sheet", default=None)
+    tax.add_argument("--limit", type=int, default=None)
+    tax.add_argument(
+        "--method",
+        choices=("agglomerative", "dbscan", "both"),
+        default="agglomerative",
+        help="agglomerative (silhouette k) | dbscan (outliers) | both",
+    )
+    tax.add_argument(
+        "--k-range",
+        nargs=2,
+        type=int,
+        metavar=("LO", "HI"),
+        default=[4, 20],
+        help="Agglomerative k search range (default 4 20)",
+    )
+    tax.add_argument(
+        "--min-label-purity",
+        type=float,
+        default=None,
+        help="Below this, cluster candidate_name is flagged needs_human_review (config taxonomy.min_label_purity, default 0.6)",
+    )
+    tax.add_argument(
+        "--min-silhouette",
+        type=float,
+        default=None,
+        help="Warn when best silhouette is below this (config taxonomy.min_silhouette, default 0.25)",
+    )
+
+    camlock = sub.add_parser(
+        "check-camera-lock",
+        help="Set-and-verify C920 UVC exposure/focus via uvc-util (no capture)",
+    )
+    camlock.add_argument("--config", type=Path, default=None)
+    camlock.add_argument("--device-index", type=int, default=None)
+
     return parser
 
 
@@ -680,6 +723,7 @@ def cmd_run(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
             repeats=args.repeat,
             resume=args.resume,
             on_trial=on_trial,
+            macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
         )
     except KeyboardInterrupt:
         print("\ninterrupted — stopping WandSimulator")
@@ -725,6 +769,138 @@ def cmd_report_only(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
         min_group=min_group,
         emit_cards=bool(getattr(args, "cards", False)),
     )
+
+
+def cmd_taxonomy(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
+    """Re-classify existing captures, then cluster metadata cards."""
+    try:
+        import sklearn  # noqa: F401
+    except ImportError:
+        print(
+            "error: scikit-learn is required for taxonomy — "
+            "pip install scikit-learn (see tools/wave-classifier/requirements.txt)",
+            file=sys.stderr,
+        )
+        return 2
+    trial_set = _load_merged_trials(args)
+    noise, min_corr, review, cycle, min_group = _classify_knobs(args, cfg)
+    reports = build_reports(
+        trial_set,
+        captures_dir=CAPTURES_DIR,
+        noise_floor_pct=noise,
+        min_template_correlation=min_corr,
+        cycle_tolerance_pct=cycle,
+        review_threshold=review,
+    )
+    from .taxonomy import (
+        build_feature_vectors,
+        cluster_trials,
+        corpus_speed_edges,
+        suggest_cluster_name,
+        write_taxonomy_csv,
+        write_taxonomy_markdown,
+    )
+
+    vectors, excluded = build_feature_vectors(reports)
+    print(
+        f"taxonomy: {len(vectors)} usable vectors, {len(excluded)} excluded "
+        f"(no cycle_time_ms / capture failed)"
+    )
+    if len(vectors) < 2:
+        print(
+            "error: need at least 2 trials with a measured cycle_time_ms to cluster. "
+            "Capture first, then `python -m wave_classifier report-only --cards` "
+            "(or `run --cards`) so metadata cards exist.",
+            file=sys.stderr,
+        )
+        return 2
+    methods = ["agglomerative", "dbscan"] if args.method == "both" else [args.method]
+    stamp = timestamp_slug()
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    k_range = (int(args.k_range[0]), int(args.k_range[1]))
+    sil_min = (
+        float(args.min_silhouette)
+        if args.min_silhouette is not None
+        else float(_cfg_get(cfg, "taxonomy", "min_silhouette", 0.25))
+    )
+    purity = (
+        float(args.min_label_purity)
+        if args.min_label_purity is not None
+        else float(_cfg_get(cfg, "taxonomy", "min_label_purity", 0.6))
+    )
+    edges = corpus_speed_edges(vectors)
+    for method in methods:
+        result = cluster_trials(
+            vectors,
+            method=method,
+            k_range=k_range,
+            silhouette_min=sil_min,
+            min_samples=int(_cfg_get(cfg, "discover", "min_group", 3)),
+        )
+        print(f"  {method}: k={result.k} silhouette={result.silhouette} {result.note}")
+        if result.weak_structure:
+            print(f"  warning: weak cluster structure ({result.note})")
+        names = {}
+        for cid, idxs in result.cluster_members.items():
+            if cid < 0:
+                continue
+            names[cid] = suggest_cluster_name(
+                [vectors[i] for i in idxs],
+                speed_edges=edges,
+                min_label_purity=purity,
+            )
+            sug = names[cid]
+            flag = " REVIEW" if sug.needs_human_review else ""
+            print(
+                f"    cluster {cid}: {sug.candidate_name} n={len(idxs)} "
+                f"purity={sug.label_purity}{flag}"
+            )
+        suffix = f"-{method}" if args.method == "both" else ""
+        md_path = REPORTS_DIR / f"taxonomy{suffix}-{stamp}.md"
+        csv_path = REPORTS_DIR / f"taxonomy{suffix}-{stamp}.csv"
+        write_taxonomy_markdown(
+            md_path,
+            result=result,
+            vectors=vectors,
+            names=names,
+            excluded=excluded,
+            generated_at=stamp,
+        )
+        write_taxonomy_csv(csv_path, vectors, result, names)
+        print(f"wrote {md_path}")
+        print(f"wrote {csv_path}")
+    return 0
+
+
+def cmd_check_camera_lock(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
+    from .capture_macos_uvc import lock_camera_for_capture, uvc_util_available
+
+    uvc_cfg = (cfg.get("capture") or {}).get("macos_uvc") or {}
+    idx = args.device_index
+    if idx is None:
+        idx = uvc_cfg.get("camera_index")
+    if idx is None:
+        idx = _cfg_get(cfg, "capture", "device_index", 0)
+    gain = uvc_cfg.get("gain_for_iso_400")
+    if gain in (None, "", "null"):
+        gain = None
+    else:
+        gain = int(gain)
+    if not uvc_util_available():
+        print("uvc-util not on PATH — brew install uvc-util", file=sys.stderr)
+        return 2
+    print(f"check-camera-lock: uvc-util -I {idx}")
+    results = lock_camera_for_capture(int(idx), gain_for_iso_400=gain)
+    unmatched = 0
+    print(f"{'status':<10} {'control':<22} {'requested':<16} actual")
+    for r in results:
+        st = "ok" if r.matched else ("skip" if r.skipped else "MISMATCH")
+        print(f"{st:<10} {r.control_name:<22} {str(r.requested_value):<16} {r.actual_value}")
+        if r.warning:
+            print(f"           {r.warning}")
+        if not r.matched and not r.skipped:
+            unmatched += 1
+    return 1 if unmatched else 0
 
 
 def cmd_groundtruth(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
@@ -938,6 +1114,10 @@ def main(argv: list[str] | None = None) -> None:
             code = cmd_report_only(args, cfg)
         elif args.cmd == "groundtruth":
             code = cmd_groundtruth(args, cfg)
+        elif args.cmd == "taxonomy":
+            code = cmd_taxonomy(args, cfg)
+        elif args.cmd == "check-camera-lock":
+            code = cmd_check_camera_lock(args, cfg)
         elif args.cmd == "build":
             code = cmd_build(args, cfg)
         elif args.cmd == "build-batch":
