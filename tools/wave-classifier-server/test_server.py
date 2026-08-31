@@ -58,7 +58,13 @@ def test_safe_report_path_rejects_traversal(tmp_path: Path):
     assert got.name == "observe-ok.md"
     assert got.read_text(encoding="utf-8") == "# hi\n"
 
-    for bad in ("../observe-ok.md", "..", "/etc/passwd", "a/b.md", "foo/../observe-ok.md", ""):
+    nested = tmp_path / "timeline-x"
+    nested.mkdir()
+    (nested / "all-ticks.csv").write_text("row_id\n", encoding="utf-8")
+    nested_got = safe_report_path("timeline-x/all-ticks.csv", reports_dir=tmp_path)
+    assert nested_got.name == "all-ticks.csv"
+
+    for bad in ("../observe-ok.md", "..", "/etc/passwd", "foo/../observe-ok.md", ""):
         try:
             safe_report_path(bad, reports_dir=tmp_path)
             raise AssertionError(f"expected reject for {bad!r}")

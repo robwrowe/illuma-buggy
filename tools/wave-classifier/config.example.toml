@@ -50,3 +50,6 @@ min_silhouette = 0.25
 [capture.macos_uvc]
 camera_index = 0
 gain_for_iso_400 = ""
+
+# Palette RGB against this camera lives in gitignored calibration.toml
+# (`python -m wave_classifier calibrate-palette`). Not stored here.

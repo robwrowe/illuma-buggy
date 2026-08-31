@@ -47,6 +47,7 @@ class CaptureResult:
     n_frames: list[int]
     error: str | None = None
     show_started: bool = False
+    baseline_frame_range: tuple[int, int] | None = None
 
 
 def _roi_tuple(roi) -> tuple[int, int, int, int]:
@@ -304,10 +305,13 @@ def _grab_until_zones(
     cam: Camera,
     rois: dict[str, tuple[int, int, int, int]],
     duration_ms: float,
+    *,
+    samples: dict[str, list[tuple[float, float, float, float]]] | None = None,
+    clock_start: float | None = None,
 ) -> dict[str, list[tuple[float, float, float, float]]]:
-    samples: dict[str, list[tuple[float, float, float, float]]] = {n: [] for n in rois}
-    start = time.monotonic()
-    deadline = start + duration_ms / 1000.0
+    out = samples if samples is not None else {n: [] for n in rois}
+    start = clock_start if clock_start is not None else time.monotonic()
+    deadline = time.monotonic() + duration_ms / 1000.0
     while time.monotonic() < deadline:
         frame = cam.grab()
         now = time.monotonic()
@@ -316,8 +320,8 @@ def _grab_until_zones(
         t_ms = (now - start) * 1000.0
         for name, roi in rois.items():
             r, g, b = _mean_rgb(frame, roi)
-            samples[name].append((t_ms, r, g, b))
-    return samples
+            out[name].append((t_ms, r, g, b))
+    return out
 
 
 class MissingRoiSet(Exception):
@@ -358,23 +362,44 @@ def capture_trial(
     settle_margin_ms: int,
     repeat_index: int | None = None,
     resume: bool = False,
-) -> tuple[list[Path], str, int, bool, str | None]:
-    from .wandsim_client import WandSimError, show_single, stop, wait_show_started
+    black_flash_ms: int = 0,
+) -> tuple[list[Path], str, int, bool, str | None, tuple[int, int] | None]:
+    from .wandsim_client import WandSimError, send_black_flash, show_single, stop, wait_show_started
 
     paths_expected = [capture_file_path(captures_dir, trial, z, repeat_index) for z in rois]
     if resume and all(p.is_file() for p in paths_expected):
-        return paths_expected, "ok", 0, True, "resume: skipped (per-zone CSVs already present)"
+        return paths_expected, "ok", 0, True, "resume: skipped (per-zone CSVs already present)", None
 
     show_started = False
+    samples: dict[str, list[tuple[float, float, float, float]]] = {n: [] for n in rois}
+    clock_start = time.monotonic()
+    baseline_range: tuple[int, int] | None = None
     try:
         stop(session.base_url)
+        flash_ms = max(0, int(black_flash_ms or 0))
+        if flash_ms > 0:
+            fps = cam.measured_fps or 30.0
+            if fps * (flash_ms / 1000.0) < 2:
+                print(
+                    f"warning: black_flash_ms={flash_ms} at {fps:.1f}fps yields <2 frames — "
+                    "raise --black-flash-ms or check camera fps"
+                )
+            send_black_flash(session.base_url, flash_ms)
+            wait_show_started(session.base_url)
+            _grab_until_zones(
+                cam, rois, flash_ms, samples=samples, clock_start=clock_start,
+            )
+            k = min((len(v) for v in samples.values()), default=0)
+            baseline_range = (0, k)
         show_single(session.base_url, trial.hex_full, hold_ms)
         show_started = wait_show_started(session.base_url)
-        samples = _grab_until_zones(cam, rois, hold_ms + settle_margin_ms)
+        _grab_until_zones(
+            cam, rois, hold_ms + settle_margin_ms, samples=samples, clock_start=clock_start,
+        )
     except WandSimError as exc:
-        return [], "wandsim_error", 0, False, str(exc)
+        return [], "wandsim_error", 0, False, str(exc), None
     except CameraError as exc:
-        return [], "camera_error", 0, False, str(exc)
+        return [], "camera_error", 0, False, str(exc), None
     finally:
         try:
             stop(session.base_url)
@@ -383,7 +408,7 @@ def capture_trial(
 
     n_frames = min((len(v) for v in samples.values()), default=0)
     if n_frames < 8:
-        return [], "too_few_frames", n_frames, show_started, f"only {n_frames} frames"
+        return [], "too_few_frames", n_frames, show_started, f"only {n_frames} frames", baseline_range
     paths: list[Path] = []
     for zone, rows in samples.items():
         path = capture_file_path(captures_dir, trial, zone, repeat_index)
@@ -394,7 +419,7 @@ def capture_trial(
             if elapsed > 0:
                 cam.measured_fps = (len(rows) - 1) / elapsed
     note = None if show_started else "showActive never confirmed; captured anyway (steps=1)"
-    return paths, "ok", n_frames, show_started, note
+    return paths, "ok", n_frames, show_started, note, baseline_range
 
 
 def run_captures(
@@ -412,6 +437,8 @@ def run_captures(
     resume: bool = False,
     on_trial: Callable[[int, int, TrialRow], None] | None = None,
     macos_uvc: dict | None = None,
+    black_flash_ms: int = 0,
+    calibrate: bool = False,
 ) -> list[CaptureResult]:
     from .wandsim_client import WandSimSession
     from .zones import resolve_zone_layout, zone_names_for_layout
@@ -427,6 +454,25 @@ def run_captures(
             if elapsed > 0:
                 cam.measured_fps = (len(rows) - 1) / elapsed
                 print(f"measured fps: {cam.measured_fps:.1f}")
+        if calibrate:
+            from .calibrate import run_palette_calibration
+
+            five = rois_by_layout.get("five-corner")
+            if not five:
+                raise MissingRoiSet(["five-corner"])
+            print("calibrating palette 0–28 (five-corner)…")
+            cal = run_palette_calibration(
+                base_url=base_url,
+                five_corner_rois=five,
+                settle_margin_ms=settle_margin_ms,
+                cam=cam,
+                session=session,
+                on_index=lambda i, n, idx: print(f"  palette {idx} ({i + 1}/{n})"),
+            )
+            print(f"wrote {cal.path}  source={cal.source}")
+            from .palette import calibration_diff_lines
+
+            print("\n".join(calibration_diff_lines(cal)))
         for i, trial in enumerate(trial_rows):
             if on_trial:
                 on_trial(i, n, trial)
@@ -455,10 +501,11 @@ def run_captures(
             last_status = "ok"
             last_error = None
             show_started = False
+            last_baseline = None
             try:
                 for r in range(repeats):
                     repeat_index = r if repeats > 1 else None
-                    pths, status, frames, started, err = capture_trial(
+                    pths, status, frames, started, err, baseline = capture_trial(
                         cam,
                         session,
                         trial,
@@ -468,9 +515,11 @@ def run_captures(
                         settle_margin_ms=settle_margin_ms,
                         repeat_index=repeat_index,
                         resume=resume,
+                        black_flash_ms=black_flash_ms,
                     )
                     last_status = status
                     last_error = err
+                    last_baseline = baseline
                     show_started = show_started or started
                     n_frames.append(frames)
                     paths.extend(pths)
@@ -487,6 +536,7 @@ def run_captures(
                             n_frames=n_frames,
                             error=last_error,
                             show_started=show_started,
+                            baseline_frame_range=last_baseline,
                         )
                     )
                 print("\ninterrupted — keeping completed captures")
@@ -500,6 +550,7 @@ def run_captures(
                     n_frames=n_frames,
                     error=last_error,
                     show_started=show_started,
+                    baseline_frame_range=last_baseline,
                 )
             )
             if i + 1 < n:

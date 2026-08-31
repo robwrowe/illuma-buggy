@@ -289,6 +289,36 @@ palette color is `discrete_interior`.
 Wand Lab Observe writes `reports/observe-*.md` (paste into Claude), plus `.csv`
 and `.json`. Those directories are gitignored.
 
+## Timeline mode (no classification)
+
+`--timeline` writes a per-zone, per-tick table of calibrated nearest color,
+mix% along the packet's expected colors, residual, and brightness
+(`max(r,g,b)`). No `inferred_label`. Output:
+
+- `reports/timeline-<stamp>.md` — combined, paste into Claude
+- `reports/timeline-<stamp>/<row_id>.md` — one file per trial
+- `reports/timeline-<stamp>/all-ticks.csv` — training export
+
+```bash
+python -m wave_classifier select-rois --zone-layout five-corner
+python -m wave_classifier calibrate-palette --base-url http://illuma-wandsim.local
+python -m wave_classifier run --timeline --no-calibrate --base-url http://illuma-wandsim.local \
+  --builder-trials path/to/trials
+```
+
+`run` defaults `--calibrate` on (29 solid shows before the first trial). Use
+`--no-calibrate` / `--use-cached-calibration` when `calibration.toml` is fresh.
+Every timeline report prints `calibration_source` and `calibration_age_s`.
+
+`--hz` defaults to native camera fps. Passing a lower `--hz` downsamples;
+passing a higher `--hz` interpolates and warns. `--black-flash-ms` (default 150
+with `--timeline`) sends palette-29 black via `/show` before each trial so `t=0`
+is a real off edge; `--no-black-flash` skips it. `report-only --timeline`
+reprocesses existing CSVs (no board, no black flash).
+
+Wand Lab Sweep Queue: Timeline / Calibrate palette / Black flash checkboxes
+(default on) map to `/observe` `timeline`, `calibrate`, `black_flash_ms`.
+
 ## Config knobs
 
 See `config.example.toml`. CLI flags override TOML. The ones that change

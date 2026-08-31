@@ -1,4 +1,4 @@
-"""CLI: `python -m wave_classifier run|select-rois|report-only|taxonomy|check-camera-lock|build|groundtruth`."""
+"""CLI: `python -m wave_classifier run|select-rois|report-only|taxonomy|calibrate-palette|check-camera-lock|build|groundtruth`."""
 
 from __future__ import annotations
 
@@ -274,6 +274,56 @@ def _add_classify_args(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_timeline_args(p: argparse.ArgumentParser, *, calibrate_default: bool) -> None:
+    p.add_argument(
+        "--timeline",
+        action="store_true",
+        help="Write per-tick color/brightness tables instead of (or besides) classifying",
+    )
+    p.add_argument(
+        "--also-classify",
+        action="store_true",
+        help="With --timeline, also run the existing classifier and concatenate reports",
+    )
+    p.add_argument(
+        "--hz",
+        type=float,
+        default=None,
+        help="Timeline tick rate. Default: native camera fps (no downsample)",
+    )
+    p.add_argument(
+        "--black-flash-ms",
+        type=int,
+        default=None,
+        help="E9 all-black /show before each trial (default 150 with --timeline, else 0)",
+    )
+    p.add_argument(
+        "--no-black-flash",
+        action="store_true",
+        help="Skip the pre-trial black reference flash",
+    )
+    cal = p.add_mutually_exclusive_group()
+    cal.add_argument(
+        "--calibrate",
+        dest="calibrate",
+        action="store_true",
+        help="Run 29-color five-corner calibration before the first trial",
+    )
+    cal.add_argument(
+        "--no-calibrate",
+        dest="calibrate",
+        action="store_false",
+        help="Skip calibration; use calibration.toml (or guessed palette)",
+    )
+    cal.add_argument(
+        "--use-cached-calibration",
+        dest="calibrate",
+        action="store_false",
+        help="Alias for --no-calibrate",
+    )
+    p.set_defaults(calibrate=calibrate_default)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m wave_classifier",
@@ -318,6 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Pick ROIs for this zone layout before capturing",
     )
+    _add_timeline_args(run, calibrate_default=True)
 
     rois = sub.add_parser("select-rois", help="Pick per-zone webcam ROIs and save them to config.toml")
     rois.add_argument("--config", type=Path, default=None)
@@ -342,6 +393,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_classify_args(report)
     report.add_argument("--sheet", default=None)
     report.add_argument("--limit", type=int, default=None)
+    report.add_argument(
+        "--base-url",
+        default=None,
+        help="Required with --calibrate on report-only (otherwise CSVs only)",
+    )
+    _add_timeline_args(report, calibrate_default=False)
 
     gt = sub.add_parser(
         "groundtruth",
@@ -442,6 +499,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     camlock.add_argument("--config", type=Path, default=None)
     camlock.add_argument("--device-index", type=int, default=None)
+
+    calp = sub.add_parser(
+        "calibrate-palette",
+        help="Show palette 0–28 solid on five-corner ROIs and write calibration.toml",
+    )
+    calp.add_argument("--config", type=Path, default=None)
+    calp.add_argument("--base-url", default=None, help="WandSimulator URL (or [wandsim] base_url)")
+    calp.add_argument("--device-index", type=int, default=None)
+    calp.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="calibration.toml path (default: tools/wave-classifier/calibration.toml)",
+    )
 
     return parser
 
@@ -631,6 +702,66 @@ def _missing_layouts(needed: list[str], rois_by_layout: dict) -> list[str]:
     return missing
 
 
+def _black_flash_ms(args: argparse.Namespace) -> int:
+    if getattr(args, "no_black_flash", False):
+        return 0
+    explicit = getattr(args, "black_flash_ms", None)
+    if explicit is not None:
+        return max(0, int(explicit))
+    if getattr(args, "timeline", False):
+        return 150
+    return 0
+
+
+def _build_timeline_reports(
+    trial_set: TrialSet,
+    *,
+    captures_dir: Path,
+    cap_by_hex: dict | None,
+    hz: float | None,
+):
+    from .capture import find_capture_csvs, parse_capture_stem, read_samples_csv
+    from .palette import load_calibration
+    from .timeline import build_timeline_report
+
+    cal = load_calibration()
+    reports = []
+    for trial in trial_set.unique_capture_trials():
+        cr = (cap_by_hex or {}).get(trial.hex_key)
+        paths = list(getattr(cr, "csv_paths", None) or []) or find_capture_csvs(captures_dir, trial)
+        series = {}
+        for p in paths:
+            zone, _rep = parse_capture_stem(p.stem, trial.row_id_safe)
+            series[zone] = read_samples_csv(p)
+        fps = getattr(cr, "measured_fps", None) if cr else None
+        baseline = getattr(cr, "baseline_frame_range", None) if cr else None
+        reports.append(
+            build_timeline_report(
+                trial,
+                series,
+                trial.expected_colors,
+                cal,
+                hz=hz,
+                measured_fps=fps,
+                baseline_tick_range=baseline,
+            )
+        )
+    return reports, cal
+
+
+def _write_timeline(reports, *, stamp: str | None = None) -> dict:
+    from .timeline_report import write_timeline_bundle
+    from .triage import timestamp_slug
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = stamp or timestamp_slug()
+    paths = write_timeline_bundle(REPORTS_DIR, reports, stamp=stamp)
+    print(f"wrote {paths['md']}")
+    print(f"wrote {paths['csv']}")
+    print(f"wrote {paths['dir']}/<row_id>.md")
+    return paths
+
+
 def cmd_select_rois(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
     from .capture import pick_rois
 
@@ -724,12 +855,28 @@ def cmd_run(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
             resume=args.resume,
             on_trial=on_trial,
             macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
+            black_flash_ms=_black_flash_ms(args),
+            calibrate=bool(getattr(args, "calibrate", True)),
         )
     except KeyboardInterrupt:
         print("\ninterrupted — stopping WandSimulator")
         cap_results = []
 
     by_hex = {r.trial.hex_key: r for r in cap_results}
+    do_timeline = bool(getattr(args, "timeline", False))
+    do_classify = (not do_timeline) or bool(getattr(args, "also_classify", False))
+    if do_timeline:
+        tl_reports, cal = _build_timeline_reports(
+            trial_set,
+            captures_dir=CAPTURES_DIR,
+            cap_by_hex=by_hex,
+            hz=getattr(args, "hz", None),
+        )
+        age = f"{cal.age_s:.0f}s" if cal.age_s is not None else "n/a"
+        print(f"calibration_source={cal.source}  calibration_age_s={age}")
+        _write_timeline(tl_reports)
+    if not do_classify:
+        return 0
     reports = build_reports(
         trial_set,
         captures_dir=CAPTURES_DIR,
@@ -753,6 +900,48 @@ def cmd_report_only(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
     unfiled: list[dict[str, str]] = []
     if getattr(args, "notes_file", None):
         unfiled = _handle_unkeyed_notes(args.notes_file)
+    if getattr(args, "calibrate", False):
+        base_url = args.base_url or _cfg_get(cfg, "wandsim", "base_url", None)
+        if not base_url:
+            print(
+                "error: --calibrate on report-only needs --base-url (or [wandsim] base_url)",
+                file=sys.stderr,
+            )
+            return 2
+        rois_by_layout = rois_from_config(cfg)
+        five = rois_by_layout.get("five-corner")
+        if not five:
+            from .capture import MissingRoiSet
+
+            raise MissingRoiSet(["five-corner"])
+        from .calibrate import run_palette_calibration
+
+        device = args.device_index if getattr(args, "device_index", None) is not None else int(
+            _cfg_get(cfg, "capture", "device_index", 0)
+        )
+        settle = int(_cfg_get(cfg, "capture", "settle_margin_ms", 500))
+        run_palette_calibration(
+            base_url=base_url,
+            five_corner_rois=five,
+            device_index=device,
+            settle_margin_ms=settle,
+            macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
+            on_index=lambda i, n, idx: print(f"  palette {idx} ({i + 1}/{n})"),
+        )
+    do_timeline = bool(getattr(args, "timeline", False))
+    do_classify = (not do_timeline) or bool(getattr(args, "also_classify", False))
+    if do_timeline:
+        tl_reports, cal = _build_timeline_reports(
+            trial_set,
+            captures_dir=CAPTURES_DIR,
+            cap_by_hex=None,
+            hz=getattr(args, "hz", None),
+        )
+        age = f"{cal.age_s:.0f}s" if cal.age_s is not None else "n/a"
+        print(f"calibration_source={cal.source}  calibration_age_s={age}")
+        _write_timeline(tl_reports)
+    if not do_classify:
+        return 0
     noise, min_corr, review, cycle, min_group = _classify_knobs(args, cfg)
     reports = build_reports(
         trial_set,
@@ -769,6 +958,39 @@ def cmd_report_only(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
         min_group=min_group,
         emit_cards=bool(getattr(args, "cards", False)),
     )
+
+
+def cmd_calibrate_palette(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
+    from .calibrate import run_palette_calibration
+    from .palette import calibration_diff_lines
+
+    base_url = args.base_url or _cfg_get(cfg, "wandsim", "base_url", None)
+    if not base_url:
+        print(
+            "error: --base-url is required (or set [wandsim] base_url in config.toml).",
+            file=sys.stderr,
+        )
+        return 2
+    rois_by_layout = rois_from_config(cfg)
+    five = rois_by_layout.get("five-corner")
+    if not five:
+        from .capture import MissingRoiSet
+
+        raise MissingRoiSet(["five-corner"])
+    device = args.device_index if args.device_index is not None else int(_cfg_get(cfg, "capture", "device_index", 0))
+    settle = int(_cfg_get(cfg, "capture", "settle_margin_ms", 500))
+    cal = run_palette_calibration(
+        base_url=base_url,
+        five_corner_rois=five,
+        device_index=device,
+        settle_margin_ms=settle,
+        macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
+        dest=args.out,
+        on_index=lambda i, n, idx: print(f"[{i + 1}/{n}] palette {idx}"),
+    )
+    print(f"wrote {cal.path}")
+    print("\n".join(calibration_diff_lines(cal)))
+    return 0
 
 
 def cmd_taxonomy(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
@@ -1116,6 +1338,8 @@ def main(argv: list[str] | None = None) -> None:
             code = cmd_groundtruth(args, cfg)
         elif args.cmd == "taxonomy":
             code = cmd_taxonomy(args, cfg)
+        elif args.cmd == "calibrate-palette":
+            code = cmd_calibrate_palette(args, cfg)
         elif args.cmd == "check-camera-lock":
             code = cmd_check_camera_lock(args, cfg)
         elif args.cmd == "build":

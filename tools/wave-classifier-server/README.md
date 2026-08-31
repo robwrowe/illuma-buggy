@@ -62,8 +62,8 @@ Then `cd web && npm run dev`. Wand Lab's Simulator IP field is the board;
 | POST | `/build` | Single-tail `build_payload()` |
 | POST | `/build-batch` | `parse_tail_block()` + loop `build_payload()` (no files) |
 | POST | `/show` | `wandsim_client.show_single()` + best-effort `stop()` |
-| POST | `/observe` | Capture + classify ≤10 payloads (blocking). Writes `reports/observe-*.{csv,md,json}` unless `run_id` is set and this is not the last chunk — then one bundle is written on the final chunk. Paste the `.md` into Claude. 409 if no ROI. 400 if >10 (use the CLI). |
-| GET | `/reports/{filename}` | Read a file from `reports/` by basename (no `..` / path traversal). Markdown as `text/markdown`. |
+| POST | `/observe` | Capture + classify **or** `timeline: true` per-tick tables. Optional `calibrate`, `black_flash_ms`, `hz`. Writes `reports/observe-*.{csv,md,json}` or `reports/timeline-*`. 409 if no ROI. 400 if >10 (use the CLI). |
+| GET | `/reports/{filename}` | Read a file from `reports/` (basename or `timeline-<stamp>/…`). Rejects `..`. |
 | POST | `/discover` | Rank bit-position candidates from existing `captures/` |
 
 `/observe` does not pick ROIs. If the requested `zone_layout` has no saved

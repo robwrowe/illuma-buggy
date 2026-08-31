@@ -93,6 +93,19 @@ def show_single(base_url: str, hex_full: str, hold_ms: int) -> dict[str, Any]:
     return data
 
 
+def send_black_flash(base_url: str, duration_ms: int = 150) -> dict[str, Any]:
+    """POST /show an E9 all-black solid (palette 29). `stop()` is not a zero-point.
+
+    duration_ms should be short — this is a reference edge, not a trial. Caller
+    should warn when measured_fps * (duration_ms/1000) < 2 (fewer than two frames).
+    """
+    from .payload_builder import build_solid_palette_payload
+
+    ms = max(1, int(duration_ms))
+    built = build_solid_palette_payload(29)
+    return show_single(base_url, built.hex_full, ms)
+
+
 def wait_show_started(base_url: str, timeout_s: float = SHOW_POLL_S) -> bool:
     """Poll GET /status until showActive, or timeout. Returns whether it started."""
     deadline = time.monotonic() + timeout_s

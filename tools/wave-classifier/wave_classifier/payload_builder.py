@@ -246,6 +246,31 @@ def built_short_id(built: BuiltPayload) -> str:
     return hashlib.sha1(normalize_hex(built.hex_full).encode("ascii")).hexdigest()[:12]
 
 
+def build_solid_palette_payload(
+    palette_idx: int,
+    *,
+    n_zones: int = 5,
+    envelope: str = "e1",
+    timing_byte: int = 0x01,
+) -> BuiltPayload:
+    """Static all-zones solid: 0F, empty tail, one palette index repeated.
+
+    Matches field-note solids like `E909 00 01 0F A4 A4 A4 A4 A4` (without vib).
+    Used for palette calibration and the pre-trial black flash (index 29).
+    """
+    n = max(1, int(n_zones))
+    idx = int(palette_idx) & 0x1F
+    colors = [{"palette_idx": idx, "mask": 0} for _ in range(n)]
+    return build_payload(
+        tail_bytes=[],
+        timing_byte=int(timing_byte) & 0xFF,
+        color_format="0f",
+        colors=colors,
+        vibration=None,
+        envelope=envelope,
+    )
+
+
 def built_payload_to_json(built: BuiltPayload) -> dict[str, Any]:
     """JSON-safe BuiltPayload (omits raw bytes)."""
     return {

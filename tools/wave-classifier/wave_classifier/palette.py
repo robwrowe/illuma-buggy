@@ -1,6 +1,14 @@
-"""MagicBand+ palette RGB — keep in sync with web/src/lib/ble/mbConstants.ts MB_PALETTE."""
+"""MagicBand+ palette RGB — keep in sync with web/src/lib/ble/mbConstants.ts MB_PALETTE.
+
+Guessed hex in MB_PALETTE is the color-and-mask-palette.md "best guess" column.
+Measured RGB lives in gitignored calibration.toml (see load_calibration).
+"""
 
 from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
 
 # index → (family name, hex)
 MB_PALETTE: list[tuple[str, str]] = [
@@ -55,3 +63,174 @@ def palette_entry(idx: int) -> dict:
     if i == 31:
         return {"r": 255, "g": 0, "b": 255, "name": "Random", "palette_idx": 31, "hex": "#ff00ff"}
     return {"r": 0, "g": 0, "b": 0, "name": "?", "palette_idx": i, "hex": "#000000"}
+
+
+# Indices 0–28 are real fixed colors. 29=Black (no RGB to calibrate),
+# 30=Unique / 31=Random are device-randomized.
+CALIBRATE_INDICES = tuple(range(29))
+BLACK_PALETTE_IDX = 29
+
+CORNER_ZONES = ("topLeft", "bottomLeft", "bottomRight", "topRight")
+
+
+@dataclass
+class PaletteCalibration:
+    """Measured (or guessed) RGB per palette index.
+
+    Five-corner is the stored geometry. inner-outer `outer` is the mean of the
+    four corners; `single`/`all` is the mean of all five.
+    """
+
+    source: str  # "measured" | "guessed"
+    by_index: dict[int, tuple[int, int, int]]
+    by_zone: dict[int, dict[str, tuple[int, int, int]]] = field(default_factory=dict)
+    captured_at: str | None = None
+    measured_fps: float | None = None
+    age_s: float | None = None
+    path: Path | None = None
+
+    def rgb(self, idx: int, zone: str | None = None) -> tuple[int, int, int]:
+        i = int(idx) & 0x1F
+        if zone and i in self.by_zone:
+            zmap = self.by_zone[i]
+            if zone in zmap:
+                return zmap[zone]
+            if zone in {"outer", "all"}:
+                keys = CORNER_ZONES if zone == "outer" else tuple(zmap)
+                pts = [zmap[k] for k in keys if k in zmap]
+                if pts:
+                    return _mean_rgb_int(pts)
+        if i in self.by_index:
+            return self.by_index[i]
+        ent = palette_entry(i)
+        return int(ent["r"]), int(ent["g"]), int(ent["b"])
+
+
+def _mean_rgb_int(pts: list[tuple[int, int, int]]) -> tuple[int, int, int]:
+    n = max(len(pts), 1)
+    r = int(round(sum(p[0] for p in pts) / n))
+    g = int(round(sum(p[1] for p in pts) / n))
+    b = int(round(sum(p[2] for p in pts) / n))
+    return (r, g, b)
+
+
+def guessed_calibration() -> PaletteCalibration:
+    by_index = {}
+    for i in CALIBRATE_INDICES:
+        ent = palette_entry(i)
+        by_index[i] = (int(ent["r"]), int(ent["g"]), int(ent["b"]))
+    return PaletteCalibration(source="guessed", by_index=by_index)
+
+
+def default_calibration_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "calibration.toml"
+
+
+def load_calibration(path: Path | None = None) -> PaletteCalibration:
+    """Load calibration.toml, or guessed MB_PALETTE if the file is missing."""
+    dest = Path(path) if path is not None else default_calibration_path()
+    if not dest.is_file():
+        return guessed_calibration()
+    from .cli import _load_toml
+
+    data = _load_toml(dest)
+    pal = data.get("palette") or {}
+    by_index: dict[int, tuple[int, int, int]] = {}
+    by_zone: dict[int, dict[str, tuple[int, int, int]]] = {}
+    for key, block in pal.items():
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(block, dict):
+            continue
+        if "r" in block:
+            by_index[idx] = (int(block["r"]), int(block["g"]), int(block["b"]))
+        zones = block.get("zones") or {}
+        if isinstance(zones, dict) and zones:
+            zmap = {}
+            for zname, val in zones.items():
+                if isinstance(val, (list, tuple)) and len(val) >= 3:
+                    zmap[str(zname)] = (int(val[0]), int(val[1]), int(val[2]))
+            if zmap:
+                by_zone[idx] = zmap
+                if idx not in by_index:
+                    by_index[idx] = _mean_rgb_int(list(zmap.values()))
+    if not by_index:
+        cal = guessed_calibration()
+        cal.path = dest
+        return cal
+    meta = data.get("meta") or {}
+    age_s = None
+    try:
+        age_s = max(0.0, time.time() - dest.stat().st_mtime)
+    except OSError:
+        age_s = None
+    fps = meta.get("measured_fps")
+    return PaletteCalibration(
+        source="measured",
+        by_index=by_index,
+        by_zone=by_zone,
+        captured_at=str(meta.get("captured_at") or "") or None,
+        measured_fps=float(fps) if fps not in (None, "") else None,
+        age_s=age_s,
+        path=dest,
+    )
+
+
+def save_calibration(cal: PaletteCalibration, path: Path | None = None) -> Path:
+    dest = Path(path) if path is not None else default_calibration_path()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# calibration.toml — per camera / lighting / device. Do not commit.",
+        "# Measured against five-corner ROIs; inner-outer and single are derived at load.",
+        "",
+        "[meta]",
+        f'captured_at = "{cal.captured_at or ""}"',
+        f"measured_fps = {cal.measured_fps if cal.measured_fps is not None else 0}",
+        f'source = "{cal.source}"',
+        "",
+    ]
+    for idx in sorted(cal.by_index):
+        r, g, b = cal.by_index[idx]
+        lines.append(f"[palette.{idx}]")
+        lines.append(f"r = {r}")
+        lines.append(f"g = {g}")
+        lines.append(f"b = {b}")
+        zmap = cal.by_zone.get(idx) or {}
+        if zmap:
+            lines.append(f"[palette.{idx}.zones]")
+            for zname, rgb in zmap.items():
+                lines.append(f"{zname} = [{rgb[0]}, {rgb[1]}, {rgb[2]}]")
+        lines.append("")
+    dest.write_text("\n".join(lines), encoding="utf-8")
+    cal.path = dest
+    return dest
+
+
+def guessed_rgb(idx: int) -> tuple[int, int, int]:
+    ent = palette_entry(idx)
+    return int(ent["r"]), int(ent["g"]), int(ent["b"])
+
+
+def calibration_diff_lines(cal: PaletteCalibration) -> list[str]:
+    """Eyeball table: measured vs guessed MB_PALETTE hex."""
+    lines = [
+        "idx  name     guessed RGB          measured RGB         Δ (euclid)",
+        "---  -------  -------------------  -------------------  ----------",
+    ]
+    for idx in CALIBRATE_INDICES:
+        name = palette_entry(idx)["name"]
+        gr, gg, gb = guessed_rgb(idx)
+        if idx in cal.by_index:
+            mr, mg, mb = cal.by_index[idx]
+            dist = ((mr - gr) ** 2 + (mg - gg) ** 2 + (mb - gb) ** 2) ** 0.5
+            meas = f"{mr:3d},{mg:3d},{mb:3d}"
+            delta = f"{dist:8.1f}"
+        else:
+            meas = "(missing)"
+            delta = "       —"
+        lines.append(
+            f"{idx:3d}  {name:<7}  {gr:3d},{gg:3d},{gb:3d}           {meas:<19}  {delta}"
+        )
+    return lines

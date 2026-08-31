@@ -16,7 +16,7 @@ firmware/**/*.bin      # compiled artifacts
 firmware/StrollerController/embedded_rules.json
 
 # Webcam waveform classifier — raw captures and generated reports
-tools/wave-classifier/captures/
+tools/wave-classifier/calibration.toml
 tools/wave-classifier/reports/
 tools/wave-classifier/builder_trials/
 tools/wave-classifier/.venv/

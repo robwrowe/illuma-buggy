@@ -75,9 +75,9 @@ def discard_observe_run(pending, run_id):
 
 
 def safe_report_path(filename: str, reports_dir: Path = REPORTS_DIR) -> Path:
-    """Resolve a report basename inside reports_dir. Rejects traversal."""
-    name = (filename or "").strip()
-    if not name or name != Path(name).name or ".." in name:
+    """Resolve a path inside reports_dir. Allows one nested folder; rejects .."""
+    name = (filename or "").strip().replace("\\", "/")
+    if not name or name.startswith("/") or ".." in Path(name).parts:
         raise HTTPException(400, "invalid filename")
     root = reports_dir.resolve()
     path = (root / name).resolve()
@@ -169,6 +169,11 @@ class ObserveBody(BaseModel):
     run_id: Optional[str] = None
     run_seq: Optional[int] = None  # 1-indexed chunk number
     run_total_chunks: Optional[int] = None
+    timeline: bool = False
+    hz: Optional[float] = None
+    calibrate: bool = False
+    black_flash_ms: int = 0
+    also_classify: bool = False
 
 
 @app.get("/health")
@@ -294,6 +299,8 @@ def api_observe(body: ObserveBody):
                 gap_seconds=gap,
                 repeats=max(1, body.repeat),
                 macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
+                black_flash_ms=max(0, int(body.black_flash_ms or 0)),
+                calibrate=bool(body.calibrate),
             )
         except MissingRoiSet as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -304,35 +311,79 @@ def api_observe(body: ObserveBody):
             ) from exc
 
         by_hex = {r.trial.hex_key: r for r in cap_results}
-        report_objs = []
-        reports = []
-        for trial in trials:
-            cr = by_hex.get(trial.hex_key)
-            paths = list(getattr(cr, "csv_paths", None) or [])
-            status = getattr(cr, "capture_status", "ok") if cr else "missing_csv"
-            err = getattr(cr, "error", None) if cr else None
-            report = classify_trial(
-                trial,
-                paths,
-                noise_floor_pct=noise,
-                min_template_correlation=min_corr,
-                capture_status=status,
-                capture_error=err,
-            )
-            report_objs.append(report)
-            reports.append(trial_report_to_dict(report, capture_paths=paths))
-
         extra = {
             "captures_dir": str(CAPTURES_DIR / "observe"),
             "capture_layout": layout,
             "capture_layout_auto": auto_layout,
         }
+        if body.timeline:
+            from wave_classifier.capture import parse_capture_stem, read_samples_csv
+            from wave_classifier.palette import load_calibration
+            from wave_classifier.timeline import build_timeline_report
+            from wave_classifier.timeline_report import (
+                timeline_report_to_dict,
+                write_timeline_bundle,
+            )
+            from wave_classifier.triage import timestamp_slug
+
+            cal = load_calibration()
+            extra["calibration_source"] = cal.source
+            extra["calibration_age_s"] = cal.age_s
+            report_objs = []
+            reports = []
+            for trial in trials:
+                cr = by_hex.get(trial.hex_key)
+                paths = list(getattr(cr, "csv_paths", None) or [])
+                series = {}
+                for p in paths:
+                    zone, _rep = parse_capture_stem(p.stem, trial.row_id_safe)
+                    series[zone] = read_samples_csv(p)
+                fps = getattr(cr, "measured_fps", None) if cr else None
+                baseline = getattr(cr, "baseline_frame_range", None) if cr else None
+                tl = build_timeline_report(
+                    trial,
+                    series,
+                    trial.expected_colors,
+                    cal,
+                    hz=body.hz,
+                    measured_fps=fps,
+                    baseline_tick_range=baseline,
+                )
+                report_objs.append(tl)
+                reports.append(timeline_report_to_dict(tl))
+            extra["report_kind"] = "timeline"
+
+            def _write_tl(objs):
+                return write_timeline_bundle(REPORTS_DIR, objs, stamp=timestamp_slug())
+
+            write_fn = _write_tl
+        else:
+            report_objs = []
+            reports = []
+            for trial in trials:
+                cr = by_hex.get(trial.hex_key)
+                paths = list(getattr(cr, "csv_paths", None) or [])
+                status = getattr(cr, "capture_status", "ok") if cr else "missing_csv"
+                err = getattr(cr, "error", None) if cr else None
+                report = classify_trial(
+                    trial,
+                    paths,
+                    noise_floor_pct=noise,
+                    min_template_correlation=min_corr,
+                    capture_status=status,
+                    capture_error=err,
+                )
+                report_objs.append(report)
+                reports.append(trial_report_to_dict(report, capture_paths=paths))
+            extra["report_kind"] = "classify"
+            write_fn = lambda objs: write_observe_bundle(REPORTS_DIR, objs)
+
         if run_id:
             action, accumulated = accumulate_observe_run(
                 _PENDING_RUNS, run_id, body.run_seq, body.run_total_chunks, report_objs
             )
             if action == "write":
-                paths_out = write_observe_bundle(REPORTS_DIR, accumulated)
+                paths_out = write_fn(accumulated)
             else:
                 return {
                     "reports": reports,
@@ -344,22 +395,44 @@ def api_observe(body: ObserveBody):
                     **extra,
                 }
         else:
-            paths_out = write_observe_bundle(REPORTS_DIR, report_objs)
-        return {
+            paths_out = write_fn(report_objs)
+        out = {
             "reports": reports,
             "count": len(reports),
             "report_csv": str(paths_out["csv"]),
             "report_md": str(paths_out["md"]),
-            "report_json": str(paths_out["json"]),
+            "report_json": str(paths_out.get("json") or ""),
             "run_pending": False,
             **extra,
         }
+        if body.also_classify and body.timeline:
+            class_objs = []
+            class_reports = []
+            for trial in trials:
+                cr = by_hex.get(trial.hex_key)
+                paths = list(getattr(cr, "csv_paths", None) or [])
+                status = getattr(cr, "capture_status", "ok") if cr else "missing_csv"
+                err = getattr(cr, "error", None) if cr else None
+                report = classify_trial(
+                    trial,
+                    paths,
+                    noise_floor_pct=noise,
+                    min_template_correlation=min_corr,
+                    capture_status=status,
+                    capture_error=err,
+                )
+                class_objs.append(report)
+                class_reports.append(trial_report_to_dict(report, capture_paths=paths))
+            class_paths = write_observe_bundle(REPORTS_DIR, class_objs)
+            out["classify_reports"] = class_reports
+            out["classify_report_md"] = str(class_paths["md"])
+        return out
     except Exception:
         discard_observe_run(_PENDING_RUNS, run_id)
         raise
 
 
-@app.get("/reports/{filename}")
+@app.get("/reports/{filename:path}")
 def api_report(filename: str):
     path = safe_report_path(filename)
     suffix = path.suffix.lower()

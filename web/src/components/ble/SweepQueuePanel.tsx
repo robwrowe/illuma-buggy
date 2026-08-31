@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import {
   Button,
+  Checkbox,
   Collapse,
   Group,
   NumberInput,
@@ -40,6 +41,9 @@ export function SweepQueuePanel({
   const [open, setOpen] = useWandLabUiState('sweepQueue.open', true);
   const [pasteText, setPasteText] = useState('');
   const [holdMs, setHoldMs] = useWandLabUiState('sweepQueue.holdMs', DEFAULT_OBSERVE_HOLD_MS);
+  const [timeline, setTimeline] = useWandLabUiState('sweepQueue.timeline', true);
+  const [calibrate, setCalibrate] = useWandLabUiState('sweepQueue.calibrate', true);
+  const [blackFlash, setBlackFlash] = useWandLabUiState('sweepQueue.blackFlash', true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [reports, setReports] = useState([]);
@@ -112,6 +116,9 @@ export function SweepQueuePanel({
         hold_ms: hold,
         zone_layout: 'auto',
         base_url: wandsim,
+        timeline: !!timeline,
+        calibrate: !!calibrate,
+        black_flash_ms: blackFlash ? 150 : 0,
         onChunk: (i, n) => {
           if (n > 1) onStatus?.(`Run Sweep batch ${i + 1}/${n}…`);
         },
@@ -176,7 +183,7 @@ export function SweepQueuePanel({
               onChange={(v) => setHoldMs(Math.max(500, Number(v) || DEFAULT_OBSERVE_HOLD_MS))}
               disabled={running}
             />
-            <Tooltip label={runDisabledReason || 'Capture and classify the whole queue as one run'}>
+            <Tooltip label={runDisabledReason || (timeline ? 'Capture a per-tick color timeline for the whole queue' : 'Capture and classify the whole queue as one run')}>
               <span>
                 <Button
                   size="compact-xs"
@@ -189,6 +196,27 @@ export function SweepQueuePanel({
                 </Button>
               </span>
             </Tooltip>
+            <Checkbox
+              size="xs"
+              label="Timeline"
+              checked={!!timeline}
+              onChange={(e) => setTimeline(e.currentTarget.checked)}
+              disabled={running}
+            />
+            <Checkbox
+              size="xs"
+              label="Calibrate palette"
+              checked={!!calibrate}
+              onChange={(e) => setCalibrate(e.currentTarget.checked)}
+              disabled={running}
+            />
+            <Checkbox
+              size="xs"
+              label="Black flash"
+              checked={!!blackFlash}
+              onChange={(e) => setBlackFlash(e.currentTarget.checked)}
+              disabled={running}
+            />
             <Button size="compact-xs" variant="subtle" color="red" onClick={clear} disabled={!items.length || running}>
               Clear queue
             </Button>
@@ -285,6 +313,7 @@ export function SweepQueuePanel({
                 reportMd={reportMd}
                 reportJson={reportJson}
                 backendUrl={wc.baseUrl}
+                mode={timeline ? 'timeline' : 'classify'}
               />
             </Stack>
           )}

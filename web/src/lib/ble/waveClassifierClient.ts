@@ -86,7 +86,7 @@ export async function buildBatch(baseUrl, params) {
 
 /**
  * @param {string} backendUrl classifier server (localhost:8420)
- * @param {{ payloads: {hex_full: string, label?: string, tail_index?: number, color_count?: number, expected_colors?: object[]}[], hold_ms?: number, repeat?: number, zone_layout?: string, base_url?: string, onChunk?: function }} params
+ * @param {{ payloads: {hex_full: string, label?: string, tail_index?: number, color_count?: number, expected_colors?: object[]}[], hold_ms?: number, repeat?: number, zone_layout?: string, base_url?: string, timeline?: boolean, hz?: number, calibrate?: boolean, black_flash_ms?: number, also_classify?: boolean, onChunk?: function }} params
  *   `base_url` here is the WandSimulator board URL (same host as Send), not the classifier.
  */
 export async function observe(backendUrl, params) {
@@ -107,11 +107,15 @@ export async function observe(backendUrl, params) {
   for (let c = 0; c < chunks.length; c++) {
     const chunk = chunks[c];
     params?.onChunk?.(c, chunks.length, chunk.length);
-    const timeoutMs = Math.max(120000, chunk.length * (hold + 4000) + 15000);
+    const timeoutMs = Math.max(
+      120000,
+      chunk.length * (hold + 4000) + 15000 + (c === 0 && params?.calibrate ? 120000 : 0),
+    );
     const body = {
       ...params,
       payloads: chunk,
       hold_ms: hold,
+      calibrate: c === 0 ? !!params?.calibrate : false,
       ...(runId ? { run_id: runId, run_seq: c + 1, run_total_chunks: chunks.length } : {}),
     };
     delete body.onChunk;
@@ -132,7 +136,12 @@ export async function observe(backendUrl, params) {
 export function reportFilenameFromPath(path) {
   const s = String(path || '').trim().replace(/\\/g, '/');
   if (!s) return '';
+  const marker = '/reports/';
+  const idx = s.lastIndexOf(marker);
+  if (idx >= 0) return s.slice(idx + marker.length);
   const parts = s.split('/');
+  const tl = parts.findIndex((p) => String(p).startsWith('timeline-'));
+  if (tl >= 0) return parts.slice(tl).join('/');
   return parts[parts.length - 1] || '';
 }
 

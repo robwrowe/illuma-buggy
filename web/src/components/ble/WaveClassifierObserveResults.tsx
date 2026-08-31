@@ -14,6 +14,7 @@ export function WaveClassifierObserveResults({
   reportJson,
   backendUrl,
   emptyLabel = 'No observe results yet.',
+  mode = 'classify',
 }) {
   const [mdText, setMdText] = useState('');
   const [mdError, setMdError] = useState('');
@@ -36,6 +37,8 @@ export function WaveClassifierObserveResults({
       cancelled = true;
     };
   }, [reportMd, backendUrl]);
+
+  const isTimeline = mode === 'timeline' || reports.some((r) => r.report_kind === 'timeline');
 
   if (!reports.length) {
     return (
@@ -106,6 +109,34 @@ export function WaveClassifierObserveResults({
           ) : null}
         </Stack>
       ) : null}
+      {isTimeline ? (
+        <Stack gap={4}>
+          {reports.map((r, i) => (
+            <Text key={`${r.row_id || i}`} size="xs" c="dimmed">
+              {r.row_id || `#${i + 1}`}: {r.tick_count ?? '—'} ticks
+              {r.calibration_source ? ` · cal ${r.calibration_source}` : ''}
+              {Array.isArray(r.warnings) && r.warnings.length ? ` · ${r.warnings.length} warning(s)` : ''}
+            </Text>
+          ))}
+          {mdText ? (
+            <Text
+              component="pre"
+              size="xs"
+              ff="monospace"
+              style={{
+                whiteSpace: 'pre-wrap',
+                maxHeight: 420,
+                overflow: 'auto',
+                margin: 0,
+              }}
+            >
+              {mdText}
+            </Text>
+          ) : (
+            <Text size="xs" c="dimmed">Loading timeline markdown…</Text>
+          )}
+        </Stack>
+      ) : (
       <Table.ScrollContainer minWidth={480}>
         <Table striped withTableBorder withColumnBorders highlightOnHover>
           <Table.Thead>
@@ -167,6 +198,7 @@ export function WaveClassifierObserveResults({
           </Table.Tbody>
         </Table>
       </Table.ScrollContainer>
+      )}
     </>
   );
 }

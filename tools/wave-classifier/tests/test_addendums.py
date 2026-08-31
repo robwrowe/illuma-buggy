@@ -350,7 +350,7 @@ def test_cli_help_fast():
     except SystemExit as exc:
         assert exc.code == 0
     try:
-        main(["check-camera-lock", "--help"])
+        main(["calibrate-palette", "--help"])
     except SystemExit as exc:
         assert exc.code == 0
 
