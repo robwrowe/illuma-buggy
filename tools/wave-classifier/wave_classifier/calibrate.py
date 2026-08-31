@@ -11,10 +11,8 @@ from .capture import (
     CameraError,
     MissingRoiSet,
     _grab_until_zones,
-    confirm_zones_off,
-    off_confirm_ceiling,
-    peak_zone_brightness,
     wait_for_zones_lit,
+    wait_for_zones_off_broadcast,
 )
 from .palette import mean_rgb_brightest_frames
 from .timeline import brightness_of
@@ -30,105 +28,6 @@ from .zones import FIVE_CORNER_IDS
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
-
-
-def _wait_for_zones_off(
-    base_url: str,
-    cam: Camera,
-    rois: dict[str, tuple[int, int, int, int]],
-    *,
-    min_black_ms: int,
-    off_confirm_timeout_ms: int,
-    off_max_brightness: float,
-    off_baseline_margin: float = 12.0,
-) -> None:
-    """Broadcast E905 black until the camera confirms off, then stop before the color."""
-    from .wandsim_client import (
-        get_status,
-        show_single,
-        stop,
-        wait_show_idle,
-        wait_show_started,
-    )
-
-    stop(base_url)
-    try:
-        if not get_status(base_url, timeout=1.5).get("showActive"):
-            pass
-        elif not wait_show_idle(base_url, timeout_s=2.0):
-            _log("  waiting for wand show to finish…")
-            wait_show_idle(base_url, timeout_s=2.0)
-    except Exception:
-        wait_show_idle(base_url, timeout_s=2.0)
-
-    pre_peak = peak_zone_brightness(cam, rois)
-    min_black = max(0, int(min_black_ms))
-    timeout_ms = max(500, int(off_confirm_timeout_ms))
-    # Keep black on the air for the whole confirm window (+ slack for min_black).
-    black_hold_ms = max(min_black, timeout_ms + 1000)
-    built_black = build_solid_palette_payload(29)
-    abs_ceiling = off_confirm_ceiling(
-        baseline_peak=None,
-        baseline_margin=0,
-        max_brightness=off_max_brightness,
-    )
-    if pre_peak is not None:
-        _log(
-            f"  → black (E905 pal 29) until peak ≤ {abs_ceiling:.0f} "
-            f"(pre={pre_peak:.0f}, min {min_black}ms, timeout {timeout_ms}ms)"
-        )
-    else:
-        _log(
-            f"  → black (E905 pal 29) until peak ≤ {abs_ceiling:.0f} "
-            f"(min {min_black}ms, timeout {timeout_ms}ms)"
-        )
-    show_single(base_url, built_black.hex_full, black_hold_ms)
-    if not wait_show_started(base_url, timeout_s=1.0):
-        _log("  warning: black showActive not confirmed within 1s")
-
-    black_started = time.monotonic()
-    deadline = black_started + timeout_ms / 1000.0
-    baseline_peak: float | None = None
-    confirmed = False
-
-    while time.monotonic() < deadline:
-        peak = peak_zone_brightness(cam, rois)
-        if peak is not None:
-            baseline_peak = peak if baseline_peak is None else min(baseline_peak, peak)
-        ceiling = off_confirm_ceiling(
-            baseline_peak=baseline_peak,
-            baseline_margin=off_baseline_margin,
-            max_brightness=off_max_brightness,
-        )
-        min_elapsed = (time.monotonic() - black_started) * 1000.0 >= min_black
-        if min_elapsed and confirm_zones_off(
-            cam,
-            rois,
-            max_brightness=off_max_brightness,
-            baseline_peak=baseline_peak,
-            baseline_margin=off_baseline_margin,
-            timeout_ms=250,
-        ):
-            confirmed = True
-            _log(f"  → off confirmed (peak ≤ {ceiling:.0f}); starting color")
-            break
-
-    stop(base_url)
-    wait_show_idle(base_url, timeout_s=1.5)
-
-    if not confirmed:
-        ceiling = off_confirm_ceiling(
-            baseline_peak=baseline_peak,
-            baseline_margin=off_baseline_margin,
-            max_brightness=off_max_brightness,
-        )
-        last = peak_zone_brightness(cam, rois)
-        last_s = f"{last:.0f}" if last is not None else "?"
-        raise CameraError(
-            f"LED zones did not reach off state within {timeout_ms}ms "
-            f"(last peak {last_s}, need ≤ {ceiling:.0f}) — previous color may still "
-            "be on; raise --off-confirm-timeout-ms or --black-flash-ms"
-        )
 
 
 def _measure_palette_color(
@@ -254,7 +153,7 @@ def run_palette_calibration(
         total = len(CALIBRATE_INDICES)
         for i, idx in enumerate(CALIBRATE_INDICES):
             _log(f"[{i + 1}/{total}] palette {idx}")
-            _wait_for_zones_off(
+            wait_for_zones_off_broadcast(
                 session.base_url,
                 cam,
                 use,
@@ -262,6 +161,7 @@ def run_palette_calibration(
                 off_confirm_timeout_ms=off_confirm_timeout_ms,
                 off_max_brightness=off_max_brightness,
                 off_baseline_margin=off_baseline_margin,
+                log=_log,
             )
             built = build_solid_palette_payload(idx)
             _log(f"  → show {built.hex} hold={hold_ms}ms")
@@ -289,7 +189,7 @@ def run_palette_calibration(
                 except Exception:
                     pass
                 wait_show_idle(session.base_url, timeout_s=1.5)
-                _wait_for_zones_off(
+                wait_for_zones_off_broadcast(
                     session.base_url,
                     cam,
                     use,
@@ -297,6 +197,7 @@ def run_palette_calibration(
                     off_confirm_timeout_ms=off_confirm_timeout_ms,
                     off_max_brightness=off_max_brightness,
                     off_baseline_margin=off_baseline_margin,
+                    log=_log,
                 )
                 show_single(session.base_url, built.hex_full, hold_ms)
                 wait_show_started(session.base_url, timeout_s=1.0)

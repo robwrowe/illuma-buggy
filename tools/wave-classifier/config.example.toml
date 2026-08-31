@@ -12,6 +12,7 @@ calibrate_black_flash_ms = 500    # min black on wand; confirm off while still b
 calibrate_color_hold_ms = 3000    # min palette solid hold on wand per index
 off_confirm_timeout_ms = 5000     # max wait for camera off-confirm while black is on
 off_max_brightness = 25          # peak ROI brightness treated as "off"
+lit_timeout_ms = 4000            # max wait for trial color before sampling anyway
 
 # Optional: Illuma export JSON for calibrate-palette diff (mbMapping.colors)
 # expected_export = "/path/to/illuma-buggy-export.json"

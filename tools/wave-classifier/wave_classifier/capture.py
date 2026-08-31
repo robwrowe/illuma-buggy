@@ -427,6 +427,124 @@ def off_confirm_ceiling(
     return cap
 
 
+def wait_for_zones_off_broadcast(
+    base_url: str,
+    cam: Camera,
+    rois: dict[str, tuple[int, int, int, int]],
+    *,
+    min_black_ms: int,
+    off_confirm_timeout_ms: int,
+    off_max_brightness: float,
+    off_baseline_margin: float = 12.0,
+    samples: dict[str, list[tuple[float, float, float, float]]] | None = None,
+    clock_start: float | None = None,
+    log: Callable[[str], None] | None = None,
+) -> None:
+    """Broadcast E905 black until the camera confirms off, then stop before the trial."""
+    from .payload_builder import build_solid_palette_payload
+    from .timeline import brightness_of
+    from .wandsim_client import (
+        get_status,
+        show_single,
+        stop,
+        wait_show_idle,
+        wait_show_started,
+    )
+
+    def _log(msg: str) -> None:
+        if log:
+            log(msg)
+        else:
+            print(msg, flush=True)
+
+    stop(base_url)
+    try:
+        if not get_status(base_url, timeout=1.5).get("showActive"):
+            pass
+        elif not wait_show_idle(base_url, timeout_s=2.0):
+            _log("  waiting for wand show to finish…")
+            wait_show_idle(base_url, timeout_s=2.0)
+    except Exception:
+        wait_show_idle(base_url, timeout_s=2.0)
+
+    pre_peak = peak_zone_brightness(cam, rois)
+    min_black = max(0, int(min_black_ms))
+    timeout_ms = max(500, int(off_confirm_timeout_ms))
+    black_hold_ms = max(min_black, timeout_ms + 1000)
+    built_black = build_solid_palette_payload(29)
+    abs_ceiling = off_confirm_ceiling(
+        baseline_peak=None,
+        baseline_margin=0,
+        max_brightness=off_max_brightness,
+    )
+    if pre_peak is not None:
+        _log(
+            f"  → black until peak ≤ {abs_ceiling:.0f} "
+            f"(pre={pre_peak:.0f}, min {min_black}ms, timeout {timeout_ms}ms)"
+        )
+    else:
+        _log(
+            f"  → black until peak ≤ {abs_ceiling:.0f} "
+            f"(min {min_black}ms, timeout {timeout_ms}ms)"
+        )
+    show_single(base_url, built_black.hex_full, black_hold_ms)
+    if not wait_show_started(base_url, timeout_s=1.0):
+        _log("  warning: black showActive not confirmed within 1s")
+
+    black_started = time.monotonic()
+    deadline = black_started + timeout_ms / 1000.0
+    baseline_peak: float | None = None
+    confirmed = False
+    streak = 0
+    t0 = clock_start if clock_start is not None else black_started
+
+    while time.monotonic() < deadline:
+        frame = cam.grab()
+        peak: float | None = None
+        if frame is not None:
+            peaks = [brightness_of(*_mean_rgb(frame, roi)) for roi in rois.values()]
+            peak = max(peaks) if peaks else None
+            if samples is not None:
+                t_ms = (time.monotonic() - t0) * 1000.0
+                for name, roi in rois.items():
+                    r, g, b = _mean_rgb(frame, roi)
+                    samples[name].append((t_ms, r, g, b))
+        if peak is not None:
+            baseline_peak = peak if baseline_peak is None else min(baseline_peak, peak)
+        ceiling = off_confirm_ceiling(
+            baseline_peak=baseline_peak,
+            baseline_margin=off_baseline_margin,
+            max_brightness=off_max_brightness,
+        )
+        min_elapsed = (time.monotonic() - black_started) * 1000.0 >= min_black
+        if min_elapsed and peak is not None and peak <= ceiling:
+            streak += 1
+            if streak >= 3:
+                confirmed = True
+                _log(f"  → off confirmed (peak ≤ {ceiling:.0f}); starting trial")
+                break
+        else:
+            streak = 0
+        time.sleep(0.033)
+
+    stop(base_url)
+    wait_show_idle(base_url, timeout_s=1.5)
+
+    if not confirmed:
+        ceiling = off_confirm_ceiling(
+            baseline_peak=baseline_peak,
+            baseline_margin=off_baseline_margin,
+            max_brightness=off_max_brightness,
+        )
+        last = peak_zone_brightness(cam, rois)
+        last_s = f"{last:.0f}" if last is not None else "?"
+        raise CameraError(
+            f"LED zones did not reach off state within {timeout_ms}ms "
+            f"(last peak {last_s}, need ≤ {ceiling:.0f}) — previous color may still "
+            "be on; raise --off-confirm-timeout-ms or --black-flash-ms"
+        )
+
+
 class MissingRoiSet(Exception):
     def __init__(self, layouts: list[str]):
         self.layouts = layouts
@@ -454,6 +572,20 @@ def rois_for_layout(cfg_rois: dict, layout: str) -> dict[str, tuple[int, int, in
     return None
 
 
+def _trial_peak_brightness(
+    samples: dict[str, list[tuple[float, float, float, float]]],
+    baseline_range: tuple[int, int] | None,
+) -> float | None:
+    from .timeline import brightness_of
+
+    start = baseline_range[1] if baseline_range else 0
+    peaks: list[float] = []
+    for rows in samples.values():
+        for _, r, g, b in rows[start:]:
+            peaks.append(brightness_of(r, g, b))
+    return max(peaks) if peaks else None
+
+
 def capture_trial(
     cam: Camera,
     session,
@@ -466,63 +598,121 @@ def capture_trial(
     repeat_index: int | None = None,
     resume: bool = False,
     black_flash_ms: int = 0,
+    off_confirm_timeout_ms: int = 5000,
+    off_max_brightness: float = 25.0,
+    off_baseline_margin: float = 12.0,
+    lit_timeout_ms: int = 4000,
+    use_timing_hold: bool = True,
+    min_trial_brightness: float = 12.0,
 ) -> tuple[list[Path], str, int, bool, str | None, tuple[int, int] | None]:
-    from .wandsim_client import WandSimError, send_black_flash, show_single, stop, wait_show_started
+    from .e9_timing import estimate_show_hold_ms, timing_byte_from_hex
+    from .wandsim_client import WandSimError, show_single, stop, wait_show_started
 
     paths_expected = [capture_file_path(captures_dir, trial, z, repeat_index) for z in rois]
     if resume and all(p.is_file() for p in paths_expected):
         return paths_expected, "ok", 0, True, "resume: skipped (per-zone CSVs already present)", None
 
-    show_started = False
-    samples: dict[str, list[tuple[float, float, float, float]]] = {n: [] for n in rois}
-    clock_start = time.monotonic()
-    baseline_range: tuple[int, int] | None = None
-    try:
-        stop(session.base_url)
-        flash_ms = max(0, int(black_flash_ms or 0))
-        if flash_ms > 0:
-            fps = cam.measured_fps or 30.0
-            if fps * (flash_ms / 1000.0) < 2:
-                print(
-                    f"warning: black_flash_ms={flash_ms} at {fps:.1f}fps yields <2 frames — "
-                    "raise --black-flash-ms or check camera fps"
-                )
-            send_black_flash(session.base_url, flash_ms)
-            wait_show_started(session.base_url)
-            _grab_until_zones(
-                cam, rois, flash_ms, samples=samples, clock_start=clock_start,
-            )
-            k = min((len(v) for v in samples.values()), default=0)
-            baseline_range = (0, k)
-        show_single(session.base_url, trial.hex_full, hold_ms)
-        show_started = wait_show_started(session.base_url)
-        _grab_until_zones(
-            cam, rois, hold_ms + settle_margin_ms, samples=samples, clock_start=clock_start,
-        )
-    except WandSimError as exc:
-        return [], "wandsim_error", 0, False, str(exc), None
-    except CameraError as exc:
-        return [], "camera_error", 0, False, str(exc), None
-    finally:
+    flash_ms = max(0, int(black_flash_ms or 0))
+    timing_byte = timing_byte_from_hex(trial.hex_full) if use_timing_hold else None
+    effective_hold = int(hold_ms)
+    if timing_byte is not None:
+        timing_hold = estimate_show_hold_ms(timing_byte, margin_ms=settle_margin_ms)
+        if timing_hold > effective_hold:
+            effective_hold = timing_hold
+
+    last_error: str | None = None
+    for attempt in range(2):
+        show_started = False
+        samples: dict[str, list[tuple[float, float, float, float]]] = {n: [] for n in rois}
+        clock_start = time.monotonic()
+        baseline_range: tuple[int, int] | None = None
         try:
             stop(session.base_url)
-        except Exception:
-            pass
+            if flash_ms > 0:
+                fps = cam.measured_fps or 30.0
+                if fps * (flash_ms / 1000.0) < 2:
+                    print(
+                        f"warning: black_flash_ms={flash_ms} at {fps:.1f}fps yields <2 frames — "
+                        "raise --black-flash-ms or check camera fps"
+                    )
+                wait_for_zones_off_broadcast(
+                    session.base_url,
+                    cam,
+                    rois,
+                    min_black_ms=flash_ms,
+                    off_confirm_timeout_ms=off_confirm_timeout_ms,
+                    off_max_brightness=off_max_brightness,
+                    off_baseline_margin=off_baseline_margin,
+                    samples=samples,
+                    clock_start=clock_start,
+                )
+                k = min((len(v) for v in samples.values()), default=0)
+                baseline_range = (0, k) if k > 0 else None
 
-    n_frames = min((len(v) for v in samples.values()), default=0)
-    if n_frames < 8:
-        return [], "too_few_frames", n_frames, show_started, f"only {n_frames} frames", baseline_range
-    paths: list[Path] = []
-    for zone, rows in samples.items():
-        path = capture_file_path(captures_dir, trial, zone, repeat_index)
-        write_samples_csv(path, rows)
-        paths.append(path)
+            if timing_byte is not None and effective_hold > hold_ms:
+                print(
+                    f"  timing hold {effective_hold}ms "
+                    f"(user {hold_ms}ms, tb=0x{timing_byte:02x})"
+                )
+            show_single(session.base_url, trial.hex_full, effective_hold)
+            show_started = wait_show_started(session.base_url)
+            if attempt > 0 and not wait_for_zones_lit(
+                cam,
+                rois,
+                min_brightness=max(12.0, off_max_brightness * 0.6),
+                timeout_ms=lit_timeout_ms,
+            ):
+                print(
+                    f"  warning: retry — color not visible within {lit_timeout_ms}ms"
+                )
+            _grab_until_zones(
+                cam,
+                rois,
+                effective_hold + settle_margin_ms,
+                samples=samples,
+                clock_start=clock_start,
+            )
+        except WandSimError as exc:
+            return [], "wandsim_error", 0, False, str(exc), None
+        except CameraError as exc:
+            return [], "camera_error", 0, False, str(exc), None
+        finally:
+            try:
+                stop(session.base_url)
+            except Exception:
+                pass
+
+        n_frames = min((len(v) for v in samples.values()), default=0)
+        trial_peak = _trial_peak_brightness(samples, baseline_range)
+        too_few = n_frames < 8
+        too_dark = trial_peak is not None and trial_peak < min_trial_brightness
+        if too_few:
+            last_error = f"only {n_frames} frames"
+        elif too_dark:
+            last_error = f"trial too dark (peak {trial_peak:.0f} < {min_trial_brightness:.0f})"
+        if (too_few or too_dark) and attempt == 0:
+            print(f"  retry capture ({last_error})")
+            time.sleep(0.5)
+            continue
+
+        if too_few:
+            return [], "too_few_frames", n_frames, show_started, last_error, baseline_range
+        if too_dark:
+            return [], "too_dark", n_frames, show_started, last_error, baseline_range
+
+        paths: list[Path] = []
+        for zone, rows in samples.items():
+            path = capture_file_path(captures_dir, trial, zone, repeat_index)
+            write_samples_csv(path, rows)
+            paths.append(path)
         if cam.measured_fps is None and rows:
             elapsed = (rows[-1][0] - rows[0][0]) / 1000.0
             if elapsed > 0:
                 cam.measured_fps = (len(rows) - 1) / elapsed
-    note = None if show_started else "showActive never confirmed; captured anyway (steps=1)"
-    return paths, "ok", n_frames, show_started, note, baseline_range
+        note = None if show_started else "showActive never confirmed; captured anyway (steps=1)"
+        return paths, "ok", n_frames, show_started, note, baseline_range
+
+    return [], "too_few_frames", 0, False, last_error, None
 
 
 def run_captures(
@@ -542,6 +732,12 @@ def run_captures(
     macos_uvc: dict | None = None,
     black_flash_ms: int = 0,
     calibrate: bool = False,
+    off_confirm_timeout_ms: int = 5000,
+    off_max_brightness: float = 25.0,
+    lit_timeout_ms: int = 4000,
+    use_timing_hold: bool = True,
+    calibrate_black_flash_ms: int | None = None,
+    calibrate_color_hold_ms: int | None = None,
 ) -> list[CaptureResult]:
     from .wandsim_client import WandSimSession
     from .zones import resolve_zone_layout, zone_names_for_layout
@@ -570,7 +766,10 @@ def run_captures(
                 settle_margin_ms=settle_margin_ms,
                 cam=cam,
                 session=session,
-                black_flash_ms=black_flash_ms if black_flash_ms > 0 else 500,
+                black_flash_ms=calibrate_black_flash_ms or (black_flash_ms if black_flash_ms > 0 else 500),
+                color_hold_ms=calibrate_color_hold_ms or 3000,
+                off_confirm_timeout_ms=off_confirm_timeout_ms,
+                off_max_brightness=off_max_brightness,
                 on_index=lambda i, n, idx: print(f"  palette {idx} ({i + 1}/{n})"),
             )
             print(f"wrote {cal.path}  source={cal.source}")
@@ -620,6 +819,10 @@ def run_captures(
                         repeat_index=repeat_index,
                         resume=resume,
                         black_flash_ms=black_flash_ms,
+                        off_confirm_timeout_ms=off_confirm_timeout_ms,
+                        off_max_brightness=off_max_brightness,
+                        lit_timeout_ms=lit_timeout_ms,
+                        use_timing_hold=use_timing_hold,
                     )
                     last_status = status
                     last_error = err

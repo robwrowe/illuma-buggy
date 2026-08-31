@@ -181,6 +181,20 @@ def test_timeline_report_two_color_table():
     assert "waveform_class" not in md
 
 
+def test_e9_timing_hold_ms():
+    from wave_classifier.e9_timing import (
+        compute_timing_lifecycle,
+        estimate_show_hold_ms,
+        timing_byte_from_hex,
+    )
+
+    life = compute_timing_lifecycle(0x04)
+    assert abs(life["on_sec"] - 1.6 * 4) < 0.01
+    assert estimate_show_hold_ms(0x04, margin_ms=500) >= int(1.6 * 4 * 1000) + 500
+    tb = timing_byte_from_hex("8301E100E90500090E00B0")
+    assert tb == 0x09
+
+
 def main() -> None:
     tests = [
         test_resample_native_keeps_frames,
@@ -195,6 +209,7 @@ def main() -> None:
         test_solid_black_payload_is_palette_29,
         test_brightness_is_max_channel,
         test_timeline_report_two_color_table,
+        test_e9_timing_hold_ms,
     ]
     failed = 0
     for fn in tests:

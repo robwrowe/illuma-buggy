@@ -302,6 +302,29 @@ def _add_timeline_args(p: argparse.ArgumentParser, *, calibrate_default: bool) -
         action="store_true",
         help="Skip the pre-trial black reference flash",
     )
+    p.add_argument(
+        "--off-confirm-timeout-ms",
+        type=int,
+        default=None,
+        help="Max wait for camera off-confirm while black is on (default from config or 5000)",
+    )
+    p.add_argument(
+        "--off-max-brightness",
+        type=float,
+        default=None,
+        help="Peak ROI brightness treated as off (default from config or 25)",
+    )
+    p.add_argument(
+        "--lit-timeout-ms",
+        type=int,
+        default=None,
+        help="Max wait for trial color to appear before sampling (default from config or 4000)",
+    )
+    p.add_argument(
+        "--no-timing-hold",
+        action="store_true",
+        help="Do not extend /show hold from the packet timing byte",
+    )
     cal = p.add_mutually_exclusive_group()
     cal.add_argument(
         "--calibrate",
@@ -758,6 +781,30 @@ def _calibrate_palette_kwargs(cfg: dict[str, Any], args: argparse.Namespace) -> 
     }
 
 
+def _capture_trial_kwargs(cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    cap = cfg.get("capture") or {}
+    hold_ms = int(getattr(args, "hold_ms", 4000) or 4000)
+    lit_default = int(cap.get("lit_timeout_ms", max(4000, hold_ms // 2)))
+    return {
+        "off_confirm_timeout_ms": (
+            int(args.off_confirm_timeout_ms)
+            if getattr(args, "off_confirm_timeout_ms", None) is not None
+            else int(cap.get("off_confirm_timeout_ms", 5000))
+        ),
+        "off_max_brightness": (
+            float(args.off_max_brightness)
+            if getattr(args, "off_max_brightness", None) is not None
+            else float(cap.get("off_max_brightness", 25))
+        ),
+        "lit_timeout_ms": (
+            int(args.lit_timeout_ms)
+            if getattr(args, "lit_timeout_ms", None) is not None
+            else lit_default
+        ),
+        "use_timing_hold": not bool(getattr(args, "no_timing_hold", False)),
+    }
+
+
 def _black_flash_ms(args: argparse.Namespace) -> int:
     if getattr(args, "no_black_flash", False):
         return 0
@@ -897,6 +944,8 @@ def cmd_run(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
 
     from .capture import run_captures
 
+    cap_kw = _capture_trial_kwargs(cfg, args)
+    cal_kw = _calibrate_palette_kwargs(cfg, args)
     try:
         cap_results = run_captures(
             unique,
@@ -913,6 +962,9 @@ def cmd_run(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
             macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
             black_flash_ms=_black_flash_ms(args),
             calibrate=bool(getattr(args, "calibrate", True)),
+            calibrate_black_flash_ms=cal_kw["black_flash_ms"],
+            calibrate_color_hold_ms=cal_kw["color_hold_ms"],
+            **cap_kw,
         )
     except KeyboardInterrupt:
         print("\ninterrupted — stopping WandSimulator")
