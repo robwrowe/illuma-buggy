@@ -177,11 +177,32 @@ def get_uvc_value(camera_index: int, control_name: str) -> str:
     return text
 
 
+_BOOL_TRUE = {"true", "on", "1", "yes"}
+_BOOL_FALSE = {"false", "off", "0", "no"}
+
+
+def _normalize_boolish(v) -> int | None:
+    """uvc-util reports bool-style controls as 'true'/'false' text. Returns
+    0/1 if v looks bool-ish, else None (caller falls through to numeric compare)."""
+    s = str(v).strip().lower()
+    if s in _BOOL_TRUE:
+        return 1
+    if s in _BOOL_FALSE:
+        return 0
+    return None
+
 def _values_match(requested, actual, step=None) -> bool:
     if actual is None:
         return False
     if str(requested).strip().lower() == str(actual).strip().lower():
         return True
+
+    # Bool-style controls: uvc-util reports "true"/"false", we request 0/1.
+    req_bool = _normalize_boolish(requested)
+    act_bool = _normalize_boolish(actual)
+    if req_bool is not None and act_bool is not None:
+        return req_bool == act_bool
+
     try:
         a = float(str(actual).split()[0])
         r = float(requested)

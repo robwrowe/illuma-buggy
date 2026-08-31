@@ -65,6 +65,7 @@ function ParamDetailPopover({
   payloadBytes = null,
   byteIndex = null,
   tailIndex = null,
+  simIp = '',
 }) {
   const initialGroups = normalizeParamGroups(initialDetail);
   const defaultMode = initialDetail?.mode === 'bitgroups' || initialGroups.length > 1
@@ -123,6 +124,7 @@ function ParamDetailPopover({
               payloadBytes={payloadBytes}
               byteIndex={byteIndex}
               tailIndex={tailIndex}
+              simIp={simIp}
             />
             <Group justify="flex-end" gap={6}>
               <Button size="compact-xs" variant="default" onClick={onCancel}>
@@ -341,6 +343,7 @@ function AnalyzerRow({
   bitColumns = [],
   bitCells,
   onToggleBits,
+  simIp = '',
 }) {
   const [hovered, setHovered] = useState(false);
   const hoverHandlers = {
@@ -425,6 +428,7 @@ function AnalyzerRow({
                 payloadBytes={row.bytes}
                 byteIndex={i}
                 tailIndex={i}
+                simIp={simIp}
               />
             )}
             {popoverOpen && detailPopover.kind === 'color' && (
@@ -466,7 +470,7 @@ export function WandLabAnalyzerTab({
   onStatus,
   session = EMPTY_ANALYZER_SESSION,
   onSessionChange,
-  simIp: _simIp,
+  simIp = '',
 }) {
   const pasteText = session.pasteText ?? '';
   const rows = session.rows ?? [];
@@ -1106,6 +1110,7 @@ export function WandLabAnalyzerTab({
                       payloadBytes={rows[0]?.bytes}
                       byteIndex={i}
                       tailIndex={i}
+                      simIp={simIp}
                     />
                   )}
                   {popoverOpen && detailPopover.kind === 'color' && (
@@ -1145,6 +1150,7 @@ export function WandLabAnalyzerTab({
                 onPatternsChange={setPatterns}
                 bitColumns={bitColumns}
                 bitCells={bitCells}
+                simIp={simIp}
                 onToggleBits={(rowId, index) => {
                   if (compareMode) {
                     handleClick(rowId, index);

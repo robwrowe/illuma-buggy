@@ -24,7 +24,7 @@ import {
 import { useShowProgress } from '../../hooks/useShowProgress';
 import { generateId } from '../../lib/utils';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
-import { observe } from '../../lib/ble/waveClassifierClient';
+import { observe, wandsimUrlFromIp, DEFAULT_OBSERVE_HOLD_MS } from '../../lib/ble/waveClassifierClient';
 import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
 import { WaveClassifierObserveResults } from './WaveClassifierObserveResults';
 
@@ -60,6 +60,48 @@ export function WandLabPacketSequence({
     () => packets.filter((p) => p.bytes?.length),
     [packets],
   );
+
+  const observeHold = Math.max(DEFAULT_OBSERVE_HOLD_MS, Number(defaultWaitMs) || 0);
+
+  const runSequenceObserve = async (payloads, statusPrefix) => {
+    const wandsim = wandsimUrlFromIp(simIp);
+    if (!wandsim) {
+      onStatus?.('Set Simulator IP first — Observe drives the same board as Send');
+      return;
+    }
+    let ready = wc.available;
+    if (!ready) ready = await wc.refresh();
+    if (!ready) {
+      onStatus?.(wc.disabledTip);
+      return;
+    }
+    setObserving(true);
+    onStatus?.(`${statusPrefix} (${payloads.length})…`);
+    try {
+      const res = await observe(wc.baseUrl, {
+        payloads,
+        hold_ms: observeHold,
+        base_url: wandsim,
+        onChunk: (i, n) => {
+          if (n > 1) onStatus?.(`${statusPrefix} batch ${i + 1}/${n}…`);
+        },
+      });
+      const reports = (res?.reports || []).map((r, i) => ({
+        ...r,
+        effect_label: r.effect_label || payloads[i]?.label,
+      }));
+      setObserveReports(reports);
+      setObserveReportCsv(res?.report_csv || '');
+      setObserveReportMd(res?.report_md || '');
+      const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
+      onStatus?.(`${statusPrefix} done — ${reports.length} result${reports.length === 1 ? '' : 's'}${fileNote}`);
+    } catch (e) {
+      onStatus?.(e.message || 'Observe failed');
+    } finally {
+      setObserving(false);
+    }
+  };
+
 
   // Auto /show: showStep is the 0-based index currently playing among valid packets.
   const autoPlayingId = useMemo(() => {
@@ -142,22 +184,12 @@ export function WandLabPacketSequence({
       await startShow(ip, body);
       setLastSentId(null);
       onStatus?.(`Queued ${valid.length} packet${valid.length === 1 ? '' : 's'} via /show`);
-      if (observeWhileSending && wc.available) {
+      if (observeWhileSending) {
         const payloads = valid.map((p, i) => ({
           hex_full: payloadToShowHex(p.bytes).toUpperCase(),
           label: p.label || `packet-${i + 1}`,
         }));
-        setObserving(true);
-        observe(wc.baseUrl, { payloads, hold_ms: defaultWaitMs })
-          .then((res) => {
-            setObserveReports(res?.reports || []);
-            setObserveReportCsv(res?.report_csv || '');
-            setObserveReportMd(res?.report_md || '');
-            const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
-            onStatus?.(`Observe-while-sending: ${res?.reports?.length || 0} results${fileNote}`);
-          })
-          .catch((e) => onStatus?.(e.message || 'Observe failed'))
-          .finally(() => setObserving(false));
+        void runSequenceObserve(payloads, 'Observe-while-sending');
       }
       startPolling((st) => {
         if (st && !st.showActive) {
@@ -414,42 +446,30 @@ export function WandLabPacketSequence({
         >
           Reset step
         </Button>
-        <Tooltip label={wc.available ? 'Re-broadcast and classify each packet' : wc.disabledTip}>
-          <Button
-            variant="light"
-            color="violet"
-            loading={observing}
-            disabled={!wc.available || observing || !validPackets.length}
-            onClick={async () => {
-              const payloads = validPackets.map((p, i) => ({
-                hex_full: payloadToShowHex(p.bytes).toUpperCase(),
-                label: p.label || `packet-${i + 1}`,
-              }));
-              setObserving(true);
-              onStatus?.(`Observe sequence (${payloads.length})…`);
-              try {
-                const res = await observe(wc.baseUrl, {
-                  payloads,
-                  hold_ms: defaultWaitMs,
-                });
-                const reports = (res?.reports || []).map((r, i) => ({
-                  ...r,
-                  effect_label: r.effect_label || payloads[i]?.label,
+        <Tooltip
+          label={
+            !simIp
+              ? 'Set Simulator IP first — Observe drives the same board as Send'
+              : (wc.available ? 'Re-broadcast and classify each packet' : wc.disabledTip)
+          }
+        >
+          <span>
+            <Button
+              variant="light"
+              color="violet"
+              loading={observing}
+              disabled={!simIp || !wc.available || observing || !validPackets.length}
+              onClick={() => {
+                const payloads = validPackets.map((p, i) => ({
+                  hex_full: payloadToShowHex(p.bytes).toUpperCase(),
+                  label: p.label || `packet-${i + 1}`,
                 }));
-                setObserveReports(reports);
-                setObserveReportCsv(res?.report_csv || '');
-                setObserveReportMd(res?.report_md || '');
-                const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
-                onStatus?.(`Observe sequence done — ${reports.length} result${reports.length === 1 ? '' : 's'}${fileNote}`);
-              } catch (e) {
-                onStatus?.(e.message || 'Observe sequence failed');
-              } finally {
-                setObserving(false);
-              }
-            }}
-          >
-            Observe sequence
-          </Button>
+                void runSequenceObserve(payloads, 'Observe sequence');
+              }}
+            >
+              Observe sequence
+            </Button>
+          </span>
         </Tooltip>
         <Checkbox
           size="xs"

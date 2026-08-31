@@ -30,6 +30,25 @@ class ZoneLayout:
     downgraded: bool = False
 
 
+def preferred_capture_layout(rois_by_layout: dict | None) -> ZoneLayout:
+    """Richest ROI set that is actually configured.
+
+    Observe must not ask a human to classify inner/outer vs five-corner —
+    both are commonly two-color sawtooth, and the packet bits that switch
+    them are not known yet. Capture five-corner when those ROIs exist so
+    measured stagger (or four corners in lockstep vs center) can tell them
+    apart later. This is capture geometry, not an effect label.
+    """
+    rois = rois_by_layout or {}
+    if rois.get("five-corner"):
+        return ZoneLayout("five-corner")
+    if rois.get("inner-outer"):
+        return ZoneLayout("inner-outer")
+    if rois.get("single"):
+        return ZoneLayout("single", assumed=True)
+    return ZoneLayout("single", assumed=True)
+
+
 def zone_names_for_layout(layout: str) -> list[str]:
     if layout == "five-corner":
         return list(FIVE_CORNER_IDS)

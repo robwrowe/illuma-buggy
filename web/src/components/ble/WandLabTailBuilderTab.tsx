@@ -24,7 +24,12 @@ import { DEFAULT_MB_WLED_COLORS, mbPaletteOptions } from '../../lib/ble/mbConsta
 import { decodeMbColorMaskByte } from '../../lib/ble/mbPayloads';
 import { byteToBitString, parseBitStringToByte, payloadToShowHex } from '../../lib/ble/wandSimClient';
 import { useWandLabUiState } from '../../lib/ble/wandLabUiState';
-import { observe, buildBatch } from '../../lib/ble/waveClassifierClient';
+import {
+  observe,
+  buildBatch,
+  wandsimUrlFromIp,
+  DEFAULT_OBSERVE_HOLD_MS,
+} from '../../lib/ble/waveClassifierClient';
 import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
 import {
   BIT_COL_PX,
@@ -392,8 +397,9 @@ export function WandLabTailBuilderTab({
   const [observeReports, setObserveReports] = useState([]);
   const [observeReportCsv, setObserveReportCsv] = useState('');
   const [observeReportMd, setObserveReportMd] = useState('');
-  const [observeZoneLayout, setObserveZoneLayout] = useWandLabUiState('tail.observeZoneLayout', 'single');
   const [observePreview, setObservePreview] = useWandLabUiState('tail.observePreview', false);
+  const [observeHoldMs, setObserveHoldMs] = useWandLabUiState('tail.observeHoldMs', DEFAULT_OBSERVE_HOLD_MS);
+  const [observeError, setObserveError] = useState('');
 
   const palOpts = mbPaletteOptions();
   const isRgb = colorFormat === 'd2';
@@ -749,21 +755,44 @@ export function WandLabTailBuilderTab({
   const hexFullForBytes = (bytes) => payloadToShowHex(bytes || []).toUpperCase();
 
   const runObserve = async (payloads, statusPrefix) => {
-    if (!wc.available) {
+    setObserveError('');
+    const wandsim = wandsimUrlFromIp(simIp);
+    if (!wandsim) {
+      const msg = 'Set Simulator IP first — Observe drives the same board as Send';
+      setObserveError(msg);
+      onStatus?.(msg);
+      return;
+    }
+    let ready = wc.available;
+    if (!ready) {
+      ready = await wc.refresh();
+    }
+    if (!ready) {
+      setObserveError(wc.disabledTip);
       onStatus?.(wc.disabledTip);
       return;
     }
     if (!payloads.length) {
+      setObserveError('Nothing to observe');
       onStatus?.('Nothing to observe');
       return;
     }
     setObserving(true);
     onStatus?.(`${statusPrefix} (${payloads.length})…`);
     try {
+      const hold = Math.max(500, Number(observeHoldMs) || DEFAULT_OBSERVE_HOLD_MS);
+      const nColors = colorsForPacket.filter((_, idx) => colorSlotIncluded(idx)).length;
+      const withColors = payloads.map((p) => (
+        p.color_count != null ? p : { ...p, color_count: nColors }
+      ));
       const res = await observe(wc.baseUrl, {
-        payloads,
-        hold_ms: sendWaitMs,
-        zone_layout: observeZoneLayout,
+        payloads: withColors,
+        hold_ms: hold,
+        zone_layout: 'auto',
+        base_url: wandsim,
+        onChunk: (i, n) => {
+          if (n > 1) onStatus?.(`${statusPrefix} batch ${i + 1}/${n}…`);
+        },
       });
       const reports = (res?.reports || []).map((r, i) => ({
         ...r,
@@ -773,9 +802,14 @@ export function WandLabTailBuilderTab({
       setObserveReportCsv(res?.report_csv || '');
       setObserveReportMd(res?.report_md || '');
       const fileNote = res?.report_md ? ` → ${res.report_md}` : (res?.report_csv ? ` → ${res.report_csv}` : '');
-      onStatus?.(`${statusPrefix} done — ${reports.length} result${reports.length === 1 ? '' : 's'}${fileNote}`);
+      const layoutNote = res?.capture_layout
+        ? ` · captured as ${res.capture_layout}${res.capture_layout_auto ? ' (auto)' : ''}`
+        : '';
+      onStatus?.(`${statusPrefix} done — ${reports.length} result${reports.length === 1 ? '' : 's'}${fileNote}${layoutNote}`);
     } catch (e) {
-      onStatus?.(e.message || 'Observe failed');
+      const msg = e.message || 'Observe failed';
+      setObserveError(msg);
+      onStatus?.(msg);
     } finally {
       setObserving(false);
     }
@@ -1118,61 +1152,63 @@ export function WandLabTailBuilderTab({
       {displayTails.length > 0 && (
         <Stack gap={4}>
           {specs.map((spec, si) => (
-              <Group key={spec.id} gap={6} wrap="wrap" align="flex-end">
-                <NumberInput
-                  size="xs"
-                  label={si === 0 ? 'Byte' : undefined}
-                  min={0}
-                  max={Math.max(0, tailMaxLen - 1)}
-                  clampBehavior="strict"
-                  value={spec.byteIdx}
-                  onChange={(v) => patchNibbleSpec(spec.id, { byteIdx: Number(v) || 0 })}
-                  w={72}
-                  styles={{ input: { fontFamily: 'monospace' } }}
-                />
-                <NumberInput
-                  size="xs"
-                  label={si === 0 ? 'Start' : undefined}
-                  min={0}
-                  max={7}
-                  clampBehavior="strict"
-                  value={spec.bitStart}
-                  onChange={(v) => patchNibbleSpec(spec.id, { bitStart: Number(v) || 0 })}
-                  w={64}
-                  styles={{ input: { fontFamily: 'monospace' } }}
-                />
-                <NumberInput
-                  size="xs"
-                  label={si === 0 ? 'Bits' : undefined}
-                  min={1}
-                  max={8 - spec.bitStart}
-                  clampBehavior="strict"
-                  value={spec.bitCount}
-                  onChange={(v) => patchNibbleSpec(spec.id, { bitCount: Number(v) || 1 })}
-                  w={64}
-                  styles={{ input: { fontFamily: 'monospace' } }}
-                />
+            <Group key={spec.id} gap={6} wrap="wrap" align="flex-end">
+              <NumberInput
+                size="xs"
+                label={si === 0 ? 'Byte' : undefined}
+                min={0}
+                max={Math.max(0, tailMaxLen - 1)}
+                clampBehavior="strict"
+                value={spec.byteIdx}
+                onChange={(v) => patchNibbleSpec(spec.id, { byteIdx: Number(v) || 0 })}
+                w={72}
+                styles={{ input: { fontFamily: 'monospace' } }}
+              />
+              <NumberInput
+                size="xs"
+                label={si === 0 ? 'Start' : undefined}
+                min={0}
+                max={7}
+                clampBehavior="strict"
+                value={spec.bitStart}
+                onChange={(v) => patchNibbleSpec(spec.id, { bitStart: Number(v) || 0 })}
+                w={64}
+                styles={{ input: { fontFamily: 'monospace' } }}
+              />
+              <NumberInput
+                size="xs"
+                label={si === 0 ? 'Bits' : undefined}
+                min={1}
+                max={8 - spec.bitStart}
+                clampBehavior="strict"
+                value={spec.bitCount}
+                onChange={(v) => patchNibbleSpec(spec.id, { bitCount: Number(v) || 1 })}
+                w={64}
+                styles={{ input: { fontFamily: 'monospace' } }}
+              />
+              <Text size="xs" c="dimmed" ff="monospace" pb={6}>
+                {bitRangeLabel(spec.bitStart, spec.bitCount)}
+              </Text>
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                color="red"
+                title={`Remove ${nibbleSpecLabel(spec)}`}
+                onClick={() => removeNibbleSpec(spec.id)}
+              >
+                ✕
+              </Button>
+              {specs.length === 1 && displayTails.length <= 12 && (
                 <Text size="xs" c="dimmed" ff="monospace" pb={6}>
-                  {bitRangeLabel(spec.bitStart, spec.bitCount)}
-                </Text>
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  color="red"
-                  title={`Remove ${nibbleSpecLabel(spec)}`}
-                  onClick={() => removeNibbleSpec(spec.id)}
-                >
-                  ✕
-                </Button>
-                {specs.length === 1 && displayTails.length <= 12 && (
-                  <Text size="xs" c="dimmed" ff="monospace" pb={6}>
-                    {displayTails.map((t) => {
+                  {displayTails
+                    .map((t) => {
                       const v = nibbleDec(t.bytes, spec);
                       return v == null ? '—' : String(v);
-                    }).join(' · ')}
-                  </Text>
-                )}
-              </Group>
+                    })
+                    .join(' · ')}
+                </Text>
+              )}
+            </Group>
           ))}
           <Group gap={6} wrap="wrap">
             <Button
@@ -1228,7 +1264,12 @@ export function WandLabTailBuilderTab({
                     const isAddCol = i >= tailMaxLen;
                     if (isAddCol) {
                       return (
-                        <Table.Th key="add-byte" w={HEX_COL_PX} p={4} style={{ minWidth: HEX_COL_PX }}>
+                        <Table.Th
+                          key="add-byte"
+                          w={HEX_COL_PX}
+                          p={4}
+                          style={{ minWidth: HEX_COL_PX }}
+                        >
                           <Button
                             size="compact-xs"
                             variant="default"
@@ -1267,14 +1308,20 @@ export function WandLabTailBuilderTab({
                           cursor: 'pointer',
                           opacity: colIncluded ? 1 : 0.42,
                           minWidth: colW,
-                          boxShadow: isNibbleCol ? 'inset 0 -2px 0 var(--mantine-color-cyan-6)' : undefined,
+                          boxShadow: isNibbleCol
+                            ? 'inset 0 -2px 0 var(--mantine-color-cyan-6)'
+                            : undefined,
                         }}
                       >
                         <Stack gap={2} align="stretch">
                           <Checkbox
                             size="xs"
                             checked={colIncluded}
-                            title={colIncluded ? 'Omit this tail byte from the packet (keeps the value)' : 'Include this tail byte'}
+                            title={
+                              colIncluded
+                                ? 'Omit this tail byte from the packet (keeps the value)'
+                                : 'Include this tail byte'
+                            }
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => {
                               e.stopPropagation();
@@ -1398,7 +1445,9 @@ export function WandLabTailBuilderTab({
                         return (
                           <Table.Td key={spec.id} p={4} onClick={(e) => e.stopPropagation()}>
                             {dec == null ? (
-                              <Text size="xs" c="dimmed" ff="monospace">—</Text>
+                              <Text size="xs" c="dimmed" ff="monospace">
+                                —
+                              </Text>
                             ) : (
                               <NumberInput
                                 size="xs"
@@ -1409,7 +1458,13 @@ export function WandLabTailBuilderTab({
                                 value={dec}
                                 onChange={(v) => patchNibbleDec(i, spec, v)}
                                 w={72}
-                                styles={{ input: { fontFamily: 'monospace', textAlign: 'center', paddingInline: 4 } }}
+                                styles={{
+                                  input: {
+                                    fontFamily: 'monospace',
+                                    textAlign: 'center',
+                                    paddingInline: 4,
+                                  },
+                                }}
                               />
                             )}
                           </Table.Td>
@@ -1554,6 +1609,127 @@ export function WandLabTailBuilderTab({
           />
         )}
       </Stack>
+
+      <Group gap="xs" wrap="wrap" align="flex-end">
+        <Button
+          onClick={handleSend}
+          disabled={!simIp || assembled.bytes.length === 0 || sendingAll}
+        >
+          Send{displayTails.length > 1 ? ` #${safeIdx + 1}` : ''}
+        </Button>
+        <Tooltip
+          label={
+            !simIp
+              ? 'Set Simulator IP first — Observe drives the same board as Send'
+              : (wc.available ? 'Capture + classify this assembled payload' : wc.disabledTip)
+          }
+        >
+          <span>
+            <Button
+              variant="light"
+              color="violet"
+              onClick={handleObserve}
+              loading={observing}
+              disabled={!simIp || !wc.available || assembled.bytes.length === 0 || observing}
+            >
+              Observe
+            </Button>
+          </span>
+        </Tooltip>
+        {displayTails.length > 1 && (
+          <>
+            <Button
+              variant="default"
+              onClick={handleStepNext}
+              disabled={!simIp || sendingAll || safeIdx + 1 >= displayTails.length}
+            >
+              Step next
+            </Button>
+            {sendingAll ? (
+              <Button color="red" variant="light" onClick={stopSendAll}>
+                Stop send-all
+              </Button>
+            ) : (
+              <Button variant="default" onClick={handleSendAll} disabled={!simIp}>
+                Send all
+              </Button>
+            )}
+            <NumberInput
+              label="Wait (ms)"
+              size="xs"
+              w={110}
+              min={50}
+              max={60000}
+              step={50}
+              value={sendWaitMs}
+              onChange={(v) => setSendWaitMs(Math.max(50, Number(v) || 1000))}
+              disabled={sendingAll}
+            />
+          </>
+        )}
+        <Button
+          variant="default"
+          onClick={() => onLoadToByteEditor?.(assembled.bytes)}
+          disabled={assembled.bytes.length === 0}
+        >
+          Load into byte editor
+        </Button>
+        <Button variant="default" onClick={handleCopy} disabled={assembled.bytes.length === 0}>
+          {copyMsg || 'Copy hex'}
+        </Button>
+      </Group>
+      <Group gap="xs" wrap="wrap" align="flex-end">
+        <NumberInput
+          label="Capture (ms)"
+          size="xs"
+          w={120}
+          min={500}
+          max={30000}
+          step={500}
+          value={observeHoldMs}
+          onChange={(v) => setObserveHoldMs(Math.max(500, Number(v) || DEFAULT_OBSERVE_HOLD_MS))}
+          disabled={observing}
+        />
+        <Tooltip
+          label={
+            !simIp
+              ? 'Set Simulator IP first — Observe drives the same board as Send'
+              : (wc.available ? 'Assemble every pasted tail and observe' : wc.disabledTip)
+          }
+        >
+          <span>
+            <Button
+              variant="light"
+              color="violet"
+              onClick={() => void handleObserveAll()}
+              loading={observing}
+              disabled={!simIp || !wc.available || !displayTails.length || observing}
+            >
+              Build & Observe All
+            </Button>
+          </span>
+        </Tooltip>
+        <Switch
+          size="xs"
+          label="Preview hex first"
+          checked={observePreview}
+          onChange={(e) => setObservePreview(e.currentTarget.checked)}
+        />
+      </Group>
+      <Text size="xs" c="dimmed">
+        Capture uses the richest ROI set already configured (five-corner, else inner-outer, else
+        single). Inner/outer vs five-zone is not a dropdown — both are two-color sawtooth until
+        the switch bits are known; the webcam measurement tells them apart.
+      </Text>
+      {observeError ? (
+        <Text size="xs" c="red">{observeError}</Text>
+      ) : null}
+      {(observing || observeReports.length > 0) && (
+        <Stack gap={4}>
+          <Text size="xs" fw={600} tt="uppercase" c="dimmed">Observe results</Text>
+          <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />
+        </Stack>
+      )}
 
       <Button
         size="compact-xs"
@@ -1720,120 +1896,6 @@ export function WandLabTailBuilderTab({
               data={envelopeControlData}
             />
           </Field>
-
-          <Stack gap={4}>
-            <Text size="xs" fw={600} tt="uppercase" c="dimmed">
-              Assembled payload
-            </Text>
-            <Text size="sm" ff="monospace" style={{ wordBreak: 'break-all' }}>
-              {tailBytesToDisplayHex(assembled.bytes) || '(empty)'}
-            </Text>
-            <Text size="xs" ff="monospace" c="dimmed">
-              Derived sub-opcode: 0x{assembled.subOpcodeHex} (packet length:{' '}
-              {assembled.bytes.length} bytes)
-            </Text>
-            {assembled.warnings.map((w) => (
-              <Text key={w} size="xs" c="yellow.6">
-                {w}
-              </Text>
-            ))}
-          </Stack>
-
-          <Group gap="xs" wrap="wrap" align="flex-end">
-            <Button
-              onClick={handleSend}
-              disabled={!simIp || assembled.bytes.length === 0 || sendingAll}
-            >
-              Send{displayTails.length > 1 ? ` #${safeIdx + 1}` : ''}
-            </Button>
-            <Tooltip label={wc.available ? 'Capture + classify this assembled payload' : wc.disabledTip}>
-              <Button
-                variant="light"
-                color="violet"
-                onClick={handleObserve}
-                loading={observing}
-                disabled={!wc.available || assembled.bytes.length === 0 || observing}
-              >
-                Observe
-              </Button>
-            </Tooltip>
-            {displayTails.length > 1 && (
-              <>
-                <Button
-                  variant="default"
-                  onClick={handleStepNext}
-                  disabled={!simIp || sendingAll || safeIdx + 1 >= displayTails.length}
-                >
-                  Step next
-                </Button>
-                {sendingAll ? (
-                  <Button color="red" variant="light" onClick={stopSendAll}>
-                    Stop send-all
-                  </Button>
-                ) : (
-                  <Button variant="default" onClick={handleSendAll} disabled={!simIp}>
-                    Send all
-                  </Button>
-                )}
-                <NumberInput
-                  label="Wait (ms)"
-                  size="xs"
-                  w={110}
-                  min={50}
-                  max={60000}
-                  step={50}
-                  value={sendWaitMs}
-                  onChange={(v) => setSendWaitMs(Math.max(50, Number(v) || 1000))}
-                  disabled={sendingAll}
-                />
-              </>
-            )}
-            <Button
-              variant="default"
-              onClick={() => onLoadToByteEditor?.(assembled.bytes)}
-              disabled={assembled.bytes.length === 0}
-            >
-              Load into byte editor
-            </Button>
-            <Button variant="default" onClick={handleCopy} disabled={assembled.bytes.length === 0}>
-              {copyMsg || 'Copy hex'}
-            </Button>
-          </Group>
-          <Group gap="xs" wrap="wrap" align="flex-end">
-            <SegmentedControl
-              size="xs"
-              value={observeZoneLayout}
-              onChange={setObserveZoneLayout}
-              data={[
-                { value: 'single', label: 'single' },
-                { value: 'five-corner', label: 'five-corner' },
-                { value: 'inner-outer', label: 'inner-outer' },
-              ]}
-            />
-            <Tooltip label={wc.available ? 'Assemble every pasted tail and observe' : wc.disabledTip}>
-              <Button
-                variant="light"
-                color="violet"
-                onClick={() => void handleObserveAll()}
-                loading={observing}
-                disabled={!wc.available || !displayTails.length || observing}
-              >
-                Build & Observe All
-              </Button>
-            </Tooltip>
-            <Switch
-              size="xs"
-              label="Preview hex first"
-              checked={observePreview}
-              onChange={(e) => setObservePreview(e.currentTarget.checked)}
-            />
-          </Group>
-          {(observing || observeReports.length > 0) && (
-            <Stack gap={4}>
-              <Text size="xs" fw={600} tt="uppercase" c="dimmed">Observe results</Text>
-              <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />
-            </Stack>
-          )}
         </Stack>
       </Collapse>
     </Stack>

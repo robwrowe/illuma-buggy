@@ -273,8 +273,10 @@ labels to collide; that's a review row, not a classifier bug.
 
 Chase vs Strobe: each LED of a chase is a square on/off, the same local shape
 as a strobe. Trial-level `inferred_label` uses peak order across five-corner
-ROIs. Observe with `--zone-layout five-corner` (Wand Lab segmented control).
-A single-ROI capture cannot tell them apart.
+ROIs. Observe auto-captures the richest configured ROI set (five-corner when
+present) — do not pick inner/outer vs five-zone in the UI; both are two-color
+sawtooth until the switch bits are known. A single-ROI capture cannot tell
+chase from strobe.
 
 Wand Lab Observe writes `reports/observe-*.md` (paste into Claude), plus `.csv`
 and `.json`. Those directories are gitignored.

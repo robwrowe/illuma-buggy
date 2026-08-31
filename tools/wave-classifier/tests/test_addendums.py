@@ -60,6 +60,60 @@ def test_resolve_zone_layout():
     assert zl.assumed is True
 
 
+def test_preferred_capture_layout():
+    from wave_classifier.zones import preferred_capture_layout
+
+    assert preferred_capture_layout({
+        "single": {"all": (0, 0, 1, 1)},
+        "inner-outer": {"center": (0, 0, 1, 1), "outer": (0, 0, 2, 2)},
+        "five-corner": {"topLeft": (0, 0, 1, 1)},
+    }).layout == "five-corner"
+    assert preferred_capture_layout({
+        "single": {"all": (0, 0, 1, 1)},
+        "inner-outer": {"center": (0, 0, 1, 1), "outer": (0, 0, 2, 2)},
+    }).layout == "inner-outer"
+    assert preferred_capture_layout({"single": {"all": (0, 0, 1, 1)}}).layout == "single"
+
+
+def test_infer_color_count_d2():
+    from wave_classifier.xlsx_loader import infer_color_count
+
+    built = build_payload(
+        tail_bytes="30 7B 00",
+        timing_byte=0x64,
+        color_format="d2",
+        colors=[
+            {"r": 10, "g": 20, "b": 30},
+            {"r": 40, "g": 50, "b": 60},
+        ],
+    )
+    decoded = decode_hex_structure(built.hex_full)
+    assert infer_color_count(decoded) == 2
+    row = trial_from_dict({"hex_full": built.hex_full, "sheet": "t"}, source_kind="builder")
+    assert row.color_count == 2
+
+
+def test_infer_color_count_0f_needs_hint():
+    from wave_classifier.xlsx_loader import infer_color_count
+
+    built = build_payload(
+        tail_bytes="30 7B 00",
+        timing_byte=0x64,
+        color_format="0f",
+        colors=[
+            {"palette_idx": 0x12, "mask": 2},
+            {"palette_idx": 0x04, "mask": 2},
+        ],
+    )
+    decoded = decode_hex_structure(built.hex_full)
+    assert infer_color_count(decoded) is None
+    row = trial_from_dict(
+        {"hex_full": built.hex_full, "sheet": "t", "color_count": 2},
+        source_kind="builder",
+    )
+    assert row.color_count == 2
+
+
 def test_payload_round_trip():
     built = build_payload(
         tail_bytes="30 7B 00",
@@ -488,6 +542,9 @@ def main() -> None:
     tests = [
         test_zone_names,
         test_resolve_zone_layout,
+        test_preferred_capture_layout,
+        test_infer_color_count_d2,
+        test_infer_color_count_0f_needs_hint,
         test_payload_round_trip,
         test_payload_no_vib_round_trip,
         test_payload_d2_color_block,

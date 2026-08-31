@@ -9,7 +9,7 @@ import {
   encodeBitGroupValue,
 } from '../../lib/ble/byteAnalyzer';
 import { byteToBitString, payloadToShowHex } from '../../lib/ble/wandSimClient';
-import { observe } from '../../lib/ble/waveClassifierClient';
+import { observe, wandsimUrlFromIp, DEFAULT_OBSERVE_HOLD_MS } from '../../lib/ble/waveClassifierClient';
 import { useWaveClassifierBackend } from '../../lib/ble/useWaveClassifierBackend';
 import { WaveClassifierObserveResults } from './WaveClassifierObserveResults';
 
@@ -52,6 +52,7 @@ export function BitGridEditor({
   payloadBytes = null,
   byteIndex = null,
   tailIndex = null,
+  simIp = '',
 }) {
   const value = Number(byteValue) & 0xff;
   const bitStr = byteToBitString(value);
@@ -159,7 +160,9 @@ export function BitGridEditor({
     && byteIndex >= 0
     && byteIndex < payloadBytes.length
   );
-  const sweepDisabledReason = !wc.available
+  const sweepDisabledReason = !simIp
+    ? 'Set Simulator IP first — Observe drives the same board as Send'
+    : !wc.available
     ? wc.disabledTip
     : groups.length !== 1
       ? 'Select a single bit-group to sweep'
@@ -170,7 +173,18 @@ export function BitGridEditor({
           : '';
 
   const handleSweepObserve = async () => {
-    if (!canSweep || !wc.available || !sweepGroup) return;
+    if (!canSweep || !sweepGroup) return;
+    const wandsim = wandsimUrlFromIp(simIp);
+    if (!wandsim) {
+      setError('Set Simulator IP first — Observe drives the same board as Send');
+      return;
+    }
+    let ready = wc.available;
+    if (!ready) ready = await wc.refresh();
+    if (!ready) {
+      setError(wc.disabledTip);
+      return;
+    }
     const bitCount = Number(sweepGroup.bitCount) || 1;
     const max = (1 << bitCount) - 1;
     const payloads = [];
@@ -184,8 +198,13 @@ export function BitGridEditor({
       });
     }
     setObserving(true);
+    setError('');
     try {
-      const res = await observe(wc.baseUrl, { payloads, hold_ms: 4000 });
+      const res = await observe(wc.baseUrl, {
+        payloads,
+        hold_ms: DEFAULT_OBSERVE_HOLD_MS,
+        base_url: wandsim,
+      });
       const reports = (res?.reports || []).map((r, i) => ({
         ...r,
         sweep_value: payloads[i]?.label,
@@ -366,16 +385,18 @@ export function BitGridEditor({
         </Text>
       )}
       <Tooltip label={sweepDisabledReason || 'Sweep this group through every value and observe'}>
-        <Button
-          size="compact-xs"
-          variant="light"
-          color="violet"
-          loading={observing}
-          disabled={!wc.available || !canSweep || observing}
-          onClick={() => void handleSweepObserve()}
-        >
-          Sweep this group & Observe
-        </Button>
+        <span>
+          <Button
+            size="compact-xs"
+            variant="light"
+            color="violet"
+            loading={observing}
+            disabled={!!sweepDisabledReason || observing}
+            onClick={() => void handleSweepObserve()}
+          >
+            Sweep this group & Observe
+          </Button>
+        </span>
       </Tooltip>
       {(observing || observeReports.length > 0) && (
         <WaveClassifierObserveResults reports={observeReports} reportCsv={observeReportCsv} reportMd={observeReportMd} />

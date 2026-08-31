@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { backendHealth, DEFAULT_BACKEND_URL } from './waveClassifierClient';
 import { useWandLabUiState } from './wandLabUiState';
 
@@ -6,8 +6,8 @@ const DISABLED_TIP =
   'Local wave-classifier backend not running — see tools/wave-classifier-server/README.md';
 
 /**
- * One health check per backend URL per session. Observe controls stay visible
- * but disabled (with tooltip) when the backend is unreachable.
+ * Health-check the local classifier server. Re-probes when the URL changes,
+ * when the window gains focus, and via `refresh()` (Observe click).
  */
 export function useWaveClassifierBackend() {
   const [baseUrl, setBaseUrl] = useWandLabUiState(
@@ -17,6 +17,14 @@ export function useWaveClassifierBackend() {
   const [available, setAvailable] = useState(false);
   const [checked, setChecked] = useState(false);
 
+  const probe = useCallback(async () => {
+    const res = await backendHealth(baseUrl);
+    const ok = !!res?.ok;
+    setAvailable(ok);
+    setChecked(true);
+    return ok;
+  }, [baseUrl]);
+
   useEffect(() => {
     let cancelled = false;
     setChecked(false);
@@ -25,8 +33,15 @@ export function useWaveClassifierBackend() {
       setAvailable(!!res?.ok);
       setChecked(true);
     });
+    const onFocus = () => {
+      backendHealth(baseUrl).then((res) => {
+        if (!cancelled) setAvailable(!!res?.ok);
+      });
+    };
+    window.addEventListener('focus', onFocus);
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', onFocus);
     };
   }, [baseUrl]);
 
@@ -35,6 +50,7 @@ export function useWaveClassifierBackend() {
     setBaseUrl,
     available,
     checked,
+    refresh: probe,
     disabledTip: available ? '' : DISABLED_TIP,
   };
 }

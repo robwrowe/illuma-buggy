@@ -596,11 +596,11 @@ def merge_trial_sources(*sets: TrialSet) -> TrialSet:
     return _retag(trials)
 
 
-def tail_bytes_from_decoded(decoded: DecodedPacket, color_count: int | None) -> list[tuple[int, str]]:
-    """Post-color-block bytes (minus vib) as T00.. pairs. Used when the sheet has no T columns."""
+def _payload_after_format(decoded: DecodedPacket) -> tuple[int | None, list[int]]:
+    """Format byte and the bytes after it (vib stripped). Empty if undecodable."""
     after = decoded.after_company_id
     if not after:
-        return []
+        return None, []
     i = 0
     if after and after[0] in ENV_BYTES:
         i = 1
@@ -620,6 +620,25 @@ def tail_bytes_from_decoded(decoded: DecodedPacket, color_count: int | None) -> 
     rest = list(after[i:])
     if decoded.vibration_byte is not None and rest and rest[-1] == decoded.vibration_byte:
         rest = rest[:-1]
+    return fmt, rest
+
+
+def infer_color_count(decoded: DecodedPacket) -> int | None:
+    """Color slots recoverable from hex. D2 is 0x55 RGB groups; 0F/0E is not unique."""
+    fmt, rest = _payload_after_format(decoded)
+    if fmt == 0xD2:
+        n = 0
+        i = 0
+        while i + 4 <= len(rest) and rest[i] == 0x55:
+            n += 1
+            i += 4
+        return n if n else None
+    return None
+
+
+def tail_bytes_from_decoded(decoded: DecodedPacket, color_count: int | None) -> list[tuple[int, str]]:
+    """Post-color-block bytes (minus vib) as T00.. pairs. Used when the sheet has no T columns."""
+    fmt, rest = _payload_after_format(decoded)
     n_color = 1 if color_count is None else max(int(color_count), 0)
     if fmt in (0x0F, 0x0E):
         rest = rest[n_color:]
@@ -645,8 +664,11 @@ def trial_from_dict(data: dict[str, Any], *, source_kind: str = SOURCE_BUILDER) 
             tail.append((int(item[0]), str(item[1])))
         elif isinstance(item, dict):
             tail.append((int(item.get("index", 0)), str(item.get("hex", ""))))
+    n_colors = data.get("color_count")
+    if n_colors is None and decoded:
+        n_colors = infer_color_count(decoded)
     if not tail and decoded:
-        tail = tail_bytes_from_decoded(decoded, data.get("color_count"))
+        tail = tail_bytes_from_decoded(decoded, n_colors)
     hint_raw = data.get("zone_layout_hint") or {}
     hint = ZoneLayoutHint(
         five_zones=hint_raw.get("five_zones"),
@@ -669,7 +691,7 @@ def trial_from_dict(data: dict[str, Any], *, source_kind: str = SOURCE_BUILDER) 
         op_code=data.get("op_code"),
         length_byte=data.get("length_byte") if data.get("length_byte") is not None else decoded.length_byte,
         derived_payload_length=data.get("derived_payload_length") if data.get("derived_payload_length") is not None else decoded.derived_payload_length,
-        color_count=data.get("color_count"),
+        color_count=n_colors,
         color_format_1=data.get("color_format_1"),
         color_format_2=data.get("color_format_2"),
         effect_label=data.get("effect_label"),

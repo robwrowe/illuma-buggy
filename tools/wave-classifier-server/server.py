@@ -39,6 +39,8 @@ from wave_classifier.triage import (  # noqa: E402
     write_observe_bundle,
 )
 from wave_classifier.xlsx_loader import ZoneLayoutHint, load_trials, trial_from_dict  # noqa: E402
+from wave_classifier.zones import preferred_capture_layout  # noqa: E402
+from wave_classifier.wandsim_client import WandSimError  # noqa: E402
 
 app = FastAPI(title="wave-classifier-server", version=WC_VERSION)
 app.add_middleware(
@@ -116,13 +118,16 @@ class ObservePayload(BaseModel):
     hex_full: str
     label: Optional[str] = None
     tail_index: Optional[int] = None
+    color_count: Optional[int] = None
 
 
 class ObserveBody(BaseModel):
     payloads: List[ObservePayload]
     hold_ms: int = 4000
     repeat: int = 1
-    zone_layout: str = "single"
+    # "auto" = richest configured ROI set. Do not require the operator to
+    # classify inner/outer vs five-corner — those share 2-color sawtooth.
+    zone_layout: Optional[str] = "auto"
     base_url: Optional[str] = None
 
 
@@ -180,9 +185,14 @@ def api_observe(body: ObserveBody):
         )
     if not body.payloads:
         raise HTTPException(400, "payloads is empty")
-    layout = body.zone_layout if body.zone_layout in {"single", "five-corner", "inner-outer"} else "single"
     cfg = _cfg()
     rois_by_layout = rois_from_config(cfg)
+    requested = (body.zone_layout or "auto").strip().lower()
+    auto_layout = requested not in {"single", "five-corner", "inner-outer"}
+    if auto_layout:
+        layout = preferred_capture_layout(rois_by_layout).layout
+    else:
+        layout = requested
     if layout not in rois_by_layout and not (
         layout == "five-corner" and "inner-outer" in rois_by_layout
     ):
@@ -217,8 +227,15 @@ def api_observe(body: ObserveBody):
             "effect_label": p.label,
             "source_sheet_kind": "builder",
         }
+        if p.color_count is not None:
+            rec["color_count"] = int(p.color_count)
         row = trial_from_dict(rec, source_kind="builder")
         row.zone_layout_hint = hint
+        if auto_layout:
+            row.notes.append(
+                f"zone_layout_auto: captured as {layout} (richest configured ROIs; "
+                "not a packet classification of inner/outer vs five-corner)"
+            )
         trials.append(row)
 
     try:
@@ -236,6 +253,11 @@ def api_observe(body: ObserveBody):
         )
     except MissingRoiSet as exc:
         raise HTTPException(409, str(exc)) from exc
+    except WandSimError as exc:
+        raise HTTPException(
+            502,
+            f"{exc} — check Wand Lab Simulator IP (sent as base_url) and that the board is on WiFi.",
+        ) from exc
 
     by_hex = {r.trial.hex_key: r for r in cap_results}
     report_objs = []
@@ -263,6 +285,8 @@ def api_observe(body: ObserveBody):
         "report_md": str(paths_out["md"]),
         "report_json": str(paths_out["json"]),
         "captures_dir": str(CAPTURES_DIR / "observe"),
+        "capture_layout": layout,
+        "capture_layout_auto": auto_layout,
     }
 
 
