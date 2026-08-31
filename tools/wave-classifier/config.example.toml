@@ -13,6 +13,9 @@ calibrate_color_hold_ms = 3000    # min palette solid hold on wand per index
 off_confirm_timeout_ms = 5000     # max wait for camera off-confirm while black is on
 off_max_brightness = 25          # peak ROI brightness treated as "off"
 
+# Optional: Illuma export JSON for calibrate-palette diff (mbMapping.colors)
+# expected_export = "/path/to/illuma-buggy-export.json"
+
 # Named ROI sets per zone layout. Run `select-rois --zone-layout <layout>` to fill these
 # from the webcam. Layouts are independent — re-running select-rois overwrites that
 # layout only. Do not share boxes across layouts; the physical framing differs.

@@ -537,6 +537,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Peak ROI brightness treated as off (default 25)",
     )
+    calp.add_argument(
+        "--expected-export",
+        type=Path,
+        default=None,
+        help="Illuma export JSON — diff table uses mbMapping.colors (0–28)",
+    )
 
     return parser
 
@@ -1013,7 +1019,7 @@ def cmd_report_only(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
 
 def cmd_calibrate_palette(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
     from .calibrate import run_palette_calibration
-    from .palette import calibration_diff_lines
+    from .palette import calibration_diff_lines, load_expected_from_export
 
     base_url = args.base_url or _cfg_get(cfg, "wandsim", "base_url", None)
     if not base_url:
@@ -1040,8 +1046,20 @@ def cmd_calibrate_palette(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
         dest=args.out,
         **cal_kw,
     )
+    expected_path = args.expected_export
+    if expected_path is None:
+        cfg_path = (cfg.get("palette") or {}).get("expected_export")
+        if cfg_path:
+            expected_path = Path(cfg_path)
+    expected = None
+    if expected_path:
+        try:
+            expected = load_expected_from_export(expected_path)
+            print(f"diff vs mbMapping.colors from {expected_path}")
+        except (OSError, ValueError) as exc:
+            print(f"warning: could not load --expected-export: {exc}", file=sys.stderr)
     print(f"wrote {cal.path}")
-    print("\n".join(calibration_diff_lines(cal)))
+    print("\n".join(calibration_diff_lines(cal, expected)))
     return 0
 
 

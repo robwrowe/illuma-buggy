@@ -114,6 +114,53 @@ def _mean_rgb_int(pts: list[tuple[int, int, int]]) -> tuple[int, int, int]:
     return (r, g, b)
 
 
+def mean_rgb_brightest_frames(
+    rows: list[tuple[float, float, float, float]],
+    n_frames: int,
+) -> tuple[int, int, int] | None:
+    """Mean RGB of the *brightest* *n_frames* samples (ignores trailing dark frames)."""
+    from .timeline import brightness_of
+
+    if not rows:
+        return None
+    ranked = sorted(rows, key=lambda row: brightness_of(row[1], row[2], row[3]), reverse=True)
+    tail = ranked[: min(len(ranked), max(1, int(n_frames)))]
+    r = sum(x[1] for x in tail) / len(tail)
+    g = sum(x[2] for x in tail) / len(tail)
+    b = sum(x[3] for x in tail) / len(tail)
+    return int(round(r)), int(round(g)), int(round(b))
+
+
+def load_expected_from_export(path: Path | str) -> dict[int, tuple[int, int, int]]:
+    """Load mbMapping.colors from an Illuma export JSON (32 hex entries)."""
+    import json
+
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    colors = (raw.get("mbMapping") or {}).get("colors")
+    if not isinstance(colors, list) or len(colors) < 29:
+        raise ValueError(
+            f"{path}: expected mbMapping.colors with at least 29 hex strings"
+        )
+    out: dict[int, tuple[int, int, int]] = {}
+    for i in range(29):
+        hx = str(colors[i] or "").strip()
+        if not hx:
+            continue
+        out[i] = hex_to_rgb(hx)
+    if len(out) < 29:
+        raise ValueError(f"{path}: mbMapping.colors missing entries for indices 0–28")
+    return out
+
+
+def expected_rgb(
+    idx: int,
+    expected_by_index: dict[int, tuple[int, int, int]] | None = None,
+) -> tuple[int, int, int]:
+    if expected_by_index and int(idx) in expected_by_index:
+        return expected_by_index[int(idx)]
+    return guessed_rgb(idx)
+
+
 def guessed_calibration() -> PaletteCalibration:
     by_index = {}
     for i in CALIBRATE_INDICES:
@@ -213,24 +260,28 @@ def guessed_rgb(idx: int) -> tuple[int, int, int]:
     return int(ent["r"]), int(ent["g"]), int(ent["b"])
 
 
-def calibration_diff_lines(cal: PaletteCalibration) -> list[str]:
-    """Eyeball table: measured vs guessed MB_PALETTE hex."""
+def calibration_diff_lines(
+    cal: PaletteCalibration,
+    expected_by_index: dict[int, tuple[int, int, int]] | None = None,
+) -> list[str]:
+    """Eyeball table: measured vs expected RGB (export mbMapping.colors or MB_PALETTE guess)."""
+    ref_label = "expected RGB" if expected_by_index else "guessed RGB"
     lines = [
-        "idx  name     guessed RGB          measured RGB         Δ (euclid)",
+        f"idx  name     {ref_label:<19}  measured RGB         Δ (euclid)",
         "---  -------  -------------------  -------------------  ----------",
     ]
     for idx in CALIBRATE_INDICES:
         name = palette_entry(idx)["name"]
-        gr, gg, gb = guessed_rgb(idx)
+        er, eg, eb = expected_rgb(idx, expected_by_index)
         if idx in cal.by_index:
             mr, mg, mb = cal.by_index[idx]
-            dist = ((mr - gr) ** 2 + (mg - gg) ** 2 + (mb - gb) ** 2) ** 0.5
+            dist = ((mr - er) ** 2 + (mg - eg) ** 2 + (mb - eb) ** 2) ** 0.5
             meas = f"{mr:3d},{mg:3d},{mb:3d}"
             delta = f"{dist:8.1f}"
         else:
             meas = "(missing)"
             delta = "       —"
         lines.append(
-            f"{idx:3d}  {name:<7}  {gr:3d},{gg:3d},{gb:3d}           {meas:<19}  {delta}"
+            f"{idx:3d}  {name:<7}  {er:3d},{eg:3d},{eb:3d}           {meas:<19}  {delta}"
         )
     return lines

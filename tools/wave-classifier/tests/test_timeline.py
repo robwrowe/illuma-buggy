@@ -106,6 +106,25 @@ def test_off_confirm_ceiling_caps_at_max_brightness():
     assert off_confirm_ceiling(baseline_peak=None, baseline_margin=12, max_brightness=30) == 30
 
 
+def test_load_expected_from_export():
+    import json
+    import tempfile
+
+    from wave_classifier.palette import expected_rgb, load_expected_from_export
+
+    colors = ["#00b4b4", "#6d84ff"] + ["#010101"] * 27
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump({"mbMapping": {"colors": colors}}, f)
+        path = f.name
+    try:
+        got = load_expected_from_export(path)
+        assert got[0] == (0, 180, 180)
+        assert got[1] == (109, 132, 255)
+        assert expected_rgb(0, got) == (0, 180, 180)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
 def test_solid_palette_payload_uses_e905():
     assert build_solid_palette_payload(0).hex == "E100E90500090E00B0"
     assert build_solid_palette_payload(28).hex == "E100E90500090E1CB0"
@@ -171,6 +190,7 @@ def main() -> None:
         test_blend_far_from_line_keeps_fraction,
         test_three_color_no_force_mix,
         test_off_confirm_ceiling_caps_at_max_brightness,
+        test_load_expected_from_export,
         test_solid_palette_payload_uses_e905,
         test_solid_black_payload_is_palette_29,
         test_brightness_is_max_channel,

@@ -16,6 +16,8 @@ from .capture import (
     peak_zone_brightness,
     wait_for_zones_lit,
 )
+from .palette import mean_rgb_brightest_frames
+from .timeline import brightness_of
 from .palette import (
     CALIBRATE_INDICES,
     PaletteCalibration,
@@ -129,6 +131,58 @@ def _wait_for_zones_off(
         )
 
 
+def _measure_palette_color(
+    cam: Camera,
+    rois: dict[str, tuple[int, int, int, int]],
+    *,
+    sample_ms: int,
+    n_frames: int,
+    lit_timeout_ms: int,
+    off_max_brightness: float,
+    min_sample_brightness: float = 18.0,
+) -> tuple[
+    dict[str, tuple[int, int, int]],
+    tuple[int, int, int],
+    dict[str, list[tuple[float, float, float, float]]],
+]:
+    """Wait for lit ROIs, grab samples, average brightest frames per zone."""
+    if not wait_for_zones_lit(
+        cam,
+        rois,
+        min_brightness=max(12.0, off_max_brightness * 0.6),
+        timeout_ms=lit_timeout_ms,
+    ):
+        _log(
+            f"  warning: color brightness not seen within {lit_timeout_ms}ms — "
+            "sampling anyway (check wand / ROIs)"
+        )
+    else:
+        _log("  → color visible; sampling")
+    samples = _grab_until_zones(cam, rois, sample_ms)
+    zmap: dict[str, tuple[int, int, int]] = {}
+    means: list[tuple[int, int, int]] = []
+    for zone, rows in samples.items():
+        rgb = mean_rgb_brightest_frames(rows, n_frames)
+        if rgb is None:
+            continue
+        zmap[zone] = rgb
+        means.append(rgb)
+    if not means:
+        raise CameraError("no camera frames during color sample")
+    n = len(means)
+    overall = (
+        int(round(sum(p[0] for p in means) / n)),
+        int(round(sum(p[1] for p in means) / n)),
+        int(round(sum(p[2] for p in means) / n)),
+    )
+    if brightness_of(*overall) < min_sample_brightness:
+        raise CameraError(
+            f"sample too dark {overall} (peak {brightness_of(*overall):.0f} "
+            f"< {min_sample_brightness:.0f})"
+        )
+    return zmap, overall, samples
+
+
 def run_palette_calibration(
     *,
     base_url: str,
@@ -215,45 +269,49 @@ def run_palette_calibration(
             show_single(session.base_url, built.hex_full, hold_ms)
             if not wait_show_started(session.base_url, timeout_s=1.0):
                 _log("  warning: palette showActive not confirmed within 1s")
-            lit_timeout = max(3000, int(color_hold_ms // 3))
-            if not wait_for_zones_lit(
-                cam,
-                use,
-                min_brightness=max(12.0, off_max_brightness * 0.6),
-                timeout_ms=lit_timeout,
-            ):
-                _log(
-                    f"  warning: color brightness not seen within {lit_timeout}ms — "
-                    "sampling anyway (check wand / ROIs)"
+            lit_timeout = max(4000, int(color_hold_ms // 2))
+            zmap: dict[str, tuple[int, int, int]]
+            overall: tuple[int, int, int]
+            samples: dict[str, list[tuple[float, float, float, float]]]
+            try:
+                zmap, overall, samples = _measure_palette_color(
+                    cam,
+                    use,
+                    sample_ms=sample_ms,
+                    n_frames=n_frames,
+                    lit_timeout_ms=lit_timeout,
+                    off_max_brightness=off_max_brightness,
                 )
-            else:
-                _log("  → color visible; sampling")
-            samples = _grab_until_zones(cam, use, sample_ms)
-            zmap: dict[str, tuple[int, int, int]] = {}
-            means = []
-            for zone, rows in samples.items():
-                if not rows:
-                    continue
-                tail = rows[-min(len(rows), n_frames) :]
-                r = sum(x[1] for x in tail) / len(tail)
-                g = sum(x[2] for x in tail) / len(tail)
-                b = sum(x[3] for x in tail) / len(tail)
-                rgb = (int(round(r)), int(round(g)), int(round(b)))
-                zmap[zone] = rgb
-                means.append(rgb)
-            if not means:
-                raise CameraError(
-                    f"no camera frames while calibrating palette {idx} — "
-                    "check USB camera; retry calibrate-palette"
+            except CameraError as exc:
+                _log(f"  warning: {exc}; retrying once…")
+                try:
+                    stop(session.base_url)
+                except Exception:
+                    pass
+                wait_show_idle(session.base_url, timeout_s=1.5)
+                _wait_for_zones_off(
+                    session.base_url,
+                    cam,
+                    use,
+                    min_black_ms=black_flash_ms,
+                    off_confirm_timeout_ms=off_confirm_timeout_ms,
+                    off_max_brightness=off_max_brightness,
+                    off_baseline_margin=off_baseline_margin,
+                )
+                show_single(session.base_url, built.hex_full, hold_ms)
+                wait_show_started(session.base_url, timeout_s=1.0)
+                color_started = time.monotonic()
+                zmap, overall, samples = _measure_palette_color(
+                    cam,
+                    use,
+                    sample_ms=sample_ms,
+                    n_frames=n_frames,
+                    lit_timeout_ms=lit_timeout + 2000,
+                    off_max_brightness=off_max_brightness,
                 )
             by_zone[idx] = zmap
-            n = len(means)
-            by_index[idx] = (
-                int(round(sum(p[0] for p in means) / n)),
-                int(round(sum(p[1] for p in means) / n)),
-                int(round(sum(p[2] for p in means) / n)),
-            )
-            _log(f"  → mean RGB {by_index[idx]}")
+            by_index[idx] = overall
+            _log(f"  → mean RGB {overall}")
             if on_index:
                 on_index(i, total, idx)
             elapsed_ms = (time.monotonic() - color_started) * 1000.0
