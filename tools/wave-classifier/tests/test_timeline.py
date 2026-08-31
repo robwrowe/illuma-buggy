@@ -98,6 +98,14 @@ def test_three_color_no_force_mix():
     assert blend.nearest_expected_idx == 2
 
 
+def test_off_confirm_ceiling_caps_at_max_brightness():
+    from wave_classifier.capture import off_confirm_ceiling
+
+    assert off_confirm_ceiling(baseline_peak=16, baseline_margin=12, max_brightness=30) == 28
+    assert off_confirm_ceiling(baseline_peak=218, baseline_margin=12, max_brightness=30) == 30
+    assert off_confirm_ceiling(baseline_peak=None, baseline_margin=12, max_brightness=30) == 30
+
+
 def test_solid_palette_payload_uses_e905():
     assert build_solid_palette_payload(0).hex == "E100E90500090E00B0"
     assert build_solid_palette_payload(28).hex == "E100E90500090E1CB0"
@@ -162,6 +170,7 @@ def main() -> None:
         test_blend_endpoints_and_midpoint,
         test_blend_far_from_line_keeps_fraction,
         test_three_color_no_force_mix,
+        test_off_confirm_ceiling_caps_at_max_brightness,
         test_solid_palette_payload_uses_e905,
         test_solid_black_payload_is_palette_29,
         test_brightness_is_max_channel,

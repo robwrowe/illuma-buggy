@@ -337,15 +337,15 @@ def confirm_zones_off(
 ) -> bool:
     """True when every ROI stays dark enough for *consecutive* frames.
 
-    When *baseline_peak* is set (from a black-flash grab), uses
-    ``baseline_peak + baseline_margin`` instead of the absolute *max_brightness*.
+    Ceiling is ``min(max_brightness, baseline_peak + margin)`` when a black
+    baseline exists — never above *max_brightness*.
     """
     from .timeline import brightness_of
 
-    ceiling = (
-        float(baseline_peak) + float(baseline_margin)
-        if baseline_peak is not None
-        else float(max_brightness)
+    ceiling = off_confirm_ceiling(
+        baseline_peak=baseline_peak,
+        baseline_margin=baseline_margin,
+        max_brightness=max_brightness,
     )
     deadline = time.monotonic() + timeout_ms / 1000.0
     streak = 0
@@ -365,6 +365,30 @@ def confirm_zones_off(
     return False
 
 
+def wait_for_zones_lit(
+    cam: Camera,
+    rois: dict[str, tuple[int, int, int, int]],
+    *,
+    min_brightness: float = 15.0,
+    timeout_ms: float = 4000.0,
+    poll_ms: float = 33.0,
+    consecutive: int = 3,
+) -> bool:
+    """True when peak ROI brightness reaches *min_brightness* for *consecutive* frames."""
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    streak = 0
+    while time.monotonic() < deadline:
+        peak = peak_zone_brightness(cam, rois)
+        if peak is not None and peak >= min_brightness:
+            streak += 1
+            if streak >= consecutive:
+                return True
+        else:
+            streak = 0
+        time.sleep(poll_ms / 1000.0)
+    return False
+
+
 def peak_brightness_in_samples(
     samples: dict[str, list[tuple[float, float, float, float]]],
 ) -> float | None:
@@ -375,6 +399,32 @@ def peak_brightness_in_samples(
         for _, r, g, b in rows:
             peaks.append(brightness_of(r, g, b))
     return max(peaks) if peaks else None
+
+
+def peak_zone_brightness(
+    cam: Camera,
+    rois: dict[str, tuple[int, int, int, int]],
+) -> float | None:
+    """Peak max-channel brightness across *rois* for one frame, or None if no frame."""
+    from .timeline import brightness_of
+
+    frame = cam.grab()
+    if frame is None:
+        return None
+    return max(brightness_of(*_mean_rgb(frame, roi)) for roi in rois.values())
+
+
+def off_confirm_ceiling(
+    *,
+    baseline_peak: float | None,
+    baseline_margin: float,
+    max_brightness: float,
+) -> float:
+    """Dark threshold for off-confirm; never above *max_brightness*."""
+    cap = float(max_brightness)
+    if baseline_peak is not None:
+        return min(cap, float(baseline_peak) + float(baseline_margin))
+    return cap
 
 
 class MissingRoiSet(Exception):
@@ -520,7 +570,7 @@ def run_captures(
                 settle_margin_ms=settle_margin_ms,
                 cam=cam,
                 session=session,
-                black_flash_ms=black_flash_ms if black_flash_ms > 0 else 200,
+                black_flash_ms=black_flash_ms if black_flash_ms > 0 else 500,
                 on_index=lambda i, n, idx: print(f"  palette {idx} ({i + 1}/{n})"),
             )
             print(f"wrote {cal.path}  source={cal.source}")
