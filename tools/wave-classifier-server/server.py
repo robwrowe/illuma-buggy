@@ -46,7 +46,14 @@ from wave_classifier.wandsim_client import WandSimError  # noqa: E402
 app = FastAPI(title="wave-classifier-server", version=WC_VERSION)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origin_regex=(
+        r"https?://("
+        r"localhost|127\.0\.0\.1"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+        r")(:\d+)?"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -287,6 +294,16 @@ def api_observe(body: ObserveBody):
                 )
             trials.append(row)
 
+        cap_kw = {
+            "off_confirm_timeout_ms": int(capture.get("off_confirm_timeout_ms", 5000)),
+            "off_max_brightness": float(capture.get("off_max_brightness", 25)),
+            "lit_timeout_ms": int(
+                capture.get("lit_timeout_ms", max(4000, int(body.hold_ms) // 2))
+            ),
+            "use_timing_hold": True,
+            "calibrate_black_flash_ms": int(capture.get("calibrate_black_flash_ms", 500)),
+            "calibrate_color_hold_ms": int(capture.get("calibrate_color_hold_ms", 3000)),
+        }
         try:
             cap_results = run_captures(
                 trials,
@@ -301,6 +318,7 @@ def api_observe(body: ObserveBody):
                 macos_uvc=(cfg.get("capture") or {}).get("macos_uvc") or {},
                 black_flash_ms=max(0, int(body.black_flash_ms or 0)),
                 calibrate=bool(body.calibrate),
+                **cap_kw,
             )
         except MissingRoiSet as exc:
             raise HTTPException(409, str(exc)) from exc

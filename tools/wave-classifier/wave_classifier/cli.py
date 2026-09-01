@@ -861,6 +861,7 @@ def _write_timeline(reports, *, stamp: str | None = None) -> dict:
     paths = write_timeline_bundle(REPORTS_DIR, reports, stamp=stamp)
     print(f"wrote {paths['md']}")
     print(f"wrote {paths['csv']}")
+    print(f"wrote {paths['peak_csv']}")
     print(f"wrote {paths['dir']}/<row_id>.md")
     return paths
 

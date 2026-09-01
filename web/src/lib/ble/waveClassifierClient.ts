@@ -56,6 +56,22 @@ async function jsonFetch(url, opts = {}) {
       throw err;
     }
     return data;
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error(
+        `Request timed out after ${Math.round(timeoutMs / 1000)}s — for long sweeps turn off `
+        + 'Calibrate palette or use the CLI; calibration alone can take 10+ minutes.',
+      );
+    }
+    if (err instanceof TypeError || /failed to fetch/i.test(String(err?.message || err))) {
+      throw new Error(
+        'Cannot reach wave-classifier backend — start it with '
+        + '`uvicorn server:app --port 8420` in tools/wave-classifier-server, '
+        + 'open the web app at http://localhost:5173 (not a LAN IP unless CORS matches), '
+        + 'and confirm Wave-classifier backend shows reachable.',
+      );
+    }
+    throw err;
   } finally {
     clearTimeout(t);
   }
@@ -107,9 +123,10 @@ export async function observe(backendUrl, params) {
   for (let c = 0; c < chunks.length; c++) {
     const chunk = chunks[c];
     params?.onChunk?.(c, chunks.length, chunk.length);
+    const calibrateMs = (c === 0 && params?.calibrate) ? 900000 : 0;
     const timeoutMs = Math.max(
-      120000,
-      chunk.length * (hold + 4000) + 15000 + (c === 0 && params?.calibrate ? 120000 : 0),
+      180000,
+      chunk.length * (hold + 8000) + 30000 + calibrateMs,
     );
     const body = {
       ...params,

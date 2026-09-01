@@ -6,6 +6,11 @@ import csv
 from pathlib import Path
 
 from .timeline import TimelineReport, TimelineTick
+from .timeline_peak_summary import (
+    PEAK_SUMMARY_COLUMNS,
+    format_peak_summary_markdown,
+    peak_summary_rows,
+)
 from .xlsx_loader import fs_safe
 
 
@@ -58,6 +63,7 @@ def format_timeline_markdown(report: TimelineReport) -> str:
         for w in report.warnings:
             lines.append(f"⚠ {w}")
         lines.append("")
+    lines.append(format_peak_summary_markdown(report))
     lines += [
         f"| t_ms | zone | nearest_color | {mix_header} | residual | brightness | baseline |",
         "|---|---|---|---|---|---|---|",
@@ -161,29 +167,46 @@ def write_all_ticks_csv(path: Path, reports: list[TimelineReport]) -> None:
             writer.writerow(row)
 
 
+def write_peak_summary_csv(path: Path, reports: list[TimelineReport]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=PEAK_SUMMARY_COLUMNS)
+        writer.writeheader()
+        for report in reports:
+            for row in peak_summary_rows(report):
+                writer.writerow(row)
+
+
 def write_timeline_bundle(
     reports_dir: Path,
     reports: list[TimelineReport],
     *,
     stamp: str,
 ) -> dict:
-    """Per-trial md under timeline-<stamp>/, combined md, all-ticks.csv."""
+    """Per-trial md under timeline-<stamp>/, combined md, all-ticks.csv, peak-summary.csv."""
     folder = reports_dir / f"timeline-{stamp}"
     folder.mkdir(parents=True, exist_ok=True)
     combined = reports_dir / f"timeline-{stamp}.md"
     csv_path = folder / "all-ticks.csv"
+    peak_csv = folder / "peak-summary.csv"
     write_combined_timeline_markdown(combined, reports, generated_at=stamp)
     write_all_ticks_csv(csv_path, reports)
+    write_peak_summary_csv(peak_csv, reports)
     for report in reports:
         rid = fs_safe(getattr(report.trial, "row_id", "trial"))
         write_timeline_trial_markdown(folder / f"{rid}.md", report)
-    return {"md": combined, "csv": csv_path, "dir": folder}
+    return {"md": combined, "csv": csv_path, "peak_csv": peak_csv, "dir": folder}
 
 
 def timeline_report_to_dict(report: TimelineReport) -> dict:
     """JSON-shaped summary for Observe (not a classifier verdict)."""
     trial = report.trial
     n_ticks = max((len(v) for v in report.zones.values()), default=0)
+    from .timeline_peak_summary import summarize_zone_peaks
+
+    peaks = summarize_zone_peaks(report)
+    matched = sum(1 for p in peaks if p.match is True)
+    comparable = sum(1 for p in peaks if p.match is not None)
     return {
         "report_kind": "timeline",
         "row_id": getattr(trial, "row_id", ""),
@@ -197,4 +220,19 @@ def timeline_report_to_dict(report: TimelineReport) -> dict:
         "baseline_tick_range": list(report.baseline_tick_range) if report.baseline_tick_range else None,
         "warnings": list(report.warnings),
         "colors": ", ".join(report.expected_color_names),
+        "peak_summary": [
+            {
+                "zone": p.zone,
+                "expected_palette_idx": p.expected_palette_idx,
+                "measured_palette_idx": p.measured_palette_idx,
+                "measured_palette_name": p.measured_palette_name,
+                "peak_raw_brightness": round(p.peak_raw_brightness, 2),
+                "peak_t_ms": round(p.peak_t_ms, 2),
+                "match": p.match,
+                "lit_tick_count": p.n_lit_ticks,
+            }
+            for p in peaks
+        ],
+        "peak_match_count": matched,
+        "peak_comparable_count": comparable,
     }

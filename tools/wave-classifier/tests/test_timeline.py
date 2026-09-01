@@ -195,6 +195,42 @@ def test_e9_timing_hold_ms():
     assert tb == 0x09
 
 
+def test_peak_summary_zone_match():
+    from wave_classifier.timeline import TimelineReport, TimelineTick, build_timeline_report
+    from wave_classifier.timeline_peak_summary import summarize_zone_peaks
+    from wave_classifier.xlsx_loader import trial_from_dict
+
+    trial = trial_from_dict({
+        "hex_full": "8301E100E909000E0FAEB9A3AFADB0",
+        "row_id": "peak-test",
+        "color_count": 5,
+        "expected_colors": [
+            {"palette_idx": 14, "name": "center"},
+            {"palette_idx": 25, "name": "topRight"},
+            {"palette_idx": 3, "name": "bottomRight"},
+            {"palette_idx": 15, "name": "bottomLeft"},
+            {"palette_idx": 13, "name": "topLeft"},
+        ],
+    })
+    import numpy as np
+    from wave_classifier.palette import PaletteCalibration, palette_entry
+
+    t = np.array([1000.0, 2000.0])
+    cal = PaletteCalibration(
+        source="measured",
+        by_index={i: (palette_entry(i)["r"], palette_entry(i)["g"], palette_entry(i)["b"]) for i in range(32)},
+    )
+    y = palette_entry(14)
+    series = {
+        "center": (t, np.array([y["r"], y["r"]]), np.array([y["g"], y["g"]]), np.array([y["b"], y["b"]])),
+    }
+    report = build_timeline_report(trial, series, trial.expected_colors, cal, hz=None, measured_fps=30.0)
+    rows = summarize_zone_peaks(report)
+    center = next(r for r in rows if r.zone == "center")
+    assert center.measured_palette_idx == 14
+    assert center.match is True
+
+
 def main() -> None:
     tests = [
         test_resample_native_keeps_frames,
@@ -210,6 +246,7 @@ def main() -> None:
         test_brightness_is_max_channel,
         test_timeline_report_two_color_table,
         test_e9_timing_hold_ms,
+        test_peak_summary_zone_match,
     ]
     failed = 0
     for fn in tests:
