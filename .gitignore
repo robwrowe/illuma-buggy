@@ -24,3 +24,4 @@ tools/wave-classifier/**/__pycache__/
 tools/wave-classifier-server/.venv/
 tools/wave-classifier-server/**/__pycache__/
 tools/wave-classifier/**/*.egg-info/
+/tools/wave-classifier/captures
