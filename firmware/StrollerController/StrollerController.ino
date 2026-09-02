@@ -29,6 +29,8 @@
 #include "SdRuleLogger.h"
 #include "StatusDisplay.h"
 #include "EmbeddedRules.h"
+#include "WledSendQueue.h"
+#include "HttpCommandServer.h"
 #include <ArduinoJson.h>
 
 void setup() {
@@ -169,6 +171,16 @@ void setup() {
   // OLED before NeoPixel/UART/BLE when present (HAS_OLED); no-op stubs otherwise.
   statusDisplayInit();  // non-fatal
 
+  // Must exist before any BLE write callback can fire, i.e. before
+  // NimBLEDevice::init()/startBLEPeripheral(). A connect+write can land here
+  // as soon as advertising starts; enqueueing into a null queue asserts
+  // (xQueueSemaphoreTake queue.c:1709) and boot-loops the board.
+  cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
+  bleCmdQueue = xQueueCreate(BLE_CMD_QUEUE_DEPTH, sizeof(PendingBleCmd));
+  if (!cmdQueue || !bleCmdQueue) {
+    Serial.println("[Boot] FATAL: cmdQueue/bleCmdQueue create failed");
+  }
+
   NimBLEDevice::init(BLE_NAME);
   delay(200);
   statusLedInit();
@@ -189,10 +201,8 @@ void setup() {
   }
 
   payloadTransportInit();
-
-  // Create command queue (10 slots)
-  cmdQueue = xQueueCreate(10, sizeof(PendingCmd));
-  bleCmdQueue = xQueueCreate(BLE_CMD_QUEUE_DEPTH, sizeof(PendingBleCmd));
+  wledSendQueueInit();
+  httpCommandServerInit();
 
   xTaskCreatePinnedToCore(
     [](void*) { connectToWLED(); vTaskDelete(NULL); },
@@ -204,6 +214,7 @@ void setup() {
 }
 
 void processPendingCommands() {
+  if (!cmdQueue) return;
   PendingCmd cmd;
   // Process up to 3 commands per loop iteration
   for (int i = 0; i < 3; i++) {
@@ -241,6 +252,7 @@ void processPendingCommands() {
 void loop() {
   statusLedTick();
   uartScannerLinkPoll();
+  httpCommandServerPoll();
   // BLE first — app preset fire / status must not wait behind UART rule applies.
   processBleCmdQueue();
   processPendingCommands();

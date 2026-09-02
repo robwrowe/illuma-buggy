@@ -20,6 +20,26 @@
   --text2: #9090b0;
   --text3: #4a4a6a;
   --indoor: #60a5fa;
+  --table-stripe: #2a2a48;
+  --table-hover: #32325a;
+}
+
+[data-mantine-color-scheme='light'] {
+  --bg: #f4f4f8;
+  --surface: #ffffff;
+  --surface2: #e8e8f0;
+  --border: #c0c0d0;
+  --primary: #7c3aed;
+  --primary-dim: #7c3aed22;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --text: #0a0a1a;
+  --text2: #4a4a6a;
+  --text3: #9090b0;
+  --indoor: #2563eb;
+  --table-stripe: #ddd6fe;
+  --table-hover: #c4b5fd;
 }
 
 html,
@@ -27,6 +47,8 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
 }
 
 #root {
@@ -41,4 +63,14 @@ body {
 
 .mantine-Input-input::placeholder {
   color: var(--mantine-primary-color-light-color);
+}
+
+/* Force visible table stripes — Mantine 9 does not set data-striped. */
+.mantine-Table-table tbody tr:nth-of-type(odd) {
+  background-color: var(--table-stripe);
+}
+
+.mantine-Table-table tbody tr:nth-of-type(odd) > th,
+.mantine-Table-table tbody tr:nth-of-type(odd) > td {
+  background-color: transparent;
 }

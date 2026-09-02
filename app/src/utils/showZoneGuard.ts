@@ -30,6 +30,8 @@ export function shouldProtectShowFromZones(opts: {
   const inScope = (binding: ParkShowBinding) =>
     showBindingInScope(binding, activeParkId, activeZoneIds);
 
+  // Park-wide bindings (no scopeZoneId) are in scope for the entire park —
+  // fireworks and similar shows should suppress every zone during pre/live.
   if (showScheduleProtects && parkBindings.some(inScope)) {
     return true;
   }

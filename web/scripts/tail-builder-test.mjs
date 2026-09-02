@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Smoke tests for web/src/lib/ble/tailBuilder.js.
- * Usage: node scripts/tail-builder-test.mjs  (from web/)
+ * Smoke tests for web/src/lib/ble/tailBuilder.ts.
+ * Usage: npm run test:tail-builder  (from web/)
  */
-import { decodeMbColorMaskByte } from '../src/lib/ble/mbPayloads.js';
+import { decodeMbColorMaskByte } from '../src/lib/ble/mbPayloads.ts';
 import {
   assembleTailPayload,
   buildColorBlockBytes,
@@ -12,7 +12,7 @@ import {
   parseTailBytes,
   parseTailLine,
   parseTailList,
-} from '../src/lib/ble/tailBuilder.js';
+} from '../src/lib/ble/tailBuilder.ts';
 
 let failed = 0;
 
@@ -60,6 +60,32 @@ assert(
   `worked example hex (got ${result.hex})`,
 );
 assert(result.subOpcode === 0x11, `worked example subOpcode 0x11 (got 0x${result.subOpcodeHex})`);
+
+const omittedTail0 = assembleTailPayload({
+  timingByte: 0x6f,
+  colorFormat: '0f',
+  colors,
+  tailBytes: parseTailBytes(spaced),
+  vibration: 0,
+  envelope: 'e1',
+  partEnabled: { t0: false },
+});
+assert(omittedTail0.bytes.length === result.bytes.length - 1, 'omitting tail[0] drops one assembled byte');
+assert(omittedTail0.subOpcode === result.subOpcode - 1, 'omitting tail[0] decrements subOpcode');
+assert(!omittedTail0.hex.includes('58f44882'), 'omitted tail[0] 0x58 is gone from compact hex');
+
+const overriddenPad = assembleTailPayload({
+  timingByte: 0x6f,
+  colorFormat: '0f',
+  colors,
+  tailBytes: parseTailBytes(spaced),
+  vibration: 0,
+  envelope: 'e1',
+  partOverrides: { envPad: 0xaa },
+});
+assert(overriddenPad.hex.startsWith('e1aae9'), 'partOverrides can change a pad byte without dropping it');
+assert(overriddenPad.bytes.length === result.bytes.length, 'overriding a byte does not change packet length');
+assert(overriddenPad.parts.find((p) => p.id === 'envPad')?.baseByte === 0x00, 'override keeps original as baseByte');
 
 const rgbBlock = buildColorBlockBytes('d2', [{ kind: 'rgb', r: 255, g: 0, b: 0 }]);
 assert(bytesEq(rgbBlock, [0x55, 0xff, 0x00, 0x00]), 'D2 color block 55 FF 00 00');

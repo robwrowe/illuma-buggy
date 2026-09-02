@@ -1,6 +1,6 @@
 # Illuma Buggy — Web Config Tool
 
-Vite + React + Mantine app for configuring zones, presets, palettes, Wand Lab opcode testing, and settings without needing to be at a theme park.
+Vite + React + TypeScript + Mantine v9 app for configuring zones, presets, palettes, Wand Lab opcode testing, and settings without needing to be at a theme park.
 
 ## Setup
 

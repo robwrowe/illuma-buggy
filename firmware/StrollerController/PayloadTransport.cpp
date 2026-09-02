@@ -4,6 +4,7 @@
 #include "MbPacketDecode.h"
 #include "DisneyBleScan.h"
 #include "UartLink.h"
+#include "WledSendQueue.h"
 #include <NimBLEDevice.h>
 #include <string.h>
 #include <stdlib.h>
@@ -96,6 +97,10 @@ void uartScannerLinkPoll() {
                   (unsigned long)gUartRx.checksumFail,
                   (unsigned long)gUartRx.resync,
                   lastScannerPacketMs ? (String(age) + "ms ago").c_str() : "never");
+    Serial.printf("[WLED] queue sent=%lu failed=%lu dropped=%lu\n",
+                  (unsigned long)wledSendQueueSentCount(),
+                  (unsigned long)wledSendQueueFailedCount(),
+                  (unsigned long)wledSendQueueDroppedCount());
   }
 }
 

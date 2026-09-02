@@ -44,7 +44,7 @@ void processSerialCommands() {
                   (int)currentOverride,
                   currentPresetId.length() ? currentPresetId.c_str() : "(none)",
                   currentBrightness,
-                  (unsigned)uxQueueMessagesWaiting(cmdQueue),
+                  cmdQueue ? (unsigned)uxQueueMessagesWaiting(cmdQueue) : 0u,
                   boardRole == BoardRole::LOGIC_BOARD ? "logic" : "standalone",
                   scannerPeerConfigured ? transportMacToString(scannerPeerMac).c_str() : "(none)",
                   lastScannerPacketMs ? (millis() - lastScannerPacketMs) : 0UL);

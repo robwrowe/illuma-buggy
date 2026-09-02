@@ -1,0 +1,737 @@
+import { hexToBytes, bytesToHex } from './e9Decode';
+import { createEmptyRule, createEmptyExtract, createEmptyExtractTarget } from './mbMapping';
+import { hasCompanyIdPrefix, stripCompanyId } from './wandSimClient';
+import { deserializeByteTags, serializeByteTags } from '../sheets/wandLabSheetsClient';
+
+export { deserializeByteTags, serializeByteTags };
+
+/** One pasted line → one packet row for the analyzer grid. */
+export function parseAnalyzerInput(text, { strip8301 = true } = {}) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, i) => {
+      let hex = line;
+      if (strip8301 && hasCompanyIdPrefix(hex)) hex = stripCompanyId(hex);
+      const bytes = hexToBytes(hex);
+      return { id: `row-${i}-${Date.now()}`, raw: line, bytes };
+    })
+    .filter((row) => row.bytes.length > 0);
+}
+
+/** True when paste looks like a Sheets `byte_tags` export (TSV), not bare hex lines. */
+export function looksLikeByteTagsSheetPaste(text) {
+  const lines = String(text || '').trim().split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return false;
+  const first = lines[0];
+  if (/\bhex\b/i.test(first) && /\bbyte_tags\b/i.test(first)) return true;
+  if (!first.includes('\t')) return false;
+  // Headerless: a hex-ish column and a tags-ish column on the first data row
+  const cols = first.split('\t').map((c) => c.trim());
+  const hasHex = cols.some((c) => /^[0-9a-fA-F]{12,}$/i.test(c.replace(/\s/g, '')));
+  const hasTags = cols.some((c) => /^\d+:[a-zA-Z]/.test(c) || /:\d+:/.test(c));
+  return hasHex && hasTags;
+}
+
+function cleanHexField(raw) {
+  return String(raw || '').replace(/[^0-9a-fA-F]/g, '');
+}
+
+function looksLikeHexField(raw) {
+  const h = cleanHexField(raw);
+  return h.length >= 12 && h.length % 2 === 0;
+}
+
+function looksLikeTagsField(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return false;
+  return /^\d+:[a-zA-Z]/.test(s) || s.split(',').some((p) => /^\d+:[a-zA-Z]/.test(p.trim()));
+}
+
+/**
+ * Parse a Sheets `byte_tags` tab copy (header optional).
+ * @returns {{ ok: boolean, packets?: object[], message: string }}
+ */
+export function parseByteTagsSheetPaste(text, { strip8301 = true } = {}) {
+  const lines = String(text || '').trim().split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return { ok: false, message: 'Nothing to import' };
+
+  let start = 0;
+  let col = {
+    finding_id: -1,
+    opcode: -1,
+    hex: -1,
+    byte_tags: -1,
+    linked_rule_id: -1,
+    notes: -1,
+  };
+
+  const headerCells = lines[0].split('\t').map((c) => c.trim().toLowerCase());
+  const hasHeader = headerCells.includes('hex') && headerCells.includes('byte_tags');
+  if (hasHeader) {
+    headerCells.forEach((name, i) => {
+      if (name in col) col[name] = i;
+    });
+    start = 1;
+  }
+
+  const packets = [];
+  for (let li = start; li < lines.length; li++) {
+    const cells = lines[li].split('\t').map((c) => c.trim());
+    let hexRaw = '';
+    let tagsRaw = '';
+    let opcode = '';
+    let notes = '';
+    let findingId = '';
+    let linkedRuleId = '';
+
+    if (hasHeader) {
+      hexRaw = col.hex >= 0 ? cells[col.hex] : '';
+      tagsRaw = col.byte_tags >= 0 ? cells[col.byte_tags] : '';
+      opcode = col.opcode >= 0 ? (cells[col.opcode] || '') : '';
+      notes = col.notes >= 0 ? (cells[col.notes] || '') : '';
+      findingId = col.finding_id >= 0 ? (cells[col.finding_id] || '') : '';
+      linkedRuleId = col.linked_rule_id >= 0 ? (cells[col.linked_rule_id] || '') : '';
+    } else {
+      // Heuristic: first hex-looking col + first tags-looking col
+      for (const c of cells) {
+        if (!hexRaw && looksLikeHexField(c)) hexRaw = c;
+        else if (!tagsRaw && looksLikeTagsField(c)) tagsRaw = c;
+      }
+      // Common subset: hex, opcode, tags  OR  hex, tags
+      if (!hexRaw && cells[0]) hexRaw = cells[0];
+      if (!tagsRaw) {
+        const maybeTags = cells.find((c) => looksLikeTagsField(c));
+        if (maybeTags) tagsRaw = maybeTags;
+      }
+    }
+
+    let hex = cleanHexField(hexRaw);
+    if (hex.length < 12) continue;
+    if (strip8301 && hasCompanyIdPrefix(hex)) hex = stripCompanyId(hex);
+    const bytes = hexToBytes(hex);
+    if (!bytes.length) continue;
+
+    const tagList = deserializeByteTags(tagsRaw, bytes.length);
+    packets.push({
+      id: `imp-${li}-${Date.now()}-${packets.length}`,
+      raw: hex,
+      bytes,
+      tags: tagList,
+      opcode: String(opcode || '').trim(),
+      notes: String(notes || '').trim(),
+      findingId: String(findingId || '').trim(),
+      linkedRuleId: String(linkedRuleId || '').trim(),
+      byteTagsSerialized: tagsRaw || serializeByteTags(tagList),
+    });
+  }
+
+  if (!packets.length) {
+    return {
+      ok: false,
+      message: 'No rows with hex + tags found — copy from the byte_tags sheet (include header if possible)',
+    };
+  }
+  return {
+    ok: true,
+    packets,
+    message: `Imported ${packets.length} tagged packet${packets.length === 1 ? '' : 's'}`,
+  };
+}
+
+/**
+ * Collapse identical tags across packets into columnTags; row-specific diffs → cellTags.
+ * @param {{ id: string, bytes: number[], tags: object[] }[]} packets
+ */
+export function partitionImportedTags(packets) {
+  const columnTags = {};
+  const cellTags = {};
+  const maxLen = packets.reduce((m, p) => Math.max(m, p.bytes?.length || 0), 0);
+
+  for (let i = 0; i < maxLen; i++) {
+    const present = packets
+      .filter((p) => i < (p.bytes?.length || 0))
+      .map((p) => ({ id: p.id, tag: p.tags?.[i] || null }));
+    if (!present.length) continue;
+    const key = (t) => JSON.stringify(t);
+    const allSame = present.every((p) => key(p.tag) === key(present[0].tag));
+    if (allSame && present[0].tag) {
+      columnTags[i] = present[0].tag;
+    } else {
+      present.forEach(({ id, tag }) => {
+        if (!tag) return;
+        if (!cellTags[id]) cellTags[id] = {};
+        cellTags[id][i] = tag;
+      });
+    }
+  }
+  return { columnTags, cellTags };
+}
+
+/**
+ * Build analyzer rows + tag maps from imported / log packets.
+ */
+export function buildAnalyzerStateFromPackets(packets) {
+  const rows = packets.map((p, i) => ({
+    id: p.id || `row-${i}-${Date.now()}`,
+    raw: p.raw || bytesToHex(p.bytes || []),
+    bytes: p.bytes || [],
+    opcode: p.opcode || '',
+    notes: p.notes || '',
+    findingId: p.findingId || '',
+    linkedRuleId: p.linkedRuleId || '',
+  }));
+  const withIds = packets.map((p, i) => ({
+    ...p,
+    id: rows[i].id,
+    tags: p.tags || deserializeByteTags(p.byteTagsSerialized || '', (p.bytes || []).length),
+  }));
+  const { columnTags, cellTags } = partitionImportedTags(withIds);
+  return { rows, columnTags, cellTags };
+}
+
+/** Tag kinds, in UI display order. */
+export const BYTE_TAG_KINDS = [
+  { id: 'timing', label: 'Timing', color: 'orange' },
+  { id: 'color', label: 'Color', color: 'grape' },
+  { id: 'param', label: 'Param', color: 'blue' },
+  { id: 'anchor', label: 'Anchor', color: 'yellow' },
+  { id: 'signature', label: 'Signature', color: 'teal' },
+  { id: 'vibration', label: 'Vibration', color: 'gray' },
+];
+
+export function createEmptyParamDetail() {
+  return { bitStart: 0, bitCount: 8, paramName: '' };
+}
+
+export const TIMING_BYTE_BIT_PRESET = [
+  { bitStart: 0, bitCount: 4, name: 't' },
+  { bitStart: 4, bitCount: 2, name: 'fadeBits' },
+  { bitStart: 6, bitCount: 1, name: 'scaler' },
+  { bitStart: 7, bitCount: 1, name: 'extended' },
+];
+
+/** Normalize legacy single-range param detail to the multi-group shape. */
+export function normalizeParamGroups(detail) {
+  if (detail?.mode === 'bitgroups' && Array.isArray(detail.groups)) return detail.groups;
+  if (detail?.paramName != null || detail?.bitStart != null || detail?.bitCount != null) {
+    return [{
+      bitStart: detail.bitStart ?? 0,
+      bitCount: detail.bitCount ?? 8,
+      name: detail.paramName || '',
+    }];
+  }
+  return [];
+}
+
+export function decodeBitGroupValue(byteValue, bitStart, bitCount) {
+  const count = Math.max(0, Math.min(8, Number(bitCount) || 0));
+  const start = Math.max(0, Math.min(7, Number(bitStart) || 0));
+  const mask = count >= 8 ? 0xff : ((1 << count) - 1);
+  return ((Number(byteValue) & 0xff) >> start) & mask;
+}
+
+/** Write `value` into bits `[bitStart, bitStart+bitCount)` of a byte; other bits stay put. */
+export function encodeBitGroupValue(byteValue, bitStart, bitCount, value) {
+  const count = Math.max(0, Math.min(8, Number(bitCount) || 0));
+  const start = Math.max(0, Math.min(7, Number(bitStart) || 0));
+  if (count <= 0) return Number(byteValue) & 0xff;
+  const mask = count >= 8 ? 0xff : ((1 << count) - 1);
+  const shifted = (mask << start) & 0xff;
+  const packed = (Number(value) & mask) << start;
+  return ((Number(byteValue) & 0xff & ~shifted) | packed) & 0xff;
+}
+
+export function customBitFieldMax(bitCount) {
+  const count = Math.max(0, Math.min(8, Number(bitCount) || 0));
+  if (count <= 0) return 0;
+  if (count >= 8) return 255;
+  return (1 << count) - 1;
+}
+
+export const NIBBLE_CUSTOM_BIT_FIELDS = [
+  { id: 'hi', name: 'hi', bitStart: 4, bitCount: 4 },
+  { id: 'lo', name: 'lo', bitStart: 0, bitCount: 4 },
+];
+
+export function normalizeCustomBitFields(fields) {
+  if (!Array.isArray(fields)) return [];
+  return fields.map((f, i) => {
+    const bitStart = Math.max(0, Math.min(7, Number(f.bitStart) || 0));
+    const bitCount = Math.max(1, Math.min(8 - bitStart, Number(f.bitCount) || 1));
+    return {
+      id: typeof f.id === 'string' && f.id ? f.id : `f${i}`,
+      name: typeof f.name === 'string' ? f.name : '',
+      bitStart,
+      bitCount,
+    };
+  });
+}
+
+/** Compact `12 / 3` readout for custom bit fields on a byte. */
+export function formatCustomBitDecimals(byteValue, fields) {
+  const list = normalizeCustomBitFields(fields);
+  if (!list.length) return '';
+  return list.map((f) => decodeBitGroupValue(byteValue, f.bitStart, f.bitCount)).join(' / ');
+}
+
+export function bitGroupsOverlap(groups, candidate) {
+  const c0 = Number(candidate.bitStart) || 0;
+  const c1 = c0 + (Number(candidate.bitCount) || 0);
+  return (groups || []).some((g) => {
+    const g0 = Number(g.bitStart) || 0;
+    const g1 = g0 + (Number(g.bitCount) || 0);
+    return c0 < g1 && c1 > g0;
+  });
+}
+
+export const BIT_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
+export const BIT_FIELD_COLORS = ['cyan', 'lime', 'pink', 'indigo', 'red', 'violet', 'grape', 'teal'];
+export const HEX_COL_PX = 36;
+export const BIT_COL_PX = 112;
+
+export function bitFieldColor(i) {
+  return BIT_FIELD_COLORS[i % BIT_FIELD_COLORS.length];
+}
+
+export function bitRangeLabel(bitStart, bitCount) {
+  const count = Number(bitCount) || 0;
+  const start = Number(bitStart) || 0;
+  if (count <= 0) return '—';
+  if (count === 1) return `b${start}`;
+  return `b${start + count - 1}:${start}`;
+}
+
+export function groupIndexForBit(groups, bitIdx) {
+  return (groups || []).findIndex((g) => {
+    const start = Number(g.bitStart) || 0;
+    const count = Number(g.bitCount) || 0;
+    return bitIdx >= start && bitIdx < start + count;
+  });
+}
+
+export function asIndexList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(Number).filter((n) => Number.isFinite(n));
+}
+
+export function asIndexMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const next = {};
+  Object.entries(value).forEach(([k, v]) => {
+    const list = asIndexList(v);
+    if (list.length) next[k] = list;
+  });
+  return next;
+}
+
+export function columnHasBitView(bitColumns, bitCells, index) {
+  if (asIndexList(bitColumns).includes(index)) return true;
+  return Object.values(asIndexMap(bitCells)).some((list) => asIndexList(list).includes(index));
+}
+
+export function cellHasBitView(bitColumns, bitCells, rowKey, index) {
+  if (asIndexList(bitColumns).includes(index)) return true;
+  return asIndexList(asIndexMap(bitCells)[rowKey]).includes(index);
+}
+
+export function toggleIndexList(list, index) {
+  const set = new Set(asIndexList(list));
+  if (set.has(index)) set.delete(index);
+  else set.add(index);
+  return [...set].sort((a, b) => a - b);
+}
+
+export function toggleBitCellMap(bitCells, rowKey, index) {
+  const next = { ...asIndexMap(bitCells) };
+  const list = toggleIndexList(next[rowKey], index);
+  if (list.length) next[rowKey] = list;
+  else delete next[rowKey];
+  return next;
+}
+
+/** Flip every cell in a column between hex and bits. */
+export function toggleBitColumn(bitColumns, bitCells, index) {
+  const showing = columnHasBitView(bitColumns, bitCells, index);
+  if (showing) {
+    const nextCells = {};
+    Object.entries(asIndexMap(bitCells)).forEach(([k, list]) => {
+      const filtered = asIndexList(list).filter((i) => i !== index);
+      if (filtered.length) nextCells[k] = filtered;
+    });
+    return {
+      bitColumns: asIndexList(bitColumns).filter((c) => c !== index),
+      bitCells: nextCells,
+    };
+  }
+  return {
+    bitColumns: toggleIndexList(bitColumns, index),
+    bitCells: asIndexMap(bitCells),
+  };
+}
+
+export function toggleAllBitsInRow(bitCells, rowKey, byteCount, turnOn) {
+  const next = { ...asIndexMap(bitCells) };
+  if (!turnOn) delete next[rowKey];
+  else next[rowKey] = Array.from({ length: Math.max(0, byteCount) }, (_, i) => i);
+  return next;
+}
+
+export function effectiveBitFields({ columnLayouts, cellLayouts, rowKey, index, tag }) {
+  const rowMap = cellLayouts?.[rowKey] || {};
+  const cell = rowMap[index] ?? rowMap[String(index)];
+  if (Array.isArray(cell) && cell.length) return cell;
+  const col = columnLayouts?.[index] ?? columnLayouts?.[String(index)];
+  if (Array.isArray(col) && col.length) return col;
+  if (tag?.kind === 'param') {
+    const groups = normalizeParamGroups(tag.detail);
+    if (groups.length) return groups;
+  }
+  return [];
+}
+
+export function setLayoutAt(layouts, key, groups) {
+  const next = { ...(layouts || {}) };
+  if (!groups?.length) delete next[key];
+  else next[key] = groups;
+  return next;
+}
+
+export function setCellLayoutAt(cellLayouts, rowKey, index, groups) {
+  const next = { ...(cellLayouts || {}) };
+  const row = { ...(next[rowKey] || {}) };
+  const k = String(index);
+  if (!groups?.length) delete row[k];
+  else row[k] = groups;
+  if (Object.keys(row).length) next[rowKey] = row;
+  else delete next[rowKey];
+  return next;
+}
+
+/** Shift row-index keys when inserting a tail/packet row at `insertAt`. */
+export function shiftRowIndexMap(map, insertAt, copyFrom = null) {
+  const src = map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+  const next = {};
+  Object.entries(src).forEach(([k, v]) => {
+    const i = Number(k);
+    if (!Number.isFinite(i)) {
+      next[k] = v;
+      return;
+    }
+    next[String(i >= insertAt ? i + 1 : i)] = v;
+  });
+  if (copyFrom != null && src[String(copyFrom)] != null) {
+    next[String(insertAt)] = src[String(copyFrom)];
+  }
+  return next;
+}
+
+/** Per-bit agreement across a set of byte values — for compare-mode bit view. */
+export function bitAgreementAcross(values) {
+  return Array.from({ length: 8 }, (_, bi) => {
+    const bitIdx = 7 - bi; // display order b7..b0
+    const vals = (values || []).map((v) => ((Number(v) & 0xff) >> bitIdx) & 1);
+    return { bitIdx, values: vals, agree: new Set(vals).size <= 1 };
+  });
+}
+
+export function createEmptyBitPattern() {
+  return { id: `pat-${Date.now()}`, name: '', groups: [] };
+}
+
+export function bitPatternToParamDetail(pattern) {
+  return {
+    mode: 'bitgroups',
+    groups: (pattern?.groups || []).map((g) => ({ ...g })),
+  };
+}
+
+export function decodePatternAtByte(byteValue, groups) {
+  return (groups || []).map((g) => ({
+    name: g.name || '',
+    bitStart: g.bitStart ?? 0,
+    bitCount: g.bitCount ?? 8,
+    value: decodeBitGroupValue(byteValue, g.bitStart, g.bitCount),
+  }));
+}
+
+export function scanPatternOnRow(bytes, pattern) {
+  return (bytes || []).map((b, index) => ({
+    index,
+    byte: b & 0xff,
+    fields: decodePatternAtByte(b & 0xff, pattern?.groups || []),
+  }));
+}
+
+export function scanPatternAcrossRows(rows, pattern) {
+  const maxLen = (rows || []).reduce((m, r) => Math.max(m, r.bytes?.length || 0), 0);
+  const result = [];
+  for (let i = 0; i < maxLen; i++) {
+    const vals = (rows || []).filter((r) => i < (r.bytes?.length || 0)).map((r) => r.bytes[i] & 0xff);
+    const fieldStats = (pattern?.groups || []).map((g) => {
+      const decoded = vals.map((v) => decodeBitGroupValue(v, g.bitStart, g.bitCount));
+      return {
+        name: g.name || '',
+        distinctCount: new Set(decoded).size,
+        coverage: decoded.length,
+      };
+    });
+    result.push({ index: i, coverage: vals.length, fieldStats });
+  }
+  return result;
+}
+
+const BIT_PATTERNS_LS_KEY = 'illuma-wandlab-bit-patterns';
+
+export function loadBitPatterns() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BIT_PATTERNS_LS_KEY) || '[]');
+    if (Array.isArray(raw) && raw.length) return raw;
+  } catch { /* ignore */ }
+  const seed = [{ id: 'pat-timing', name: 'timing-like', groups: TIMING_BYTE_BIT_PRESET.map((g) => ({ ...g })) }];
+  saveBitPatterns(seed);
+  return seed;
+}
+
+export function saveBitPatterns(patterns) {
+  try {
+    localStorage.setItem(BIT_PATTERNS_LS_KEY, JSON.stringify(patterns));
+  } catch { /* quota */ }
+  return patterns;
+}
+
+export function createEmptyColorDetail() {
+  return { mode: 'palette', channelRole: '', groupId: '' };
+}
+
+/** 1-based occurrence of bytes[index] within bytes[0..index]. */
+export function byteOccurrenceAt(bytes, index) {
+  if (!bytes?.length || index < 0 || index >= bytes.length) return 1;
+  const v = bytes[index] & 0xff;
+  let n = 0;
+  for (let i = 0; i <= index; i++) {
+    if ((bytes[i] & 0xff) === v) n++;
+  }
+  return Math.max(1, n);
+}
+
+/**
+ * Nearest anchor-tagged index at or before `index`, or -1.
+ * Used so extracts / colors / timing can be emitted relative to a marker.
+ */
+export function nearestAnchorIndex(byteTags, index) {
+  if (!Array.isArray(byteTags) || index < 0) return -1;
+  for (let j = Math.min(index, byteTags.length - 1); j >= 0; j--) {
+    if (byteTags[j]?.kind === 'anchor') return j;
+  }
+  return -1;
+}
+
+/**
+ * Absolute offset, or anchor-relative fields when an Anchor tag precedes this index.
+ * @returns {{ offset: number, anchor?: object }}
+ */
+export function offsetOrAnchorFromTags(bytes, byteTags, index) {
+  const offset = Math.max(0, index);
+  const anchorIdx = nearestAnchorIndex(byteTags, index);
+  if (anchorIdx < 0 || !bytes?.length || anchorIdx >= bytes.length) {
+    return { offset };
+  }
+  return {
+    offset,
+    anchor: {
+      byte: (bytes[anchorIdx] & 0xff).toString(16).padStart(2, '0').toUpperCase(),
+      occurrence: byteOccurrenceAt(bytes, anchorIdx),
+      searchFrom: 0,
+      searchLen: 0,
+      deltaBytes: index - anchorIdx,
+    },
+  };
+}
+
+/**
+ * A cell override wins over the column default for that specific row+index.
+ * @returns {{ kind: string, detail: object }|null}
+ */
+export function effectiveTag(byteIndex, rowId, columnTags, cellTags) {
+  return cellTags?.[rowId]?.[byteIndex] ?? columnTags?.[byteIndex] ?? null;
+}
+
+/** For each byte index, is the value constant across all rows long enough to have that index? */
+export function columnConstancy(rows) {
+  const maxLen = rows.reduce((m, r) => Math.max(m, r.bytes.length), 0);
+  const result = [];
+  for (let i = 0; i < maxLen; i++) {
+    const vals = rows.filter((r) => i < r.bytes.length).map((r) => r.bytes[i]);
+    const distinct = new Set(vals);
+    result.push({
+      index: i,
+      constant: distinct.size <= 1,
+      distinctCount: distinct.size,
+      coverage: vals.length,
+    });
+  }
+  return result;
+}
+
+/**
+ * Flattens column defaults + per-cell overrides into one array aligned to `bytes`.
+ */
+export function flattenRowTags(bytes, columnTags, cellTagsForRow) {
+  return bytes.map((_, i) => cellTagsForRow?.[i] ?? columnTags?.[i] ?? null);
+}
+
+/**
+ * Groups color/rgb-mode entries by detail.groupId.
+ * @returns {{ complete: object[], incomplete: object[] }}
+ */
+export function groupRgbColorTags(colorRgbEntries) {
+  const byGroup = new Map();
+  colorRgbEntries.forEach(({ index, detail }) => {
+    const g = detail.groupId || '(no group)';
+    if (!byGroup.has(g)) byGroup.set(g, {});
+    const slot = byGroup.get(g);
+    const role = detail.channelRole;
+    if (slot[role]) {
+      slot[role] = {
+        ...slot[role],
+        duplicate: true,
+        indices: [...(slot[role].indices || [slot[role].index]), index],
+      };
+    } else {
+      slot[role] = { index };
+    }
+  });
+
+  const complete = [];
+  const incomplete = [];
+  byGroup.forEach((roles, groupId) => {
+    const hasDup = ['r', 'g', 'b'].some((role) => roles[role]?.duplicate);
+    const missing = ['r', 'g', 'b'].filter((role) => !roles[role]);
+    if (hasDup) {
+      incomplete.push({ groupId, roles, issue: 'duplicate' });
+    } else if (missing.length) {
+      incomplete.push({ groupId, roles, issue: 'missing', missing });
+    } else {
+      complete.push({ groupId, r: roles.r.index, g: roles.g.index, b: roles.b.index });
+    }
+  });
+  return { complete, incomplete };
+}
+
+/**
+ * Builds a draft rule from one tagged row.
+ * @returns {{ rule: object, warnings: string[] }}
+ */
+export function generateRuleFromTags(bytes, byteTags, { ruleName = '' } = {}) {
+  const warnings = [];
+  const sigIndices = [];
+  const paletteColorIndices = [];
+  const rgbColorEntries = [];
+  const paramEntries = [];
+  const anchorIndices = [];
+  let timingIndex = -1;
+
+  byteTags.forEach((t, i) => {
+    if (!t) return;
+    if (t.kind === 'signature') sigIndices.push(i);
+    else if (t.kind === 'anchor') anchorIndices.push(i);
+    else if (t.kind === 'color' && t.detail?.mode === 'rgb') rgbColorEntries.push({ index: i, detail: t.detail });
+    else if (t.kind === 'color') paletteColorIndices.push(i);
+    else if (t.kind === 'param') paramEntries.push({ index: i, detail: t.detail || {} });
+    else if (t.kind === 'timing' && timingIndex === -1) timingIndex = i;
+  });
+
+  if (!sigIndices.length) {
+    warnings.push('No signature bytes tagged — generated rule has an empty match group; add at least one condition before pushing.');
+  }
+  if (!paletteColorIndices.length && !rgbColorEntries.length && !paramEntries.length) {
+    warnings.push('No color or param bytes tagged — this rule will only match, it will not drive any output yet.');
+  }
+  if (anchorIndices.length) {
+    warnings.push(
+      `${anchorIndices.length} anchor marker(s) tagged — extracts/colors/timing after a marker use anchor-relative offsets when generating.`,
+    );
+  }
+
+  const loc = (index) => offsetOrAnchorFromTags(bytes, byteTags, index);
+
+  const rule = createEmptyRule({
+    name: ruleName || 'Generated from analyzer',
+    match: {
+      mode: 'all',
+      children: sigIndices.map((i) => ({
+        mode: 'some',
+        children: [{ type: 'byte', offset: i, op: 'eq', value: bytes[i] }],
+      })),
+    },
+  });
+
+  paletteColorIndices.forEach((i, n) => {
+    rule.extract.push({
+      ...createEmptyExtract(`color${n}`),
+      ...loc(i),
+      bitStart: 0,
+      bitCount: 8,
+      paletteMap: true,
+      targets: [{ kind: 'maskColor', mask: 'all' }],
+    });
+  });
+
+  const { complete, incomplete } = groupRgbColorTags(rgbColorEntries);
+  complete.forEach(({ groupId, r, g, b }) => {
+    rule.colorSources.push({
+      name: groupId,
+      kind: 'rgb',
+      channelGroup: {
+        r: { ...loc(r), bitStart: 0, bitCount: 8 },
+        g: { ...loc(g), bitStart: 0, bitCount: 8 },
+        b: { ...loc(b), bitStart: 0, bitCount: 8 },
+        scale: 'direct8',
+      },
+    });
+  });
+  incomplete.forEach(({ groupId, issue, missing }) => {
+    warnings.push(
+      issue === 'duplicate'
+        ? `Color group "${groupId}" has more than one byte tagged with the same R/G/B role — that group was skipped; fix the role assignments and regenerate, or add colorSources manually in Rules.`
+        : `Color group "${groupId}" is missing ${missing.map((role) => role.toUpperCase()).join('/')} — that group was skipped; tag the missing channel(s) or add colorSources manually in Rules.`,
+    );
+  });
+
+  paramEntries.forEach(({ index, detail }) => {
+    const groups = normalizeParamGroups(detail);
+    const list = groups.length
+      ? groups
+      : [{ bitStart: detail.bitStart ?? 0, bitCount: detail.bitCount ?? 8, name: detail.paramName || `param${index}` }];
+    list.forEach((g, gi) => {
+      rule.extract.push({
+        ...createEmptyExtract(g.name || `param${index}${list.length > 1 ? `_${gi}` : ''}`),
+        source: 'payloadBits',
+        ...loc(index),
+        bitStart: g.bitStart ?? 0,
+        bitCount: g.bitCount ?? 8,
+        paletteMap: false,
+        targets: [createEmptyExtractTarget('segmentField')],
+      });
+    });
+  });
+  if (paramEntries.length) {
+    warnings.push(`${paramEntries.length} param extract(s) generated with no target field selected — open each in the Rules tab and choose sx/ix/c1/etc.`);
+  }
+
+  if (timingIndex >= 0) {
+    rule.timing = {
+      ...rule.timing,
+      ...loc(timingIndex),
+      enabled: false,
+      timingModelId: '',
+    };
+    warnings.push(`Timing byte tagged at offset ${timingIndex} — timing is left disabled; enable it and pick a timing model in the Rules → Timing Models tab once you've confirmed the byte's encoding.`);
+  }
+
+  return { rule, warnings };
+}
+
+export { hexToBytes, bytesToHex };

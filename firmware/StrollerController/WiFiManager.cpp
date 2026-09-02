@@ -16,7 +16,7 @@ void startLogicBoardMdns() {
     Serial.println("[mDNS] Failed to start responder");
     return;
   }
-  MDNS.addService("http", "tcp", 80);
+  MDNS.addService("http", "tcp", 8080);
   MDNS.addServiceTxt("http", "tcp", "role", "logic");
   logicMdnsStarted = true;
   Serial.println("[mDNS] Advertising as illuma-logic.local");
@@ -51,7 +51,11 @@ void connectToWLED(bool force) {
     attempts++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\n[WiFi] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+    WifiNetInfo net = getWifiNetInfo();
+    Serial.printf(
+      "\n[WiFi] Connected. IP: %s  GW: %s  Mask: %s\n",
+      net.ip.c_str(), net.gateway.c_str(), net.subnet.c_str()
+    );
     startLogicBoardMdns();
     // Do NOT call snapshotWledBaseline / ensureWledPowerOn here — this runs on a
     // FreeRTOS WiFi task. Concurrent HTTPClient with loop() hangs / races.
