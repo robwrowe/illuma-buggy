@@ -5,6 +5,7 @@ import { activeSegmentsFromPreset, buildRecalledSegment, formatSegRange, withRes
 
 const BYTE_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'maskEq']);
 const CMP_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte']);
+const BYTES_AT_OFFSET_OPS = new Set(['eq', 'neq']);
 const MB_SEG_KEY_SET = new Set(MB_SEG_KEYS);
 const COOLDOWN_RESET_MODES = new Set(['onMatch', 'fixed']);
 
@@ -102,7 +103,16 @@ export function createEmptyCondition(type = 'hexPrefix') {
       right: { offset: 0, bitStart: 0, bitCount: 8 },
     };
   }
+  if (type === 'bytesAtOffset') {
+    return { type: 'bytesAtOffset', offset: 0, value: '', op: 'eq', scan: false };
+  }
   return { type: 'hexPrefix', value: '' };
+}
+
+/** Authoring-only label. Empty/whitespace is omitted so firmware JSON stays compact. */
+function attachConditionName(node, raw) {
+  const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
+  return name ? { ...node, name } : node;
 }
 
 export function createEmptyExtractTarget(kind = 'maskColor') {
@@ -1389,11 +1399,17 @@ export function normalizeConditionNode(raw) {
   if (raw.type) {
     const type = raw.type;
     if (type === 'hexPrefix') {
-      return { type: 'hexPrefix', value: typeof raw.value === 'string' ? raw.value.replace(/[^0-9a-fA-F]/g, '') : '' };
+      return attachConditionName(
+        { type: 'hexPrefix', value: typeof raw.value === 'string' ? raw.value.replace(/[^0-9a-fA-F]/g, '') : '' },
+        raw,
+      );
     }
     if (type === 'length') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
-      return { type: 'length', op, value: Number.isFinite(raw.value) ? Number(raw.value) : 0 };
+      return attachConditionName(
+        { type: 'length', op, value: Number.isFinite(raw.value) ? Number(raw.value) : 0 },
+        raw,
+      );
     }
     if (type === 'byte') {
       const op = BYTE_OPS.has(raw.op) ? raw.op : 'eq';
@@ -1406,7 +1422,19 @@ export function normalizeConditionNode(raw) {
       };
       const anchor = normalizeAnchor(raw.anchor);
       if (anchor) node.anchor = anchor;
-      return node;
+      return attachConditionName(node, raw);
+    }
+    if (type === 'bytesAtOffset') {
+      const node = {
+        type: 'bytesAtOffset',
+        offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+        value: typeof raw.value === 'string' ? raw.value.replace(/[^0-9a-fA-F]/g, '') : '',
+        op: BYTES_AT_OFFSET_OPS.has(raw.op) ? raw.op : 'eq',
+        scan: !!(raw.scan ?? raw.contains),
+      };
+      const anchor = normalizeAnchor(raw.anchor);
+      if (anchor) node.anchor = anchor;
+      return attachConditionName(node, raw);
     }
     if (type === 'bits') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
@@ -1420,7 +1448,7 @@ export function normalizeConditionNode(raw) {
       };
       const anchor = normalizeAnchor(raw.anchor);
       if (anchor) node.anchor = anchor;
-      return node;
+      return attachConditionName(node, raw);
     }
     if (type === 'byteCompare') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
@@ -1434,14 +1462,17 @@ export function normalizeConditionNode(raw) {
         if (anchor) s.anchor = anchor;
         return s;
       };
-      return {
-        type: 'byteCompare',
-        left: normSide(raw.left),
-        op,
-        right: normSide(raw.right),
-      };
+      return attachConditionName(
+        {
+          type: 'byteCompare',
+          left: normSide(raw.left),
+          op,
+          right: normSide(raw.right),
+        },
+        raw,
+      );
     }
-    return createEmptyCondition('hexPrefix');
+    return attachConditionName(createEmptyCondition('hexPrefix'), raw);
   }
 
   const mode = raw.mode === 'some' ? 'some' : 'all';

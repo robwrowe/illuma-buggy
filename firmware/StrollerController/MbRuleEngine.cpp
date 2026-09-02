@@ -264,6 +264,38 @@ static bool matchHexPrefix(const uint8_t* payload, size_t plen, const char* hex)
   return true;
 }
 
+/** True when `hex` is even-length and every nibble is 0-9a-fA-F. */
+static bool hexStringValid(const char* hex, size_t hexLen) {
+  if (!hex || hexLen == 0 || (hexLen & 1)) return false;
+  for (size_t i = 0; i < hexLen; i++) {
+    if (hexNibble(hex[i]) < 0) return false;
+  }
+  return true;
+}
+
+/** Literal match of `need` bytes parsed from `hex` starting at `offset`. */
+static bool hexBytesMatchAt(const uint8_t* payload, size_t plen, size_t offset,
+                            const char* hex, size_t need) {
+  if (!payload || !hex || offset + need > plen) return false;
+  for (size_t i = 0; i < need; i++) {
+    int hi = hexNibble(hex[i * 2]);
+    int lo = hexNibble(hex[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    if (payload[offset + i] != (uint8_t)((hi << 4) | lo)) return false;
+  }
+  return true;
+}
+
+/** True if `hex` occurs anywhere in payload[offset .. plen). */
+static bool hexBytesFoundFrom(const uint8_t* payload, size_t plen, size_t offset,
+                              const char* hex, size_t need) {
+  if (need == 0 || offset + need > plen) return false;
+  for (size_t start = offset; start + need <= plen; start++) {
+    if (hexBytesMatchAt(payload, plen, start, hex, need)) return true;
+  }
+  return false;
+}
+
 static bool compareOp(uint32_t lhs, const char* op, uint32_t rhs) {
   if (!op) return false;
   if (strcmp(op, "eq") == 0)  return lhs == rhs;
@@ -330,6 +362,23 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     uint32_t lv = extractBits(payload, plen, lOffset, lBitStart, lBitCount);
     uint32_t rv = extractBits(payload, plen, rOffset, rBitStart, rBitCount);
     return compareOp(lv, leaf["op"] | "eq", rv);
+  }
+  if (strcmp(type, "bytesAtOffset") == 0) {
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, leaf, 0);
+    if (offsetResolved < 0) return false;
+    size_t offset = (size_t)offsetResolved;
+
+    const char* hex = leaf["value"] | "";
+    size_t hexLen = strlen(hex);
+    if (!hexStringValid(hex, hexLen)) return false;
+    size_t need = hexLen / 2;
+
+    bool scan = (leaf["scan"] | false) || (leaf["contains"] | false);
+    bool found = scan
+      ? hexBytesFoundFrom(payload, plen, offset, hex, need)
+      : hexBytesMatchAt(payload, plen, offset, hex, need);
+    const char* op = leaf["op"] | "eq";
+    return (strcmp(op, "neq") == 0) ? !found : found;
   }
   return false;
 }

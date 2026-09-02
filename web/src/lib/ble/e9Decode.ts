@@ -299,6 +299,34 @@ export function matchHexPrefix(payload, hex) {
 }
 
 /**
+ * Multi-byte literal match starting at a resolved offset (bytesAtOffset leaf).
+ * When `opts.scan` (or `opts.contains`) is true, search from `offset` through the tail.
+ */
+export function matchBytesAtOffset(payloadBytes, offset, hex, opts = {}) {
+  if (!payloadBytes || offset == null || offset < 0) return false;
+  const clean = String(hex || '').replace(/[^0-9a-fA-F]/g, '');
+  if (!clean.length || (clean.length & 1)) return false;
+  const need = clean.length / 2;
+  const scan = !!(opts?.scan || opts?.contains);
+
+  const matchesAt = (start) => {
+    if (start + need > payloadBytes.length) return false;
+    for (let i = 0; i < need; i++) {
+      const want = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+      if ((payloadBytes[start + i] & 0xff) !== want) return false;
+    }
+    return true;
+  };
+
+  if (!scan) return matchesAt(offset);
+  if (offset + need > payloadBytes.length) return false;
+  for (let start = offset; start + need <= payloadBytes.length; start++) {
+    if (matchesAt(start)) return true;
+  }
+  return false;
+}
+
+/**
  * Mirrors firmware resolveAnchorOffset(). Returns -1 if not found.
  * @param {number[]} payloadBytes
  * @param {object} anchor
@@ -448,6 +476,16 @@ export function evaluateLeaf(payloadBytes, leaf) {
     const lv = extractBits(payloadBytes, leftOff, Number(left.bitStart ?? 0), Number(left.bitCount ?? 8));
     const rv = extractBits(payloadBytes, rightOff, Number(right.bitStart ?? 0), Number(right.bitCount ?? 8));
     return compareOp(lv, leaf.op || 'eq', rv);
+  }
+  if (type === 'bytesAtOffset') {
+    const offset = resolveOffsetOrAnchor(payloadBytes, leaf, 0);
+    if (offset < 0) return false;
+    const clean = String(leaf.value ?? '').replace(/[^0-9a-fA-F]/g, '');
+    if (!clean.length || (clean.length & 1)) return false;
+    const found = matchBytesAtOffset(payloadBytes, offset, clean, {
+      scan: !!(leaf.scan || leaf.contains),
+    });
+    return leaf.op === 'neq' ? !found : found;
   }
   return false;
 }

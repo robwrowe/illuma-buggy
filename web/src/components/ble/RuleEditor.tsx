@@ -7,6 +7,7 @@ import {
   ColorInput,
   Divider,
   Group,
+  Input,
   MultiSelect,
   NumberInput,
   Paper,
@@ -90,6 +91,7 @@ import { sendHex, stripCompanyId } from '../../lib/ble/wandSimClient';
 import { rgbToHex } from '../../lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { ColorSwatch } from '../shared/ColorSwatch';
+import { RulePriorityDrawer } from './RulePriorityDrawer';
 
 const CMP_OP_OPTS = [
   { value: 'eq', label: 'eq' },
@@ -101,6 +103,10 @@ const CMP_OP_OPTS = [
 ];
 
 const BYTE_OP_OPTS = [...CMP_OP_OPTS, { value: 'maskEq', label: 'maskEq' }];
+const BYTES_AT_OFFSET_OP_OPTS = [
+  { value: 'eq', label: 'eq' },
+  { value: 'neq', label: 'neq' },
+];
 
 const LEAF_TYPE_OPTS = [
   { value: 'hexPrefix', label: 'hexPrefix' },
@@ -108,6 +114,7 @@ const LEAF_TYPE_OPTS = [
   { value: 'byte', label: 'byte' },
   { value: 'bits', label: 'bits' },
   { value: 'byteCompare', label: 'byteCompare' },
+  { value: 'bytesAtOffset', label: 'bytesAtOffset' },
 ];
 
 const TARGET_KIND_OPTS = [
@@ -194,7 +201,7 @@ function formatHexByte(n) {
   return `0x${(Number(n) & 0xff).toString(16).toUpperCase().padStart(2, '0')}`;
 }
 
-function HexByteInput({ value, onChange, placeholder = '0x00' }) {
+function HexByteInput({ value, onChange, placeholder = '0x00', ...rest }) {
   const [text, setText] = useState(() => formatHexByte(value ?? 0));
 
   useEffect(() => {
@@ -230,6 +237,7 @@ function HexByteInput({ value, onChange, placeholder = '0x00' }) {
       }}
       placeholder={placeholder}
       styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+      {...rest}
     />
   );
 }
@@ -250,7 +258,13 @@ function OffsetOrAnchorField({
   allowColorFallback = true,
 }) {
   const mode = node?.anchor ? 'anchor' : 'offset';
-  const anchor = node?.anchor || { byte: '0F', occurrence: 1, searchFrom: 0, searchLen: 0, deltaBytes: 0 };
+  const anchor = node?.anchor || {
+    byte: '0F',
+    occurrence: 1,
+    searchFrom: 0,
+    searchLen: 0,
+    deltaBytes: 0,
+  };
   const fallbackIsColor = allowColorFallback && isFallbackColor(node?.fallbackValue);
   const fallbackMode = fallbackIsColor ? 'color' : 'number';
 
@@ -261,8 +275,10 @@ function OffsetOrAnchorField({
       onPatch({
         anchor: normalizeAnchor(anchor) || anchor,
         fallbackValue: fallbackIsColor
-          ? (normalizeCustomHex(node?.fallbackValue) || '#000000')
-          : (Number.isFinite(Number(node?.fallbackValue)) ? Number(node.fallbackValue) : 0),
+          ? normalizeCustomHex(node?.fallbackValue) || '#000000'
+          : Number.isFinite(Number(node?.fallbackValue))
+            ? Number(node.fallbackValue)
+            : 0,
         requireAnchor: !!node?.requireAnchor,
       });
     }
@@ -278,106 +294,166 @@ function OffsetOrAnchorField({
   };
 
   return (
-    <Stack gap={4}>
-      <Group gap={6} wrap="nowrap">
-        <Text size="xs" c="dimmed" style={{ flex: 1 }}>{label}</Text>
-        <SegmentedControl
-          size="xs"
-          value={mode}
-          onChange={setMode}
-          disabled={disabled}
-          data={[{ value: 'offset', label: 'Fixed' }, { value: 'anchor', label: 'Anchor' }]}
-        />
-      </Group>
-      {mode === 'offset' ? (
-        <NumberInput
-          size="xs"
-          value={node?.offset ?? 0}
-          onChange={(v) => onPatch({ offset: Math.max(0, parseInt(String(v), 10) || 0) })}
-          min={0}
-          disabled={disabled}
-        />
-      ) : (
-        <Stack gap={4}>
-          <SimpleGrid cols={2} spacing={4}>
-            <Field label="Marker byte" style={{ marginBottom: 0 }}>
-              <HexByteInput
-                value={parseInt(anchor.byte || '0F', 16)}
-                onChange={(v) => patchAnchor({ byte: v.toString(16).padStart(2, '0') })}
-                placeholder="0x0F"
-              />
-            </Field>
-            <Field label="Occurrence" style={{ marginBottom: 0 }}>
-              <NumberInput size="xs" min={1} value={anchor.occurrence ?? 1}
-                onChange={(v) => patchAnchor({ occurrence: Math.max(1, parseInt(String(v), 10) || 1) })}
-                disabled={disabled} />
-            </Field>
-            <Field label="Search from" style={{ marginBottom: 0 }}>
-              <NumberInput size="xs" min={0} value={anchor.searchFrom ?? 0}
-                onChange={(v) => patchAnchor({ searchFrom: Math.max(0, parseInt(String(v), 10) || 0) })}
-                disabled={disabled} />
-            </Field>
-            <Field label="Search len (0=all)" style={{ marginBottom: 0 }}>
-              <NumberInput size="xs" min={0} value={anchor.searchLen ?? 0}
-                onChange={(v) => patchAnchor({ searchLen: Math.max(0, parseInt(String(v), 10) || 0) })}
-                disabled={disabled} />
-            </Field>
-            <Field label="Δ bytes after match" style={{ marginBottom: 0, gridColumn: '1 / -1' }}>
-              <NumberInput size="xs" value={anchor.deltaBytes ?? 0}
-                onChange={(v) => patchAnchor({ deltaBytes: parseInt(String(v), 10) || 0 })}
-                disabled={disabled} />
-            </Field>
-          </SimpleGrid>
-          {showAnchorExtras && (
-            <Stack gap={4}>
-              <Group gap={6} wrap="nowrap" align="flex-end">
-                <Text size="xs" c="dimmed" style={{ flex: 1 }}>Fallback if marker missing</Text>
-                {allowColorFallback && (
-                  <SegmentedControl
-                    size="xs"
-                    value={fallbackMode}
-                    onChange={setFallbackMode}
-                    disabled={disabled}
-                    data={[
-                      { value: 'number', label: 'Number' },
-                      { value: 'color', label: 'Color' },
-                    ]}
-                  />
-                )}
-              </Group>
-              {fallbackMode === 'color' ? (
-                <ColorInput
-                  size="xs"
-                  format="hex"
-                  value={normalizeCustomHex(node?.fallbackValue) || '#000000'}
-                  onChange={(v) => onPatch({ fallbackValue: normalizeCustomHex(v) || '#000000' })}
-                  disabled={disabled}
-                  swatches={['#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff']}
-                />
-              ) : (
-                <NumberInput
-                  size="xs"
-                  min={0}
-                  max={255}
-                  value={Number.isFinite(Number(node?.fallbackValue)) ? Number(node.fallbackValue) : 0}
-                  onChange={(v) => onPatch({
-                    fallbackValue: Math.max(0, Math.min(255, parseInt(String(v), 10) || 0)),
-                  })}
-                  disabled={disabled}
-                />
-              )}
-              <Checkbox
-                size="xs"
-                label="Fail rule match if marker not found"
-                checked={!!node?.requireAnchor}
-                onChange={(e) => onPatch({ requireAnchor: e.currentTarget.checked })}
-                disabled={disabled}
-              />
-            </Stack>
-          )}
+    <>
+      <Group align="flex-end" justify="space-between" gap="xs">
+        <Stack gap={0} justify="flex-start" align="flex-start">
+          <Input.Label size="xs">{label}</Input.Label>
+          <SegmentedControl
+            size="xs"
+            value={mode}
+            onChange={setMode}
+            disabled={disabled}
+            data={[
+              { value: 'offset', label: 'Fixed' },
+              { value: 'anchor', label: 'Anchor' },
+            ]}
+          />
         </Stack>
+        {mode === 'offset' && (
+          <NumberInput
+            label="Index"
+            size="xs"
+            value={node?.offset ?? 0}
+            onChange={(v) => onPatch({ offset: Math.max(0, parseInt(String(v), 10) || 0) })}
+            min={0}
+            disabled={disabled}
+            flex={1}
+          />
+        )}
+        {mode !== 'offset' && (
+          <>
+            <HexByteInput
+              label="Marker Byte"
+              size="xs"
+              value={parseInt(anchor.byte || '0F', 16)}
+              onChange={(v) => patchAnchor({ byte: v.toString(16).padStart(2, '0') })}
+              placeholder="0x0F"
+              flex={1}
+            />
+
+            <NumberInput
+              label="Occurrence"
+              size="xs"
+              min={1}
+              value={anchor.occurrence ?? 1}
+              onChange={(v) =>
+                patchAnchor({ occurrence: Math.max(1, parseInt(String(v), 10) || 1) })
+              }
+              disabled={disabled}
+              flex={1}
+            />
+
+            <NumberInput
+              label="Search from"
+              size="xs"
+              min={0}
+              value={anchor.searchFrom ?? 0}
+              onChange={(v) =>
+                patchAnchor({ searchFrom: Math.max(0, parseInt(String(v), 10) || 0) })
+              }
+              disabled={disabled}
+              flex={1}
+            />
+
+            <NumberInput
+              label="Search length (0 = all)"
+              size="xs"
+              min={0}
+              value={anchor.searchLen ?? 0}
+              onChange={(v) =>
+                patchAnchor({ searchLen: Math.max(0, parseInt(String(v), 10) || 0) })
+              }
+              disabled={disabled}
+              flex={1}
+            />
+
+            <NumberInput
+              label="Δ bytes after match"
+              size="xs"
+              value={anchor.deltaBytes ?? 0}
+              onChange={(v) => patchAnchor({ deltaBytes: parseInt(String(v), 10) || 0 })}
+              disabled={disabled}
+              flex={1}
+            />
+          </>
+        )}
+      </Group>
+
+      {mode !== 'offset' && showAnchorExtras && (
+        <Group justify="flex-start" align="flex-end">
+          <Checkbox
+            size="xs"
+            label="Fail rule match if marker not found"
+            checked={!!node?.requireAnchor}
+            onChange={(e) => onPatch({ requireAnchor: e.currentTarget.checked })}
+            disabled={disabled}
+          />
+
+          <Stack gap={0} justify="flex-start" align="flex-start">
+            <Input.Label size="xs">Fallback</Input.Label>
+            <Input.Description size="xs">If marker is missing</Input.Description>
+          </Stack>
+
+          {allowColorFallback && (
+            <SegmentedControl
+              size="xs"
+              value={fallbackMode}
+              onChange={setFallbackMode}
+              disabled={disabled}
+              data={[
+                { value: 'number', label: 'Number' },
+                { value: 'color', label: 'Color' },
+              ]}
+            />
+          )}
+
+          {fallbackMode === 'color' ? (
+            <ColorInput
+              size="xs"
+              format="hex"
+              value={normalizeCustomHex(node?.fallbackValue) || '#000000'}
+              onChange={(v) => onPatch({ fallbackValue: normalizeCustomHex(v) || '#000000' })}
+              disabled={disabled}
+              swatches={['#000000', '#ffffff', '#ff0000', '#00ff00', '#0000ff']}
+            />
+          ) : (
+            <NumberInput
+              size="xs"
+              min={0}
+              max={255}
+              value={Number.isFinite(Number(node?.fallbackValue)) ? Number(node.fallbackValue) : 0}
+              onChange={(v) =>
+                onPatch({
+                  fallbackValue: Math.max(0, Math.min(255, parseInt(String(v), 10) || 0)),
+                })
+              }
+              disabled={disabled}
+            />
+          )}
+        </Group>
       )}
-    </Stack>
+    </>
+  );
+}
+
+function ConditionNameField({ node, onChange, ...rest }) {
+  return (
+    <TextInput
+      flex={1}
+      value={node.name || ''}
+      label="Name (optional)"
+      onChange={(e) => {
+        const next = e.target.value;
+        if (next.trim()) onChange({ ...node, name: next });
+        else {
+          const { name: _drop, ...rest } = node;
+          onChange(rest);
+        }
+      }}
+      placeholder="e.g. TL/BL same color"
+      size="xs"
+      {...rest}
+    />
   );
 }
 
@@ -421,43 +497,40 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
 
   return (
     <Paper p="xs" withBorder bg="var(--surface2)">
-      <Group gap="xs" align="flex-end" wrap="wrap" mb="xs">
-        <Field label="Type">
-          <SearchableSelect
-            value={node.type}
-            onChange={(type) => onChange(createEmptyCondition(type))}
-            options={LEAF_TYPE_OPTS}
-            allowEmpty={false}
-          />
-        </Field>
-        <AppButton size="compact-xs" variant="default" onClick={handleCopy}>
+      <Group gap="xs" align="flex-end" justify="space-between" wrap="wrap" mb="xs">
+        <SearchableSelect
+          label="Type"
+          value={node.type}
+          onChange={(type) => {
+            const next = createEmptyCondition(type);
+            const name = typeof node.name === 'string' ? node.name.trim() : '';
+            onChange(name ? { ...next, name } : next);
+          }}
+          options={LEAF_TYPE_OPTS}
+          allowEmpty={false}
+          size="xs"
+        />
+
+        <ConditionNameField node={node} onChange={onChange} />
+
+        <AppButton size="sm" variant="default" onClick={handleCopy}>
           Copy
         </AppButton>
-        <AppButton
-          size="compact-xs"
-          variant="default"
-          disabled={!canPaste}
-          onClick={handlePasteReplace}
-        >
+        <AppButton size="sm" variant="default" disabled={!canPaste} onClick={handlePasteReplace}>
           Paste
         </AppButton>
         {onPasteAfter && (
-          <AppButton
-            size="compact-xs"
-            variant="default"
-            disabled={!canPaste}
-            onClick={handlePasteAfter}
-          >
+          <AppButton size="sm" variant="default" disabled={!canPaste} onClick={handlePasteAfter}>
             Paste after
           </AppButton>
         )}
         {onDuplicate && (
-          <AppButton size="compact-xs" variant="default" onClick={onDuplicate}>
+          <AppButton size="sm" variant="default" onClick={onDuplicate}>
             Duplicate
           </AppButton>
         )}
         {onDelete && (
-          <AppButton variant="danger" size="compact-xs" onClick={onDelete}>
+          <AppButton variant="danger" size="sm" onClick={onDelete}>
             Delete
           </AppButton>
         )}
@@ -545,7 +618,9 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
             <Field label="bitStart">
               <NumberInput
                 value={node.bitStart ?? 0}
-                onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)) })}
+                onChange={(v) =>
+                  set({ bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)) })
+                }
                 min={0}
                 max={7}
               />
@@ -553,7 +628,9 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
             <Field label="bitCount">
               <NumberInput
                 value={node.bitCount ?? 1}
-                onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)) })}
+                onChange={(v) =>
+                  set({ bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)) })
+                }
                 min={1}
                 max={32}
               />
@@ -668,11 +745,52 @@ function ConditionLeafEditor({ node, onChange, onDelete, onDuplicate, onPasteAft
           </Group>
         </Stack>
       )}
+      {node.type === 'bytesAtOffset' && (
+        <Stack gap="xs">
+          <OffsetOrAnchorField node={node} onPatch={(p) => set(p)} showAnchorExtras={false} />
+          <Group gap="xs" grow>
+            <Field label="Op">
+              <SearchableSelect
+                value={node.op || 'eq'}
+                onChange={(op) => set({ op })}
+                options={BYTES_AT_OFFSET_OP_OPTS}
+                allowEmpty={false}
+              />
+            </Field>
+            <Field label="Bytes (hex)">
+              <TextInput
+                value={node.value || ''}
+                onChange={(e) => set({ value: e.target.value.replace(/[^0-9a-fA-F]/g, '') })}
+                placeholder="307B"
+                styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+              />
+            </Field>
+          </Group>
+          <Checkbox
+            label="Scan / contains (from offset to end of payload)"
+            description="Off: match only at the exact offset. On: look for this sequence anywhere from the offset through the tail."
+            checked={!!node.scan}
+            onChange={(e) => set({ scan: e.target.checked })}
+          />
+          <Text size="xs" c="dimmed">
+            {node.scan
+              ? 'eq finds the sequence somewhere in the tail; neq means it never appears. Anchor E9 with Δ 0 (or 1) + scan is “307B anywhere after E9,” covering both E90B (+10) and E90E (+13).'
+              : 'eq requires payload[offset..] to equal these bytes; neq is the inverse. E.g. "307B" at offset N checks 0x30 then 0x7B.'}
+          </Text>
+        </Stack>
+      )}
     </Paper>
   );
 }
 
-function ConditionGroupEditor({ node, onChange, onDelete = undefined, onDuplicate = undefined, onPasteAfter = undefined, depth = 0 }) {
+function ConditionGroupEditor({
+  node,
+  onChange,
+  onDelete = undefined,
+  onDuplicate = undefined,
+  onPasteAfter = undefined,
+  depth = 0,
+}) {
   const [open, setOpen] = useState(false); // collapsed by default
   const { copyKind, hasKind, takeKind } = useRuleClip();
   const [clipMsg, setClipMsg] = useState('');
@@ -834,20 +952,11 @@ function ConditionGroupEditor({ node, onChange, onDelete = undefined, onDuplicat
       </Group>
       {open && (
         <>
-          <Field label="Name (optional)">
-            <TextInput
-              value={node.name || ''}
-              onChange={(e) => {
-                const next = e.target.value;
-                if (next.trim()) onChange({ ...node, name: next });
-                else {
-                  const { name: _drop, ...rest } = node;
-                  onChange(rest);
-                }
-              }}
-              placeholder="e.g. TL/BL same color"
-            />
-          </Field>
+          <ConditionNameField
+            node={node}
+            onChange={onChange}
+            style={{ paddingBottom: 'var(--mantine-spacing-md)' }}
+          />
           <Stack gap="xs">
             {children.map((child, i) => (
               <ConditionGroupEditor
@@ -1154,13 +1263,13 @@ function TimingParamBindingEditor({
             ) : null}
           </Text>
         )}
-        <Field label="Name (optional)">
-          <TextInput
-            value={extract.name || ''}
-            onChange={(e) => set({ name: e.target.value })}
-            placeholder={meta.label}
-          />
-        </Field>
+
+        <TextInput
+          label="Name (optional)"
+          value={extract.name || ''}
+          onChange={(e) => set({ name: e.target.value })}
+          placeholder={meta.label}
+        />
         <Field label="Segment">
           <SearchableSelect
             value={target.segmentId || ''}
@@ -1288,7 +1397,9 @@ function ChannelGroupFields({ channelGroup, onChange }) {
                   <NumberInput
                     value={ch.bitStart ?? 0}
                     onChange={(v) =>
-                      setChannel(key, { bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)) })
+                      setChannel(key, {
+                        bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)),
+                      })
                     }
                     min={0}
                     max={7}
@@ -1298,7 +1409,9 @@ function ChannelGroupFields({ channelGroup, onChange }) {
                   <NumberInput
                     value={ch.bitCount ?? 8}
                     onChange={(v) =>
-                      setChannel(key, { bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)) })
+                      setChannel(key, {
+                        bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)),
+                      })
                     }
                     min={1}
                     max={32}
@@ -1457,7 +1570,10 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
               <NumberInput
                 value={src.bitStart ?? 0}
                 onChange={(v) =>
-                  onChange({ ...src, bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)) })
+                  onChange({
+                    ...src,
+                    bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)),
+                  })
                 }
                 min={0}
                 max={7}
@@ -1467,7 +1583,10 @@ function ColorSourceRowEditor({ source, usedNames, onChange, onDelete }) {
               <NumberInput
                 value={src.bitCount ?? 8}
                 onChange={(v) =>
-                  onChange({ ...src, bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)) })
+                  onChange({
+                    ...src,
+                    bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)),
+                  })
                 }
                 min={1}
                 max={32}
@@ -1605,48 +1724,48 @@ function ColorBlendSourceEditor({ label, source, onChange }) {
             onPatch={(p) => onChange({ ...src, kind: 'palette', ...p })}
           />
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-          <Field label="bitStart">
-            <NumberInput
-              value={src.bitStart ?? 0}
-              onChange={(v) =>
-                onChange({
-                  ...src,
-                  kind: 'palette',
-                  bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)),
-                })
-              }
-              min={0}
-              max={7}
-            />
-          </Field>
-          <Field label="bitCount">
-            <NumberInput
-              value={src.bitCount ?? 8}
-              onChange={(v) =>
-                onChange({
-                  ...src,
-                  kind: 'palette',
-                  bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)),
-                })
-              }
-              min={1}
-              max={32}
-            />
-          </Field>
-          <Field label="Map">
-            <SegmentedControl
-              fullWidth
-              size="xs"
-              value={src.paletteMap === false ? 'raw' : 'palette'}
-              onChange={(mode) =>
-                onChange({ ...src, kind: 'palette', paletteMap: mode === 'palette' })
-              }
-              data={[
-                { label: 'Palette idx', value: 'palette' },
-                { label: 'Raw gray', value: 'raw' },
-              ]}
-            />
-          </Field>
+            <Field label="bitStart">
+              <NumberInput
+                value={src.bitStart ?? 0}
+                onChange={(v) =>
+                  onChange({
+                    ...src,
+                    kind: 'palette',
+                    bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)),
+                  })
+                }
+                min={0}
+                max={7}
+              />
+            </Field>
+            <Field label="bitCount">
+              <NumberInput
+                value={src.bitCount ?? 8}
+                onChange={(v) =>
+                  onChange({
+                    ...src,
+                    kind: 'palette',
+                    bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)),
+                  })
+                }
+                min={1}
+                max={32}
+              />
+            </Field>
+            <Field label="Map">
+              <SegmentedControl
+                fullWidth
+                size="xs"
+                value={src.paletteMap === false ? 'raw' : 'palette'}
+                onChange={(mode) =>
+                  onChange({ ...src, kind: 'palette', paletteMap: mode === 'palette' })
+                }
+                data={[
+                  { label: 'Palette idx', value: 'palette' },
+                  { label: 'Raw gray', value: 'raw' },
+                ]}
+              />
+            </Field>
           </SimpleGrid>
         </Stack>
       )}
@@ -1977,7 +2096,9 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
               <Field label="bitStart">
                 <NumberInput
                   value={extract.bitStart ?? 0}
-                  onChange={(v) => set({ bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)) })}
+                  onChange={(v) =>
+                    set({ bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)) })
+                  }
                   min={0}
                   max={7}
                 />
@@ -1985,7 +2106,9 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
               <Field label="bitCount">
                 <NumberInput
                   value={extract.bitCount ?? 5}
-                  onChange={(v) => set({ bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)) })}
+                  onChange={(v) =>
+                    set({ bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)) })
+                  }
                   min={1}
                   max={32}
                 />
@@ -2211,42 +2334,42 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
                   }
                 />
                 <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                <Field label="bitStart">
-                  <NumberInput
-                    value={colorBlend.ratio.bitStart ?? 0}
-                    onChange={(v) =>
-                      set({
-                        colorBlend: {
-                          ...colorBlend,
-                          ratio: {
-                            ...colorBlend.ratio,
-                            bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)),
+                  <Field label="bitStart">
+                    <NumberInput
+                      value={colorBlend.ratio.bitStart ?? 0}
+                      onChange={(v) =>
+                        set({
+                          colorBlend: {
+                            ...colorBlend,
+                            ratio: {
+                              ...colorBlend.ratio,
+                              bitStart: Math.min(7, Math.max(0, parseInt(String(v), 10) || 0)),
+                            },
                           },
-                        },
-                      })
-                    }
-                    min={0}
-                    max={7}
-                  />
-                </Field>
-                <Field label="bitCount">
-                  <NumberInput
-                    value={colorBlend.ratio.bitCount ?? 8}
-                    onChange={(v) =>
-                      set({
-                        colorBlend: {
-                          ...colorBlend,
-                          ratio: {
-                            ...colorBlend.ratio,
-                            bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)),
+                        })
+                      }
+                      min={0}
+                      max={7}
+                    />
+                  </Field>
+                  <Field label="bitCount">
+                    <NumberInput
+                      value={colorBlend.ratio.bitCount ?? 8}
+                      onChange={(v) =>
+                        set({
+                          colorBlend: {
+                            ...colorBlend,
+                            ratio: {
+                              ...colorBlend.ratio,
+                              bitCount: Math.min(32, Math.max(1, parseInt(String(v), 10) || 1)),
+                            },
                           },
-                        },
-                      })
-                    }
-                    min={1}
-                    max={32}
-                  />
-                </Field>
+                        })
+                      }
+                      min={1}
+                      max={32}
+                    />
+                  </Field>
                 </SimpleGrid>
               </Stack>
             ) : (
@@ -3230,7 +3353,9 @@ function formatPreviewTimingCell(p) {
 }
 
 function tsvCell(value) {
-  return String(value ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, '; ');
+  return String(value ?? '')
+    .replace(/\t/g, ' ')
+    .replace(/\r?\n/g, '; ');
 }
 
 /** TSV of coverage-preview table columns (no Wand Lab actions). */
@@ -3691,10 +3816,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                       </Text>
                     </Table.Td>
                     <Table.Td>
-                      <PreviewPacketExtracts
-                        colorSources={p.colorSources}
-                        extracts={p.extracts}
-                      />
+                      <PreviewPacketExtracts colorSources={p.colorSources} extracts={p.extracts} />
                     </Table.Td>
                     <Table.Td>
                       {p.timing ? (
@@ -3773,6 +3895,7 @@ export function RuleEditor({
   const segmentMaps = mapping.segmentMaps || [];
   const timingModels = mapping.timingModels || [];
   const [expandedId, setExpandedId] = useState(rules[0]?.id || null);
+  const [reorderOpen, setReorderOpen] = useState(false);
 
   const setRules = (nextRules, { reindex = false } = {}) => {
     const out = reindex ? reindexRulePriorities(nextRules) : nextRules;
@@ -3844,6 +3967,9 @@ export function RuleEditor({
             <AppButton size="compact-sm" variant="primary" onClick={addRule}>
               Add rule
             </AppButton>
+            <AppButton size="compact-sm" variant="default" onClick={() => setReorderOpen(true)}>
+              Reorder / bulk priority
+            </AppButton>
             <Text size="xs" c="dimmed">
               {rules.length} rule{rules.length === 1 ? '' : 's'}
             </Text>
@@ -3890,6 +4016,16 @@ export function RuleEditor({
             onEditTimingModels={onEditTimingModels}
           />
         ))}
+
+        {reorderOpen && (
+          <RulePriorityDrawer
+            rules={rules}
+            onChange={(next) => {
+              setRules(next);
+            }}
+            onClose={() => setReorderOpen(false)}
+          />
+        )}
       </Stack>
     </RuleClipProvider>
   );
