@@ -21,10 +21,22 @@ static uint32_t droppedCount = 0;
 static uint32_t sentCount = 0;
 static uint32_t failedCount = 0;
 
-static void wledSendTask(void* /*param*/) {
+static void wledSendTask(void* param) {
+  // Must use the handle passed at create time, not the file-scope global.
+  // This task is pinned to core 0 while setup() runs on core 1; the two S3
+  // cores do not share a coherent D-cache, so a freshly written global can
+  // still read as nullptr here and abort with:
+  //   assert failed: xQueueSemaphoreTake queue.c:1709 (( pxQueue ))
+  QueueHandle_t queue = (QueueHandle_t)param;
+  if (!queue) {
+    Serial.println("[WLED] FATAL: WledSendTask started with null queue");
+    vTaskDelete(NULL);
+    return;
+  }
+
   WledSendJob job;
   for (;;) {
-    if (xQueueReceive(wledSendQueue, &job, portMAX_DELAY) != pdTRUE) continue;
+    if (xQueueReceive(queue, &job, portMAX_DELAY) != pdTRUE) continue;
     if (!job.json) continue;
 
     String body(job.json);
@@ -46,16 +58,27 @@ static void wledSendTask(void* /*param*/) {
 
 void wledSendQueueInit() {
   wledHttpMutexInit();
-  wledSendQueue = xQueueCreate(WLED_SEND_QUEUE_DEPTH, sizeof(WledSendJob));
-  xTaskCreatePinnedToCore(
+  QueueHandle_t q = xQueueCreate(WLED_SEND_QUEUE_DEPTH, sizeof(WledSendJob));
+  if (!q) {
+    Serial.println("[WLED] FATAL: wledSendQueue creation failed — async send disabled");
+    return;
+  }
+  wledSendQueue = q;
+  BaseType_t ok = xTaskCreatePinnedToCore(
     wledSendTask,
     "WledSendTask",
     4096,
-    nullptr,
+    (void*)q,
     1,     // low priority — never contend with BLE/loop core work
     nullptr,
     0      // core 0 — loop()/BLE stay on core 1 (matches existing WiFiTask pattern)
   );
+  if (ok != pdPASS) {
+    Serial.println("[WLED] FATAL: WledSendTask create failed — async send disabled");
+    wledSendQueue = nullptr;
+    vQueueDelete(q);
+    return;
+  }
   Serial.println("[WLED] async send queue + task ready");
 }
 

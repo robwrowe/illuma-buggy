@@ -74,13 +74,24 @@ static void handleStatus() {
   sendJson(200, json);
 }
 
+static bool httpListening = false;
+
 void httpCommandServerInit() {
   httpServer.on("/cmd", HTTP_ANY, handleCommand);
   httpServer.on("/status", HTTP_ANY, handleStatus);
-  httpServer.begin();
-  Serial.println("[HTTP] command server listening on :8080 (/cmd, /status)");
+  // Listen is deferred until STA is up. Calling NetworkServer::begin() here
+  // (before WiFi.mode/begin) can take a still-null lwIP/wifi queue and abort
+  // with xQueueSemaphoreTake on pxQueue == NULL — same boot-loop as a null
+  // WLED send queue, and it lands right after that init print.
+  Serial.println("[HTTP] routes registered (listen deferred until WiFi STA)");
 }
 
 void httpCommandServerPoll() {
+  if (!httpListening) {
+    if (WiFi.status() != WL_CONNECTED) return;
+    httpServer.begin();
+    httpListening = true;
+    Serial.println("[HTTP] command server listening on :8080 (/cmd, /status)");
+  }
   httpServer.handleClient();
 }

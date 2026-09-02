@@ -77,21 +77,24 @@ void handleBLECommand(const String& msg) {
     bleNotify("{\"type\":\"ack\",\"action\":\"preset_delete\",\"id\":\"" + id + "\"}");
   }
   else if (type == "preset_list") {
-    PendingCmd cmd; strncpy(cmd.type, "preset_list", 31); xQueueSend(cmdQueue, &cmd, 0);
+    if (cmdQueue) { PendingCmd cmd; strncpy(cmd.type, "preset_list", 31); xQueueSend(cmdQueue, &cmd, 0); }
   }
 
   // ── WLED proxy GETs — queued to main loop (HTTPClient can't run on BLE stack) ──
+  // Guarded: cmdQueue can come back null from xQueueCreate() under heap
+  // pressure at boot; an unguarded send here previously asserted
+  // (xQueueSemaphoreTake queue.c:1709) and boot-looped the board.
   else if (type == "wled_get_effects") {
-    PendingCmd cmd; strncpy(cmd.type, "wled_get_effects", 31); xQueueSend(cmdQueue, &cmd, 0);
+    if (cmdQueue) { PendingCmd cmd; strncpy(cmd.type, "wled_get_effects", 31); xQueueSend(cmdQueue, &cmd, 0); }
   }
   else if (type == "wled_get_palettes") {
-    PendingCmd cmd; strncpy(cmd.type, "wled_get_palettes", 31); xQueueSend(cmdQueue, &cmd, 0);
+    if (cmdQueue) { PendingCmd cmd; strncpy(cmd.type, "wled_get_palettes", 31); xQueueSend(cmdQueue, &cmd, 0); }
   }
   else if (type == "wled_get_fxdata") {
-    PendingCmd cmd; strncpy(cmd.type, "wled_get_fxdata", 31); xQueueSend(cmdQueue, &cmd, 0);
+    if (cmdQueue) { PendingCmd cmd; strncpy(cmd.type, "wled_get_fxdata", 31); xQueueSend(cmdQueue, &cmd, 0); }
   }
   else if (type == "wled_get_state") {
-    PendingCmd cmd; strncpy(cmd.type, "wled_get_state", 31); xQueueSend(cmdQueue, &cmd, 0);
+    if (cmdQueue) { PendingCmd cmd; strncpy(cmd.type, "wled_get_state", 31); xQueueSend(cmdQueue, &cmd, 0); }
   }
 
   // ── Zone / override ──
