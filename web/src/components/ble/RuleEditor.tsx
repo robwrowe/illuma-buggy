@@ -3202,6 +3202,70 @@ function formatExtractValueLabel(ex) {
   return `raw ${ex.raw}`;
 }
 
+function formatPreviewStatus(p) {
+  if (!p.matched) return 'no rule';
+  if (p.reportedUnmatched) return 'reported unmatched';
+  return 'match';
+}
+
+function formatPreviewExtractsCell(p) {
+  const parts = [];
+  for (const cs of p.colorSources || []) {
+    const hex = cs.rgb ? rgbToHex(cs.rgb[0], cs.rgb[1], cs.rgb[2]) : '#000000';
+    parts.push(`${cs.name || 'color'} ${hex}`);
+  }
+  for (const ex of p.extracts || []) {
+    parts.push(`${ex.name || 'ex'} · ${formatExtractValueLabel(ex)}`);
+  }
+  return parts.length ? parts.join('; ') : '—';
+}
+
+function formatPreviewTimingCell(p) {
+  if (!p.timing) return '—';
+  let s = `on ${p.timing.onSec.toFixed(1)}s`;
+  if (p.timing.stretchSec > 0) s += ` · fade ${p.timing.stretchSec.toFixed(1)}s`;
+  if (p.timing.scaler) s += ' · 3×';
+  if (p.timing.extended) s += ' · ext';
+  return s;
+}
+
+function tsvCell(value) {
+  return String(value ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, '; ');
+}
+
+/** TSV of coverage-preview table columns (no Wand Lab actions). */
+function previewRowsToTsv(rows) {
+  const headers = ['#', 'Status', 'Pri', 'Rule', 'Hex (payload)', 'Colors / extracts', 'Timing'];
+  const body = (rows || []).map((p) => [
+    String(p.rowIdx + 1),
+    formatPreviewStatus(p),
+    p.matched && p.priority != null ? String(p.priority) : '—',
+    p.matched ? p.ruleName || '(unnamed)' : '—',
+    p.hex || '',
+    formatPreviewExtractsCell(p),
+    formatPreviewTimingCell(p),
+  ]);
+  return [headers, ...body].map((row) => row.map(tsvCell).join('\t')).join('\n');
+}
+
+async function copyTextToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (!ok) throw new Error('copy failed');
+  }
+}
+
 /** Compact color + extract readout for coverage preview rows. */
 function PreviewPacketExtracts({ colorSources = [], extracts = [] }) {
   const hasColors = (colorSources || []).length > 0;
@@ -3422,11 +3486,26 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
     let hexes = unmatchedPackets.map((p) => p.hex);
     if (unique) hexes = [...new Set(hexes)];
     try {
-      await navigator.clipboard.writeText(hexes.join('\n'));
+      await copyTextToClipboard(hexes.join('\n'));
       setCopyStatus(
         unique
           ? `Copied ${hexes.length} unique unmatched hex`
           : `Copied ${hexes.length} unmatched hex`,
+      );
+    } catch {
+      setCopyStatus('Clipboard copy failed');
+    }
+  };
+
+  const copyPreviewTable = async () => {
+    if (!visiblePackets.length) {
+      setCopyStatus('No preview rows to copy');
+      return;
+    }
+    try {
+      await copyTextToClipboard(previewRowsToTsv(visiblePackets));
+      setCopyStatus(
+        `Copied ${visiblePackets.length} preview row${visiblePackets.length === 1 ? '' : 's'} as TSV`,
       );
     } catch {
       setCopyStatus('Clipboard copy failed');
@@ -3521,6 +3600,14 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
             onClick={() => copyUnmatched({ unique: true })}
           >
             Copy unique unmatched
+          </AppButton>
+          <AppButton
+            size="xs"
+            variant="default"
+            disabled={!visiblePackets.length}
+            onClick={copyPreviewTable}
+          >
+            Copy table
           </AppButton>
         </Group>
 
