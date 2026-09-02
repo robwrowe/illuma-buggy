@@ -1,6 +1,10 @@
 #!/bin/bash
-# build.sh — Illuma Buggy Android dev build
+# build.sh — Illuma Buggy Android *development* EAS build (needs Metro)
 # Usage: ./build.sh [--clean]
+#
+# This is NOT a field/park APK. For a clean production sideload:
+#   npm run build:apk:prod:clean
+# See docs/android-release-runbook.md
 
 set -e  # exit on any error
 

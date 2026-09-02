@@ -33,6 +33,19 @@ eas build --platform android --profile development
 eas build --platform ios --profile development
 ```
 
+## Field / park APK (no Metro)
+
+Sideload a standalone Android APK. Full steps: [docs/android-release-runbook.md](../docs/android-release-runbook.md).
+
+```bash
+cd app
+npm run build:apk:prod:clean    # clean EAS production APK → app/dist/illuma-buggy-prod.apk
+```
+
+That wipes `node_modules/`, `android/`, and `.expo/`, then builds the EAS **production** profile (no Metro, `versionCode` auto-increment).
+
+`npm run build:clean` is a **dev client** EAS build, not a park APK.
+
 ## Project structure
 
 ```

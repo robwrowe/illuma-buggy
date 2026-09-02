@@ -3,10 +3,12 @@
 #
 # Usage:
 #   ./build-apk.sh dev              # dev client debug APK (needs Metro after install)
-#   ./build-apk.sh prod             # release APK with embedded JS (no Metro)
+#   ./build-apk.sh prod             # local release APK (still includes expo-dev-client)
 #   ./build-apk.sh dev --install    # build + adb install to connected Pixel
-#   ./build-apk.sh prod --eas       # cloud build via EAS (true prod, no dev client)
-#   ./build-apk.sh dev --clean      # wipe android/ and re-prebuild first
+#   ./build-apk.sh prod --eas       # EAS preview APK (standalone, no Metro)
+#   ./build-apk.sh prod --eas --clean --production
+#                                   # clean EAS production APK (field release)
+#   ./build-apk.sh dev --clean      # wipe android/ and re-prebuild first (local only)
 #
 # After installing a dev build, start Metro on your Mac:
 #   npx expo start --dev-client
@@ -18,20 +20,23 @@ cd "$SCRIPT_DIR"
 
 MODE=""
 USE_EAS=false
+USE_PRODUCTION=false
 CLEAN=false
 INSTALL=false
 ALL_ARCHS=false
 
 usage() {
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
   echo ""
   echo "Options:"
-  echo "  --eas         Build on EAS cloud instead of local Gradle (uses EAS secrets)"
-  echo "  --clean       Remove android/ and .expo, then run expo prebuild"
-  echo "  --install     adb install -r the APK after a local build"
-  echo "  --all-archs   Build all ABIs (slower; default is arm64-v8a for Pixel)"
-  echo "  -- <args>     Pass extra args to Gradle (e.g. -- --stacktrace)"
-  echo "  -h, --help    Show this help"
+  echo "  --eas          Build on EAS cloud instead of local Gradle (uses EAS secrets)"
+  echo "  --production   With --eas prod: use eas.json production (autoIncrement versionCode)"
+  echo "  --clean        EAS: wipe node_modules, android/, .expo (do not prebuild)."
+  echo "                 Local: wipe android/ and .expo, then expo prebuild"
+  echo "  --install      adb install -r the APK after a local build"
+  echo "  --all-archs    Build all ABIs (slower; default is arm64-v8a for Pixel)"
+  echo "  -- <args>      Pass extra args to Gradle (e.g. -- --stacktrace)"
+  echo "  -h, --help     Show this help"
 }
 
 GRADLE_EXTRA_ARGS=()
@@ -40,6 +45,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     dev|prod) MODE="$1" ;;
     --eas) USE_EAS=true ;;
+    --production) USE_PRODUCTION=true ;;
     --clean) CLEAN=true ;;
     --install) INSTALL=true ;;
     --all-archs) ALL_ARCHS=true ;;
@@ -62,6 +68,13 @@ fi
 if [[ "$USE_EAS" == true && "$INSTALL" == true ]]; then
   echo "Note: --install only applies to local builds. EAS builds save the APK to dist/."
   INSTALL=false
+fi
+
+if [[ "$USE_PRODUCTION" == true ]]; then
+  if [[ "$USE_EAS" != true || "$MODE" != "prod" ]]; then
+    echo "❌ --production requires: ./build-apk.sh prod --eas --production"
+    exit 1
+  fi
 fi
 
 ARCH="arm64-v8a"
@@ -289,20 +302,41 @@ build_local_prod() {
   echo ""
   echo "Prod build ready — JS is embedded, no Metro required."
   echo "Note: local release builds still include the dev-client binary."
-  echo "      Use --eas for a clean production APK without the dev launcher."
+  echo "      Use npm run build:apk:prod:clean for a field APK without the dev launcher."
+}
+
+clean_for_eas() {
+  if [[ "$CLEAN" == true ]]; then
+    echo "🧹 Cleaning node_modules, android, .expo (no local prebuild)..."
+    rm -rf node_modules android .expo
+    return 0
+  fi
+  if [[ -d android ]]; then
+    echo "❌ app/android/ exists. EAS will upload it and skip cloud prebuild (ENOENT gradlew)."
+    echo "   Re-run with --clean, or: rm -rf android .expo"
+    exit 1
+  fi
 }
 
 build_eas() {
-  ensure_deps
   if ! command -v eas >/dev/null 2>&1; then
     echo "❌ eas-cli not found. Run: npm install -g eas-cli"
     exit 1
   fi
 
+  clean_for_eas
+  ensure_deps
+
   local profile
   case "$MODE" in
     dev) profile="development" ;;
-    prod) profile="preview" ;;
+    prod)
+      if [[ "$USE_PRODUCTION" == true ]]; then
+        profile="production"
+      else
+        profile="preview"
+      fi
+      ;;
   esac
 
   echo "☁️  Submitting $profile build to EAS..."

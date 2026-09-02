@@ -12,6 +12,8 @@
     "build:apk": "bash build-apk.sh",
     "build:apk:dev": "bash build-apk.sh dev",
     "build:apk:prod": "bash build-apk.sh prod",
+    "build:apk:prod:eas": "bash build-apk.sh prod --eas",
+    "build:apk:prod:clean": "bash build-apk.sh prod --eas --clean --production",
     "serve": "npx serve ../web/index.html"
   },
   "dependencies": {
