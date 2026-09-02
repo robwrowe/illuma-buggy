@@ -699,6 +699,7 @@ void handleBLECommand(const String& msg) {
     if (scannerSeen) scannerAgeMs = millis() - lastScannerPacketMs;
     uint8_t myMac[6];
     WiFi.macAddress(myMac);
+    WifiNetInfo net = getWifiNetInfo();
     bleNotify(
       "{\"type\":\"status\","
       "\"override\":" + String((int)currentOverride) + ","
@@ -709,6 +710,9 @@ void handleBLECommand(const String& msg) {
       "\"wled_ssid\":\"" + wledSsid + "\","
       "\"wled_ip\":\"" + wledIp + "\","
       "\"wled_port\":" + String(wledPort) + ","
+      "\"wifi_ip\":\"" + net.ip + "\","
+      "\"wifi_gateway\":\"" + net.gateway + "\","
+      "\"wifi_subnet\":\"" + net.subnet + "\","
       "\"sw_enabled\":" + String(starlightEnabled ? "true" : "false") + ","
       "\"sw_timeout_ms\":" + String(starlightTimeoutMs) + ","
       "\"mb_enabled\":" + String(magicBandEnabled ? "true" : "false") + ","
@@ -744,4 +748,3 @@ void handleBLECommand(const String& msg) {
 // ─────────────────────────────────────────────
 // BLE PERIPHERAL
 // ─────────────────────────────────────────────
-

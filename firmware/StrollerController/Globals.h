@@ -14,6 +14,15 @@ extern String wledIp;
 extern int    wledPort;
 extern const char* BLE_NAME;
 
+// Returns "" for each field if WiFi is not connected. Cheap — safe to call
+// from loop(), BLE command handlers, or the HTTP status route.
+struct WifiNetInfo {
+  String ip;
+  String gateway;
+  String subnet;
+};
+WifiNetInfo getWifiNetInfo();
+
 extern const char* MB_SEG_KEYS[];
 extern const uint8_t MB_DEFAULT_COLORS[32][3];
 

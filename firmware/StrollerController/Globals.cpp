@@ -1,5 +1,15 @@
 #include "Globals.h"
 
+WifiNetInfo getWifiNetInfo() {
+  WifiNetInfo info;
+  if (WiFi.status() == WL_CONNECTED) {
+    info.ip      = WiFi.localIP().toString();
+    info.gateway = WiFi.gatewayIP().toString();
+    info.subnet  = WiFi.subnetMask().toString();
+  }
+  return info;
+}
+
 String wledSsid = "KyLan Ren";
 String wledPass = "tigers2016";
 String wledIp   = "wled.local";

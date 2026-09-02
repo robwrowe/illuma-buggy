@@ -65,8 +65,12 @@ static void handleStatus() {
     handleOptions();
     return;
   }
-  String json = "{\"role\":\"logic\",\"ip\":\"" + WiFi.localIP().toString() +
-                "\",\"freeHeap\":" + String((unsigned)ESP.getFreeHeap()) + "}";
+  WifiNetInfo net = getWifiNetInfo();
+  String json = "{\"role\":\"logic\","
+                "\"ip\":\"" + net.ip + "\","
+                "\"gateway\":\"" + net.gateway + "\","
+                "\"subnet\":\"" + net.subnet + "\","
+                "\"freeHeap\":" + String((unsigned)ESP.getFreeHeap()) + "}";
   sendJson(200, json);
 }
 
