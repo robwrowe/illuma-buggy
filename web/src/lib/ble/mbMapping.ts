@@ -49,13 +49,15 @@ export function normalizeAnchor(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const byte = String(raw.byte ?? '').replace(/[^0-9a-fA-F]/g, '').slice(0, 2);
   if (byte.length !== 2) return null;
-  return {
+  const node = {
     byte: byte.toUpperCase(),
     occurrence: Math.max(1, Number.isFinite(raw.occurrence) ? Math.round(Number(raw.occurrence)) : 1),
     searchFrom: Math.max(0, Number.isFinite(raw.searchFrom) ? Math.round(Number(raw.searchFrom)) : 0),
     searchLen: Math.max(0, Number.isFinite(raw.searchLen) ? Math.round(Number(raw.searchLen)) : 0),
     deltaBytes: Number.isFinite(raw.deltaBytes) ? Math.round(Number(raw.deltaBytes)) : 0,
   };
+  if (raw.fromEnd || raw.reverse) node.fromEnd = true;
+  return node;
 }
 
 /** Normalize optional fallback / require flags used when an anchor marker is missing.
@@ -92,7 +94,7 @@ export function createEmptyMatchGroup(mode = 'all') {
 }
 
 export function createEmptyCondition(type = 'hexPrefix') {
-  if (type === 'length') return { type: 'length', op: 'eq', value: 0 };
+  if (type === 'length') return { type: 'length', offset: 0, op: 'eq', value: 0 };
   if (type === 'byte') return { type: 'byte', offset: 0, op: 'eq', value: 0, mask: 0xff };
   if (type === 'bits') return { type: 'bits', offset: 0, bitStart: 0, bitCount: 1, op: 'eq', value: 0 };
   if (type === 'byteCompare') {
@@ -109,10 +111,12 @@ export function createEmptyCondition(type = 'hexPrefix') {
   return { type: 'hexPrefix', value: '' };
 }
 
-/** Authoring-only label. Empty/whitespace is omitted so firmware JSON stays compact. */
-function attachConditionName(node, raw) {
+/** Authoring-only name + enabled flag. Empty name and enabled:true are omitted. */
+function attachConditionMeta(node, raw) {
   const name = typeof raw?.name === 'string' ? raw.name.trim() : '';
-  return name ? { ...node, name } : node;
+  const out = name ? { ...node, name } : node;
+  if (raw && raw.enabled === false) return { ...out, enabled: false };
+  return out;
 }
 
 export function createEmptyExtractTarget(kind = 'maskColor') {
@@ -1399,17 +1403,22 @@ export function normalizeConditionNode(raw) {
   if (raw.type) {
     const type = raw.type;
     if (type === 'hexPrefix') {
-      return attachConditionName(
+      return attachConditionMeta(
         { type: 'hexPrefix', value: typeof raw.value === 'string' ? raw.value.replace(/[^0-9a-fA-F]/g, '') : '' },
         raw,
       );
     }
     if (type === 'length') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
-      return attachConditionName(
-        { type: 'length', op, value: Number.isFinite(raw.value) ? Number(raw.value) : 0 },
-        raw,
-      );
+      const node = {
+        type: 'length',
+        offset: Number.isFinite(raw.offset) ? Math.max(0, Number(raw.offset)) : 0,
+        op,
+        value: Number.isFinite(raw.value) ? Number(raw.value) : 0,
+      };
+      const anchor = normalizeAnchor(raw.anchor);
+      if (anchor) node.anchor = anchor;
+      return attachConditionMeta(node, raw);
     }
     if (type === 'byte') {
       const op = BYTE_OPS.has(raw.op) ? raw.op : 'eq';
@@ -1422,7 +1431,7 @@ export function normalizeConditionNode(raw) {
       };
       const anchor = normalizeAnchor(raw.anchor);
       if (anchor) node.anchor = anchor;
-      return attachConditionName(node, raw);
+      return attachConditionMeta(node, raw);
     }
     if (type === 'bytesAtOffset') {
       const node = {
@@ -1434,7 +1443,7 @@ export function normalizeConditionNode(raw) {
       };
       const anchor = normalizeAnchor(raw.anchor);
       if (anchor) node.anchor = anchor;
-      return attachConditionName(node, raw);
+      return attachConditionMeta(node, raw);
     }
     if (type === 'bits') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
@@ -1448,7 +1457,7 @@ export function normalizeConditionNode(raw) {
       };
       const anchor = normalizeAnchor(raw.anchor);
       if (anchor) node.anchor = anchor;
-      return attachConditionName(node, raw);
+      return attachConditionMeta(node, raw);
     }
     if (type === 'byteCompare') {
       const op = CMP_OPS.has(raw.op) ? raw.op : 'eq';
@@ -1462,7 +1471,7 @@ export function normalizeConditionNode(raw) {
         if (anchor) s.anchor = anchor;
         return s;
       };
-      return attachConditionName(
+      return attachConditionMeta(
         {
           type: 'byteCompare',
           left: normSide(raw.left),
@@ -1472,15 +1481,14 @@ export function normalizeConditionNode(raw) {
         raw,
       );
     }
-    return attachConditionName(createEmptyCondition('hexPrefix'), raw);
+    return attachConditionMeta(createEmptyCondition('hexPrefix'), raw);
   }
 
   const mode = raw.mode === 'some' ? 'some' : 'all';
   const children = Array.isArray(raw.children)
     ? raw.children.map(normalizeConditionNode)
     : [];
-  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
-  return name ? { mode, children, name } : { mode, children };
+  return attachConditionMeta({ mode, children }, raw);
 }
 
 export function normalizePresetVariables(raw) {
