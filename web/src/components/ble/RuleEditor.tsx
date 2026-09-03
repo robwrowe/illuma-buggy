@@ -2550,21 +2550,20 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
       )}
       {extractMode === 'curve' && (
         <Stack gap="xs" mt="xs">
-          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
-            <SearchableSelect
-              label="Curve"
-              size="xs"
-              flex={1}
-              value={curve.type || 'linear'}
-              onChange={(type) => set({ curve: { ...curve, type } })}
-              options={[
-                { value: 'linear', label: 'linear' },
-                { value: 'exponential', label: 'exponential' },
-                { value: 'reciprocal', label: 'reciprocal (rate→param)' },
-              ]}
-              allowEmpty={false}
-            />
-
+          <SearchableSelect
+            label="Curve"
+            size="xs"
+            flex={1}
+            value={curve.type || 'linear'}
+            onChange={(type) => set({ curve: { ...curve, type } })}
+            options={[
+              { value: 'linear', label: 'linear' },
+              { value: 'exponential', label: 'exponential' },
+              { value: 'reciprocal', label: 'reciprocal (rate→param)' },
+            ]}
+            allowEmpty={false}
+          />
+          <SimpleGrid cols={{ base: 2, sm: 2 }} spacing="xs">
             <NumberInput
               label={isReciprocal ? 'Hz min (clamp)' : 'In (min)'}
               size="xs"
@@ -2592,7 +2591,7 @@ function ExtractRowEditor({ extract, segmentOpts, colorSourceOpts = [], onChange
             />
 
             <NumberInput
-              label="Out (max)"
+              label="Out"
               size="xs"
               flex={1}
               value={curve.outMax ?? 255}
@@ -3651,6 +3650,16 @@ function PreviewPacketExtracts({ colorSources = [], extracts = [] }) {
   );
 }
 
+function ruleOptionLabel(rule, index) {
+  const name = typeof rule?.name === 'string' ? rule.name.trim() : '';
+  return name || `Rule ${index + 1}`;
+}
+
+function matchingIdsForRow(p) {
+  if (Array.isArray(p?.matchingRuleIds) && p.matchingRuleIds.length) return p.matchingRuleIds;
+  return p?.ruleId ? [p.ruleId] : [];
+}
+
 function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels, simIp = '' }) {
   const navigate = useNavigate();
   const [paste, setPaste] = useState('');
@@ -3658,7 +3667,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
   const [packets, setPackets] = useState<any[]>([]);
   const [matchMode, setMatchMode] = useState('first'); // first | all | selected
   const [unmatchedOnly, setUnmatchedOnly] = useState(false);
+  const [matchedRuleFilter, setMatchedRuleFilter] = useState<string[]>([]);
   const [debugMode, setDebugMode] = useState(false);
+  const [debugRuleFilter, setDebugRuleFilter] = useState<string[]>([]);
   const [copyStatus, setCopyStatus] = useState('');
   const [sendingRow, setSendingRow] = useState<any>(null);
 
@@ -3666,6 +3677,18 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
     () => (rules || []).find((r) => r.id === selectedRuleId) || null,
     [rules, selectedRuleId],
   );
+
+  useEffect(() => {
+    const ids = new Set((rules || []).map((r) => r.id).filter(Boolean));
+    setMatchedRuleFilter((prev) => {
+      const next = prev.filter((id) => ids.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+    setDebugRuleFilter((prev) => {
+      const next = prev.filter((id) => ids.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [rules]);
 
   const modelFor = (rule) => {
     const id = rule?.timing?.timingModelId;
@@ -3726,6 +3749,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           reportedUnmatched,
           ruleId: matched ? selectedRule.id : null,
           ruleName: matched ? selectedRule.name : null,
+          matchingRuleIds: matched && selectedRule.id ? [selectedRule.id] : [],
           priority: matched ? selectedRule.priority : null,
           extracts,
           colorSources,
@@ -3751,6 +3775,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           ruleId: topRule?.id || null,
           ruleName: prev.matchingRules.map((m) => m.rule.name).join(', ') || null,
           ruleNames: prev.matchingRules.map((m) => m.rule.name),
+          matchingRuleIds: prev.matchingRules.map((m) => m.rule.id).filter(Boolean),
           priority: topRule?.priority ?? null,
           extracts: extractRule
             ? previewExtracts(bytes, extractRule.extract || [], colors, mapFor(extractRule), {
@@ -3794,6 +3819,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
         reportedUnmatched,
         ruleId: first?.id || null,
         ruleName: first?.name || null,
+        matchingRuleIds: first?.id ? [first.id] : [],
         priority: first?.priority ?? null,
         extracts,
         colorSources,
@@ -3817,7 +3843,51 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
     [packets],
   );
 
-  const visiblePackets = unmatchedOnly ? unmatchedPackets : packets;
+  const ruleFilterOptions = useMemo(
+    () =>
+      (rules || [])
+        .map((r, i) => ({
+          value: r.id,
+          label: ruleOptionLabel(r, i),
+        }))
+        .filter((o) => o.value),
+    [rules],
+  );
+
+  const matchedRuleOptions = useMemo(() => {
+    const counts = new Map();
+    for (const p of packets) {
+      for (const id of matchingIdsForRow(p)) {
+        counts.set(id, (counts.get(id) || 0) + 1);
+      }
+    }
+    return ruleFilterOptions.map((o) => ({
+      value: o.value,
+      label: `${o.label} (${counts.get(o.value) || 0})`,
+    }));
+  }, [packets, ruleFilterOptions]);
+
+  const visiblePackets = useMemo(() => {
+    let rows = unmatchedOnly ? unmatchedPackets : packets;
+    if (matchedRuleFilter.length) {
+      const want = new Set(matchedRuleFilter);
+      rows = rows.filter((p) => matchingIdsForRow(p).some((id) => want.has(id)));
+    }
+    return rows;
+  }, [packets, unmatchedPackets, unmatchedOnly, matchedRuleFilter]);
+
+  const tablePackets = useMemo(() => {
+    if (!debugMode || !debugRuleFilter.length) return visiblePackets;
+    const want = new Set(debugRuleFilter);
+    const subset = (rules || []).filter((r) => want.has(r.id));
+    return visiblePackets.map((p) => {
+      const bytes = disneyPayload(hexToBytes(p.hex));
+      const debugLines = subset.flatMap((rule) =>
+        explainRulesAgainstPacket(bytes, [rule], { allRules: true, onlyRuleId: rule.id }),
+      );
+      return { ...p, debugLines };
+    });
+  }, [visiblePackets, debugMode, debugRuleFilter, rules]);
 
   const copyUnmatched = async ({ unique = false } = {}) => {
     if (!unmatchedPackets.length) {
@@ -3839,14 +3909,14 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
   };
 
   const copyPreviewTable = async () => {
-    if (!visiblePackets.length) {
+    if (!tablePackets.length) {
       setCopyStatus('No preview rows to copy');
       return;
     }
     try {
-      await copyTextToClipboard(previewRowsToTsv(visiblePackets, { debug: debugMode }));
+      await copyTextToClipboard(previewRowsToTsv(tablePackets, { debug: debugMode }));
       setCopyStatus(
-        `Copied ${visiblePackets.length} preview row${visiblePackets.length === 1 ? '' : 's'} as TSV`,
+        `Copied ${tablePackets.length} preview row${tablePackets.length === 1 ? '' : 's'} as TSV`,
       );
     } catch {
       setCopyStatus('Clipboard copy failed');
@@ -3890,7 +3960,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
       <SectionHead>Rule coverage preview</SectionHead>
       <Text size="xs" c="dimmed" mb="xs" lh={1.45}>
         Paste a list of hex / capture rows (8301 stripped automatically). Preview which rule each
-        packet would hit under the current rule set, and copy any that have no match.
+        packet would hit under the current rule set, and copy any that have no match. After Preview,
+        filter rows to packets that matched specific rule(s), and with Debug on, limit the debug
+        column to selected rule(s).
         {!simIp?.trim() && <> Simulator IP is empty — set it on the Wand Lab tab to enable Send.</>}
       </Text>
 
@@ -3926,12 +3998,44 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
             disabled={!packets.length}
             onChange={(e) => setUnmatchedOnly(e.currentTarget.checked)}
           />
+          <MultiSelect
+            size="xs"
+            searchable
+            clearable
+            placeholder="Matched rule(s)…"
+            data={matchedRuleOptions}
+            value={matchedRuleFilter}
+            onChange={setMatchedRuleFilter}
+            disabled={!packets.length}
+            miw={220}
+            maw={340}
+            title="Show only packets that matched these rules (OR). In First match mode this is the winning rule; use All matching rules to include lower-priority hits."
+            comboboxProps={{ withinPortal: true, zIndex: 1100 }}
+            nothingFoundMessage="No rules"
+          />
           <Checkbox
             size="xs"
             label="Debug"
             checked={debugMode}
             onChange={(e) => setDebugMode(e.currentTarget.checked)}
           />
+          {debugMode && (
+            <MultiSelect
+              size="xs"
+              searchable
+              clearable
+              placeholder="Debug rule(s)…"
+              data={ruleFilterOptions}
+              value={debugRuleFilter}
+              onChange={setDebugRuleFilter}
+              disabled={!packets.length}
+              miw={220}
+              maw={340}
+              title="Limit the Debug column to these rules. Shows pass/fail even if another rule won first."
+              comboboxProps={{ withinPortal: true, zIndex: 1100 }}
+              nothingFoundMessage="No rules"
+            />
+          )}
           <AppButton
             size="xs"
             variant="default"
@@ -3951,7 +4055,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
           <AppButton
             size="xs"
             variant="default"
-            disabled={!visiblePackets.length}
+            disabled={!tablePackets.length}
             onClick={copyPreviewTable}
           >
             Copy table
@@ -3963,6 +4067,9 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
         {status && (
           <Text size="xs" c="dimmed" mt="xs">
             {status}
+            {(unmatchedOnly || matchedRuleFilter.length) && packets.length > 0
+              ? ` — showing ${visiblePackets.length}`
+              : ''}
           </Text>
         )}
         {copyStatus && (
@@ -3988,7 +4095,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {visiblePackets.map((p) => (
+                {tablePackets.map((p) => (
                   <Table.Tr
                     key={p.rowIdx}
                     style={
@@ -4108,11 +4215,17 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
                     </Table.Td>
                   </Table.Tr>
                 ))}
-                {visiblePackets.length === 0 && (
+                {tablePackets.length === 0 && (
                   <Table.Tr>
                     <Table.Td colSpan={debugMode ? 9 : 8}>
                       <Text size="xs" c="dimmed">
-                        No unmatched packets in this paste.
+                        {matchedRuleFilter.length && unmatchedOnly
+                          ? 'No unmatched packets among the selected rule(s).'
+                          : matchedRuleFilter.length
+                            ? 'No packets match the selected rule(s).'
+                            : unmatchedOnly
+                              ? 'No unmatched packets in this paste.'
+                              : 'No packets to show.'}
                       </Text>
                     </Table.Td>
                   </Table.Tr>

@@ -696,28 +696,29 @@ export function explainRulesAgainstPacket(payloadBytes, rules, opts = {}) {
   const lines = [];
   for (const { rule } of indexed) {
     const name = ruleDisplayName(rule);
+    const ruleId = rule.id || '';
     if (rule.enabled === false) {
-      if (opts.onlyRuleId) lines.push({ ok: false, summary: `${name}: rule disabled` });
+      if (opts.onlyRuleId) lines.push({ ok: false, ruleId, summary: `${name}: rule disabled` });
       continue;
     }
     if (!rule.match) {
-      lines.push({ ok: false, summary: `${name}: no match tree` });
+      lines.push({ ok: false, ruleId, summary: `${name}: no match tree` });
       continue;
     }
     if (!matchTreeEnabled(rule.match)) {
-      lines.push({ ok: false, summary: `${name}: match tree disabled` });
+      lines.push({ ok: false, ruleId, summary: `${name}: match tree disabled` });
       continue;
     }
     const expl = explainConditionGroup(payloadBytes, rule.match);
     if (!expl.ok) {
-      lines.push({ ok: false, summary: `${name}: ${expl.failed}` });
+      lines.push({ ok: false, ruleId, summary: `${name}: ${expl.failed}` });
       continue;
     }
     if (!ruleRequiredAnchorsOk(rule, payloadBytes)) {
-      lines.push({ ok: false, summary: `${name}: requireAnchor marker missing` });
+      lines.push({ ok: false, ruleId, summary: `${name}: requireAnchor marker missing` });
       continue;
     }
-    lines.push({ ok: true, summary: `${name}: matched` });
+    lines.push({ ok: true, ruleId, summary: `${name}: matched` });
     if (!opts.allRules) break;
   }
   return lines;
