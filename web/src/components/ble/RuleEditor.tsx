@@ -2682,6 +2682,7 @@ function RuleCard({
   paletteOptions = [],
   onEditMaps,
   onEditTimingModels,
+  previewMatchCount = null,
 }) {
   const timing = rule.timing || createEmptyRuleTiming();
   const fallbackDuration = rule.fallbackDuration || createEmptyFallbackDuration();
@@ -2729,6 +2730,20 @@ function RuleCard({
           <Badge size="xs" variant="outline">
             P{rule.priority ?? index * 10}
           </Badge>
+          {previewMatchCount != null && (
+            <Badge
+              size="xs"
+              color={previewMatchCount === 0 ? 'orange' : 'teal'}
+              variant={previewMatchCount === 0 ? 'filled' : 'light'}
+              title={
+                previewMatchCount === 0
+                  ? 'No packets in the last preview matched this rule'
+                  : `${previewMatchCount} packet${previewMatchCount === 1 ? '' : 's'} in the last preview matched this rule`
+              }
+            >
+              {previewMatchCount} hit{previewMatchCount === 1 ? '' : 's'}
+            </Badge>
+          )}
           {rule.enabled === false && (
             <Badge size="xs" color="gray">
               off
@@ -3660,7 +3675,23 @@ function matchingIdsForRow(p) {
   return p?.ruleId ? [p.ruleId] : [];
 }
 
-function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels, simIp = '' }) {
+function emptyRuleHitCounts(rules) {
+  const counts = {};
+  for (const r of rules || []) {
+    if (r?.id) counts[r.id] = 0;
+  }
+  return counts;
+}
+
+function LivePreview({
+  rules,
+  colors,
+  selectedRuleId,
+  segmentMaps,
+  timingModels,
+  simIp = '',
+  onPreviewCounts,
+}) {
   const navigate = useNavigate();
   const [paste, setPaste] = useState('');
   const [status, setStatus] = useState('');
@@ -3702,10 +3733,16 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
       setStatus('Paste hex or capture rows first');
       setPackets([]);
       setCopyStatus('');
+      onPreviewCounts?.(null);
       return;
     }
+    const hitCounts = emptyRuleHitCounts(rules);
     const results = hexes.map((hex, rowIdx) => {
       const bytes = disneyPayload(hexToBytes(hex));
+      for (const r of rules || []) {
+        if (!r?.id) continue;
+        if (previewPacketAgainstRules(bytes, [r]).matched) hitCounts[r.id] += 1;
+      }
       const mapFor = (rule) =>
         rule?.segmentMapId
           ? (segmentMaps || []).find((m) => m.id === rule.segmentMapId) || null
@@ -3829,6 +3866,7 @@ function LivePreview({ rules, colors, selectedRuleId, segmentMaps, timingModels,
     });
     setPackets(results);
     setCopyStatus('');
+    onPreviewCounts?.(hitCounts);
     const hits = results.filter((r) => r.matched && !r.reportedUnmatched).length;
     const reported = results.filter((r) => r.reportedUnmatched).length;
     const misses = results.length - hits - reported;
@@ -4255,6 +4293,13 @@ export function RuleEditor({
   const timingModels = mapping.timingModels || [];
   const [expandedId, setExpandedId] = useState(rules[0]?.id || null);
   const [reorderOpen, setReorderOpen] = useState(false);
+  const [previewCounts, setPreviewCounts] = useState<Record<string, number> | null>(null);
+  const previewZeroCount = useMemo(() => {
+    if (!previewCounts) return null;
+    return rules.filter(
+      (r) => r.id && Object.prototype.hasOwnProperty.call(previewCounts, r.id) && previewCounts[r.id] === 0,
+    ).length;
+  }, [previewCounts, rules]);
 
   const setRules = (nextRules, { reindex = false } = {}) => {
     const out = reindex ? reindexRulePriorities(nextRules) : nextRules;
@@ -4319,6 +4364,7 @@ export function RuleEditor({
           segmentMaps={segmentMaps}
           timingModels={timingModels}
           simIp={simIp}
+          onPreviewCounts={setPreviewCounts}
         />
 
         <Group justify="space-between">
@@ -4332,6 +4378,11 @@ export function RuleEditor({
             <Text size="xs" c="dimmed">
               {rules.length} rule{rules.length === 1 ? '' : 's'}
             </Text>
+            {previewZeroCount != null && (
+              <Text size="xs" c={previewZeroCount > 0 ? 'orange' : 'dimmed'}>
+                {previewZeroCount} with 0 hits
+              </Text>
+            )}
           </Group>
           <Text size="xs" c="dimmed">
             Ordered rules evaluated on the board (lower priority first). Push with{' '}
@@ -4373,6 +4424,11 @@ export function RuleEditor({
             paletteOptions={paletteOptions}
             onEditMaps={onEditMaps}
             onEditTimingModels={onEditTimingModels}
+            previewMatchCount={
+              previewCounts && rule.id != null && Object.prototype.hasOwnProperty.call(previewCounts, rule.id)
+                ? previewCounts[rule.id]
+                : null
+            }
           />
         ))}
 
