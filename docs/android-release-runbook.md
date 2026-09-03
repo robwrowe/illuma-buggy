@@ -28,9 +28,9 @@ Ship a sideload APK of the Illuma Buggy companion app (`com.illumabuggy.app`) on
 |------|-----|
 | **Park / field phone (clean prod)** | **`npm run build:apk:prod:clean`** |
 | Incremental field APK (no versionCode bump) | Path A — `./build-apk.sh prod --eas` |
-| Daily JS iteration with BLE | Dev client + Metro (`npm run start:clear`) |
-| No EAS / no network | Path C — local Gradle (dev-client still in the binary) |
-| New native module (`react-native-*`, Expo plugin) | Clean prod (same command as park phone) |
+| Local APK on this Mac (no EAS) | [Local Gradle](#local-gradle-build) — `./build-apk.sh prod` or `dev` |
+| Daily JS iteration with BLE | Local debug APK + Metro (`npm run start:clear`) |
+| New native module (`react-native-*`, Expo plugin) | Clean prod for park; local `--clean` for bench |
 
 `npm run build:clean` is **not** a production build — it is the EAS **development** profile (needs Metro).
 
@@ -170,21 +170,132 @@ eas build:download --platform android --profile preview --latest -o dist/illuma-
 
 ---
 
-## Path C — Local Gradle (bench only)
+## Local Gradle build
 
-Needs Android Studio / SDK + JDK 17–23 (Gradle 8.13). Default ABI is `arm64-v8a` (Pixel).
+Use this when you want an APK from this Mac without waiting on EAS: bench testing, no network, or iterating on native code. The helper is `app/build-apk.sh` **without** `--eas`.
+
+Local **release** embeds JS (no Metro), but **still includes the expo-dev-client binary**. Local **debug** is a true dev client and needs Metro. Neither is a park APK — for that, use the [clean production build](#clean-production-build-field-release).
+
+A leftover `app/android/` from a local build will break the next EAS job. Delete it (`rm -rf android .expo`) or use `--clean` on the EAS command before kicking a cloud build.
+
+### Local toolchain (once)
+
+On this Mac:
+
+1. **Node 18+** (`cd app && npm install --legacy-peer-deps`).
+2. **Android Studio** — install via [developer.android.com](https://developer.android.com/studio). Open **SDK Manager** and install:
+   - Android SDK Platform (current compile SDK is fine)
+   - Android SDK Build-Tools
+   - NDK (Side by side)
+   - Android SDK Platform-Tools (`adb`)
+3. **JDK 17–23** (Gradle 8.13). Android Studio’s bundled JBR 21 is enough. The script looks for:
+   - `$JAVA_HOME` if it is already 17–23
+   - `/Applications/Android Studio.app/Contents/jbr/Contents/Home`
+   - `/usr/libexec/java_home -v 21` then `-v 17`
+
+   If your default `java` is 24+, set:
+
+   ```bash
+   brew install openjdk@21   # only if Studio’s JBR is missing
+   export JAVA_HOME="$(/usr/libexec/java_home -v 21)"
+   ```
+
+4. **SDK path.** The script writes `android/local.properties` from the first of `$ANDROID_HOME`, `$ANDROID_SDK_ROOT`, `~/Library/Android/sdk`, `~/Android/Sdk`.
+5. **Maps key in `app/.env`** (not the EAS secret):
+
+   ```bash
+   # app/.env  — gitignored
+   GOOGLE_MAPS_API_KEY=your-key-here
+   ```
+
+   Or `export GOOGLE_MAPS_API_KEY=...` in the shell. Without it, zone maps are blank; the script asks before continuing.
+
+USB debugging: on the Pixel, enable Developer options → USB debugging, then `adb devices` must show `device` (not `unauthorized`).
+
+### Local release APK (embedded JS)
+
+JS is baked into the APK. The app opens without Metro. The expo-dev-client launcher can still appear.
 
 ```bash
 cd app
-# maps key: export GOOGLE_MAPS_API_KEY=...  or put it in app/.env
-./build-apk.sh prod --install          # release APK + adb install -r
-# or
-./build-apk.sh prod --clean            # wipe android/ + prebuild first
+./build-apk.sh prod                         # → app/dist/illuma-buggy-prod.apk
+./build-apk.sh prod --install               # same, then adb install -r
+./build-apk.sh prod --clean                 # wipe android/ + .expo, prebuild, then release
+./build-apk.sh prod --clean --install       # clean rebuild + install
 ```
 
-Output: `app/dist/illuma-buggy-prod.apk`.
+Same via npm: `npm run build:apk:prod`.
 
-**Caveat:** local release still ships the expo-dev-client binary. For a park phone, use the [clean production build](#clean-production-build-field-release).
+What `./build-apk.sh prod` does:
+
+1. Picks a JDK 17–23
+2. `npm install --legacy-peer-deps` if `node_modules/` is missing
+3. `npx expo prebuild --platform android --no-install` if `android/gradlew` is missing (`--clean` always wipes and re-prebuilds)
+4. `./gradlew :app:assembleRelease` for `arm64-v8a` (Pixel). Add `--all-archs` for every ABI
+5. Copies `android/app/build/outputs/apk/release/app-release.apk` → `app/dist/illuma-buggy-prod.apk`
+
+### Local debug APK (Metro)
+
+Use this for day-to-day JS work with BLE. The phone loads JS from the laptop.
+
+```bash
+cd app
+./build-apk.sh dev --install
+# on the Mac:
+npm run start:clear
+```
+
+Same via npm: `npm run build:apk:dev`. Output: `app/dist/illuma-buggy-dev.apk`.
+
+Phone and Mac must be on the same LAN (or an Expo tunnel). Open Illuma Buggy on the Pixel; it should attach to Metro. BLE works in this build — Expo Go does not.
+
+After a JS-only change, rebuild is not required: reload Metro. After a **native** change (new `react-native-*` dep, Expo plugin, `app.config.js` permissions), rebuild with `--clean`.
+
+### Clean local rebuild
+
+Needed after native deps, a broken `android/` tree, or a Gradle cache that will not recover:
+
+```bash
+cd app
+./build-apk.sh prod --clean --install    # local release
+./build-apk.sh dev --clean --install     # local debug
+```
+
+`--clean` locally deletes `android/` and `.expo/`, then runs `expo prebuild`. It does **not** delete `node_modules/` (unlike EAS `--clean`).
+
+### Manual equivalent
+
+```bash
+cd app
+npm install --legacy-peer-deps
+
+# Maps key must be in the environment for prebuild to bake it into the Android manifest
+export GOOGLE_MAPS_API_KEY="$(grep -E '^GOOGLE_MAPS_API_KEY=' .env | cut -d= -f2- | tr -d "'\"")"
+
+rm -rf android .expo
+npx expo prebuild --platform android --no-install
+
+# JDK 17–23; SDK in local.properties
+export JAVA_HOME="$(/usr/libexec/java_home -v 21)"
+printf 'sdk.dir=%s\n' "$HOME/Library/Android/sdk" > android/local.properties
+
+cd android
+./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a
+# debug instead:  ./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a
+cd ..
+
+mkdir -p dist
+cp android/app/build/outputs/apk/release/app-release.apk dist/illuma-buggy-prod.apk
+adb install -r dist/illuma-buggy-prod.apk
+```
+
+Pass extra Gradle flags after `--`, e.g. `./build-apk.sh prod -- --stacktrace`.
+
+### Local vs EAS signing
+
+Local Gradle uses the **debug keystore** (Expo prebuild default) unless you have configured a release keystore. EAS uses the project keystore on expo.dev. Android will refuse `adb install -r` across those signatures — uninstall `com.illumabuggy.app` first (this wipes app data: presets, zones, etc.).
+
+Local `versionCode` does not auto-increment. If install fails as a downgrade, uninstall first.
 
 ---
 
@@ -207,8 +318,9 @@ adb install -r app/dist/illuma-buggy-prod.apk
 
 ### After install
 
-- A **preview/production** APK launches by itself — no Metro.
-- A **development** APK waits for Metro on the laptop:
+- An EAS **preview/production** APK launches by itself — no Metro.
+- A local **release** APK also embeds JS, but may still show the expo-dev-client UI.
+- A **development** / local **debug** APK waits for Metro on the laptop:
 
   ```bash
   cd app && npm run start:clear
@@ -224,7 +336,7 @@ Do this on the phone that will go to the park, with the logic board powered.
 
 | # | Check | Pass |
 |---|--------|------|
-| V1 | App icon / splash | Opens; no expo-dev-client launcher (clean prod / Path A) |
+| V1 | App icon / splash | Opens; no expo-dev-client launcher (EAS clean prod / Path A). Local release may still show the dev-client UI |
 | V2 | Permissions | Bluetooth, location (precise), notifications — grant all; background location if you use zones |
 | V3 | BLE connect | Home → connect to **IllumaBuggy**; session becomes ready (not just “connected”) |
 | V4 | Maps | Zones screen shows the map (proves the Maps key made it into the binary) |
@@ -233,7 +345,7 @@ Do this on the phone that will go to the park, with the logic board powered.
 | V7 | GPS zones | Outdoor: enter a drawn zone → preset triggers (zones enabled) |
 | V8 | Kill & reopen | Force-stop, reopen, reconnect — no Metro prompt |
 
-If V4 fails but V3 works, the APK is fine except `GOOGLE_MAPS_API_KEY` was empty at build time — set the EAS secret and rebuild.
+If V4 fails but V3 works, the Maps key was empty at build time. EAS: set the secret and rebuild. Local: put it in `app/.env` and rebuild with `--clean` so prebuild picks it up.
 
 ---
 
@@ -247,6 +359,8 @@ If V4 fails but V3 works, the APK is fine except `GOOGLE_MAPS_API_KEY` was empty
 
 All three are APKs. None of them produce an AAB. `npm run build:clean` is the **development** profile with a local wipe — not production.
 
+Local Gradle (`./build-apk.sh prod` / `dev`) is not an EAS profile. It uses the debug keystore and still ships expo-dev-client.
+
 ---
 
 ## Troubleshooting
@@ -254,23 +368,26 @@ All three are APKs. None of them produce an AAB. `npm run build:clean` is the **
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | EAS `ENOENT ... gradlew` | Local `app/android/` present; CNG prebuild skipped | `npm run build:apk:prod:clean` (or `rm -rf android .expo` then rebuild). Never prebuild before EAS |
-| Script exits: `android/ exists` | Leftover local prebuild | Re-run with `--clean`, or delete `android/` |
-| Zones map is blank / grey | Missing Maps key in that binary | `eas secret:list`; recreate `GOOGLE_MAPS_API_KEY`; rebuild clean prod |
-| App asks for Metro / shows dev menu | Dev-client APK (`development` profile, `npm run build:clean`, or local Path C) | Rebuild with `npm run build:apk:prod:clean` |
-| `adb install` fails: signatures | Different keystore than the installed app | Uninstall `com.illumabuggy.app` (wipes local app data), or keep using the EAS keystore |
-| `adb install` fails: version downgrade | `versionCode` not higher | Clean prod (`production` autoIncrement), or uninstall first |
-| BLE missing / crash on scan | Built with Expo Go, or stale native project after adding a native dep | Always custom build; for new native deps use clean prod |
-| New `react-native-*` dep does nothing | Metro-only; native code not in the APK | Clean prod rebuild. Hot reload is not enough |
-| JDK / Gradle errors locally | Java 24+ or no Android SDK | Clean prod (EAS) instead, or JDK 17–21 + Android Studio SDK |
+| Script exits: `android/ exists` | Leftover local prebuild on an EAS command | Re-run with `--clean`, or delete `android/` |
+| Zones map is blank / grey | Missing Maps key in that binary | EAS: `eas secret:list` and rebuild. Local: `app/.env` + `--clean` so prebuild rebakes the key |
+| App asks for Metro / shows dev menu | Dev-client APK (`development` profile, `npm run build:clean`, or local debug/release) | Park phone: `npm run build:apk:prod:clean`. Bench debug: start Metro (`npm run start:clear`) |
+| `adb install` fails: signatures | Local debug keystore vs EAS keystore (or a different machine) | Uninstall `com.illumabuggy.app` (wipes local app data), then reinstall |
+| `adb install` fails: version downgrade | `versionCode` not higher | EAS production autoIncrement, or uninstall first |
+| BLE missing / crash on scan | Built with Expo Go, or stale native project after adding a native dep | Always custom build; local `--clean` or EAS clean prod |
+| New `react-native-*` dep does nothing | Metro-only; native code not in the APK | Local: `./build-apk.sh prod --clean`. Park: clean prod. Hot reload is not enough |
+| `No compatible JDK found` / Gradle fails | Java 24+ as default, or `$JAVA_HOME` wrong | `export JAVA_HOME="$(/usr/libexec/java_home -v 21)"` or install Android Studio’s JBR |
+| `Android SDK not found` | Studio SDK not installed, or not in the usual path | SDK Manager → Platform + Build-Tools + NDK; or set `ANDROID_HOME` |
+| `No adb device found` | USB debugging off, or unauthorized | Enable USB debugging; accept the RSA prompt; `adb devices` → `device` |
+| Metro never connects | Debug APK but Metro not running, or different LAN | `cd app && npm run start:clear`; same Wi-Fi, or use a tunnel |
 | Build queued forever | EAS plan / concurrent limit | Cancel old builds on expo.dev, or wait |
-| Wrong JS in the APK | Uncommitted files, or built from the wrong directory | Run EAS from `app/`; confirm `git status` before kicking the build |
+| Wrong JS in the APK | Uncommitted files, or built from the wrong directory | Run from `app/`; confirm `git status` before kicking EAS |
 
 ---
 
 ## Related
 
-- `app/build-apk.sh` — APK helper (`prod --eas --clean --production` = clean field release)
-- `app/package.json` — `npm run build:apk:prod:clean`
+- `app/build-apk.sh` — APK helper (`prod --eas --clean --production` = EAS field release; `prod` / `dev` = local Gradle)
+- `app/package.json` — `npm run build:apk:prod:clean` (EAS); `npm run build:apk:prod` / `build:apk:dev` (local)
 - `app/build.sh` — EAS **development** profile only (`npm run build:clean` is not prod)
 - `app/eas.json` — profiles
 - `app/app.config.js` — package id, Maps key, EAS project id

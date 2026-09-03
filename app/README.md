@@ -46,6 +46,19 @@ That wipes `node_modules/`, `android/`, and `.expo/`, then builds the EAS **prod
 
 `npm run build:clean` is a **dev client** EAS build, not a park APK.
 
+## Local Gradle APK (this Mac)
+
+Needs Android Studio / SDK + JDK 17–23. Maps key from `app/.env`. Full steps: [docs/android-release-runbook.md](../docs/android-release-runbook.md#local-gradle-build).
+
+```bash
+cd app
+./build-apk.sh prod --install          # local release APK (JS embedded; still has expo-dev-client)
+./build-apk.sh dev --install           # local debug APK; then npm run start:clear
+./build-apk.sh prod --clean --install  # wipe android/ + prebuild, then release
+```
+
+Delete `app/android/` before the next EAS job, or the cloud prebuild will be skipped.
+
 ## Project structure
 
 ```
