@@ -475,14 +475,20 @@ See `firmware/WandSimulator/API.md`. The web tool talks to `http://<sim-ip>/stat
 ```bash
 cd app
 npm run build          # EAS cloud build (Android, development profile)
-npm run build:clean    # clean prebuild + EAS build
-npm run build:apk      # standalone APK build
+npm run build:clean    # wipe local dirs + EAS development profile (needs Metro)
+npm run build:apk:prod:clean   # wipe local dirs + EAS production APK (field release)
+./build-apk.sh prod --eas      # incremental EAS preview APK (no versionCode bump)
+./build-apk.sh prod --install  # local Gradle release APK (needs Android SDK)
+./build-apk.sh prod --no-dev-client --install  # local release without expo-dev-client
+./build-apk.sh dev --install   # local Gradle debug APK + Metro
 ```
 
 `app.config.js` reads `process.env.GOOGLE_MAPS_API_KEY` from EAS secret at build time.
 Android package: `com.illumabuggy.app`
 
-New native dependencies require a full `build:clean` — Metro hot reload is not enough.
+New native dependencies require a full production rebuild (`npm run build:apk:prod:clean`) — Metro hot reload is not enough.
+
+Field/park APK steps: [`docs/android-release-runbook.md`](docs/android-release-runbook.md).
 
 ### Firmware
 

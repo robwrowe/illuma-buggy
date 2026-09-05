@@ -119,15 +119,29 @@ static int resolveAnchorOffset(const uint8_t* payload, size_t plen, JsonObjectCo
   if (start > plen) start = plen;
   int searchLen = anchor["searchLen"] | 0;
   size_t end = (searchLen > 0) ? min(plen, start + (size_t)searchLen) : plen;
+  bool fromEnd = (anchor["fromEnd"] | false) || (anchor["reverse"] | false);
+  long delta = (long)(anchor["deltaBytes"] | 0);
+
+  auto finish = [&](size_t i) -> int {
+    long result = (long)i + delta;
+    if (result < 0 || (size_t)result >= plen) return -1;
+    return (int)result;
+  };
 
   int count = 0;
-  for (size_t i = start; i < end; i++) {
-    if (payload[i] == target) {
-      count++;
-      if (count == occurrence) {
-        long result = (long)i + (long)(anchor["deltaBytes"] | 0);
-        if (result < 0 || (size_t)result >= plen) return -1;
-        return (int)result;
+  if (!fromEnd) {
+    for (size_t i = start; i < end; i++) {
+      if (payload[i] == target) {
+        count++;
+        if (count == occurrence) return finish(i);
+      }
+    }
+  } else if (end > start) {
+    for (size_t i = end; i > start; ) {
+      i--;
+      if (payload[i] == target) {
+        count++;
+        if (count == occurrence) return finish(i);
       }
     }
   }
@@ -264,6 +278,38 @@ static bool matchHexPrefix(const uint8_t* payload, size_t plen, const char* hex)
   return true;
 }
 
+/** True when `hex` is even-length and every nibble is 0-9a-fA-F. */
+static bool hexStringValid(const char* hex, size_t hexLen) {
+  if (!hex || hexLen == 0 || (hexLen & 1)) return false;
+  for (size_t i = 0; i < hexLen; i++) {
+    if (hexNibble(hex[i]) < 0) return false;
+  }
+  return true;
+}
+
+/** Literal match of `need` bytes parsed from `hex` starting at `offset`. */
+static bool hexBytesMatchAt(const uint8_t* payload, size_t plen, size_t offset,
+                            const char* hex, size_t need) {
+  if (!payload || !hex || offset + need > plen) return false;
+  for (size_t i = 0; i < need; i++) {
+    int hi = hexNibble(hex[i * 2]);
+    int lo = hexNibble(hex[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    if (payload[offset + i] != (uint8_t)((hi << 4) | lo)) return false;
+  }
+  return true;
+}
+
+/** True if `hex` occurs anywhere in payload[offset .. plen). */
+static bool hexBytesFoundFrom(const uint8_t* payload, size_t plen, size_t offset,
+                              const char* hex, size_t need) {
+  if (need == 0 || offset + need > plen) return false;
+  for (size_t start = offset; start + need <= plen; start++) {
+    if (hexBytesMatchAt(payload, plen, start, hex, need)) return true;
+  }
+  return false;
+}
+
 static bool compareOp(uint32_t lhs, const char* op, uint32_t rhs) {
   if (!op) return false;
   if (strcmp(op, "eq") == 0)  return lhs == rhs;
@@ -288,7 +334,10 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     return matchHexPrefix(payload, plen, leaf["value"] | "");
   }
   if (strcmp(type, "length") == 0) {
-    return compareOp((uint32_t)plen, leaf["op"] | "eq", (uint32_t)(leaf["value"] | 0));
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, leaf, 0);
+    if (offsetResolved < 0 || (size_t)offsetResolved > plen) return false;
+    uint32_t remaining = (uint32_t)(plen - (size_t)offsetResolved);
+    return compareOp(remaining, leaf["op"] | "eq", (uint32_t)(leaf["value"] | 0));
   }
   if (strcmp(type, "byte") == 0) {
     int offsetResolved = resolveOffsetOrAnchor(payload, plen, leaf, 0);
@@ -331,6 +380,23 @@ static bool evaluateLeaf(const uint8_t* payload, size_t plen, const JsonObject& 
     uint32_t rv = extractBits(payload, plen, rOffset, rBitStart, rBitCount);
     return compareOp(lv, leaf["op"] | "eq", rv);
   }
+  if (strcmp(type, "bytesAtOffset") == 0) {
+    int offsetResolved = resolveOffsetOrAnchor(payload, plen, leaf, 0);
+    if (offsetResolved < 0) return false;
+    size_t offset = (size_t)offsetResolved;
+
+    const char* hex = leaf["value"] | "";
+    size_t hexLen = strlen(hex);
+    if (!hexStringValid(hex, hexLen)) return false;
+    size_t need = hexLen / 2;
+
+    bool scan = (leaf["scan"] | false) || (leaf["contains"] | false);
+    bool found = scan
+      ? hexBytesFoundFrom(payload, plen, offset, hex, need)
+      : hexBytesMatchAt(payload, plen, offset, hex, need);
+    const char* op = leaf["op"] | "eq";
+    return (strcmp(op, "neq") == 0) ? !found : found;
+  }
   return false;
 }
 
@@ -355,13 +421,25 @@ bool evaluateConditionGroup(const uint8_t* payload, size_t plen, const JsonObjec
   if (children.isNull() || children.size() == 0) return false;
 
   bool isAll = (strcmp(mode, "all") == 0);
+  int considered = 0;
   for (JsonVariant v : children) {
     if (!v.is<JsonObject>()) continue;
-    bool ok = evaluateConditionGroup(payload, plen, v.as<JsonObject>());
+    JsonObject child = v.as<JsonObject>();
+    if (!(child["enabled"] | true)) continue;
+    considered++;
+    bool ok = evaluateConditionGroup(payload, plen, child);
     if (isAll && !ok) return false;
     if (!isAll && ok) return true;
   }
+  if (considered == 0) return false;
   return isAll;
+}
+
+/** Root match tree: disabled match (or missing) never fires the rule. */
+static bool evaluateMatchRoot(const uint8_t* payload, size_t plen, const JsonObject& match) {
+  if (match.isNull()) return false;
+  if (!(match["enabled"] | true)) return false;
+  return evaluateConditionGroup(payload, plen, match);
 }
 
 int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules) {
@@ -409,7 +487,7 @@ int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules
     JsonObject rule = rules[idxs[k]].as<JsonObject>();
     JsonObject match = rule["match"].as<JsonObject>();
     if (match.isNull()) continue;
-    if (!evaluateConditionGroup(payload, plen, match)) continue;
+    if (!evaluateMatchRoot(payload, plen, match)) continue;
     if (!ruleRequiredAnchorsOk(rule, payload, plen)) {
       Serial.printf("[Rule] skip idx=%d id=%s — required anchor not found\n",
                     idxs[k], rule["id"] | "(no id)");
@@ -434,7 +512,7 @@ int findMatchingRule(const uint8_t* payload, size_t plen, const JsonArray& rules
         if (strncmp(name, "cd-07", 5) != 0) continue;
         JsonObject match = rule["match"].as<JsonObject>();
         JsonArray kids = match["children"].as<JsonArray>();
-        bool ok = !match.isNull() && evaluateConditionGroup(payload, plen, match);
+        bool ok = evaluateMatchRoot(payload, plen, match);
         Serial.printf("[RuleDbg]   %s match=%d childCount=%u\n",
                       name, ok ? 1 : 0,
                       kids.isNull() ? 0u : (unsigned)kids.size());

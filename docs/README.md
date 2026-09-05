@@ -19,6 +19,7 @@
 - [pcb-final-build-spec.md](./pcb-final-build-spec.md) — **authoritative** combined PCB + UART/OLED/SD + Parts 1–13 software build order
 - [claude-memory-uart-dual-board.md](./claude-memory-uart-dual-board.md) — pasteable agent memory: UART dual-board, no ESP-NOW, pin maps (Jul 2026)
 - [rules-psram-runbook.md](./rules-psram-runbook.md) — push or embed MB rules into the board (SPIFFS + PSRAM cache)
+- [android-release-runbook.md](./android-release-runbook.md) — sideload APK release of the Android companion app (EAS preview/production)
 - [rule-exclusivity-checklist.md](./rule-exclusivity-checklist.md) — bench matrix for ignore-lower / ignore-all rule flags
 - [rule-engine-anchor-offsets.md](./rule-engine-anchor-offsets.md) — anchor-relative byte offsets in MB rules (schema + research notes)
 - [mb-sw-test-checklist.md](./mb-sw-test-checklist.md) — MagicBand+ / Starlight bench & park checks

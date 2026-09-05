@@ -3,6 +3,7 @@ app/.expo/
 app/.expo-export-test/
 app/android/
 app/dist/
+app/package.json.illuma-bak
 app/.bundle-out/
 app/.bundle-out*/
 
@@ -15,7 +16,8 @@ firmware/**/*.bin      # compiled artifacts
 # Local rules seed for scripts/embed_rules.py (generated EmbeddedRules.h stays tracked as placeholder)
 firmware/StrollerController/embedded_rules.json
 
-# Webcam waveform classifier — raw captures and generated reports
+# Webcam waveform classifier — local machine config, raw captures, generated reports
+tools/wave-classifier/config.toml
 tools/wave-classifier/calibration.toml
 tools/wave-classifier/reports/
 tools/wave-classifier/builder_trials/

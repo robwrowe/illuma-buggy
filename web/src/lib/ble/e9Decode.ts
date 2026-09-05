@@ -299,6 +299,34 @@ export function matchHexPrefix(payload, hex) {
 }
 
 /**
+ * Multi-byte literal match starting at a resolved offset (bytesAtOffset leaf).
+ * When `opts.scan` (or `opts.contains`) is true, search from `offset` through the tail.
+ */
+export function matchBytesAtOffset(payloadBytes, offset, hex, opts = {}) {
+  if (!payloadBytes || offset == null || offset < 0) return false;
+  const clean = String(hex || '').replace(/[^0-9a-fA-F]/g, '');
+  if (!clean.length || (clean.length & 1)) return false;
+  const need = clean.length / 2;
+  const scan = !!(opts?.scan || opts?.contains);
+
+  const matchesAt = (start) => {
+    if (start + need > payloadBytes.length) return false;
+    for (let i = 0; i < need; i++) {
+      const want = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+      if ((payloadBytes[start + i] & 0xff) !== want) return false;
+    }
+    return true;
+  };
+
+  if (!scan) return matchesAt(offset);
+  if (offset + need > payloadBytes.length) return false;
+  for (let start = offset; start + need <= payloadBytes.length; start++) {
+    if (matchesAt(start)) return true;
+  }
+  return false;
+}
+
+/**
  * Mirrors firmware resolveAnchorOffset(). Returns -1 if not found.
  * @param {number[]} payloadBytes
  * @param {object} anchor
@@ -313,15 +341,28 @@ export function resolveAnchorOffset(payloadBytes, anchor) {
   const start = Math.min(Math.max(0, Number(anchor.searchFrom ?? 0)), payloadBytes.length);
   const searchLen = Number(anchor.searchLen ?? 0);
   const end = searchLen > 0 ? Math.min(payloadBytes.length, start + searchLen) : payloadBytes.length;
+  const fromEnd = !!(anchor.fromEnd || anchor.reverse);
+  const delta = Number(anchor.deltaBytes ?? 0);
+
+  const finish = (i) => {
+    const result = i + delta;
+    if (result < 0 || result >= payloadBytes.length) return -1;
+    return result;
+  };
 
   let count = 0;
-  for (let i = start; i < end; i++) {
-    if ((payloadBytes[i] & 0xff) === target) {
-      count++;
-      if (count === occurrence) {
-        const result = i + Number(anchor.deltaBytes ?? 0);
-        if (result < 0 || result >= payloadBytes.length) return -1;
-        return result;
+  if (!fromEnd) {
+    for (let i = start; i < end; i++) {
+      if ((payloadBytes[i] & 0xff) === target) {
+        count++;
+        if (count === occurrence) return finish(i);
+      }
+    }
+  } else {
+    for (let i = end - 1; i >= start; i--) {
+      if ((payloadBytes[i] & 0xff) === target) {
+        count++;
+        if (count === occurrence) return finish(i);
       }
     }
   }
@@ -400,7 +441,8 @@ export function formatOffsetOrAnchorLabel(node) {
     const a = node.anchor;
     const delta = Number(a.deltaBytes ?? 0);
     const deltaStr = delta ? (delta > 0 ? `+${delta}` : String(delta)) : '';
-    return `anchor 0x${a.byte}×${a.occurrence ?? 1}${deltaStr}`;
+    const dirStr = a.fromEnd || a.reverse ? ' fromEnd' : '';
+    return `anchor 0x${a.byte}×${a.occurrence ?? 1}${dirStr}${deltaStr}`;
   }
   return `off ${node?.offset ?? 0}`;
 }
@@ -416,7 +458,9 @@ export function evaluateLeaf(payloadBytes, leaf) {
     return matchHexPrefix(payloadBytes, leaf.value ?? '');
   }
   if (type === 'length') {
-    return compareOp(payloadBytes.length, leaf.op || 'eq', Number(leaf.value ?? 0));
+    const offset = resolveOffsetOrAnchor(payloadBytes, leaf, 0);
+    if (offset < 0 || offset > payloadBytes.length) return false;
+    return compareOp(payloadBytes.length - offset, leaf.op || 'eq', Number(leaf.value ?? 0));
   }
   if (type === 'byte') {
     const offset = resolveOffsetOrAnchor(payloadBytes, leaf, 0);
@@ -449,6 +493,16 @@ export function evaluateLeaf(payloadBytes, leaf) {
     const rv = extractBits(payloadBytes, rightOff, Number(right.bitStart ?? 0), Number(right.bitCount ?? 8));
     return compareOp(lv, leaf.op || 'eq', rv);
   }
+  if (type === 'bytesAtOffset') {
+    const offset = resolveOffsetOrAnchor(payloadBytes, leaf, 0);
+    if (offset < 0) return false;
+    const clean = String(leaf.value ?? '').replace(/[^0-9a-fA-F]/g, '');
+    if (!clean.length || (clean.length & 1)) return false;
+    const found = matchBytesAtOffset(payloadBytes, offset, clean, {
+      scan: !!(leaf.scan || leaf.contains),
+    });
+    return leaf.op === 'neq' ? !found : found;
+  }
   return false;
 }
 
@@ -466,12 +520,20 @@ export function evaluateConditionGroup(payloadBytes, groupNode) {
   if (!children.length) return false;
 
   const isAll = mode === 'all';
+  let considered = 0;
   for (const child of children) {
+    if (!child || child.enabled === false) continue;
+    considered++;
     const ok = evaluateConditionGroup(payloadBytes, child);
     if (isAll && !ok) return false;
     if (!isAll && ok) return true;
   }
+  if (considered === 0) return false;
   return isAll;
+}
+
+function matchTreeEnabled(node) {
+  return !!node && node.enabled !== false;
 }
 
 /**
@@ -496,11 +558,170 @@ export function findMatchingRule(payloadBytes, rules) {
     return a.index - b.index;
   });
   for (const { rule } of indexed) {
-    if (!rule.match || !evaluateConditionGroup(payloadBytes, rule.match)) continue;
+    if (!matchTreeEnabled(rule.match) || !evaluateConditionGroup(payloadBytes, rule.match)) continue;
     if (!ruleRequiredAnchorsOk(rule, payloadBytes)) continue;
     return rule;
   }
   return null;
+}
+
+function fmtHexByte(n) {
+  return `0x${(Number(n) & 0xff).toString(16).toUpperCase().padStart(2, '0')}`;
+}
+
+/** Short label for a leaf or group (uses optional name when set). */
+export function describeConditionNode(node) {
+  if (!node || typeof node !== 'object') return '(empty)';
+  const name = typeof node.name === 'string' ? node.name.trim() : '';
+  if (node.type) {
+    const spec = describeConditionLeaf(node);
+    return name ? `${name} (${spec})` : spec;
+  }
+  const mode = node.mode === 'some' ? 'OR' : 'AND';
+  return name ? `${mode} “${name}”` : mode;
+}
+
+function describeConditionLeaf(leaf) {
+  const type = leaf?.type || 'leaf';
+  const loc = formatOffsetOrAnchorLabel(leaf);
+  if (type === 'hexPrefix') return `hexPrefix ${leaf.value || ''}`;
+  if (type === 'length') return `length ${leaf.op || 'eq'} ${leaf.value ?? 0} (${loc})`;
+  if (type === 'byte') return `byte ${loc} ${leaf.op || 'eq'} ${fmtHexByte(leaf.value ?? 0)}`;
+  if (type === 'bits') {
+    return `bits ${loc} [${leaf.bitStart ?? 0}+:${leaf.bitCount ?? 1}] ${leaf.op || 'eq'} ${leaf.value ?? 0}`;
+  }
+  if (type === 'bytesAtOffset') {
+    const scan = leaf.scan || leaf.contains ? ' scan' : '';
+    return `bytesAtOffset ${loc} ${leaf.op || 'eq'} ${leaf.value || ''}${scan}`;
+  }
+  if (type === 'byteCompare') {
+    return `byteCompare ${formatOffsetOrAnchorLabel(leaf.left)} ${leaf.op || 'eq'} ${formatOffsetOrAnchorLabel(leaf.right)}`;
+  }
+  return type;
+}
+
+function leafFailDetail(payloadBytes, leaf) {
+  const label = describeConditionNode(leaf);
+  const type = leaf?.type;
+  if (type === 'hexPrefix') {
+    const want = String(leaf.value || '').replace(/[^0-9a-fA-F]/g, '');
+    const got = bytesToHex(payloadBytes).slice(0, Math.max(8, want.length));
+    return `${label} — payload starts ${got}`;
+  }
+  if (type === 'length' || type === 'byte' || type === 'bits' || type === 'bytesAtOffset') {
+    const off = resolveOffsetOrAnchor(payloadBytes, leaf, 0);
+    if (off < 0) return `${label} — marker not found`;
+    if (type === 'length') {
+      if (off > payloadBytes.length) return `${label} — offset past end`;
+      return `${label} — remaining ${payloadBytes.length - off}`;
+    }
+    if (off >= payloadBytes.length) return `${label} — offset past end`;
+    if (type === 'byte' || type === 'bits') {
+      return `${label} — got ${fmtHexByte(payloadBytes[off])}`;
+    }
+    if (type === 'bytesAtOffset') {
+      return `${label} — sequence ${leaf.op === 'neq' ? 'present' : 'not found'}`;
+    }
+  }
+  if (type === 'byteCompare') {
+    const leftOff = resolveOffsetOrAnchor(payloadBytes, leaf.left || {}, 0);
+    const rightOff = resolveOffsetOrAnchor(payloadBytes, leaf.right || {}, 0);
+    if (leftOff < 0 || rightOff < 0) return `${label} — marker not found`;
+    if (leftOff >= payloadBytes.length || rightOff >= payloadBytes.length) {
+      return `${label} — offset past end`;
+    }
+    return `${label} — ${fmtHexByte(payloadBytes[leftOff])} vs ${fmtHexByte(payloadBytes[rightOff])}`;
+  }
+  return label;
+}
+
+function explainConditionGroup(payloadBytes, node) {
+  if (!node || typeof node !== 'object') {
+    return { ok: false, failed: 'no match tree' };
+  }
+  if (node.type) {
+    const ok = evaluateLeaf(payloadBytes, node);
+    return { ok, failed: ok ? null : leafFailDetail(payloadBytes, node) };
+  }
+
+  const isAll = (node.mode || 'all') !== 'some';
+  const children = Array.isArray(node.children) ? node.children : [];
+  const active = children.filter((c) => c && c.enabled !== false);
+  const label = describeConditionNode(node);
+  if (!active.length) {
+    return { ok: false, failed: `${label} has no enabled children` };
+  }
+
+  const childExpl = active.map((child) => explainConditionGroup(payloadBytes, child));
+  if (isAll) {
+    const firstFail = childExpl.find((c) => !c.ok);
+    return { ok: !firstFail, failed: firstFail ? firstFail.failed : null };
+  }
+  const anyOk = childExpl.some((c) => c.ok);
+  if (anyOk) return { ok: true, failed: null };
+  const reasons = childExpl.map((c) => c.failed).filter(Boolean);
+  const shown = reasons.slice(0, 3).join('; ');
+  const extra = reasons.length > 3 ? ` (+${reasons.length - 3} more)` : '';
+  return { ok: false, failed: `${label} none matched: ${shown}${extra}` };
+}
+
+function ruleDisplayName(rule) {
+  const name = typeof rule?.name === 'string' ? rule.name.trim() : '';
+  return name || '(unnamed)';
+}
+
+/**
+ * Why each enabled rule matched or failed against one payload (preview debug).
+ * Stops after the first match unless `opts.allRules` is true.
+ * @param {number[]} payloadBytes
+ * @param {object[]} rules
+ * @param {{ allRules?: boolean, onlyRuleId?: string }} [opts]
+ */
+export function explainRulesAgainstPacket(payloadBytes, rules, opts = {}) {
+  const indexed = [];
+  (rules || []).forEach((rule, index) => {
+    if (!rule) return;
+    if (opts.onlyRuleId && rule.id !== opts.onlyRuleId) return;
+    indexed.push({
+      rule,
+      index,
+      priority: Number.isFinite(rule.priority) ? Number(rule.priority) : 100,
+    });
+  });
+  indexed.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return a.index - b.index;
+  });
+
+  const lines = [];
+  for (const { rule } of indexed) {
+    const name = ruleDisplayName(rule);
+    const ruleId = rule.id || '';
+    if (rule.enabled === false) {
+      if (opts.onlyRuleId) lines.push({ ok: false, ruleId, summary: `${name}: rule disabled` });
+      continue;
+    }
+    if (!rule.match) {
+      lines.push({ ok: false, ruleId, summary: `${name}: no match tree` });
+      continue;
+    }
+    if (!matchTreeEnabled(rule.match)) {
+      lines.push({ ok: false, ruleId, summary: `${name}: match tree disabled` });
+      continue;
+    }
+    const expl = explainConditionGroup(payloadBytes, rule.match);
+    if (!expl.ok) {
+      lines.push({ ok: false, ruleId, summary: `${name}: ${expl.failed}` });
+      continue;
+    }
+    if (!ruleRequiredAnchorsOk(rule, payloadBytes)) {
+      lines.push({ ok: false, ruleId, summary: `${name}: requireAnchor marker missing` });
+      continue;
+    }
+    lines.push({ ok: true, ruleId, summary: `${name}: matched` });
+    if (!opts.allRules) break;
+  }
+  return lines;
 }
 
 /**
@@ -969,7 +1190,7 @@ export function previewPacketAgainstRules(hexOrBytes, rules, opts = {}) {
   if (opts.matchAllRules) {
     (rules || []).forEach((rule, index) => {
       if (!rule || rule.enabled === false) return;
-      if (rule.match && evaluateConditionGroup(bytes, rule.match)) {
+      if (rule.match && rule.match.enabled !== false && evaluateConditionGroup(bytes, rule.match)) {
         matching.push({ rule, index });
       }
     });
