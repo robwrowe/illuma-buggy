@@ -29,6 +29,7 @@ Ship a sideload APK of the Illuma Buggy companion app (`com.illumabuggy.app`) on
 | **Park / field phone (clean prod)** | **`npm run build:apk:prod:clean`** |
 | Incremental field APK (no versionCode bump) | Path A — `./build-apk.sh prod --eas` |
 | Local APK on this Mac (no EAS) | [Local Gradle](#local-gradle-build) — `./build-apk.sh prod` or `dev` |
+| Local APK **without** expo-dev-client | `./build-apk.sh prod --no-dev-client --install` |
 | Daily JS iteration with BLE | Local debug APK + Metro (`npm run start:clear`) |
 | New native module (`react-native-*`, Expo plugin) | Clean prod for park; local `--clean` for bench |
 
@@ -174,7 +175,7 @@ eas build:download --platform android --profile preview --latest -o dist/illuma-
 
 Use this when you want an APK from this Mac without waiting on EAS: bench testing, no network, or iterating on native code. The helper is `app/build-apk.sh` **without** `--eas`.
 
-Local **release** embeds JS (no Metro), but **still includes the expo-dev-client binary**. Local **debug** is a true dev client and needs Metro. Neither is a park APK — for that, use the [clean production build](#clean-production-build-field-release).
+Local **release** (`./build-apk.sh prod`) embeds JS (no Metro) but still **autolinks expo-dev-client** because the package stays in `package.json`. Release usually hides the Metro launcher; leftover `android/` from a **debug** prebuild can still show it. Strip the package entirely with [`--no-dev-client`](#local-standalone-apk-no-expo-dev-client). Local **debug** is a true dev client and needs Metro.
 
 A leftover `app/android/` from a local build will break the next EAS job. Delete it (`rm -rf android .expo`) or use `--clean` on the EAS command before kicking a cloud build.
 
@@ -214,7 +215,7 @@ USB debugging: on the Pixel, enable Developer options → USB debugging, then `a
 
 ### Local release APK (embedded JS)
 
-JS is baked into the APK. The app opens without Metro. The expo-dev-client launcher can still appear.
+JS is baked into the APK. The app opens without Metro. expo-dev-client is still in the native project unless you pass `--no-dev-client`.
 
 ```bash
 cd app
@@ -250,6 +251,38 @@ Same via npm: `npm run build:apk:dev`. Output: `app/dist/illuma-buggy-dev.apk`.
 Phone and Mac must be on the same LAN (or an Expo tunnel). Open Illuma Buggy on the Pixel; it should attach to Metro. BLE works in this build — Expo Go does not.
 
 After a JS-only change, rebuild is not required: reload Metro. After a **native** change (new `react-native-*` dep, Expo plugin, `app.config.js` permissions), rebuild with `--clean`.
+
+### Local standalone APK (no expo-dev-client)
+
+`expo-dev-client` lives in `devDependencies`, so a normal `expo prebuild` autolinks it. To compile a local release **without** that package:
+
+```bash
+cd app
+./build-apk.sh prod --no-dev-client --install
+# same:
+npm run build:apk:prod:standalone
+```
+
+That implies `--clean`. During prebuild it temporarily adds `expo.autolinking.exclude` for `expo-dev-client`, `expo-dev-launcher`, `expo-dev-menu`, and `expo-dev-menu-interface`, then restores `package.json` so the next debug build still works.
+
+Do not reuse an `android/` tree from `./build-apk.sh dev` — that native project is a dev client.
+
+**EAS production compiled on this Mac** (same profile as the park APK, still uses the EAS keystore; Maps key from `app/.env` because `--local` cannot read EAS Secret visibility):
+
+```bash
+cd app
+./build-apk.sh prod --eas-local --production --clean
+```
+
+Equivalent:
+
+```bash
+export GOOGLE_MAPS_API_KEY="$(grep -E '^GOOGLE_MAPS_API_KEY=' .env | cut -d= -f2- | tr -d "'\"")"
+rm -rf android .expo
+eas build --platform android --profile production --local --wait
+```
+
+`--eas-local` needs the Android SDK + JDK (same as Gradle). It is not a Docker-only flow on current EAS CLI.
 
 ### Clean local rebuild
 
@@ -319,7 +352,8 @@ adb install -r app/dist/illuma-buggy-prod.apk
 ### After install
 
 - An EAS **preview/production** APK launches by itself — no Metro.
-- A local **release** APK also embeds JS, but may still show the expo-dev-client UI.
+- A local **`--no-dev-client`** release APK also launches by itself, with expo-dev-client left out of the native project.
+- A local **release** without that flag embeds JS, but expo-dev-client is still autolinked (the launcher is usually hidden in Release).
 - A **development** / local **debug** APK waits for Metro on the laptop:
 
   ```bash
@@ -359,7 +393,7 @@ If V4 fails but V3 works, the Maps key was empty at build time. EAS: set the sec
 
 All three are APKs. None of them produce an AAB. `npm run build:clean` is the **development** profile with a local wipe — not production.
 
-Local Gradle (`./build-apk.sh prod` / `dev`) is not an EAS profile. It uses the debug keystore and still ships expo-dev-client.
+Local Gradle (`./build-apk.sh prod` / `dev`) is not an EAS profile. It uses the debug keystore. `prod --no-dev-client` is the local release that does not autolink expo-dev-client.
 
 ---
 
@@ -370,12 +404,12 @@ Local Gradle (`./build-apk.sh prod` / `dev`) is not an EAS profile. It uses the 
 | EAS `ENOENT ... gradlew` | Local `app/android/` present; CNG prebuild skipped | `npm run build:apk:prod:clean` (or `rm -rf android .expo` then rebuild). Never prebuild before EAS |
 | Script exits: `android/ exists` | Leftover local prebuild on an EAS command | Re-run with `--clean`, or delete `android/` |
 | Zones map is blank / grey | Missing Maps key in that binary | EAS: `eas secret:list` and rebuild. Local: `app/.env` + `--clean` so prebuild rebakes the key |
-| App asks for Metro / shows dev menu | Dev-client APK (`development` profile, `npm run build:clean`, or local debug/release) | Park phone: `npm run build:apk:prod:clean`. Bench debug: start Metro (`npm run start:clear`) |
+| App asks for Metro / shows dev menu | Dev-client APK (`development` profile, local debug, or stale `android/` from a debug prebuild) | Local: `./build-apk.sh prod --no-dev-client --install`. Park: `npm run build:apk:prod:clean`. Bench debug: `npm run start:clear` |
 | `adb install` fails: signatures | Local debug keystore vs EAS keystore (or a different machine) | Uninstall `com.illumabuggy.app` (wipes local app data), then reinstall |
 | `adb install` fails: version downgrade | `versionCode` not higher | EAS production autoIncrement, or uninstall first |
 | BLE missing / crash on scan | Built with Expo Go, or stale native project after adding a native dep | Always custom build; local `--clean` or EAS clean prod |
 | New `react-native-*` dep does nothing | Metro-only; native code not in the APK | Local: `./build-apk.sh prod --clean`. Park: clean prod. Hot reload is not enough |
-| `No compatible JDK found` / Gradle fails | Java 24+ as default, or `$JAVA_HOME` wrong | `export JAVA_HOME="$(/usr/libexec/java_home -v 21)"` or install Android Studio’s JBR |
+| `Error resolving plugin com.facebook.react.settings` / `> 26.0.1` | Gradle 8.13 ran under Java 24+ (often the macOS default). `26.0.1` is the JDK version, not an Android SDK | `--eas-local` now picks JDK 17–23. Or: `export JAVA_HOME="$(/usr/libexec/java_home -v 21)"` and retry. Cloud EAS is unaffected |
 | `Android SDK not found` | Studio SDK not installed, or not in the usual path | SDK Manager → Platform + Build-Tools + NDK; or set `ANDROID_HOME` |
 | `No adb device found` | USB debugging off, or unauthorized | Enable USB debugging; accept the RSA prompt; `adb devices` → `device` |
 | Metro never connects | Debug APK but Metro not running, or different LAN | `cd app && npm run start:clear`; same Wi-Fi, or use a tunnel |
@@ -386,8 +420,8 @@ Local Gradle (`./build-apk.sh prod` / `dev`) is not an EAS profile. It uses the 
 
 ## Related
 
-- `app/build-apk.sh` — APK helper (`prod --eas --clean --production` = EAS field release; `prod` / `dev` = local Gradle)
-- `app/package.json` — `npm run build:apk:prod:clean` (EAS); `npm run build:apk:prod` / `build:apk:dev` (local)
+- `app/build-apk.sh` — APK helper (`prod --no-dev-client` = local standalone; `prod --eas --clean --production` = EAS field release)
+- `app/package.json` — `npm run build:apk:prod:standalone` (local, no expo-dev-client); `npm run build:apk:prod:clean` (EAS)
 - `app/build.sh` — EAS **development** profile only (`npm run build:clean` is not prod)
 - `app/eas.json` — profiles
 - `app/app.config.js` — package id, Maps key, EAS project id

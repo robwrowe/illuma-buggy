@@ -172,8 +172,11 @@ function PropCell({
       />
       {displayMode === 'custom' && propKey === 'fx' && (
         <SearchableSelect
+          size="xs"
           value={entry?.value !== undefined && entry.value !== null ? String(entry.value) : ''}
-          onChange={(v) => onChange({ mode: 'custom', value: v === '' ? 0 : parseInt(String(v), 10) })}
+          onChange={(v) =>
+            onChange({ mode: 'custom', value: v === '' ? 0 : parseInt(String(v), 10) })
+          }
           options={fxOpts}
           placeholder="Effect"
           allowEmpty
@@ -181,8 +184,11 @@ function PropCell({
       )}
       {displayMode === 'custom' && propKey === 'pal' && (
         <SearchableSelect
+          size="xs"
           value={entry?.value !== undefined && entry.value !== null ? String(entry.value) : ''}
-          onChange={(v) => onChange({ mode: 'custom', value: v === '' ? 0 : parseInt(String(v), 10) })}
+          onChange={(v) =>
+            onChange({ mode: 'custom', value: v === '' ? 0 : parseInt(String(v), 10) })
+          }
           options={palOpts}
           placeholder="Palette"
           allowEmpty
@@ -190,9 +196,9 @@ function PropCell({
       )}
       {displayMode === 'custom' && (propKey === 'sx' || propKey === 'ix') && (
         <Slider
+          size="xs"
           min={0}
           max={255}
-          size="xs"
           value={Number.isFinite(entry?.value) ? entry.value : 128}
           onChange={(v) => onChange({ mode: 'custom', value: v })}
         />
@@ -200,9 +206,9 @@ function PropCell({
       {displayMode === 'custom' && SEG_OVERRIDE_CUSTOM_NUM[propKey] && (
         <Stack gap={2}>
           <Slider
+            size="xs"
             min={SEG_OVERRIDE_CUSTOM_NUM[propKey].min}
             max={SEG_OVERRIDE_CUSTOM_NUM[propKey].max}
-            size="xs"
             value={
               Number.isFinite(entry?.value) ? entry.value : SEG_OVERRIDE_CUSTOM_NUM[propKey].def
             }
@@ -224,6 +230,7 @@ function PropCell({
       )}
       {displayMode === 'custom' && propKey === 'blend' && (
         <SearchableSelect
+          size="xs"
           value={entry?.value || 'top'}
           onChange={(blend) => onChange({ mode: 'custom', value: blend })}
           options={BLEND_MODE_SELECT_OPTS}
@@ -232,6 +239,7 @@ function PropCell({
       )}
       {displayMode === 'custom' && colorSlot !== undefined && colorLibrary != null && (
         <SwatchColorPicker
+          size="xs"
           value={swatchValue}
           colorLibrary={colorLibrary}
           onSaveToLibrary={onSaveToLibrary}

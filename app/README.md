@@ -52,7 +52,8 @@ Needs Android Studio / SDK + JDK 17–23. Maps key from `app/.env`. Full steps: 
 
 ```bash
 cd app
-./build-apk.sh prod --install          # local release APK (JS embedded; still has expo-dev-client)
+./build-apk.sh prod --install          # local release APK (JS embedded; still autolinks expo-dev-client)
+./build-apk.sh prod --no-dev-client --install  # local release without expo-dev-client
 ./build-apk.sh dev --install           # local debug APK; then npm run start:clear
 ./build-apk.sh prod --clean --install  # wipe android/ + prebuild, then release
 ```

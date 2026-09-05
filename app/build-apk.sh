@@ -6,8 +6,12 @@
 #   ./build-apk.sh prod             # local release APK (still includes expo-dev-client)
 #   ./build-apk.sh dev --install    # build + adb install to connected Pixel
 #   ./build-apk.sh prod --eas       # EAS preview APK (standalone, no Metro)
+#   ./build-apk.sh prod --no-dev-client --install
+#                                   # local release APK without expo-dev-client (clean prebuild)
 #   ./build-apk.sh prod --eas --clean --production
 #                                   # clean EAS production APK (field release)
+#   ./build-apk.sh prod --eas --production --eas-local
+#                                   # same production profile, compiled on this Mac
 #   ./build-apk.sh dev --clean      # wipe android/ and re-prebuild first (local only)
 #
 # After installing a dev build, start Metro on your Mac:
@@ -21,22 +25,26 @@ cd "$SCRIPT_DIR"
 MODE=""
 USE_EAS=false
 USE_PRODUCTION=false
+EAS_LOCAL=false
 CLEAN=false
 INSTALL=false
 ALL_ARCHS=false
+NO_DEV_CLIENT=false
 
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
   echo ""
   echo "Options:"
-  echo "  --eas          Build on EAS cloud instead of local Gradle (uses EAS secrets)"
-  echo "  --production   With --eas prod: use eas.json production (autoIncrement versionCode)"
-  echo "  --clean        EAS: wipe node_modules, android/, .expo (do not prebuild)."
-  echo "                 Local: wipe android/ and .expo, then expo prebuild"
-  echo "  --install      adb install -r the APK after a local build"
-  echo "  --all-archs    Build all ABIs (slower; default is arm64-v8a for Pixel)"
-  echo "  -- <args>      Pass extra args to Gradle (e.g. -- --stacktrace)"
-  echo "  -h, --help     Show this help"
+  echo "  --eas            Build on EAS cloud instead of local Gradle (uses EAS secrets)"
+  echo "  --eas-local      With --eas: compile the EAS profile on this Mac (needs Android SDK)"
+  echo "  --production     With --eas prod: use eas.json production (autoIncrement versionCode)"
+  echo "  --no-dev-client  Local prod only: exclude expo-dev-client at prebuild (implies --clean)"
+  echo "  --clean          EAS: wipe node_modules, android/, .expo (do not prebuild)."
+  echo "                   Local: wipe android/ and .expo, then expo prebuild"
+  echo "  --install        adb install -r the APK after a local build"
+  echo "  --all-archs      Build all ABIs (slower; default is arm64-v8a for Pixel)"
+  echo "  -- <args>        Pass extra args to Gradle (e.g. -- --stacktrace)"
+  echo "  -h, --help       Show this help"
 }
 
 GRADLE_EXTRA_ARGS=()
@@ -45,7 +53,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     dev|prod) MODE="$1" ;;
     --eas) USE_EAS=true ;;
+    --eas-local) USE_EAS=true; EAS_LOCAL=true ;;
     --production) USE_PRODUCTION=true ;;
+    --no-dev-client) NO_DEV_CLIENT=true ;;
     --clean) CLEAN=true ;;
     --install) INSTALL=true ;;
     --all-archs) ALL_ARCHS=true ;;
@@ -75,6 +85,20 @@ if [[ "$USE_PRODUCTION" == true ]]; then
     echo "❌ --production requires: ./build-apk.sh prod --eas --production"
     exit 1
   fi
+fi
+
+if [[ "$NO_DEV_CLIENT" == true ]]; then
+  if [[ "$USE_EAS" == true || "$MODE" != "prod" ]]; then
+    echo "❌ --no-dev-client is for local Gradle release only:"
+    echo "   ./build-apk.sh prod --no-dev-client [--install]"
+    exit 1
+  fi
+  CLEAN=true
+fi
+
+if [[ "$EAS_LOCAL" == true && "$MODE" != "prod" ]]; then
+  echo "❌ --eas-local requires prod (preview or production profile)."
+  exit 1
 fi
 
 ARCH="arm64-v8a"
@@ -115,6 +139,42 @@ ensure_deps() {
   fi
 }
 
+PACKAGE_JSON_BAK=""
+
+restore_package_json() {
+  if [[ -n "$PACKAGE_JSON_BAK" && -f "$PACKAGE_JSON_BAK" ]]; then
+    mv "$PACKAGE_JSON_BAK" "$SCRIPT_DIR/package.json"
+    PACKAGE_JSON_BAK=""
+    echo "↩️  Restored package.json (expo-dev-client still installed for future debug builds)"
+  fi
+}
+
+trap restore_package_json EXIT
+
+exclude_dev_client_autolinking() {
+  PACKAGE_JSON_BAK="$SCRIPT_DIR/package.json.illuma-bak"
+  cp "$SCRIPT_DIR/package.json" "$PACKAGE_JSON_BAK"
+  echo "🚫 Excluding expo-dev-client from this prebuild..."
+  node -e '
+    const fs = require("fs");
+    const path = "package.json";
+    const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+    pkg.expo = pkg.expo || {};
+    pkg.expo.autolinking = pkg.expo.autolinking || {};
+    const exclude = new Set(pkg.expo.autolinking.exclude || []);
+    for (const name of [
+      "expo-dev-client",
+      "expo-dev-launcher",
+      "expo-dev-menu",
+      "expo-dev-menu-interface",
+    ]) {
+      exclude.add(name);
+    }
+    pkg.expo.autolinking.exclude = [...exclude];
+    fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+  '
+}
+
 ensure_android_project() {
   if [[ "$CLEAN" == true ]]; then
     echo "🧹 Cleaning android/ and .expo..."
@@ -123,7 +183,11 @@ ensure_android_project() {
   if [[ ! -f android/gradlew ]]; then
     echo "🔧 Running expo prebuild (android)..."
     load_maps_key
+    if [[ "$NO_DEV_CLIENT" == true ]]; then
+      exclude_dev_client_autolinking
+    fi
     npx expo prebuild --platform android --no-install
+    restore_package_json
   fi
 }
 
@@ -191,7 +255,7 @@ setup_java() {
   exit 1
 }
 
-setup_android_sdk() {
+setup_android_sdk_env() {
   local candidates=()
 
   if [[ -n "${ANDROID_HOME:-}" ]]; then
@@ -219,21 +283,39 @@ setup_android_sdk() {
     echo "   - Android SDK Platform"
     echo "   - Android SDK Build-Tools"
     echo "   - NDK (Side by side)"
-    echo "   Or use --eas for a cloud build."
+    echo "   Or use --eas for a cloud build (not --eas-local)."
     exit 1
   fi
 
   export ANDROID_HOME="$sdk"
   export ANDROID_SDK_ROOT="$sdk"
   export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+  echo "🤖 Android SDK: $sdk"
+
+  if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
+    local ndk=""
+    if [[ -d "$sdk/ndk" ]]; then
+      ndk="$(ls -1d "$sdk/ndk"/*/ 2>/dev/null | sort -V | tail -1 || true)"
+    fi
+    if [[ -z "$ndk" && -d "$sdk/ndk-bundle" ]]; then
+      ndk="$sdk/ndk-bundle"
+    fi
+    if [[ -n "$ndk" ]]; then
+      export ANDROID_NDK_HOME="${ndk%/}"
+      echo "🧰 ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+    fi
+  fi
+}
+
+setup_android_sdk() {
+  setup_android_sdk_env
 
   if [[ ! -d android ]]; then
     echo "❌ android/ project not found — run prebuild first."
     exit 1
   fi
 
-  printf 'sdk.dir=%s\n' "$sdk" > android/local.properties
-  echo "🤖 Android SDK: $sdk"
+  printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/local.properties
 }
 
 check_local_toolchain() {
@@ -301,8 +383,12 @@ build_local_prod() {
   maybe_install
   echo ""
   echo "Prod build ready — JS is embedded, no Metro required."
-  echo "Note: local release builds still include the dev-client binary."
-  echo "      Use npm run build:apk:prod:clean for a field APK without the dev launcher."
+  if [[ "$NO_DEV_CLIENT" == true ]]; then
+    echo "      expo-dev-client was excluded from this native project."
+  else
+    echo "Note: this APK still autolinks expo-dev-client (Release usually hides the launcher)."
+    echo "      Use --no-dev-client to strip it, or npm run build:apk:prod:clean for EAS production."
+  fi
 }
 
 clean_for_eas() {
@@ -339,12 +425,38 @@ build_eas() {
       ;;
   esac
 
-  echo "☁️  Submitting $profile build to EAS..."
-  eas build --platform android --profile "$profile" --wait --non-interactive
+  echo "☁️  Submitting $profile build to EAS${EAS_LOCAL:+ (local)}..."
+  if [[ "$EAS_LOCAL" == true ]]; then
+    # eas --local shells out to Gradle on this Mac. Default java on recent macOS
+    # is often 24–26, which Gradle 8.13 cannot load (settings plugin error "26.0.1").
+    setup_java
+    setup_android_sdk_env
+    export NODE_ENV=production
+    load_maps_key
+    if [[ -z "${GOOGLE_MAPS_API_KEY:-}" ]]; then
+      echo "❌ --eas-local cannot read EAS secrets. Set GOOGLE_MAPS_API_KEY or add app/.env"
+      exit 1
+    fi
+    mkdir -p "$DIST_DIR"
+    local eas_out="$DIST_DIR/eas-local"
+    rm -rf "$eas_out"
+    mkdir -p "$eas_out"
+    EAS_LOCAL_BUILD_ARTIFACTS_DIR="$eas_out" \
+      eas build --platform android --profile "$profile" --local --wait --non-interactive
+    local artifact
+    artifact="$(ls -t "$eas_out"/*.apk 2>/dev/null | head -1 || true)"
+    if [[ -z "$artifact" ]]; then
+      echo "❌ EAS local build finished but no APK was copied to $eas_out"
+      exit 1
+    fi
+    cp "$artifact" "$APK_PATH"
+  else
+    eas build --platform android --profile "$profile" --wait --non-interactive
 
-  mkdir -p "$DIST_DIR"
-  echo "⬇️  Downloading latest APK..."
-  eas build:download --platform android --profile "$profile" --latest -o "$APK_PATH"
+    mkdir -p "$DIST_DIR"
+    echo "⬇️  Downloading latest APK..."
+    eas build:download --platform android --profile "$profile" --latest -o "$APK_PATH"
+  fi
 
   echo ""
   echo "✅ APK ready: $APK_PATH"

@@ -2884,7 +2884,8 @@ function RuleCard({
                   />
 
                   <Slider
-                    label="Speed"
+                    label={(val) => `Speed (${val})`}
+
                     size="md"
                     flex={1}
                     min={0}
@@ -2894,7 +2895,7 @@ function RuleCard({
                   />
 
                   <Slider
-                    label="Intensity"
+                    label={(val) => `Intensity (${val})`}
                     size="md"
                     flex={1}
                     min={0}
@@ -4297,7 +4298,10 @@ export function RuleEditor({
   const previewZeroCount = useMemo(() => {
     if (!previewCounts) return null;
     return rules.filter(
-      (r) => r.id && Object.prototype.hasOwnProperty.call(previewCounts, r.id) && previewCounts[r.id] === 0,
+      (r) =>
+        r.id &&
+        Object.prototype.hasOwnProperty.call(previewCounts, r.id) &&
+        previewCounts[r.id] === 0,
     ).length;
   }, [previewCounts, rules]);
 
@@ -4425,7 +4429,9 @@ export function RuleEditor({
             onEditMaps={onEditMaps}
             onEditTimingModels={onEditTimingModels}
             previewMatchCount={
-              previewCounts && rule.id != null && Object.prototype.hasOwnProperty.call(previewCounts, rule.id)
+              previewCounts &&
+              rule.id != null &&
+              Object.prototype.hasOwnProperty.call(previewCounts, rule.id)
                 ? previewCounts[rule.id]
                 : null
             }
