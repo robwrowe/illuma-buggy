@@ -239,7 +239,6 @@ function PropCell({
       )}
       {displayMode === 'custom' && colorSlot !== undefined && colorLibrary != null && (
         <SwatchColorPicker
-          size="xs"
           value={swatchValue}
           colorLibrary={colorLibrary}
           onSaveToLibrary={onSaveToLibrary}

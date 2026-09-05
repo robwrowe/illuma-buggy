@@ -18,6 +18,18 @@ export const TAIL_BUILDER_COLOR_FORMATS = [
  * @property {number} [b]
  */
 
+/** One labeled byte in the assembled packet (before include-filters). */
+export type TailPayloadPart = {
+  id: string;
+  role: string;
+  label: string;
+  byte: number;
+  editable: boolean;
+  colorIdx?: number;
+  tailIdx?: number;
+  baseByte?: number;
+};
+
 /** Encode one palette-format color slot via encodeMbColorMaskByte (mask in bits[7:5], palette in bits[4:0]). */
 export function encodeTailColorByte(color) {
   if (!color) return 0x00;
@@ -176,7 +188,7 @@ export function envelopeByte(envelope) {
   return Number.isFinite(n) ? n & 0xff : 0xe1;
 }
 
-function applyPartOverrides(parts, overrides) {
+function applyPartOverrides(parts: TailPayloadPart[], overrides): TailPayloadPart[] {
   if (!overrides || typeof overrides !== 'object') return parts;
   return parts.map((p) => {
     const v = overrides[p.id];
@@ -207,11 +219,11 @@ export function buildTailPayloadParts({
   tailBytes,
   vibration = null,
   envelope = 'e1',
-}) {
+}): TailPayloadPart[] {
   const envByte = envelopeByte(envelope);
   const tb = Number(timingByte) & 0xff;
   const formatByte = parseInt(String(colorFormat), 16) & 0xff;
-  const parts = [
+  const parts: TailPayloadPart[] = [
     { id: 'env', role: 'env', label: 'env', byte: envByte, editable: true },
     { id: 'envPad', role: 'fixed', label: 'pad', byte: 0x00, editable: false },
     { id: 'e9', role: 'fixed', label: 'E9', byte: 0xe9, editable: false },
@@ -264,7 +276,7 @@ export function buildTailPayloadParts({
  * source value. Missing keys are included.
  * `partOverrides` maps part id → byte, applied after length is derived.
  *
- * @returns {{ bytes: number[], hex: string, subOpcode: number, subOpcodeHex: string, warnings: string[], parts: object[], kept: object[] }}
+ * @returns {{ bytes: number[], hex: string, subOpcode: number, subOpcodeHex: string, warnings: string[], parts: TailPayloadPart[], kept: TailPayloadPart[] }}
  */
 export function assembleTailPayload({
   timingByte,

@@ -31,15 +31,18 @@ export function formatBackendDetail(detail, fallback = '') {
   return fallback;
 }
 
-async function jsonFetch(url, opts = {}) {
+type JsonFetchOpts = RequestInit & { timeoutMs?: number };
+
+async function jsonFetch(url: string, opts: JsonFetchOpts = {}) {
+  const { timeoutMs: timeoutOpt, headers, ...fetchOpts } = opts;
   const ctrl = new AbortController();
-  const timeoutMs = opts.timeoutMs ?? 120000;
+  const timeoutMs = timeoutOpt ?? 120000;
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
-      ...opts,
+      ...fetchOpts,
       signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      headers: { 'Content-Type': 'application/json', ...(headers || {}) },
     });
     const text = await res.text();
     let data = null;
@@ -50,9 +53,10 @@ async function jsonFetch(url, opts = {}) {
     }
     if (!res.ok) {
       const msg = formatBackendDetail(data?.detail, data?.message || res.statusText);
-      const err = new Error(msg || `HTTP ${res.status}`);
-      err.status = res.status;
-      err.body = data;
+      const err = Object.assign(new Error(msg || `HTTP ${res.status}`), {
+        status: res.status,
+        body: data,
+      });
       throw err;
     }
     return data;

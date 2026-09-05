@@ -986,7 +986,7 @@ export function WandLabTailBuilderTab({
 
   const assembledPacketHex = (bytes) => (assembleForTail(bytes || []).hex || '').toUpperCase();
 
-  const copyHexToClipboard = async (text, okStatus, setMsg) => {
+  const copyHexToClipboard = async (text, okStatus, setMsg = undefined) => {
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);

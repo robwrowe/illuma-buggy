@@ -17,7 +17,7 @@ import { generateId } from '../utils';
 
 /** Shared across Tail Builder / Sequence / BitGrid / panel (one localStorage slice). */
 let itemsState = null;
-const listeners = new Set();
+const listeners = new Set<() => void>();
 
 function hydrateItems() {
   if (itemsState != null) return itemsState;
