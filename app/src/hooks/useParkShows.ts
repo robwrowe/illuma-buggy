@@ -259,8 +259,54 @@ export function useParkShows(activePark: ParkConfig | null, isConnected: boolean
   return { shows, fetchError, lastFetchAt, refresh };
 }
 
+const FIVE_MIN_MS = 5 * 60 * 1000;
+
 function formatShowTime(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+/** Wall-clock time with seconds, e.g. "8:55:00 PM". */
+export function formatClockHms(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+/**
+ * Remaining-time label. Minutes when ≥ 5 min left; M:SS (or H:MM:SS) below that.
+ */
+export function formatCountdown(remainingMs: number): string {
+  const ms = Math.max(0, remainingMs);
+  if (ms >= FIVE_MIN_MS) return `${Math.round(ms / 60000)}m`;
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const ss = String(s).padStart(2, '0');
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${ss}`;
+  return `${m}:${ss}`;
+}
+
+export function showPreStartMs(show: UpcomingShow): number {
+  return show.startMs - show.binding.preLeadSec * 1000;
+}
+
+/** When post is applied and show mode exits. */
+export function showPostEndMs(show: UpcomingShow): number {
+  return show.endMs + show.binding.postDelaySec * 1000;
+}
+
+function liveAtMs(show: UpcomingShow): number {
+  return show.startMs + show.binding.liveOffsetSec * 1000;
+}
+
+function statusAt(show: UpcomingShow, now: number): ShowStatus {
+  if (now >= show.endMs) return 'ended';
+  if (now >= liveAtMs(show)) return 'live';
+  if (now >= showPreStartMs(show)) return 'pre';
+  return 'upcoming';
 }
 
 function formatDurationLabel(durationSec: number): string {
@@ -269,20 +315,30 @@ function formatDurationLabel(durationSec: number): string {
   return `${durationSec}s`;
 }
 
-export function formatShowStatus(show: UpcomingShow): string {
+export function formatShowStatus(show: UpcomingShow, now = Date.now()): string {
   if (!show.inScope) return 'Outside show area';
-  if (show.status === 'ended') {
-    const ago = Math.abs(Math.round((Date.now() - show.endMs) / 60000));
+  const status = statusAt(show, now);
+  if (status === 'ended') {
+    const ago = Math.abs(Math.round((now - show.endMs) / 60000));
     return ago < 60 ? `Ended ${ago}m ago` : 'Ended';
   }
-  if (show.status === 'live') {
-    const minsLeft = Math.max(0, Math.round((show.endMs - Date.now()) / 60000));
-    return `In progress · ${minsLeft}m left · ends ${formatShowTime(show.endMs)}`;
+  if (status === 'live') {
+    const left = Math.max(0, show.endMs - now);
+    return `In progress · ${formatCountdown(left)} left · ends ${formatShowTime(show.endMs)}`;
   }
   const dur = formatDurationLabel(show.durationSec);
-  if (show.status === 'pre') {
-    return `Pre-show · starts in ${Math.max(0, show.minutesUntil)}m · ${dur} show`;
+  const untilStart = show.startMs - now;
+  if (status === 'pre') {
+    return `Pre-show · starts in ${formatCountdown(Math.max(0, untilStart))} · ${dur} show`;
   }
-  if (show.minutesUntil <= 0) return `Starting soon · ${dur} show`;
-  return `In ${show.minutesUntil}m · ${formatShowTime(show.startMs)} · ${dur}`;
+  if (untilStart <= 0) return `Starting soon · ${dur} show`;
+  return `In ${formatCountdown(untilStart)} · ${formatShowTime(show.startMs)} · ${dur}`;
+}
+
+/** Countdown until pre-show (lights enter SHOW_MODE), or "In show mode" once it has. */
+export function formatShowModeCountdown(show: UpcomingShow, now = Date.now()): string | null {
+  const remaining = showPreStartMs(show) - now;
+  if (remaining > 0) return `Show mode in ${formatCountdown(remaining)}`;
+  if (now < showPostEndMs(show)) return 'In show mode';
+  return null;
 }

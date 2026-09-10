@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
   Text,
@@ -36,7 +37,14 @@ import { fetchLiveWledSummary } from "../utils/bleBoardSync";
 import { requestFullBoardSync } from "../utils/connectBootstrap";
 import { useTheme } from "../utils/theme";
 import { PresetPickerModal } from "./MbMappingSections";
-import { useParkShows, formatShowStatus } from "../hooks/useParkShows";
+import {
+  useParkShows,
+  formatShowStatus,
+  formatShowModeCountdown,
+  formatClockHms,
+  showPreStartMs,
+  showPostEndMs,
+} from "../hooks/useParkShows";
 import { runShowPhase, stopShowMode } from "../services/showControl";
 
 export default function HomeScreen() {
@@ -88,6 +96,16 @@ export default function HomeScreen() {
   const { shows: parkShows, fetchError: parkShowsError } = useParkShows(
     activePark,
     isConnected,
+  );
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const hasShows = parkShows.length > 0;
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasShows) return;
+      setNowMs(Date.now());
+      const id = setInterval(() => setNowMs(Date.now()), 1000);
+      return () => clearInterval(id);
+    }, [hasShows]),
   );
 
   const runPhase = async (
@@ -597,10 +615,20 @@ export default function HomeScreen() {
             parkShows.map((show) => {
               const prePostOn = !show.autoPrePostDisabled;
               const liveOn = !show.autoLiveDisabled;
+              const showModeLine = formatShowModeCountdown(show, nowMs);
               return (
                 <View key={show.id} style={s.showBlock}>
                   <Text style={s.zoneName}>{show.name}</Text>
-                  <Text style={s.subText}>{formatShowStatus(show)}</Text>
+                  <Text style={s.subText}>{formatShowStatus(show, nowMs)}</Text>
+                  {showModeLine ? (
+                    <Text style={s.showCountdown}>{showModeLine}</Text>
+                  ) : null}
+                  <Text style={s.showClock}>
+                    Pre starts {formatClockHms(showPreStartMs(show))}
+                  </Text>
+                  <Text style={s.showClock}>
+                    Post ends {formatClockHms(showPostEndMs(show))}
+                  </Text>
                   <View style={s.autoRow}>
                     <Text style={s.autoLabel}>Auto pre/post</Text>
                     <Switch
@@ -901,6 +929,17 @@ const styles = (
       flex: 1,
     },
     subText: { color: c.textMuted, fontSize: 12 },
+    showCountdown: {
+      color: c.textPrimary,
+      fontSize: 13,
+      fontWeight: "600",
+      fontVariant: ["tabular-nums"],
+    },
+    showClock: {
+      color: c.textMuted,
+      fontSize: 12,
+      fontVariant: ["tabular-nums"],
+    },
     badge: {
       paddingHorizontal: 10,
       paddingVertical: 4,
