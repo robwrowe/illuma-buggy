@@ -24,7 +24,8 @@ export default function GeneralScreen() {
   const { isConnected } = useBLE();
   const {
     locationPollSec, setLocationPollSec, ftbPresetId, setFtbPresetId, presets, syncMode, setSyncMode,
-    boardConnectEnabled, setBoardConnectEnabled, parkMode, setParkMode, statusLedMode, setStatusLedMode,
+    boardConnectEnabled, setBoardConnectEnabled, parkMode, setParkMode,
+    statusLedMode, setStatusLedMode, statusLedHideOk, setStatusLedHideOk,
     saveToStorage, exportData, importData,
   } = useAppStore();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -117,6 +118,21 @@ export default function GeneralScreen() {
               <Text style={[s.themeBtnText, statusLedMode === value && { color: colors.primary }]}>{label}</Text>
             </TouchableOpacity>
           ))}
+        </View>
+        <View style={s.row}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowLabel}>Hide OK (green)</Text>
+            <Text style={s.rowHint}>Keep the LED dark when WiFi, WLED, and the scanner link are healthy. Issues still blink.</Text>
+          </View>
+          <Switch
+            value={statusLedHideOk}
+            onValueChange={(v) => {
+              setStatusLedHideOk(v);
+              if (bleService.isConnected()) void bleService.sendStatusLedHideOk(v);
+            }}
+            trackColor={{ false: colors.borderFocus, true: colors.primary }}
+            thumbColor="#fff"
+          />
         </View>
         <View style={s.row}><View style={{ flex: 1 }}><Text style={s.rowLabel}>Park Mode</Text><Text style={s.rowHint}>Minimize BLE traffic and skip config push on connect.</Text></View><Switch value={parkMode} onValueChange={setParkMode} trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" /></View>
         <View style={s.row}><View style={{ flex: 1 }}><Text style={s.rowLabel}>Connect to IllumaBuggy board</Text><Text style={s.rowHint}>Turn off for phone-only park use.</Text></View><Switch value={boardConnectEnabled} onValueChange={setBoardConnectEnabled} trackColor={{ false: colors.borderFocus, true: colors.primary }} thumbColor="#fff" /></View>

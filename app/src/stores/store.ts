@@ -405,6 +405,9 @@ interface AppState {
   /** Status LED brightness on the logic board: 0=normal, 1=dim(~30%), 2=off. */
   statusLedMode:         0 | 1 | 2;
   setStatusLedMode:      (val: 0 | 1 | 2) => void;
+  /** When true, the status LED stays dark while healthy (no green). */
+  statusLedHideOk:       boolean;
+  setStatusLedHideOk:    (val: boolean) => void;
   boardRole:             BoardRoleMode;
   setBoardRole:          (role: BoardRoleMode) => void;
   scannerMac:            string;
@@ -789,6 +792,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   boardConnectEnabled: true,
   parkMode:            false,
   statusLedMode:       0,
+  statusLedHideOk:     false,
   boardRole:           'standalone',
   scannerMac:          '',
   brightnessConfig:    DEFAULT_BRIGHTNESS,
@@ -1005,6 +1009,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setBoardConnectEnabled:(val)          => { set({ boardConnectEnabled: val }); get().saveToStorage(); },
   setParkMode:           (val)          => { set({ parkMode: val }); get().saveToStorage(); },
   setStatusLedMode:      (val)          => { set({ statusLedMode: val }); get().saveToStorage(); },
+  setStatusLedHideOk:    (val)          => { set({ statusLedHideOk: val }); get().saveToStorage(); },
   setBoardRole:          (role)         => { set({ boardRole: role }); get().saveToStorage(); },
   setScannerMac:         (mac)          => set({ scannerMac: mac }),
 
@@ -1161,7 +1166,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'bleEffectTransitionMs',
                     'wledSsid','wledPass','wledIp','wledPort','boardIp','sheetsEndpoint','sheetsUploadQueue',
                     'zonesEnabled','syncMode','boardConnectEnabled','parkMode',
-                    'statusLedMode',
+                    'statusLedMode','statusLedHideOk',
                     'boardRole','scannerMac','locationPollSec','mbMapping',
                     'recallState','bleCaptureSessions','bleCaptureDurationSec','bleCaptureDraftName',
                     'bleCaptureIgnoreTags',
@@ -1217,6 +1222,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         boardConnectEnabled:d.boardConnectEnabled ?? true,
         parkMode:           d.parkMode ?? false,
         statusLedMode:      (d.statusLedMode as 0 | 1 | 2) ?? 0,
+        statusLedHideOk:    !!d.statusLedHideOk,
         boardRole:          (d.boardRole as BoardRoleMode) ?? 'standalone',
         scannerMac:         (d.scannerMac as string) ?? '',
         locationPollSec:    d.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,
@@ -1298,6 +1304,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['boardConnectEnabled', JSON.stringify(s.boardConnectEnabled)],
         ['parkMode',            JSON.stringify(s.parkMode)],
         ['statusLedMode',       JSON.stringify(s.statusLedMode)],
+        ['statusLedHideOk',     JSON.stringify(s.statusLedHideOk)],
         ['boardRole',           JSON.stringify(s.boardRole)],
         ['scannerMac',          JSON.stringify(s.scannerMac)],
         ['locationPollSec',    JSON.stringify(s.locationPollSec)],
@@ -1415,6 +1422,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandTimeoutSec:s.magicBandTimeoutSec,
       bleEffectTransitionMs: s.bleEffectTransitionMs,
       statusLedMode:      s.statusLedMode,
+      statusLedHideOk:    s.statusLedHideOk,
       boardRole:          s.boardRole,
       scannerMac:         s.scannerMac,
       locationPollSec:    s.locationPollSec,
@@ -1451,6 +1459,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       magicBandTimeoutSec:m.magicBandTimeoutSec ?? 15,
       bleEffectTransitionMs: m.bleEffectTransitionMs ?? 700,
       statusLedMode:      (m.statusLedMode as 0 | 1 | 2) ?? 0,
+      statusLedHideOk:    !!m.statusLedHideOk,
       boardRole:          (m.boardRole as BoardRoleMode) ?? 'standalone',
       scannerMac:         (m.scannerMac as string) ?? '',
       locationPollSec:    m.locationPollSec ?? DEFAULT_LOCATION_POLL_SEC,

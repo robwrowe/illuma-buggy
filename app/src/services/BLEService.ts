@@ -468,6 +468,9 @@ class BLEService {
   sendStatusLedMode(mode: 0 | 1 | 2) {
     return this.sendSetField('statusLedMode', mode);
   }
+  sendStatusLedHideOk(hideOk: boolean) {
+    return this.sendSetField('statusLedHideOk', hideOk);
+  }
   sendBoardRole(role: 'standalone' | 'logic_board') {
     return this.send({ type: 'set_board_role', role });
   }
