@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build && cp dist/index.html dist/404.html",
     "preview": "vite preview",
     "lint": "eslint src",
-    "test:tail-builder": "tsx scripts/tail-builder-test.mjs"
+    "test:tail-builder": "tsx scripts/tail-builder-test.mjs",
+    "test:tail-fuzzer": "tsx scripts/tail-fuzzer-test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
