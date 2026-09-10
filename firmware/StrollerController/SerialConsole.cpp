@@ -20,6 +20,7 @@ void processSerialCommands() {
   if (line == "help") {
     Serial.println("[Serial] Commands:");
     Serial.println("  status           — WiFi, override, preset, queue");
+    Serial.println("  wled             — print WLED HTTP target IP:port");
     Serial.println("  wled si          — GET WLED state (fx/bri/segments)");
     Serial.println("  sniff [seconds]  — log every BLE mfr packet (default 30)");
     Serial.println("  sniff off        — stop sniffing");
@@ -52,6 +53,14 @@ void processSerialCommands() {
                   (unsigned long)uartRxPacketCount,
                   (unsigned long)parsedPacketDropCount,
                   lastScannerPacketMs ? String((millis() - lastScannerPacketMs)) + "ms ago" : String("never"));
+    Serial.printf("[Status] WLED target http://%s:%d ssid=\"%s\" sta=%s\n",
+                  wledIp.c_str(), wledPort, wledSsid.c_str(),
+                  WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "-");
+  } else if (line == "wled" || line == "wled target") {
+    Serial.printf("[WLED] target http://%s:%d  ssid=\"%s\"  sta=%s  wifi=%s\n",
+                  wledIp.c_str(), wledPort, wledSsid.c_str(),
+                  WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "-",
+                  WiFi.status() == WL_CONNECTED ? "up" : "down");
   } else if (line == "nvs wifi") {
     Preferences dbgPrefs;
     dbgPrefs.begin("config", true);
@@ -83,6 +92,7 @@ void processSerialCommands() {
       Serial.println("[WLED] WiFi not connected");
     } else {
       HTTPClient http;
+      Serial.printf("[WLED] GET http://%s:%d/json/si\n", wledIp.c_str(), wledPort);
       http.begin("http://" + wledIp + ":" + String(wledPort) + "/json/si");
       http.setTimeout(5000);
       int code = http.GET();
@@ -100,7 +110,8 @@ void processSerialCommands() {
           Serial.printf("[WLED] si parse fail (%u bytes)\n", (unsigned)body.length());
         }
       } else {
-        Serial.printf("[WLED] si GET failed HTTP %d\n", code);
+        Serial.printf("[WLED] si GET http://%s:%d/json/si failed HTTP %d\n",
+                      wledIp.c_str(), wledPort, code);
       }
       http.end();
     }

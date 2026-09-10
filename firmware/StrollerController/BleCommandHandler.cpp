@@ -359,8 +359,20 @@ void handleBLECommand(const String& msg) {
 
   // ── WLED WiFi / HTTP target ──
   else if (type == "wled_net_config") {
-    if (doc.containsKey("ssid")) wledSsid = doc["ssid"].as<String>();
-    if (doc.containsKey("pass")) wledPass = doc["pass"].as<String>();
+    // Only ssid/pass changes require tearing down and re-joining WiFi.
+    // ip/port changes only affect where the HTTP client points — wledIp/wledPort
+    // are read fresh on every request in WledClient.cpp, so no reconnect is needed
+    // and forcing one here was the source of the "needs a reboot" symptom (a WiFi
+    // disconnect/reconnect raced with the BLE ack / mDNS teardown).
+    bool wifiCredsChanged = false;
+    if (doc.containsKey("ssid") && doc["ssid"].as<String>() != wledSsid) {
+      wledSsid = doc["ssid"].as<String>();
+      wifiCredsChanged = true;
+    }
+    if (doc.containsKey("pass") && doc["pass"].as<String>() != wledPass) {
+      wledPass = doc["pass"].as<String>();
+      wifiCredsChanged = true;
+    }
     if (doc.containsKey("ip"))   wledIp   = doc["ip"].as<String>();
     if (doc.containsKey("port")) wledPort = doc["port"].as<int>();
     prefs.begin("config", false);
@@ -373,9 +385,20 @@ void handleBLECommand(const String& msg) {
                  "\"ssid\":\"" + wledSsid + "\",\"ip\":\"" + wledIp + "\","
                  "\"port\":" + String(wledPort) + "}";
     bleNotify(ack);
+    Serial.printf("[WLED] net_config target http://%s:%d ssid=\"%s\" reconnect=%s\n",
+                  wledIp.c_str(), wledPort, wledSsid.c_str(),
+                  wifiCredsChanged ? "yes" : "no");
 
-    wifiConnectInProgress = false;
-    connectToWLED(true);
+    if (wifiCredsChanged) {
+      // SSID/password changed — a real reconnect is required.
+      wifiConnectInProgress = false;
+      connectToWLED(true);
+    } else {
+      // IP/port-only change: no WiFi disruption needed. Just force the main
+      // loop's one-shot baseline snapshot/power-on against the new target,
+      // the same mechanism WiFiManager.cpp uses after a fresh connect.
+      wledWasConnected = false;
+    }
   }
 
   // ── Starlight Wand config ──

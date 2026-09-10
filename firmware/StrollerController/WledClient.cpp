@@ -38,7 +38,8 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     }
     if (attempt < retries) delay(80);
   }
-  Serial.printf("[WLED] POST failed: HTTP %d (%u bytes)\n", code, (unsigned)jsonBody.length());
+  Serial.printf("[WLED] POST http://%s:%d/json/state failed: HTTP %d (%u bytes)\n",
+                wledIp.c_str(), wledPort, code, (unsigned)jsonBody.length());
   if (jsonBody.length() < 120) {
     Serial.printf("[WLED]   body: %s\n", jsonBody.c_str());
   }
@@ -97,7 +98,8 @@ String getFromWLED(const String& path, int timeoutMs) {
     body = http.getString();
     statusDisplaySetWledOk(true);
   } else {
-    Serial.printf("[WLED] GET %s failed: %d\n", path.c_str(), code);
+    Serial.printf("[WLED] GET http://%s:%d%s failed: %d\n",
+                  wledIp.c_str(), wledPort, path.c_str(), code);
     statusDisplaySetWledOk(false);
   }
   http.end();
