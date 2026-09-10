@@ -70,7 +70,6 @@ function AppNavigator() {
           tabBarInactiveTintColor: colors.textMuted,
           headerStyle: { backgroundColor: colors.header },
           headerTintColor: colors.textPrimary,
-          headerShown: route.name !== "More",
           tabBarIcon: ({ color, size }) => {
             if (route.name === "Home")
               return <IconHome size={size} color={color} />;

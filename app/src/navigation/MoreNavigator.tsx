@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
+import { Platform, StatusBar } from 'react-native';
+import { getFocusedRouteNameFromRoute } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ZonesScreen from '../screens/ZonesScreen';
@@ -15,19 +17,38 @@ import { useTheme } from '../utils/theme';
 
 const Stack = createNativeStackNavigator();
 
-export default function MoreNavigator() {
+export default function MoreNavigator({
+  navigation,
+  route,
+}: {
+  navigation: { setOptions: (opts: { headerShown: boolean }) => void };
+  route: object;
+}) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const focused = getFocusedRouteNameFromRoute(route) ?? 'MoreHome';
+  const atRoot = focused === 'MoreHome';
+  // Native stack on Android treats nested headers as already inset (often 0).
+  // Pixel / edge-to-edge needs an explicit status-bar height so titles sit
+  // below the clock, not in the cutout.
+  const headerStatusBarHeight = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0,
+  );
+
+  useLayoutEffect(() => {
+    navigation.setOptions({ headerShown: atRoot });
+  }, [navigation, atRoot]);
+
   return (
     <Stack.Navigator screenOptions={{
       headerStyle: { backgroundColor: colors.header },
       headerTintColor: colors.textPrimary,
       contentStyle: { backgroundColor: colors.background },
-      // Nested stack under a tab with headerShown:false — apply inset so titles
-      // sit below the status bar / notch instead of under it.
-      safeAreaInsets: { top: insets.top },
+      headerStatusBarHeight,
+      safeAreaInsets: { top: headerStatusBarHeight },
     }}>
-      <Stack.Screen name="MoreHome" component={MoreHomeScreen} options={{ title: 'More' }} />
+      <Stack.Screen name="MoreHome" component={MoreHomeScreen} options={{ headerShown: false, title: 'More' }} />
       <Stack.Screen name="General" component={GeneralScreen} options={{ title: 'General' }} />
       <Stack.Screen name="PresetsConfig" component={PresetsConfigScreen} options={{ title: 'Presets' }} />
       <Stack.Screen name="Brightness" component={BrightnessScreen} />
