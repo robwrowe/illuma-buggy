@@ -18,6 +18,7 @@
 #include "MbCalibrationStore.h"
 #include "RuntimeFields.h"
 #include "SdRuleLogger.h"
+#include "Reboot.h"
 #include <WiFi.h>
 #include "JsonPsram.h"
 
@@ -344,6 +345,10 @@ void handleBLECommand(const String& msg) {
     manualParadeStop();
     bleNotify("{\"type\":\"ack\",\"action\":\"parade_manual_stop\"}");
   }
+  else if (type == "reboot") {
+    bleNotify("{\"type\":\"ack\",\"action\":\"reboot\",\"delay_ms\":400}");
+    requestReboot("ble");
+  }
 
   // ── MB / SW effect fade ──
   else if (type == "ble_effect_config") {
@@ -359,8 +364,28 @@ void handleBLECommand(const String& msg) {
 
   // ── WLED WiFi / HTTP target ──
   else if (type == "wled_net_config") {
-    if (doc.containsKey("ssid")) wledSsid = doc["ssid"].as<String>();
-    if (doc.containsKey("pass")) wledPass = doc["pass"].as<String>();
+    // Only ssid/pass changes require tearing down and re-joining WiFi.
+    // ip/port changes only affect where the HTTP client points — wledIp/wledPort
+    // are read fresh on every request in WledClient.cpp, so no reconnect is needed
+    // and forcing one here was the source of the "needs a reboot" symptom (a WiFi
+    // disconnect/reconnect raced with the BLE ack / mDNS teardown).
+    String recvSsid = doc.containsKey("ssid") ? doc["ssid"].as<String>() : String("<omit>");
+    String recvIp   = doc.containsKey("ip")   ? doc["ip"].as<String>()   : String("<omit>");
+    int    recvPort = doc.containsKey("port") ? doc["port"].as<int>()    : -1;
+#if DEBUG_WLED_NET
+    Serial.printf("[WledNet] recv ssid=\"%s\" ip=\"%s\" port=%d  (before: ip=\"%s\" port=%d)\n",
+                  recvSsid.c_str(), recvIp.c_str(), recvPort,
+                  wledIp.c_str(), wledPort);
+#endif
+    bool wifiCredsChanged = false;
+    if (doc.containsKey("ssid") && doc["ssid"].as<String>() != wledSsid) {
+      wledSsid = doc["ssid"].as<String>();
+      wifiCredsChanged = true;
+    }
+    if (doc.containsKey("pass") && doc["pass"].as<String>() != wledPass) {
+      wledPass = doc["pass"].as<String>();
+      wifiCredsChanged = true;
+    }
     if (doc.containsKey("ip"))   wledIp   = doc["ip"].as<String>();
     if (doc.containsKey("port")) wledPort = doc["port"].as<int>();
     prefs.begin("config", false);
@@ -369,13 +394,46 @@ void handleBLECommand(const String& msg) {
     prefs.putString("wledIp", wledIp);
     prefs.putInt("wledPort", wledPort);
     prefs.end();
+#if DEBUG_WLED_NET
+    Serial.printf("[WledNet] NVS wrote ip=\"%s\" port=%d\n", wledIp.c_str(), wledPort);
+#endif
+    wledTargetInvalidate();
     String ack = "{\"type\":\"ack\",\"action\":\"wled_net_config\","
                  "\"ssid\":\"" + wledSsid + "\",\"ip\":\"" + wledIp + "\","
-                 "\"port\":" + String(wledPort) + "}";
+                 "\"port\":" + String(wledPort) + ","
+                 "\"reconnect\":" + String(wifiCredsChanged ? "true" : "false") + "}";
+#if DEBUG_WLED_NET
+    Serial.printf("[WledNet] ack bleConnected=%d notifyChar=%p\n",
+                  (int)bleConnected, (void*)notifyChar);
+#endif
     bleNotify(ack);
+    Serial.printf("[WLED] net_config target %s ssid=\"%s\" reconnect=%s\n",
+                  wledBaseUrl().c_str(), wledSsid.c_str(),
+                  wifiCredsChanged ? "yes" : "no");
 
-    wifiConnectInProgress = false;
-    connectToWLED(true);
+    if (wifiCredsChanged) {
+      // SSID/password changed — reconnect from loop() so this drain isn't blocked ~10s.
+      wledNetApplyPending = true;
+#if DEBUG_WLED_NET
+      Serial.println("[WledNet] apply scheduled connectToWLED(force) from loop()");
+#endif
+    } else {
+      // IP/port-only change: no WiFi disruption needed. Just force the main
+      // loop's one-shot baseline snapshot/power-on against the new target,
+      // the same mechanism WiFiManager.cpp uses after a fresh connect.
+      wledWasConnected = false;
+      wledWarnIfOffSubnet();
+#if DEBUG_WLED_NET
+      Serial.println("[WledNet] apply skip connectToWLED (ip/port only)");
+#endif
+    }
+#if DEBUG_WLED_NET
+    WifiNetInfo afterNet = getWifiNetInfo();
+    Serial.printf("[WledNet] apply done wifi=%d sta=%s effectiveTarget=%s\n",
+                  (int)WiFi.status(),
+                  afterNet.ip.length() ? afterNet.ip.c_str() : "-",
+                  wledEffectiveHostPort().c_str());
+#endif
   }
 
   // ── Starlight Wand config ──
@@ -713,6 +771,7 @@ void handleBLECommand(const String& msg) {
       "\"wled_ssid\":\"" + wledSsid + "\","
       "\"wled_ip\":\"" + wledIp + "\","
       "\"wled_port\":" + String(wledPort) + ","
+      "\"wled_effective\":\"" + wledEffectiveHostPort() + "\","
       "\"wifi_ip\":\"" + net.ip + "\","
       "\"wifi_gateway\":\"" + net.gateway + "\","
       "\"wifi_subnet\":\"" + net.subnet + "\","

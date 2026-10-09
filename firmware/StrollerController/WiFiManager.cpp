@@ -1,5 +1,6 @@
 #include "WiFiManager.h"
 #include "Globals.h"
+#include "WledClient.h"
 #include <ESPmDNS.h>
 
 static bool logicMdnsStarted = false;
@@ -57,6 +58,7 @@ void connectToWLED(bool force) {
       net.ip.c_str(), net.gateway.c_str(), net.subnet.c_str()
     );
     startLogicBoardMdns();
+    wledWarnIfOffSubnet();
     // Do NOT call snapshotWledBaseline / ensureWledPowerOn here — this runs on a
     // FreeRTOS WiFi task. Concurrent HTTPClient with loop() hangs / races.
     // Main loop picks up the newly-connected edge and snapshots there.

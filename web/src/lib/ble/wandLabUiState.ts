@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 export const WAND_LAB_UI_LS_KEY = 'illuma-wandlab-ui';
 
 let cache = null;
+const listeners: Set<() => void> = new Set();
 
 function readAll() {
   if (cache) return cache;
@@ -17,12 +18,31 @@ function readAll() {
   return cache;
 }
 
+function notifyListeners() {
+  listeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      /* ignore subscriber errors */
+    }
+  });
+}
+
 function writeAll(next) {
   cache = next;
   try {
     localStorage.setItem(WAND_LAB_UI_LS_KEY, JSON.stringify(next));
   } catch {
     /* quota / private mode */
+  }
+  notifyListeners();
+}
+
+function sameUiValue(a, b) {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return Object.is(a, b);
   }
 }
 
@@ -62,4 +82,30 @@ export function useWandLabUiState(key, defaultValue) {
   }, [key]);
 
   return [state, setState];
+}
+
+/**
+ * Read a Wand Lab UI slice without writing it back. Subscribes to patches from
+ * `useWandLabUiState` so a keep-mounted tab (e.g. Fuzz reading Tail Builder
+ * assembly keys) stays in sync when the owner tab edits them.
+ */
+export function useWandLabUiRead(key, defaultValue) {
+  const fallbackRef = useRef(undefined);
+  if (fallbackRef.current === undefined) {
+    fallbackRef.current = typeof defaultValue === 'function' ? defaultValue() : defaultValue;
+  }
+  const [state, setState] = useState(() => mergeStored(readAll()[key], fallbackRef.current));
+
+  useEffect(() => {
+    const sync = () => {
+      const next = mergeStored(readAll()[key], fallbackRef.current);
+      setState((prev) => (sameUiValue(prev, next) ? prev : next));
+    };
+    listeners.add(sync);
+    return () => {
+      listeners.delete(sync);
+    };
+  }, [key]);
+
+  return state;
 }

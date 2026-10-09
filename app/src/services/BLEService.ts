@@ -125,6 +125,7 @@ class BLEService {
   private attemptingReconnect = false;
   private scanTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
   private lastScanTimedOut = false;
+  private expectedRebootUntil = 0;
 
   private static readonly CHUNKED_TYPES: Record<string, string> = {
     'preset_chunk':  'preset_list_raw',
@@ -197,6 +198,14 @@ class BLEService {
   }
   getConnectionState(): ConnectionState { return this.connState; }
   isConnected(): boolean { return this.connState === 'connected'; }
+
+  /** Suppress the generic disconnect notification for ~20s after a requested reboot. */
+  markExpectedReboot(ms = 20_000): void {
+    this.expectedRebootUntil = Date.now() + ms;
+  }
+  isExpectedReboot(): boolean {
+    return Date.now() < this.expectedRebootUntil;
+  }
   isSessionReady(): boolean { return this.connState === 'connected' && this.sessionReady; }
 
   onSessionReady(handler: SessionReadyHandler): () => void {
@@ -403,6 +412,7 @@ class BLEService {
     return this.send(msg);
   }
   sendStatus()                                            { return this.send({ type: 'status' }); }
+  sendReboot()                                            { return this.send({ type: 'reboot' }); }
   sendGetEffects()                                        { return this.send({ type: 'wled_get_effects' }); }
   sendGetPalettes()                                       { return this.send({ type: 'wled_get_palettes' }); }
   sendGetFxData()                                         { return this.send({ type: 'wled_get_fxdata' }); }
@@ -467,6 +477,9 @@ class BLEService {
   }
   sendStatusLedMode(mode: 0 | 1 | 2) {
     return this.sendSetField('statusLedMode', mode);
+  }
+  sendStatusLedHideOk(hideOk: boolean) {
+    return this.sendSetField('statusLedHideOk', hideOk);
   }
   sendBoardRole(role: 'standalone' | 'logic_board') {
     return this.send({ type: 'set_board_role', role });
@@ -651,7 +664,7 @@ class BLEService {
     while (this.sendQueue.length > 0) this.sendQueue.shift()!.resolve(false);
     this.sendRunning = false;
     this.setConnState('disconnected');
-    void notifyBleDisconnected();
+    if (!this.isExpectedReboot()) void notifyBleDisconnected();
     if (this.shouldReconnect) this.scheduleReconnect();
     this.handlingDisconnect = false;
   }

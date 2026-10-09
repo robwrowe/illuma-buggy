@@ -33,6 +33,7 @@ const RuntimeField kRuntimeFields[] = {
   { "bleScanLogEnabled",     FieldType::BOOL,   nullptr,           &bleScanLogEnabled,  nullptr,                nullptr,                 0,    0,      0,  true,  "scanLog",    false, nullptr },
   { "rulesPaused",           FieldType::BOOL,   nullptr,           &rulesPaused,        nullptr,                nullptr,                 0,    0,      0,  true,  "rulesPaused", false, nullptr },
   { "statusLedMode",         FieldType::U8,     &statusLedMode,    nullptr,             nullptr,                nullptr,                 0,    2,      0,  true,  "statusLedMode", false, nullptr },
+  { "statusLedHideOk",       FieldType::BOOL,   nullptr,           &statusLedHideOk,    nullptr,                nullptr,                 0,    0,      0,  true,  "ledHideOk", false, nullptr },
   { "boardRole",             FieldType::STRING_SHORT, nullptr,     nullptr,             nullptr,                &gBoardRoleFieldStaging, 0,    0,      16, false, nullptr,     false, onBoardRoleApply },
 };
 const size_t kRuntimeFieldCount = sizeof(kRuntimeFields) / sizeof(kRuntimeFields[0]);

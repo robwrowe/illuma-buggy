@@ -5,6 +5,7 @@
 // HAS_STATUS_NEOPIXEL guard below) so RuntimeFields.cpp always links,
 // even on builds without the status pixel.
 uint8_t statusLedMode = 0;
+bool statusLedHideOk = false;
 
 #if HAS_STATUS_NEOPIXEL
 
@@ -84,6 +85,11 @@ void statusLedTick() {
     case LedState::LINK_WAIT:     r = 255; g = 200; b = 0;   blinkIntervalMs = 125; break; // UART silent
     case LedState::LINKED:        r = 0;   g = 255; b = 0;   blinkIntervalMs = 0;   break;
     case LedState::STANDALONE_OK: r = 0;   g = 120; b = 0;   blinkIntervalMs = 0;   break;
+  }
+
+  if (statusLedHideOk &&
+      (currentState == LedState::LINKED || currentState == LedState::STANDALONE_OK)) {
+    r = 0; g = 0; b = 0;
   }
 
   if (blinkIntervalMs == 0) {

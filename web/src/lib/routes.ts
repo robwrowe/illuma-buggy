@@ -16,6 +16,7 @@ export const WAND_LAB_SECTIONS = [
   { path: 'mb', label: 'MagicBand+' },
   { path: 'bytes', label: 'Byte editor' },
   { path: 'tail', label: 'Tail builder' },
+  { path: 'fuzz', label: 'Fuzz' },
   { path: 'sequence', label: 'Packet sequence' },
   { path: 'analyze', label: 'Analyze' },
 ];

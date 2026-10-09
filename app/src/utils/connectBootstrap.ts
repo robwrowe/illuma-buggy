@@ -179,6 +179,10 @@ async function runEssentialConfig(token: number): Promise<{ ok: boolean; mapping
   await delay(200);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
 
+  await bleService.sendStatusLedHideOk(s.statusLedHideOk);
+  await delay(200);
+  if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };
+
   await bleService.sendMbRuleConfig(s.ftbPresetId || '');
   await delay(200);
   if (!bleService.isConnected() || token !== bootstrapToken) return { ok: false, mappingSyncOk: false };

@@ -1,5 +1,11 @@
 #pragma once
 
+// Phase 0 WLED-target verification logs ([WledNet], bleNotify drops, queue drain).
+// Set to 0 after the handler-apply path is confirmed on-device.
+#ifndef DEBUG_WLED_NET
+#define DEBUG_WLED_NET 1
+#endif
+
 // BLE
 #define SERVICE_UUID     "12345678-1234-1234-1234-123456789abc"
 #define CMD_CHAR_UUID    "12345678-1234-1234-1234-123456789abd"

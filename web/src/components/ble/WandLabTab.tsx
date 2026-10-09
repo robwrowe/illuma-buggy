@@ -32,6 +32,7 @@ import { postLogEntryToSheets, serializeByteTags } from '../../lib/sheets/wandLa
 import { DEFAULT_MB_MAPPING, normalizeMbMapping } from '../../lib/ble/mbMapping';
 import { EMPTY_ANALYZER_SESSION, WandLabAnalyzerTab } from './WandLabAnalyzerTab';
 import { WandLabTailBuilderTab } from './WandLabTailBuilderTab';
+import { WandLabFuzzTab } from './WandLabFuzzTab';
 import { WandLabCapturePaste } from './WandLabCapturePaste';
 import { WandLabLogPanel } from './WandLabLogPanel';
 import { WandLabPacketSequence } from './WandLabPacketSequence';
@@ -780,6 +781,53 @@ export function WandLabTab({ data, update }) {
                   });
                   setLogCollapsed(false);
                   setStatus(`Logged tail ${i}/${n} in observation log`);
+                }}
+              />
+            </Tabs.Panel>
+
+            <Tabs.Panel value="fuzz" pt="md">
+              <WandLabFuzzTab
+                simIp={lab.simIp}
+                onStatus={setStatus}
+                onSendPacket={sendBytes}
+                onGoToTailBuilder={() => setLabTab('tail')}
+                onSendToAnalyzer={(tails) => {
+                  const now = Date.now();
+                  const packets = (tails || [])
+                    .filter((t) => t?.bytes?.length)
+                    .map((t, i) => ({
+                      id: `fuzz-${now}-${i}`,
+                      hex: bytesToHex(t.bytes),
+                      bytes: [...t.bytes],
+                    }));
+                  if (!packets.length) {
+                    setStatus('No tails to send to Analyze');
+                    return;
+                  }
+                  setAnalyzerImportSeed({
+                    key: `fuzz-${now}`,
+                    strip8301: false,
+                    packets,
+                  });
+                  setLabTab('analyze');
+                }}
+                onLogTail={(pkt, meta) => {
+                  if (!pkt?.bytes?.length) return;
+                  const hex = bytesToHex(pkt.bytes);
+                  const n = meta?.rowCount || 1;
+                  const i = (meta?.rowIdx ?? 0) + 1;
+                  addLogEntry({
+                    presetKey: 'fuzz',
+                    forceNew: true,
+                    snapshot: {
+                      kind: 'single',
+                      presetKey: 'fuzz',
+                      bytes: hex,
+                      origBytes: hex,
+                    },
+                  });
+                  setLogCollapsed(false);
+                  setStatus(`Logged fuzz tail ${i}/${n} in observation log`);
                 }}
               />
             </Tabs.Panel>

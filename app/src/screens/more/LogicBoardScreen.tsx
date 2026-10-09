@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import IconSearch from '@tabler/icons-react-native/dist/esm/icons/IconSearch';
 import IconWifi from '@tabler/icons-react-native/dist/esm/icons/IconWifi';
+import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 import { BoardRoleMode, DEFAULT_BOARD_IP, useAppStore } from '../../stores/store';
 import { bleService } from '../../services/BLEService';
 import { discoverLogicBoardIp } from '../../services/boardDiscovery';
@@ -19,6 +20,38 @@ export default function LogicBoardScreen() {
   } = useAppStore();
   const [finding, setFinding] = useState(false);
   const [findMessage, setFindMessage] = useState<string | null>(null);
+  const [rebootHint, setRebootHint] = useState<string | null>(null);
+  const pendingRebootConfirm = useRef(false);
+
+  useEffect(() => {
+    if (!isConnected || !pendingRebootConfirm.current) return;
+    pendingRebootConfirm.current = false;
+    void bleService.sendStatus();
+    setRebootHint('Board back online');
+    const t = setTimeout(() => setRebootHint(null), 4000);
+    return () => clearTimeout(t);
+  }, [isConnected]);
+
+  const confirmReboot = () => {
+    if (!isConnected) return;
+    Alert.alert(
+      'Reboot logic board?',
+      'The board restarts and the BLE link drops for ~10 s. Lights hold their last state on WLED.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reboot',
+          style: 'destructive',
+          onPress: () => {
+            bleService.markExpectedReboot(20_000);
+            pendingRebootConfirm.current = true;
+            setRebootHint('Rebooting… reconnecting');
+            void bleService.sendReboot();
+          },
+        },
+      ],
+    );
+  };
   const updateBoardRole = (role: BoardRoleMode) => {
     setBoardRole(role);
     if (isConnected) void bleService.sendBoardRole(role);
@@ -82,6 +115,17 @@ export default function LogicBoardScreen() {
           ))}
         </View>
         <Text style={[s.rowHint, { color: statusColor }]}>{statusText}</Text>
+        <TouchableOpacity
+          style={[s.dataBtn, !isConnected && { opacity: 0.5 }]}
+          onPress={confirmReboot}
+          disabled={!isConnected}
+        >
+          <IconRefresh size={16} color={isConnected ? colors.danger : colors.textMuted} />
+          <Text style={[s.dataBtnText, { color: isConnected ? colors.danger : colors.textMuted }]}>
+            Reboot logic board
+          </Text>
+        </TouchableOpacity>
+        {rebootHint ? <Text style={s.rowHint}>{rebootHint}</Text> : null}
       </View>
       <View style={s.section}>
         <Text style={s.sectionTitle}>Logic board HTTP</Text>

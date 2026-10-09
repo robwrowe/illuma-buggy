@@ -31,6 +31,7 @@
 #include "EmbeddedRules.h"
 #include "WledSendQueue.h"
 #include "HttpCommandServer.h"
+#include "Reboot.h"
 #include <ArduinoJson.h>
 
 void setup() {
@@ -62,6 +63,7 @@ void setup() {
   mbUnmatchedLogEnabled = prefs.getBool("mbUnmatched", false);
   rulesPaused         = prefs.getBool("rulesPaused", false);
   statusLedMode       = prefs.getUChar("statusLedMode", 0);
+  statusLedHideOk     = prefs.getBool("ledHideOk", false);
   // Prefer SPIFFS for large rules JSON; migrate leftover NVS blobs once.
   // Discard corrupt/empty blobs so a truncated legacy file doesn't look like a
   // successful load (rules=0) and block a clean "waiting for push" state.
@@ -250,6 +252,7 @@ void processPendingCommands() {
 }
 
 void loop() {
+  serviceReboot();
   statusLedTick();
   uartScannerLinkPoll();
   httpCommandServerPoll();
@@ -288,16 +291,25 @@ void loop() {
     if (wledWasConnected) stopLogicBoardMdns();
     // Don't kick WiFi reconnect while assembling a large BLE push — radio churn
     // here is a common cause of mid-chunk GATT disconnects.
-    if (cmdChunkBuffer == nullptr && now - lastWifiRetry > WIFI_RETRY_MS) {
+    bool pendingApply = wledNetApplyPending;
+    if (pendingApply) wledNetApplyPending = false;
+    if (cmdChunkBuffer == nullptr && (pendingApply || now - lastWifiRetry > WIFI_RETRY_MS)) {
       lastWifiRetry = now;
       Serial.println("[WiFi] Reconnecting...");
-      connectToWLED();
+      connectToWLED(pendingApply);
     }
     wledWasConnected = false;
     wledHttpOk = false;
+  } else if (wledNetApplyPending && cmdChunkBuffer == nullptr) {
+    wledNetApplyPending = false;
+#if DEBUG_WLED_NET
+    Serial.println("[WledNet] apply -> connectToWLED(force) start");
+#endif
+    connectToWLED(true);
   } else if (!wledWasConnected) {
     wledWasConnected = true;
     delay(300);  // let AP/WLED settle after STA join
+    wledWarnIfOffSubnet();
     snapshotWledBaseline();
     ensureWledPowerOn();
   } else {
