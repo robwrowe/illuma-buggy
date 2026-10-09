@@ -164,6 +164,7 @@ uint8_t mbActiveLayoutIdx = 0;
 String  mbLayoutsJson = "";
 unsigned long lastWifiRetry = 0;
 volatile bool wifiConnectInProgress = false;
+volatile bool wledNetApplyPending = false;
 
 QueueHandle_t cmdQueue;
 QueueHandle_t bleCmdQueue = nullptr;

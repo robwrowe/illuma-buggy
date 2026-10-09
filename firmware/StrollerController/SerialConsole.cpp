@@ -10,6 +10,8 @@
 #include "WiFiManager.h"
 #include "PayloadTransport.h"
 #include "Config.h"
+#include "Reboot.h"
+#include <ESPmDNS.h>
 
 void processSerialCommands() {
   if (!Serial.available()) return;
@@ -21,6 +23,7 @@ void processSerialCommands() {
     Serial.println("[Serial] Commands:");
     Serial.println("  status           — WiFi, override, preset, queue");
     Serial.println("  wled             — print WLED HTTP target IP:port");
+    Serial.println("  wled target      — mem/NVS target + mDNS/DNS resolve");
     Serial.println("  wled si          — GET WLED state (fx/bri/segments)");
     Serial.println("  sniff [seconds]  — log every BLE mfr packet (default 30)");
     Serial.println("  sniff off        — stop sniffing");
@@ -34,6 +37,7 @@ void processSerialCommands() {
     Serial.println("  scanner <mac>            — save scanner MAC (informational)");
     Serial.println("  nvs wifi                 — dump stored vs in-memory WiFi config");
     Serial.println("  uart                     — UART link pin + RX availability");
+    Serial.println("  reboot                   — restart the logic board");
   } else if (line == "uart") {
     Serial.printf("[UART] config TX=%d RX=%d baud=%d lastPacket=%s\n",
                   UART_LINK_TX_PIN, UART_LINK_RX_PIN, UART_LINK_BAUD,
@@ -57,10 +61,34 @@ void processSerialCommands() {
                   wledIp.c_str(), wledPort, wledSsid.c_str(),
                   WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "-");
   } else if (line == "wled" || line == "wled target") {
-    Serial.printf("[WLED] target http://%s:%d  ssid=\"%s\"  sta=%s  wifi=%s\n",
-                  wledIp.c_str(), wledPort, wledSsid.c_str(),
+    Serial.printf("[WLED] target %s  ssid=\"%s\"  sta=%s  wifi=%s\n",
+                  wledBaseUrl().c_str(), wledSsid.c_str(),
                   WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "-",
                   WiFi.status() == WL_CONNECTED ? "up" : "down");
+    Preferences dbgPrefs;
+    dbgPrefs.begin("config", true);
+    String nvsIp   = dbgPrefs.getString("wledIp", "<not set>");
+    int    nvsPort = dbgPrefs.getInt("wledPort", -1);
+    dbgPrefs.end();
+    Serial.printf("[WLED]   nvs ip=\"%s\" port=%d  mem ip=\"%s\" port=%d  cache=none\n",
+                  nvsIp.c_str(), nvsPort, wledIp.c_str(), wledPort);
+
+    // Phase 0.4 — one-shot resolve of wled.local from this STA. No cache write.
+    IPAddress dnsIp;
+    bool dnsOk = (WiFi.status() == WL_CONNECTED) &&
+                 (WiFi.hostByName("wled.local", dnsIp) == 1) && (uint32_t)dnsIp != 0;
+    Serial.printf("[WLED]   hostByName(\"wled.local\") %s\n",
+                  dnsOk ? dnsIp.toString().c_str() : "FAIL");
+    String mdnsName = wledIp;
+    if (mdnsName.endsWith(".local")) {
+      mdnsName = mdnsName.substring(0, mdnsName.length() - 6);
+    } else {
+      mdnsName = "wled";
+    }
+    IPAddress mdnsIp = MDNS.queryHost(mdnsName.c_str(), 2000);
+    bool mdnsOk = (uint32_t)mdnsIp != 0;
+    Serial.printf("[WLED]   MDNS.queryHost(\"%s\") %s\n",
+                  mdnsName.c_str(), mdnsOk ? mdnsIp.toString().c_str() : "FAIL");
   } else if (line == "nvs wifi") {
     Preferences dbgPrefs;
     dbgPrefs.begin("config", true);
@@ -92,8 +120,8 @@ void processSerialCommands() {
       Serial.println("[WLED] WiFi not connected");
     } else {
       HTTPClient http;
-      Serial.printf("[WLED] GET http://%s:%d/json/si\n", wledIp.c_str(), wledPort);
-      http.begin("http://" + wledIp + ":" + String(wledPort) + "/json/si");
+      Serial.printf("[WLED] GET %s/json/si\n", wledBaseUrl().c_str());
+      http.begin(wledBaseUrl() + "/json/si");
       http.setTimeout(5000);
       int code = http.GET();
       if (code == 200) {
@@ -110,8 +138,8 @@ void processSerialCommands() {
           Serial.printf("[WLED] si parse fail (%u bytes)\n", (unsigned)body.length());
         }
       } else {
-        Serial.printf("[WLED] si GET http://%s:%d/json/si failed HTTP %d\n",
-                      wledIp.c_str(), wledPort, code);
+        Serial.printf("[WLED] si GET %s/json/si failed HTTP %d\n",
+                      wledBaseUrl().c_str(), code);
       }
       http.end();
     }
@@ -200,6 +228,8 @@ void processSerialCommands() {
       transportSetScannerMac(mac);
       Serial.printf("[Serial] scanner MAC = %s\n", transportMacToString(mac).c_str());
     }
+  } else if (line == "reboot") {
+    requestReboot("serial");
   } else {
     Serial.printf("[Serial] Unknown: %s (type 'help')\n", line.c_str());
   }

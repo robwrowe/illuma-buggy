@@ -160,6 +160,8 @@ extern uint8_t mbActiveLayoutIdx;
 extern String  mbLayoutsJson;
 extern unsigned long lastWifiRetry;
 extern volatile bool wifiConnectInProgress;
+/** Set by wled_net_config when SSID/pass changed; loop() runs connectToWLED(true). */
+extern volatile bool wledNetApplyPending;
 
 /** True after a successful WLED HTTP call; cleared on WiFi loss / HTTP failure. */
 extern bool wledHttpOk;

@@ -1,6 +1,16 @@
 #pragma once
 
 #include <Arduino.h>
+
+/** "http://<host>:<port>" — the only place WLED URLs are built. */
+String wledBaseUrl();
+/** "host:port" for status JSON. */
+String wledEffectiveHostPort();
+/** Drop any resolved/cached address (no-op until hostname resolve is added). */
+void wledTargetInvalidate();
+/** Log once when a literal IPv4 target is off the STA subnet. */
+void wledWarnIfOffSubnet();
+
 /** Serializes loop()-side and WledSendTask HTTPClient use (ESP32 HTTP is not reentrant). */
 void wledHttpMutexInit();
 bool sendToWLED(const String& jsonBody, int timeoutMs = 2000, int retries = 0);

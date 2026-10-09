@@ -173,8 +173,26 @@ already-loaded layout is active. Both persist to NVS (`mbLayouts`, `mbActiveLayo
 ```
 
 Any subset of `ssid`/`pass`/`ip`/`port` may be sent; unset fields keep their current
-value. Persists to NVS and immediately triggers a reconnect to the (possibly new) WLED
-target.
+value. Persists to NVS. SSID/password changes schedule a WiFi reconnect from `loop()`
+(ack is sent first; the reconnect does not block the BLE command drain). IP/port-only
+changes retarget HTTP with no WiFi tear-down. Ack includes `"reconnect":true|false`.
+
+### Reboot
+
+```json
+{"type":"reboot"}
+```
+
+Ack: `{"type":"ack","action":"reboot","delay_ms":400}`. The board then restarts after
+~400 ms. The BLE link will drop; the app should treat that disconnect as expected and
+auto-reconnect. Same command is accepted on HTTP `POST /cmd`. Convenience route:
+
+```
+curl -X POST http://illuma-logic.local:8080/reboot
+curl -X POST http://192.168.1.66:8080/cmd -d '{"type":"reboot"}'
+```
+
+`GET /reboot` returns `405` and does not restart. Serial console: `reboot`.
 
 ### Dual-board role & scanner pairing
 
@@ -263,6 +281,7 @@ Then a chunked `rule_log` envelope assembling to a JSON array body.
   "wled_ssid": "StrollerNet",
   "wled_ip": "4.3.2.1",
   "wled_port": 80,
+  "wled_effective": "4.3.2.1:80",
   "sw_enabled": true,
   "sw_timeout_ms": 30000,
   "mb_enabled": true,
@@ -295,6 +314,9 @@ Then a chunked `rule_log` envelope assembling to a JSON array body.
 Priority: BLE Effect > Show Mode > Manual > Zone. MagicBand+ and Starlight Wand share `BLE_EFFECT` (same priority tier); per-rule exclusivity flags arbitrate between them.
 
 When WiFi/WLED is up, `brightness` is refreshed from WLED `/json/si` before status is emitted (avoids cold default `128`).
+
+`wled_effective` is `host:port` currently used for WLED HTTP (same as `wled_ip`:`wled_port`
+until hostname resolve is added). `wled_ip` / `wled_port` are unchanged.
 
 `scanner_mac`/`scanner_seen`/`scanner_age_ms` reflect the dual-board UART link — `scanner_seen`
 is `false` until the first scanner packet/heartbeat is received after boot, and `scanner_age_ms`

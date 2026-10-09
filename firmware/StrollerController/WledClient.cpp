@@ -3,6 +3,37 @@
 #include "StatusDisplay.h"
 
 static SemaphoreHandle_t wledHttpMux = nullptr;
+static String lastOffSubnetWarnKey;
+
+String wledBaseUrl() {
+  return "http://" + wledIp + ":" + String(wledPort);
+}
+
+String wledEffectiveHostPort() {
+  return wledIp + ":" + String(wledPort);
+}
+
+void wledTargetInvalidate() {
+  lastOffSubnetWarnKey = "";
+}
+
+void wledWarnIfOffSubnet() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  IPAddress target;
+  if (!target.fromString(wledIp)) return;  // hostname — not a literal IPv4
+  IPAddress sta = WiFi.localIP();
+  IPAddress mask = WiFi.subnetMask();
+  if ((uint32_t)sta == 0 || (uint32_t)mask == 0) return;
+  if (((uint32_t)target & (uint32_t)mask) == ((uint32_t)sta & (uint32_t)mask)) {
+    lastOffSubnetWarnKey = "";
+    return;
+  }
+  String key = wledIp + "|" + sta.toString();
+  if (key == lastOffSubnetWarnKey) return;
+  lastOffSubnetWarnKey = key;
+  Serial.printf("[WLED] WARN target %s is off-subnet (sta=%s mask=%s) — requests will fail\n",
+                wledIp.c_str(), sta.toString().c_str(), mask.toString().c_str());
+}
 
 void wledHttpMutexInit() {
   if (!wledHttpMux) wledHttpMux = xSemaphoreCreateMutex();
@@ -24,7 +55,7 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
   }
   wledHttpLock();
   HTTPClient http;
-  http.begin("http://" + wledIp + ":" + String(wledPort) + "/json/state");
+  http.begin(wledBaseUrl() + "/json/state");
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(timeoutMs);
   int code = -1;
@@ -38,8 +69,8 @@ bool sendToWLED(const String& jsonBody, int timeoutMs, int retries) {
     }
     if (attempt < retries) delay(80);
   }
-  Serial.printf("[WLED] POST http://%s:%d/json/state failed: HTTP %d (%u bytes)\n",
-                wledIp.c_str(), wledPort, code, (unsigned)jsonBody.length());
+  Serial.printf("[WLED] POST %s/json/state failed: HTTP %d (%u bytes)\n",
+                wledBaseUrl().c_str(), code, (unsigned)jsonBody.length());
   if (jsonBody.length() < 120) {
     Serial.printf("[WLED]   body: %s\n", jsonBody.c_str());
   }
@@ -90,7 +121,7 @@ String getFromWLED(const String& path, int timeoutMs) {
   }
   wledHttpLock();
   HTTPClient http;
-  http.begin("http://" + wledIp + ":" + String(wledPort) + path);
+  http.begin(wledBaseUrl() + path);
   http.setTimeout(timeoutMs > 0 ? timeoutMs : 5000);
   int code = http.GET();
   String body = "";
@@ -98,8 +129,8 @@ String getFromWLED(const String& path, int timeoutMs) {
     body = http.getString();
     statusDisplaySetWledOk(true);
   } else {
-    Serial.printf("[WLED] GET http://%s:%d%s failed: %d\n",
-                  wledIp.c_str(), wledPort, path.c_str(), code);
+    Serial.printf("[WLED] GET %s%s failed: %d\n",
+                  wledBaseUrl().c_str(), path.c_str(), code);
     statusDisplaySetWledOk(false);
   }
   http.end();

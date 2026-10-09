@@ -4,6 +4,7 @@
 #include "HttpCommandServer.h"
 #include "Config.h"
 #include <esp_heap_caps.h>
+#include <string.h>
 // Peripheral-initiated ATT MTU exchange (Chrome Web Bluetooth never requests it).
 // NimBLE-Arduino 2.5.0 has no NimBLEServer::updateMTU(); use the core GATT API.
 #ifdef USING_NIMBLE_ARDUINO_HEADERS
@@ -27,7 +28,14 @@ void bleNotify(const String& json) {
     *httpCaptureTarget = json;
     return;  // HTTP-originated command — do not also push to BLE notify char
   }
-  if (!bleConnected || notifyChar == nullptr) return;
+  if (!bleConnected || notifyChar == nullptr) {
+#if DEBUG_WLED_NET
+    Serial.printf("[BLE] notify dropped connected=%d char=%p json=%s\n",
+                  (int)bleConnected, (void*)notifyChar,
+                  json.length() <= 160 ? json.c_str() : "(long)");
+#endif
+    return;
+  }
   notifyChar->setValue(json.c_str());
   notifyChar->notify();
 }
@@ -195,11 +203,50 @@ void enqueueBleCommand(const String& msg) {
   enqueueBleCommandOwned(buf, msg.length());
 }
 
+/** Persistence commands (wled_net_config and * _config) are safe to apply without a live BLE link. */
+static bool isPersistentConfigCmd(const char* json) {
+  if (!json) return false;
+  const char* key = strstr(json, "\"type\":\"");
+  if (!key) return false;
+  key += 8;
+  const char* end = strchr(key, '"');
+  if (!end || end <= key) return false;
+  size_t n = (size_t)(end - key);
+  return n >= 8 && memcmp(end - 7, "_config", 7) == 0;
+}
+
 void drainBleCmdQueue() {
   if (bleCmdQueue == nullptr) return;
+  PendingBleCmd kept[BLE_CMD_QUEUE_DEPTH];
+  int nKept = 0;
+  unsigned dropped = 0;
   PendingBleCmd item;
   while (xQueueReceive(bleCmdQueue, &item, 0) == pdTRUE) {
-    if (item.data) heap_caps_free(item.data);
+    if (item.data && isPersistentConfigCmd(item.data)) {
+#if DEBUG_WLED_NET
+      Serial.printf("[BLE] drain keep persistent cmd: %.80s\n", item.data);
+#endif
+      if (nKept < (int)BLE_CMD_QUEUE_DEPTH) {
+        kept[nKept++] = item;
+        continue;
+      }
+    }
+    if (item.data) {
+      Serial.printf("[BLE] drain dropped queued cmd (%u bytes): %.80s\n",
+                    (unsigned)strlen(item.data), item.data);
+      heap_caps_free(item.data);
+    }
+    dropped++;
+  }
+  for (int i = 0; i < nKept; i++) {
+    if (xQueueSend(bleCmdQueue, &kept[i], 0) != pdTRUE) {
+      Serial.printf("[BLE] drain requeue failed, dropping persistent cmd\n");
+      if (kept[i].data) heap_caps_free(kept[i].data);
+      dropped++;
+    }
+  }
+  if (dropped) {
+    Serial.printf("[BLE] drainBleCmdQueue dropped %u command(s)\n", dropped);
   }
 }
 
