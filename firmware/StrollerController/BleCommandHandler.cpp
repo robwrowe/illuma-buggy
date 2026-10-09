@@ -168,9 +168,12 @@ void handleBLECommand(const String& msg) {
   else if (type == "show_mode_enter") {
     String showStr = doc["show"] | "";
     String phaseStr = doc["phase"] | "";
-    ShowType st = (showStr == "parade") ? SHOW_PARADE : (showStr == "fireworks") ? SHOW_FIREWORKS : SHOW_NONE;
+    ShowType st = (showStr == "parade") ? SHOW_PARADE
+                : (showStr == "fireworks") ? SHOW_FIREWORKS
+                : (showStr == "cue") ? SHOW_CUE : SHOW_NONE;
     ShowPhase sp = (phaseStr == "pre") ? PHASE_PRE : (phaseStr == "black") ? PHASE_BLACK
-                 : (phaseStr == "live") ? PHASE_LIVE : (phaseStr == "post") ? PHASE_POST : PHASE_NONE;
+                 : (phaseStr == "live") ? PHASE_LIVE : (phaseStr == "post") ? PHASE_POST
+                 : (phaseStr == "cue") ? PHASE_CUE : PHASE_NONE;
     if (st == SHOW_NONE || sp == PHASE_NONE) {
       bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_enter\",\"ok\":false}");
     } else if (st == SHOW_PARADE && sp == PHASE_POST) {

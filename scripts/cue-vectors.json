@@ -1,0 +1,202 @@
+[
+  {
+    "name": "no window when disabled",
+    "cue": {
+      "id": "c1", "parkId": "mk", "label": "Off", "enabled": false,
+      "anchor": { "type": "clock", "time": "21:30" },
+      "fromSec": 0, "toSec": 60, "conditions": [], "priority": 0,
+      "action": { "type": "preset", "presetId": "p" }, "onEnd": "release"
+    },
+    "now": "2026-10-08T21:30:30-04:00",
+    "tz": "America/New_York",
+    "expectCount": 0
+  },
+  {
+    "name": "clock inside window park tz",
+    "cue": {
+      "id": "kiss", "parkId": "mk", "label": "Kiss", "enabled": true,
+      "anchor": { "type": "clock", "time": "21:30" },
+      "fromSec": 0, "toSec": 60, "conditions": [], "priority": 0,
+      "action": { "type": "preset", "presetId": "k" }, "onEnd": "release"
+    },
+    "now": "2026-10-08T21:30:30-04:00",
+    "tz": "America/New_York",
+    "expectActive": "kiss",
+    "expectStart": "2026-10-08T21:30:00-04:00"
+  },
+  {
+    "name": "dst evening still resolves",
+    "cue": {
+      "id": "dst", "parkId": "mk", "label": "DST", "enabled": true,
+      "anchor": { "type": "clock", "time": "21:30" },
+      "fromSec": 0, "toSec": 60, "conditions": [], "priority": 0,
+      "action": { "type": "black" }, "onEnd": "release"
+    },
+    "now": "2026-03-08T21:30:10-04:00",
+    "tz": "America/New_York",
+    "expectActive": "dst",
+    "expectStart": "2026-03-08T21:30:00-04:00"
+  },
+  {
+    "name": "midnight crossing from previous day",
+    "cue": {
+      "id": "mid", "parkId": "mk", "label": "Midnight", "enabled": true,
+      "anchor": { "type": "clock", "time": "23:50" },
+      "fromSec": 0, "toSec": 1200, "conditions": [], "priority": 0,
+      "action": { "type": "preset", "presetId": "p" }, "onEnd": "release"
+    },
+    "now": "2026-10-09T00:05:00-04:00",
+    "tz": "America/New_York",
+    "expectActive": "mid"
+  },
+  {
+    "name": "show T-30 for 30s",
+    "cue": {
+      "id": "tease", "parkId": "mk", "label": "Tease", "enabled": true,
+      "anchor": { "type": "show", "bindingId": "lum", "point": "start" },
+      "fromSec": -1800, "toSec": -1770, "conditions": [], "priority": 0,
+      "action": { "type": "preset", "presetId": "t" }, "onEnd": "release"
+    },
+    "now": "2026-10-08T20:30:10-04:00",
+    "tz": "America/New_York",
+    "instances": [{ "id": "lum-1", "bindingId": "lum", "start": "2026-10-08T21:00:00-04:00", "durationSec": 1200, "liveOffsetSec": 0 }],
+    "expectActive": "tease"
+  },
+  {
+    "name": "zone cue beats unconditional at same start",
+    "cues": [
+      {
+        "id": "plain", "parkId": "mk", "label": "Plain", "enabled": true,
+        "anchor": { "type": "clock", "time": "21:00" },
+        "fromSec": 0, "toSec": 600, "conditions": [], "priority": 0,
+        "action": { "type": "preset", "presetId": "a" }, "onEnd": "release"
+      },
+      {
+        "id": "street", "parkId": "mk", "label": "Street", "enabled": true,
+        "anchor": { "type": "clock", "time": "21:00" },
+        "fromSec": 0, "toSec": 600,
+        "conditions": [{ "type": "zone", "zoneIds": ["ms"], "match": "inside" }],
+        "priority": 10,
+        "action": { "type": "preset", "presetId": "b" }, "onEnd": "release"
+      }
+    ],
+    "now": "2026-10-08T21:01:00-04:00",
+    "tz": "America/New_York",
+    "zones": ["ms"],
+    "expectActive": "street"
+  },
+  {
+    "name": "outside zone falls back",
+    "cues": [
+      {
+        "id": "plain", "parkId": "mk", "label": "Plain", "enabled": true,
+        "anchor": { "type": "clock", "time": "21:00" },
+        "fromSec": 0, "toSec": 600, "conditions": [], "priority": 0,
+        "action": { "type": "preset", "presetId": "a" }, "onEnd": "release"
+      },
+      {
+        "id": "street", "parkId": "mk", "label": "Street", "enabled": true,
+        "anchor": { "type": "clock", "time": "21:00" },
+        "fromSec": 0, "toSec": 600,
+        "conditions": [{ "type": "zone", "zoneIds": ["ms"], "match": "inside" }],
+        "priority": 10,
+        "action": { "type": "preset", "presetId": "b" }, "onEnd": "release"
+      }
+    ],
+    "now": "2026-10-08T21:01:00-04:00",
+    "tz": "America/New_York",
+    "zones": [],
+    "expectActive": "plain"
+  },
+  {
+    "name": "party night latest close is the event",
+    "cue": {
+      "id": "close", "parkId": "mk", "label": "Close", "enabled": true,
+      "anchor": { "type": "parkClose", "which": "latest" },
+      "fromSec": 0, "toSec": 60, "conditions": [], "priority": 0,
+      "action": { "type": "preset", "presetId": "k" }, "onEnd": "release"
+    },
+    "now": "2026-11-01T00:00:10-04:00",
+    "tz": "America/New_York",
+    "schedule": {
+      "date": "2026-10-31",
+      "operating": [{ "open": "2026-10-31T09:00:00-04:00", "close": "2026-10-31T18:00:00-04:00" }],
+      "ticketed": [{ "kind": "event", "open": "2026-10-31T19:00:00-04:00", "close": "2026-11-01T00:00:00-04:00" }]
+    },
+    "expectActive": "close",
+    "expectAnchor": "2026-11-01T00:00:00-04:00"
+  },
+  {
+    "name": "regular close ignores the party",
+    "cue": {
+      "id": "reg", "parkId": "mk", "label": "Regular", "enabled": true,
+      "anchor": { "type": "parkClose", "which": "regular" },
+      "fromSec": 0, "toSec": 60, "conditions": [], "priority": 0,
+      "action": { "type": "black" }, "onEnd": "release"
+    },
+    "now": "2026-10-31T18:00:10-04:00",
+    "tz": "America/New_York",
+    "schedule": {
+      "date": "2026-10-31",
+      "operating": [{ "open": "2026-10-31T09:00:00-04:00", "close": "2026-10-31T18:00:00-04:00" }],
+      "ticketed": [{ "kind": "event", "open": "2026-10-31T19:00:00-04:00", "close": "2026-11-01T00:00:00-04:00" }]
+    },
+    "expectActive": "reg",
+    "expectAnchor": "2026-10-31T18:00:00-04:00"
+  },
+  {
+    "name": "open-ended hold is capped",
+    "cue": {
+      "id": "cap", "parkId": "mk", "label": "Cap", "enabled": true,
+      "anchor": { "type": "clock", "time": "12:00" },
+      "fromSec": 0, "toSec": null, "conditions": [], "priority": 0,
+      "action": { "type": "black" }, "onEnd": "hold"
+    },
+    "now": "2026-10-08T12:05:00-04:00",
+    "tz": "America/New_York",
+    "maxHoldSec": 900,
+    "expectActive": "cap",
+    "expectEnd": "2026-10-08T12:15:00-04:00"
+  },
+  {
+    "name": "cuesDisabled skips the instance",
+    "cue": {
+      "id": "end", "parkId": "mk", "label": "End", "enabled": true,
+      "anchor": { "type": "show", "bindingId": "lum", "point": "end" },
+      "fromSec": 0, "toSec": 60, "conditions": [], "priority": 0,
+      "action": { "type": "preset", "presetId": "x" }, "onEnd": "release"
+    },
+    "now": "2026-10-08T21:20:10-04:00",
+    "tz": "America/New_York",
+    "instances": [{ "id": "lum-1", "bindingId": "lum", "start": "2026-10-08T21:00:00-04:00", "durationSec": 1200, "liveOffsetSec": 0 }],
+    "overrides": { "lum-1": { "cuesDisabled": true } },
+    "expectCount": 0
+  },
+  {
+    "name": "endAtMs reanchors the end point",
+    "cue": {
+      "id": "ended", "parkId": "mk", "label": "Ended", "enabled": true,
+      "anchor": { "type": "show", "bindingId": "lum", "point": "end" },
+      "fromSec": 0, "toSec": 120, "conditions": [], "priority": 0,
+      "action": { "type": "preset", "presetId": "x" }, "onEnd": "release"
+    },
+    "now": "2026-10-08T21:10:30-04:00",
+    "tz": "America/New_York",
+    "instances": [{ "id": "lum-1", "bindingId": "lum", "start": "2026-10-08T21:00:00-04:00", "durationSec": 1200, "liveOffsetSec": 0 }],
+    "overrides": { "lum-1": { "endAtMs": "2026-10-08T21:10:00-04:00" } },
+    "expectActive": "ended",
+    "expectAnchor": "2026-10-08T21:10:00-04:00"
+  },
+  {
+    "name": "old cue normalizes to defaults",
+    "normalize": {
+      "parkId": "mk",
+      "anchor": { "type": "clock", "time": "21:00" },
+      "fromSec": 0,
+      "action": { "type": "black" }
+    },
+    "expectOnEnd": "release",
+    "expectToSec": null,
+    "expectPriority": 0
+  }
+]

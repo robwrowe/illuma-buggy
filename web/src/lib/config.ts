@@ -8,6 +8,7 @@ import {
 import type { AppData } from '../types/app';
 import { normalizeTags } from './tags';
 import { normalizeShowBinding } from './map/themeParks';
+import { normalizeShowCue } from './cues';
 import {
   DEFAULT_DATA,
   compareVersions,
@@ -50,6 +51,7 @@ export function loadAppData(stored: Partial<AppData> | null | undefined): AppDat
   merged.showBindings = merged.showBindings || [];
   merged.showSettings = { ...DEFAULT_DATA.showSettings, ...(merged.showSettings || {}) };
   merged.showInstanceOverrides = merged.showInstanceOverrides || {};
+  merged.cues = (merged.cues || []).map((c) => normalizeShowCue(c)).filter(Boolean);
   merged.wandLab = merged.wandLab || DEFAULT_DATA.wandLab;
   if (!(merged.wandLab.simIp || '').trim()) {
     merged.wandLab = { ...merged.wandLab, simIp: DEFAULT_DATA.wandLab.simIp };
@@ -66,7 +68,7 @@ export function loadAppData(stored: Partial<AppData> | null | undefined): AppDat
   return merged;
 }
 
-export const CURRENT_VERSION = '3.0';
+export const CURRENT_VERSION = '3.1';
 
 export function migrateSegmentMetadata(data: AppData): AppData {
   const mbMapping = data.mbMapping ? { ...data.mbMapping } : undefined;

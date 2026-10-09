@@ -57,6 +57,8 @@ export interface Park {
   id: string;
   name: string;
   entityId?: string;
+  timezone?: string;
+  themeParksApiEntityId?: string;
   lat?: number;
   lng?: number;
 }
@@ -81,6 +83,7 @@ export interface ShowSettings {
   defaultFireworksDurationSec: number;
   showNightBrightness: number;
   showAutoBrightness: boolean;
+  cueMaxHoldSec?: number;
 }
 
 export interface ParkShowBinding {
@@ -111,6 +114,22 @@ export interface ShowInstanceOverride {
   autoStartDisabled?: boolean;
   autoPrePostDisabled?: boolean;
   autoLiveDisabled?: boolean;
+  cuesDisabled?: boolean;
+  endAtMs?: number;
+}
+
+export interface ShowCue {
+  id: string;
+  parkId: string;
+  label: string;
+  enabled: boolean;
+  anchor: { type: string; [key: string]: unknown };
+  fromSec: number;
+  toSec: number | null;
+  conditions: { type: string; [key: string]: unknown }[];
+  priority: number;
+  action: { type: string; [key: string]: unknown };
+  onEnd: 'release' | 'hold';
 }
 
 export interface PresetMemory {
@@ -223,6 +242,7 @@ export interface AppData {
   showBindings: ParkShowBinding[];
   showSettings: ShowSettings;
   showInstanceOverrides: Record<string, ShowInstanceOverride>;
+  cues: ShowCue[];
   wandLab: WandLabState;
   ftbPresetId: string;
   mbMapping: MbMapping | null;

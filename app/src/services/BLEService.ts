@@ -460,8 +460,8 @@ class BLEService {
     return this.send({ type: 'show_mode_config', ...config });
   }
   sendShowModeEnter(
-    show: 'parade' | 'fireworks',
-    phase: 'pre' | 'black' | 'live' | 'post',
+    show: 'parade' | 'fireworks' | 'cue',
+    phase: 'pre' | 'black' | 'live' | 'post' | 'cue',
     opts?: { fadeMs?: number; look?: 'black' | 'keep' },
   ) {
     const msg: BLEMessage = { type: 'show_mode_enter', show, phase };

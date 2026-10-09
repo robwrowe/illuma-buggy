@@ -11,6 +11,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { restFetch } from '../utils/restFetch';
 import { useAppStore, type SheetsUploadItem } from '../stores/store';
 import type { BleCaptureSession } from '../utils/bleCapture';
+import { loadSessionPackets } from './captureJournal';
 import { deriveDisneyOpcodeHex } from '../utils/e9Parser';
 import { generateId } from '../utils/utils';
 
@@ -160,7 +161,8 @@ export async function drainSheetsQueue() {
       }
 
       try {
-        await postSessionToSheets(session, useAppStore.getState().sheetsEndpoint);
+        const packets = session.packets.length ? session.packets : await loadSessionPackets(session.id);
+        await postSessionToSheets({ ...session, packets }, useAppStore.getState().sheetsEndpoint);
         useAppStore.getState().dequeueSheetsUpload(item.sessionId);
       } catch (err) {
         bumpAttempt(item.sessionId, String(err));

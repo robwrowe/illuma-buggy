@@ -15,6 +15,7 @@ import IconPencil from '@tabler/icons-react-native/dist/esm/icons/IconPencil';
 import IconRefresh from '@tabler/icons-react-native/dist/esm/icons/IconRefresh';
 
 import { useTheme } from '../utils/theme';
+import { CuesSection } from './CuesSection';
 import { useAppStore } from '../stores/store';
 import { useBLE } from '../hooks/useBLE';
 import { bleService } from '../services/BLEService';
@@ -516,6 +517,8 @@ export default function ShowsScreen() {
                 ))
               )}
             </View>
+
+            <CuesSection parkId={selectedParkId} bindings={parkBindings} prefillBindingId={editingId} />
 
             {/* Search & add */}
             <View style={s.section}>

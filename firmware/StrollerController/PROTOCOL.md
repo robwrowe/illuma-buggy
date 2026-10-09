@@ -69,13 +69,14 @@ Otherwise `show_cue` is ignored and the command follows the normal MANUAL gate. 
 {"type":"show_mode_config","parade":{"pre":"...","live":"..."},"fireworks":{"pre":"...","live":"__BLACK__","post":"..."}}
 {"type":"show_mode_enter","show":"parade","phase":"live","fade_ms":10000,"look":"black"}
 {"type":"show_mode_enter","show":"parade","phase":"live","look":"keep"}
+{"type":"show_mode_enter","show":"cue","phase":"cue","look":"keep"}
 {"type":"show_mode_exit"}
 {"type":"parade_manual_start"}
 {"type":"parade_manual_stop"}
 ```
 
 - `show_mode_config` — persists the WLED "look" strings used for each show/phase combination to NVS. `pre`/`live`/`post` are opaque look identifiers consumed by `applyShowPhaseLook()`; `fireworks.live` defaults to the sentinel `"__BLACK__"`.
-- `show_mode_enter` — `show` is `parade` or `fireworks`; `phase` is `pre`, `black`, `live`, or `post`. Entering `parade`+`post` is treated as an exit (clears the override) rather than a real phase. Takes the `SHOW_MODE` override, which outranks `MANUAL` and `ZONE`. Optional `fade_ms` (default `bleEffectTransitionMs`, clamped to 600000) is the WLED transition for a blackout. Optional `look`: `"black"` or omitted blacks out `black`/`live` and clears `lastShowCueWled`; `"keep"` claims `SHOW_MODE` without changing the strip. A live preset is `look: "keep"` followed by `wled_raw` with `show_cue: true`. Older firmware ignores `fade_ms`, `look`, and `show_cue`, so a custom FTB time or live preset needs this firmware.
+- `show_mode_enter` — `show` is `parade`, `fireworks`, or `cue`; `phase` is `pre`, `black`, `live`, `post`, or `cue`. `show:"cue"` / `phase:"cue"` claims `SHOW_MODE` for a park-level cue and does not change the strip (`PHASE_CUE` is a no-op in `applyShowPhaseLook`). Status reports `show_type` / `show_phase` as `"cue"`. Entering `parade`+`post` is treated as an exit (clears the override) rather than a real phase. Takes the `SHOW_MODE` override, which outranks `MANUAL` and `ZONE`. Optional `fade_ms` (default `bleEffectTransitionMs`, clamped to 600000) is the WLED transition for a blackout. Optional `look`: `"black"` or omitted blacks out `black`/`live` and clears `lastShowCueWled`; `"keep"` claims `SHOW_MODE` without changing the strip. A live preset is `look: "keep"` followed by `wled_raw` with `show_cue: true`. Older firmware ignores `fade_ms`, `look`, and `show_cue`, so a custom FTB time or live preset needs this firmware.
 - `show_mode_exit` — clears `SHOW_MODE` unconditionally.
 - `parade_manual_start` / `parade_manual_stop` — separate manual parade trigger path (`manualParadeStart()`/`manualParadeStop()`), independent of `show_mode_enter`.
 

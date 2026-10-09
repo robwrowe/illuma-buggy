@@ -14,7 +14,12 @@ import {
   getParkShowtimesCache,
   hydrateParkShowtimesCache,
   setParkShowtimesCache,
+  setParkDaySchedule,
+  getParkDaySchedule,
 } from './parkShowtimesCache';
+import { fetchParkSchedule, getEntity } from './themeParksApi';
+import { parkDateString } from '../utils/showCues';
+import { cueExecutorTick } from './cueExecutor';
 import { buildUpcomingShows, type UpcomingShow } from './showSchedule';
 import { shouldScheduleProtectZones } from '../utils/showBindings';
 import { runShowPhase, stopShowMode } from './showControl';
@@ -104,6 +109,8 @@ export function computeUpcomingFromStore(now = Date.now()): UpcomingShow[] {
     s.showInstanceOverrides,
     now,
     s.activeZoneIds,
+    s.cues ?? [],
+    s.showSettings.cueMaxHoldSec ?? 900,
   );
   s.setShowProtectsZones(upcoming.some(shouldScheduleProtectZones));
   return upcoming;
@@ -127,6 +134,30 @@ async function refreshShowtimes(): Promise<void> {
   } catch (e) {
     lastFetchError = 'Showtimes unavailable';
     console.warn('[Shows] showtimes refresh failed', e);
+  }
+  const tz = s.activePark?.timezone || 'America/New_York';
+  const date = parkDateString(Date.now(), tz);
+  if (!getParkDaySchedule(date)) {
+    try {
+      setParkDaySchedule(await fetchParkSchedule(entityId, date));
+    } catch (e) {
+      console.warn('[Shows] park schedule refresh failed', e);
+    }
+  }
+  if (s.activePark && !s.activePark.timezone) {
+    try {
+      const entity = await getEntity(entityId);
+      if (entity.timezone) {
+        const tzName = entity.timezone;
+        useAppStore.setState((st) => ({
+          parks: st.parks.map((p) => (p.id === parkId ? { ...p, timezone: tzName } : p)),
+          activePark: st.activePark?.id === parkId ? { ...st.activePark, timezone: tzName } : st.activePark,
+        }));
+        useAppStore.getState().saveToStorage();
+      }
+    } catch (e) {
+      console.warn('[Shows] park timezone lookup failed', e);
+    }
   }
 }
 
@@ -216,7 +247,10 @@ export async function showAutomationTick(opts?: {
     }
     const upcoming = computeUpcomingFromStore();
     lastUpcoming = upcoming;
-    await runShowAutomation(upcoming);
+    const scheduleProtects = useAppStore.getState().showProtectsZones;
+    const cueHolding = await cueExecutorTick();
+    useAppStore.getState().setShowProtectsZones(cueHolding || scheduleProtects);
+    if (!cueHolding) await runShowAutomation(upcoming);
     return upcoming;
   } finally {
     inFlight = false;

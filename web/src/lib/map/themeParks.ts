@@ -12,12 +12,24 @@ export async function fetchThemeParkDestinations() {
 }
 
 export async function fetchParkShows(parkEntityId) {
-  const res = await fetch(`${THEME_PARKS_API}/entity/${parkEntityId}/live`);
-  if (!res.ok) throw new Error('Could not load park shows');
-  const data = await res.json();
-  return (data.liveData || [])
-    .filter(e => e.entityType === 'SHOW' && e.showtimes?.length)
-    .map(e => ({ id: e.id, name: e.name }));
+  const [liveRes, childRes] = await Promise.all([
+    fetch(`${THEME_PARKS_API}/entity/${parkEntityId}/live`),
+    fetch(`${THEME_PARKS_API}/entity/${parkEntityId}/children`).catch(() => null),
+  ]);
+  if (!liveRes.ok) throw new Error('Could not load park shows');
+  const data = await liveRes.json();
+  const byId = new Map();
+  if (childRes?.ok) {
+    const children = await childRes.json();
+    for (const child of children.children || []) {
+      if (child.entityType === 'SHOW' && child.id) byId.set(child.id, { id: child.id, name: child.name });
+    }
+  }
+  for (const show of (data.liveData || []).filter(e => e.entityType === 'SHOW')) {
+    if (!show.id) continue;
+    if (!byId.has(show.id)) byId.set(show.id, { id: show.id, name: show.name });
+  }
+  return [...byId.values()];
 }
 
 export function inferShowKind(name) {

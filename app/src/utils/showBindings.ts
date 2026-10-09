@@ -71,6 +71,8 @@ export interface ShowSettings {
   autoCaptureLeadSec: number;
   /** Seconds after scheduled show end to auto-stop capture */
   autoCaptureTailSec: number;
+  /** Safety cap when a cue has no end (toSec null). */
+  cueMaxHoldSec: number;
 }
 
 export interface ShowInstanceOverride {
@@ -80,6 +82,10 @@ export interface ShowInstanceOverride {
   autoLiveDisabled?: boolean;
   /** @deprecated use autoPrePostDisabled */
   autoStartDisabled?: boolean;
+  /** Skip show-anchored cues for this instance. */
+  cuesDisabled?: boolean;
+  /** "Show ended now" — re-anchors cues whose point is end. */
+  endAtMs?: number;
 }
 
 export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
@@ -94,6 +100,7 @@ export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
   autoCaptureEnabled: false,
   autoCaptureLeadSec: 60,
   autoCaptureTailSec: 60,
+  cueMaxHoldSec: 900,
 };
 
 export function inferShowKind(name: string): ShowKind {

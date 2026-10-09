@@ -19,6 +19,8 @@ import { buildLegacyShowModeConfig, fetchParkShows, inferShowKind, normalizeShow
 import { DEFAULT_DATA, generateId, showModePresetOptions, showPresetLabel } from '../../lib/utils';
 import { normalizeMbMapping, normalizeParadeDetection } from '../../lib/ble/mbMapping';
 import { currentBoard } from '../../lib/ble/boardTransport';
+import { CuesPanel } from './CuesPanel';
+import { normalizeShowCue } from '../../lib/cues';
 
 export function ShowsTab({ data, update }) {
   const parks = data.parks || [];
@@ -490,6 +492,19 @@ export function ShowsTab({ data, update }) {
             />
           </Modal>
         )}
+        {selectedParkId ? (
+          <CuesPanel
+            parkId={selectedParkId}
+            cues={(data.cues || []).map((c) => normalizeShowCue(c)).filter(Boolean)}
+            bindings={parkBindings}
+            presets={presets}
+            zones={parkZones}
+            timezone={selectedPark?.timezone}
+            schedule={null}
+            cueMaxHoldSec={showSettings.cueMaxHoldSec ?? 900}
+            onChange={(cues) => update({ cues })}
+          />
+        ) : null}
       </Stack>
     </ScrollArea>
   );

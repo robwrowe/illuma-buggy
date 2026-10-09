@@ -12,6 +12,7 @@ import {
   type ShowSettings,
   type ShowInstanceOverride,
 } from '../utils/showBindings';
+import { showCueTailMs, type ShowCue } from '../utils/showCues';
 
 export type ShowStatus = 'upcoming' | 'pre' | 'live' | 'ended';
 
@@ -44,6 +45,8 @@ export function buildUpcomingShows(
   overrides: Record<string, ShowInstanceOverride>,
   now: number,
   activeZoneIds: string[],
+  cues: ShowCue[] = [],
+  cueMaxHoldSec = 900,
 ): UpcomingShow[] {
   const out: UpcomingShow[] = [];
   for (const entity of raw) {
@@ -51,7 +54,8 @@ export function buildUpcomingShows(
     if (!binding) continue;
 
     const visibleBeforeMs = binding.homeVisibleBeforeMin * 60_000;
-    const visibleAfterMs = binding.homeVisibleAfterMin * 60_000;
+    const cueTailMs = showCueTailMs(binding.id, binding.durationSec, binding.liveOffsetSec, cues, cueMaxHoldSec);
+    const visibleAfterMs = Math.max(binding.homeVisibleAfterMin * 60_000, cueTailMs);
     const preLeadMs = binding.preLeadSec * 1000;
     const liveAtMs = (startMs: number) => startMs + binding.liveOffsetSec * 1000;
 

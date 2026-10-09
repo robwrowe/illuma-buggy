@@ -14,6 +14,8 @@ import { asSharedSegmentMaps } from '../utils/segmentLayouts';
 import type { ParkShowBinding } from '../utils/showBindings';
 import { applyShowLiveBrightnessIfNeeded, restoreShowBrightnessIfNeeded } from '../utils/showBrightness';
 import { planShowPhase, type ShowPhaseName } from '../utils/showPhasePlan';
+import type { ShowCue } from '../utils/showCues';
+import { postWledStateDirect } from '../utils/wledDirect';
 
 export type ShowPhase = ShowPhaseName;
 
@@ -80,6 +82,37 @@ export async function runShowPhase(
   );
   if (entered === false) return false;
   return applyShowPreset(preset, recall, layouts);
+}
+
+export async function applyShowCue(cue: ShowCue): Promise<boolean> {
+  if (!bleService.isConnected()) return false;
+  const s = useAppStore.getState();
+  const action = cue.action;
+  if (action.type === 'black') {
+    const fadeMs = action.fadeSec != null
+      ? Math.round(action.fadeSec * 1000)
+      : s.bleEffectTransitionMs;
+    return bleService.sendShowModeEnter('cue', 'cue', { look: 'black', fadeMs });
+  }
+  const preset = s.presets.find((p) => p.id === action.presetId);
+  if (!preset) {
+    console.warn('[Cues] preset missing — fading to black', action.presetId);
+    return bleService.sendShowModeEnter('cue', 'cue', {
+      look: 'black',
+      fadeMs: s.bleEffectTransitionMs,
+    });
+  }
+  const { presetWledForBoard } = await import('../utils/bleBoardSync');
+  const payload = presetWledForBoard(
+    preset,
+    asSharedSegmentMaps(s.mbMapping?.segmentMaps),
+    s.customSegmentLayouts,
+    s.recallState,
+  );
+  await bleService.sendShowModeEnter('cue', 'cue', { look: 'keep' });
+  const direct = await postWledStateDirect(payload).catch(() => false);
+  const cued = await bleService.sendWledRaw(payload, preset.id, { showCue: true });
+  return direct || cued;
 }
 
 export async function stopShowMode(): Promise<void> {

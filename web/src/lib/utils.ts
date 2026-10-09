@@ -192,7 +192,7 @@ export function normalizeColorCalibration(raw) {
 }
 
 export const DEFAULT_DATA: AppData = {
-  version: '3.0', presets: [], zones: [], indoorZones: [], parks: [],
+  version: '3.1', presets: [], zones: [], indoorZones: [], parks: [],
   brightnessConfig: { daytime: 200, nighttime: 80, indoor: 120, transitionMinutes: 30, solarThresholdDeg: 6 },
   colorCalibration: createEmptyColorCalibration(),
   recallState: { effect: 'always', palette: 'always', parameters: 'memory', color: 'memory', segments: 'never' },
@@ -214,8 +214,10 @@ export const DEFAULT_DATA: AppData = {
     defaultFireworksDurationSec: 1200,
     showNightBrightness: 5,
     showAutoBrightness: true,
+    cueMaxHoldSec: 900,
   },
   showInstanceOverrides: {},
+  cues: [],
   wandLab: { simIp: 'illuma-wandsim.local', log: [] },
   ftbPresetId: '',
   mbMapping: null, // filled by normalizeMbMapping on load

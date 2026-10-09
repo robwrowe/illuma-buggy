@@ -66,6 +66,7 @@ function isShowProtectingZones(activeZoneIds: string[]): boolean {
     showBindings: s.showBindings,
     deviceStatus: s.deviceStatus,
     showScheduleProtects: s.showProtectsZones,
+    cueActive: !!s.activeCue,
   });
 }
 

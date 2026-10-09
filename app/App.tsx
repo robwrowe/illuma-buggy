@@ -9,7 +9,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { enableScreens } from "react-native-screens";
-import { Alert } from "react-native";
+import { Alert, AppState } from "react-native";
 
 enableScreens();
 
@@ -121,20 +121,37 @@ function formatBleEffectLabel(msg: Record<string, unknown>): string | null {
 }
 
 export default function App() {
-  const {
-    loadFromStorage,
-    setOverrideDetail,
-    ingestWledEffectsRaw,
-    ingestWledPalettesRaw,
-    ingestWledFxDataRaw,
-    syncBoardPresets,
-    appendBleCapturePacket,
-    stopBleCapture,
-  } = useAppStore();
+  const loadFromStorage = useAppStore((s) => s.loadFromStorage);
+  const setOverrideDetail = useAppStore((s) => s.setOverrideDetail);
+  const ingestWledEffectsRaw = useAppStore((s) => s.ingestWledEffectsRaw);
+  const ingestWledPalettesRaw = useAppStore((s) => s.ingestWledPalettesRaw);
+  const ingestWledFxDataRaw = useAppStore((s) => s.ingestWledFxDataRaw);
+  const syncBoardPresets = useAppStore((s) => s.syncBoardPresets);
+  const appendBleCapturePacket = useAppStore((s) => s.appendBleCapturePacket);
+  const stopBleCapture = useAppStore((s) => s.stopBleCapture);
   const { loadMode } = useThemeStore();
   const { isDark } = useTheme();
 
   useEffect(() => {
+    const ErrorUtils = (global as { ErrorUtils?: { getGlobalHandler: () => (e: unknown, f?: boolean) => void; setGlobalHandler: (h: (e: unknown, f?: boolean) => void) => void } }).ErrorUtils;
+    if (ErrorUtils) {
+      const prev = ErrorUtils.getGlobalHandler();
+      ErrorUtils.setGlobalHandler((err, fatal) => {
+        const count = useAppStore.getState().bleCaptureLiveCount;
+        void import('./src/services/captureJournal').then(({ appendCrashLog }) => appendCrashLog(
+          `${new Date().toISOString()} fatal=${!!fatal} packets=${count} app=${AppState.currentState} ${String(err)}`,
+        )).catch(() => undefined);
+        prev(err, fatal);
+      });
+    }
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') {
+        void import('./src/services/captureJournal').then(async ({ flushCaptureSession }) => {
+          const id = (await import('./src/services/captureBuffer')).captureSessionId();
+          if (id) await flushCaptureSession(id);
+        });
+      }
+    });
     let cancelled = false;
     (async () => {
       await loadFromStorage();

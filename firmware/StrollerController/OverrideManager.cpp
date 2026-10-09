@@ -240,8 +240,8 @@ bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
 }
 
 void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs, const String& look) {
-  // look "keep": do not touch the strip. The app follows with wled_raw show_cue.
-  if (look == "keep") return;
+  // look "keep" / PHASE_CUE: do not touch the strip. The app follows with wled_raw show_cue.
+  if (look == "keep" || phase == PHASE_CUE) return;
   // BLACK / LIVE blackout unless the app asked to keep the current look.
   // showLook*Live globals stay for the manual-parade / legacy path and are not used here.
   if (phase == PHASE_BLACK || phase == PHASE_LIVE) {
@@ -278,6 +278,7 @@ void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs, co
 const char* showTypeStatusStr() {
   if (showModeType == SHOW_PARADE) return "parade";
   if (showModeType == SHOW_FIREWORKS) return "fireworks";
+  if (showModeType == SHOW_CUE) return "cue";
   return "";
 }
 
@@ -287,6 +288,7 @@ const char* showPhaseStatusStr() {
     case PHASE_BLACK: return "black";
     case PHASE_LIVE:  return "live";
     case PHASE_POST:  return "post";
+    case PHASE_CUE:   return "cue";
     default:          return "";
   }
 }

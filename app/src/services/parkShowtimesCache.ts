@@ -6,6 +6,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { ParkDaySchedule } from '../utils/showCues';
 
 const STORAGE_KEY = 'illuma-park-showtimes';
 
@@ -18,8 +19,11 @@ export interface ParkShowtimeEntity {
 let lastRaw: ParkShowtimeEntity[] = [];
 let lastEntityId: string | null = null;
 let lastFetchedAt = 0;
+let daySchedule: ParkDaySchedule | null = null;
 let hydrated = false;
 let hydratePromise: Promise<void> | null = null;
+
+const SCHEDULE_KEY = 'illuma-park-day-schedule';
 
 export function setParkShowtimesCache(
   raw: ParkShowtimeEntity[],
@@ -45,6 +49,19 @@ export function getParkShowtimesCache(): {
   return { raw: lastRaw, entityId: lastEntityId, fetchedAt: lastFetchedAt };
 }
 
+export function setParkDaySchedule(schedule: ParkDaySchedule | null): void {
+  daySchedule = schedule;
+  void AsyncStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedule)).catch((e) => {
+    console.warn('[Shows] schedule persist failed', e);
+  });
+}
+
+export function getParkDaySchedule(date?: string): ParkDaySchedule | null {
+  if (!daySchedule) return null;
+  if (date && daySchedule.date !== date) return null;
+  return daySchedule;
+}
+
 export async function hydrateParkShowtimesCache(): Promise<void> {
   if (hydrated) return;
   if (!hydratePromise) {
@@ -60,6 +77,11 @@ export async function hydrateParkShowtimesCache(): Promise<void> {
           lastRaw = Array.isArray(parsed.raw) ? parsed.raw : [];
           lastEntityId = parsed.entityId ?? null;
           lastFetchedAt = Number.isFinite(parsed.fetchedAt) ? parsed.fetchedAt! : 0;
+        }
+        const sched = await AsyncStorage.getItem(SCHEDULE_KEY);
+        if (sched) {
+          const parsedSched = JSON.parse(sched) as ParkDaySchedule | null;
+          if (parsedSched && Array.isArray(parsedSched.operating)) daySchedule = parsedSched;
         }
       } catch (e) {
         console.warn('[Shows] showtimes hydrate failed', e);
