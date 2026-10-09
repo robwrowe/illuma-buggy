@@ -15,6 +15,7 @@ import { getParkDaySchedule } from '../services/parkShowtimesCache';
 import { parkDateString } from '../utils/showCues';
 import { testCueNow } from '../services/cueExecutor';
 import type { ParkShowBinding } from '../utils/showBindings';
+import { PresetPickerModal } from './MbMappingSections';
 
 function newId(): string {
   return `cue_${Date.now().toString(36)}`;
@@ -162,19 +163,24 @@ function CueEditor({
   const presets = useAppStore((st) => st.presets);
   const zones = useAppStore((st) => st.zones.filter((z) => z.parkId === cue.parkId || !z.parkId));
   const [draft, setDraft] = useState<ShowCue>(cue);
-  const [offsetMin, setOffsetMin] = useState(String(Math.round(draft.fromSec / 60)));
-  const [durMin, setDurMin] = useState(draft.toSec == null ? '' : String(Math.round((draft.toSec - draft.fromSec) / 60)));
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [offsetSec, setOffsetSec] = useState(String(Math.round(draft.fromSec)));
+  const [durSec, setDurSec] = useState(draft.toSec == null ? '' : String(Math.round(draft.toSec - draft.fromSec)));
 
   const commitTimes = (next: ShowCue): ShowCue => {
-    const fromMin = Number(offsetMin);
-    const fromSec = Number.isFinite(fromMin) ? Math.round(fromMin * 60) : next.fromSec;
-    if (durMin.trim() === '') return { ...next, fromSec, toSec: null };
-    const dur = Number(durMin);
-    const toSec = Number.isFinite(dur) ? fromSec + Math.round(dur * 60) : next.toSec;
-    return { ...next, fromSec, toSec };
+    const fromParsed = Number(offsetSec);
+    const fromSec = Number.isFinite(fromParsed) ? Math.round(fromParsed) : next.fromSec;
+    if (durSec.trim() === '') return { ...next, fromSec, toSec: null };
+    const dur = Number(durSec);
+    if (!Number.isFinite(dur) || dur <= 0) return { ...next, fromSec, toSec: null };
+    return { ...next, fromSec, toSec: fromSec + Math.round(dur) };
   };
 
   const setAnchor = (anchor: CueAnchor) => setDraft({ ...draft, anchor });
+  const action = draft.action;
+  const actionLabel = action.type === 'preset'
+    ? (presets.find((p) => p.id === action.presetId)?.name ?? 'Preset')
+    : 'Black';
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
@@ -222,19 +228,31 @@ function CueEditor({
             </View>
           </View>
         ) : null}
-        <Text style={s.hint}>Offset (minutes, negative = before)</Text>
-        <TextInput style={s.input} keyboardType="numbers-and-punctuation" value={offsetMin} onChangeText={setOffsetMin} />
-        <Text style={s.hint}>Duration (minutes, blank = until next cue)</Text>
-        <TextInput style={s.input} keyboardType="numbers-and-punctuation" value={durMin} onChangeText={setDurMin} />
+        <Text style={s.hint}>Offset (seconds, negative = before)</Text>
+        <TextInput style={s.input} keyboardType="numbers-and-punctuation" value={offsetSec} onChangeText={setOffsetSec} />
+        <Text style={s.hint}>Duration (seconds, blank = until next cue)</Text>
+        <TextInput style={s.input} keyboardType="numbers-and-punctuation" value={durSec} onChangeText={setDurSec} />
         <Text style={s.hint}>Action</Text>
-        <TouchableOpacity style={s.chip} onPress={() => setDraft({ ...draft, action: { type: 'black', fadeSec: null } })}>
-          <Text style={s.chipText}>{draft.action.type === 'black' ? '● Black' : 'Black'}</Text>
+        <TouchableOpacity style={s.chip} onPress={() => setPresetOpen(true)}>
+          <Text style={s.chipText}>
+            {actionLabel}
+          </Text>
         </TouchableOpacity>
-        {presets.map((p) => (
-          <TouchableOpacity key={p.id} onPress={() => setDraft({ ...draft, action: { type: 'preset', presetId: p.id } })}>
-            <Text style={s.line}>{draft.action.type === 'preset' && draft.action.presetId === p.id ? '● ' : '○ '}{p.name}</Text>
-          </TouchableOpacity>
-        ))}
+        <PresetPickerModal
+          visible={presetOpen}
+          title="Cue preset"
+          presets={presets}
+          selectedId={action.type === 'preset' ? action.presetId : ''}
+          emptyLabel="Black"
+          colors={colors}
+          onClose={() => setPresetOpen(false)}
+          onSelect={(id) => {
+            setDraft({
+              ...draft,
+              action: id ? { type: 'preset', presetId: id } : { type: 'black', fadeSec: null },
+            });
+          }}
+        />
         <Text style={s.hint}>Only if inside a zone (tap to toggle)</Text>
         {zones.map((z) => {
           const zoneCond = draft.conditions.find((c) => c.type === 'zone');

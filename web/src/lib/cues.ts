@@ -425,12 +425,9 @@ export function resolveActiveCue(
   return hits[0] ?? null;
 }
 
-function fmtMmSs(sec: number): string {
-  const sign = sec < 0 ? '-' : '';
-  const abs = Math.abs(Math.round(sec));
-  const m = Math.floor(abs / 60);
-  const s = abs % 60;
-  return `${sign}${m}:${String(s).padStart(2, '0')}`;
+function fmtSec(sec: number): string {
+  const n = Math.round(sec);
+  return n < 0 ? `${n}s` : `+${n}s`;
 }
 
 export function describeCue(
@@ -443,17 +440,16 @@ export function describeCue(
   else if (cue.anchor.type === 'parkOpen') when = 'at park open';
   else if (cue.anchor.type === 'clock') when = `at ${cue.anchor.time}`;
   else if (cue.fromSec < 0 && (cue.toSec == null || cue.toSec <= 0)) {
-    when = `${fmtMmSs(Math.abs(cue.fromSec))} before ${showName} ${cue.anchor.point}`;
+    when = `${Math.abs(Math.round(cue.fromSec))}s before ${showName} ${cue.anchor.point}`;
   } else {
-    const end = cue.toSec == null ? 'until next' : fmtMmSs(cue.toSec);
-    when = `${showName} ${cue.anchor.point} ${fmtMmSs(cue.fromSec)} → ${end}`;
+    const end = cue.toSec == null ? 'until next' : fmtSec(cue.toSec);
+    when = `${showName} ${cue.anchor.point} ${fmtSec(cue.fromSec)} → ${end}`;
   }
   if (cue.anchor.type !== 'show' && cue.toSec != null && cue.fromSec === 0) {
     const dur = cue.toSec - cue.fromSec;
-    const mins = dur % 60 === 0 ? `${dur / 60} min` : fmtMmSs(dur);
-    when = `${when}, for ${mins}`;
+    when = `${when}, for ${Math.round(dur)}s`;
   } else if (cue.anchor.type === 'show' && cue.fromSec < 0 && cue.toSec != null && cue.toSec <= 0) {
-    when = `${when}, for ${fmtMmSs(cue.toSec - cue.fromSec)}`;
+    when = `${when}, for ${Math.round(cue.toSec - cue.fromSec)}s`;
   }
   const zone = cue.conditions.find((c) => c.type === 'zone');
   if (zone && zone.type === 'zone') {

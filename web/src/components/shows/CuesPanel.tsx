@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Group, NumberInput, Stack, Switch, Text, TextInput } from '@mantine/core';
 import { AppButton, AppCard } from '../shared/styles';
+import { SearchableSelect } from '../shared/SearchableSelect';
 import { generateId } from '../../lib/utils';
 import {
   cueWarnings,
@@ -208,29 +209,40 @@ function CueFields({
         </Group>
       ) : null}
       <NumberInput
-        label="Offset (minutes, negative = before)"
-        value={Math.round(draft.fromSec / 60)}
+        label="Offset (seconds, negative = before)"
+        value={Math.round(draft.fromSec)}
         onChange={(v) => {
-          const fromSec = Math.round(Number(v) * 60);
+          const fromSec = Math.round(Number(v));
           const dur = draft.toSec == null ? null : draft.toSec - draft.fromSec;
           setDraft({ ...draft, fromSec, toSec: dur == null ? null : fromSec + dur });
         }}
       />
       <NumberInput
-        label="Duration (minutes, empty = until next)"
-        value={draft.toSec == null ? '' : Math.round((draft.toSec - draft.fromSec) / 60)}
+        label="Duration (seconds, empty = until next)"
+        value={draft.toSec == null ? '' : Math.round(draft.toSec - draft.fromSec)}
         onChange={(v) => {
           if (v === '' || v == null) setDraft({ ...draft, toSec: null });
-          else setDraft({ ...draft, toSec: draft.fromSec + Math.round(Number(v) * 60) });
+          else setDraft({ ...draft, toSec: draft.fromSec + Math.round(Number(v)) });
         }}
       />
-      <Text size="xs">Action</Text>
-      <AppButton size="compact-sm" variant={draft.action.type === 'black' ? 'primary' : 'default'} onClick={() => setDraft({ ...draft, action: { type: 'black', fadeSec: null } })}>Black</AppButton>
-      <Group>
-        {presets.map((p) => (
-          <AppButton key={p.id} size="compact-sm" variant={draft.action.type === 'preset' && draft.action.presetId === p.id ? 'primary' : 'default'} onClick={() => setDraft({ ...draft, action: { type: 'preset', presetId: p.id } })}>{p.name}</AppButton>
-        ))}
-      </Group>
+      <SearchableSelect
+        label="Action"
+        placeholder="Black"
+        allowEmpty
+        value={draft.action.type === 'preset' ? draft.action.presetId : '__BLACK__'}
+        options={[
+          { value: '__BLACK__', label: 'Black', searchText: 'black fade' },
+          ...presets.map((p) => ({ value: p.id, label: p.name, searchText: p.name })),
+        ]}
+        onChange={(v) => {
+          setDraft({
+            ...draft,
+            action: !v || v === '__BLACK__'
+              ? { type: 'black', fadeSec: null }
+              : { type: 'preset', presetId: v },
+          });
+        }}
+      />
       <Text size="xs">Only if inside</Text>
       <Group>
         {zones.map((z) => {
