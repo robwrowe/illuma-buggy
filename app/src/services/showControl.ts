@@ -1,28 +1,43 @@
 /**
- * Run show phases via board preset apply (per-binding presets, not global only).
- * Live is blackout-only — no live preset on bindings.
+ * Run show phases via the board.
+ * Live defaults to one fade-to-black show_mode_enter.
+ * A preset phase claims SHOW_MODE first, then applies with wled_raw show_cue.
+ * Live uses look "keep" so that enter does not touch the strip.
+ * A plain preset write is still rejected in that state.
  */
 
 import { bleService } from './BLEService';
-import { applyPresetRouted } from '../utils/bleBoardSync';
 import type { Preset, RecallState } from '../stores/store';
 import { useAppStore } from '../stores/store';
 import type { CustomSegmentLayout } from '../utils/segmentLayouts';
 import { asSharedSegmentMaps } from '../utils/segmentLayouts';
-import type { ParkShowBinding, ShowKind } from '../utils/showBindings';
+import type { ParkShowBinding } from '../utils/showBindings';
 import { applyShowLiveBrightnessIfNeeded, restoreShowBrightnessIfNeeded } from '../utils/showBrightness';
+import { planShowPhase, type ShowPhaseName } from '../utils/showPhasePlan';
 
-export type ShowPhase = 'pre' | 'live' | 'post';
-
-function firmwarePhase(kind: ShowKind, phase: ShowPhase): 'pre' | 'black' | 'live' | 'post' {
-  if (phase === 'live' && kind === 'fireworks') return 'black';
-  return phase;
-}
+export type ShowPhase = ShowPhaseName;
 
 async function onShowLiveStarted(phase: ShowPhase): Promise<void> {
   if (phase === 'live') {
     await applyShowLiveBrightnessIfNeeded();
   }
+}
+
+/** Apply a preset while SHOW_MODE is held. Outside SHOW_MODE this is a normal preset write. */
+export async function applyShowPreset(
+  preset: Preset,
+  recall: RecallState,
+  layouts: CustomSegmentLayout[],
+): Promise<boolean> {
+  const { presetWledForBoard } = await import('../utils/bleBoardSync');
+  const payload = presetWledForBoard(
+    preset,
+    asSharedSegmentMaps(useAppStore.getState().mbMapping?.segmentMaps),
+    layouts,
+    recall,
+  );
+  console.log('[Shows] show_cue', preset.id, preset.name);
+  return bleService.sendWledRaw(payload, preset.id, { showCue: true });
 }
 
 export async function runShowPhase(
@@ -35,37 +50,36 @@ export async function runShowPhase(
 ): Promise<boolean> {
   if (!bleService.isConnected()) return false;
 
-  // Live: firmware blackout-only; no per-binding live preset
-  if (phase === 'live') {
-    await bleService.sendFadeToBlack(undefined, fadeMs);
-    await onShowLiveStarted(phase);
-    await bleService.sendShowModeEnter(binding.kind, firmwarePhase(binding.kind, phase));
+  const plan = planShowPhase(binding, phase, presets, fadeMs);
+  if (plan.action === 'skip') return false;
+
+  if (plan.action === 'ftb') {
+    if (plan.missingLivePreset) {
+      console.warn('[Shows] live preset missing — fading to black', binding.livePresetId);
+    }
+    // Brightness before the single blackout command so a later write cannot cut the fade.
+    if (phase === 'live') await onShowLiveStarted(phase);
+    await bleService.sendShowModeEnter(binding.kind, plan.firmwarePhase, {
+      fadeMs: plan.fadeMs,
+      look: 'black',
+    });
     return true;
   }
 
-  const presetId = binding.presets[phase];
-  if (!presetId) return false;
-
-  if (presetId === '__BLACK__') {
-    await bleService.sendFadeToBlack(undefined, fadeMs);
-    await bleService.sendShowModeEnter(binding.kind, firmwarePhase(binding.kind, phase));
-    return true;
-  }
-
-  const preset = presets.find(p => p.id === presetId);
+  const preset = presets.find((p) => p.id === plan.presetId);
   if (!preset) return false;
 
-  const ok = await applyPresetRouted(
-    preset,
-    recall,
-    asSharedSegmentMaps(useAppStore.getState().mbMapping?.segmentMaps),
-    layouts,
-    useAppStore.getState().presetApplyMode,
+  if (phase === 'live') await onShowLiveStarted(phase);
+  // Enter first so SHOW_MODE is held, then show_cue. A preset write before enter
+  // is rejected once pre-show has already taken SHOW_MODE, and enter after the
+  // cue would overwrite it with the firmware phase look.
+  const entered = await bleService.sendShowModeEnter(
+    binding.kind,
+    plan.firmwarePhase,
+    phase === 'live' ? { look: 'keep' } : undefined,
   );
-  if (ok) {
-    await bleService.sendShowModeEnter(binding.kind, firmwarePhase(binding.kind, phase));
-  }
-  return ok;
+  if (entered === false) return false;
+  return applyShowPreset(preset, recall, layouts);
 }
 
 export async function stopShowMode(): Promise<void> {

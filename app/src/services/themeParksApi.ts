@@ -1,3 +1,5 @@
+import { restFetch } from '../utils/restFetch';
+
 const BASE = 'https://api.themeparks.wiki/v1';
 
 export interface ThemeParkDestination {
@@ -7,7 +9,7 @@ export interface ThemeParkDestination {
 }
 
 export async function searchDestinations(query: string): Promise<ThemeParkDestination[]> {
-  const res = await fetch(`${BASE}/destinations`);
+  const res = await restFetch('themeparks-destinations', `${BASE}/destinations`);
   const data = await res.json();
   const q = query.toLowerCase();
   return (data.destinations || []).filter((d: ThemeParkDestination) =>
@@ -16,14 +18,14 @@ export async function searchDestinations(query: string): Promise<ThemeParkDestin
 }
 
 export async function getEntityLiveData(entityId: string) {
-  const res = await fetch(`${BASE}/entity/${entityId}/live`);
+  const res = await restFetch('themeparks-live', `${BASE}/entity/${entityId}/live`);
   if (!res.ok) throw new Error('themeparks.wiki live data unavailable');
   return res.json();
 }
 
 export async function getEntitySchedule(entityId: string, date?: string) {
   const url = `${BASE}/entity/${entityId}/schedule${date ? `?date=${date}` : ''}`;
-  const res = await fetch(url);
+  const res = await restFetch('themeparks-schedule', url);
   if (!res.ok) throw new Error('themeparks.wiki schedule unavailable');
   return res.json();
 }

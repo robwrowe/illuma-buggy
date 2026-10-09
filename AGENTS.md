@@ -248,6 +248,8 @@ watchPosition(loc => {
 - Writes `setActiveZoneIds` on every GPS tick
 - Fires `bleService.sendZoneTrigger(presetId)` on zone entry when `zonesEnabled` is true
 - Calls `bleService.sendBrightness(...)` for solar/indoor brightness changes
+- The location foreground service is also the process keep-alive. It starts when zones are on, capture is tracking, the active park has a show binding, or BLE is connected to the board — not only for GPS zones. Show automation runs from that task tick (`showAutomationTick`) because JS timers pause while the activity is stopped.
+- Show bindings may set `liveMode` (`ftb` default, or `preset` + `livePresetId`) and `ftbFadeSec` (null = global `bleEffectTransitionMs`). Live fade-to-black is a single `show_mode_enter` with `fade_ms` and `look: "black"`. A live preset is `look: "keep"` first (claims SHOW_MODE without touching the strip), then `wled_raw` with `show_cue: true`. A plain preset write is still blocked while SHOW_MODE is held.
 
 ### Recall state system
 

@@ -8,6 +8,7 @@
  */
 
 import NetInfo from '@react-native-community/netinfo';
+import { restFetch } from '../utils/restFetch';
 import { useAppStore, type SheetsUploadItem } from '../stores/store';
 import type { BleCaptureSession } from '../utils/bleCapture';
 import { deriveDisneyOpcodeHex } from '../utils/e9Parser';
@@ -26,11 +27,11 @@ async function postToSheets(
   body: { sheet: string; rows: Record<string, unknown>[] },
 ) {
   if (body.rows.length === 0) return;
-  const res = await fetch(endpoint, {
+  const res = await restFetch('sheets-upload', endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(body),
-  });
+  }, { timeoutMs: 20_000 });
   const text = await res.text();
   let data: { ok?: boolean; wrote?: string; error?: string } | null = null;
   try {

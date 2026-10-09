@@ -11,6 +11,7 @@ import { clearBoardPresetSyncCache } from '../utils/blePresetCache';
 import { resetBoardSyncStatus } from '../utils/boardSyncState';
 import { saveBleDeviceId } from '../utils/locationRuntimeBridge';
 import { dismissBleDisconnectedNotification, notifyBleDisconnected } from './strollerNotification';
+import { markBleWrite } from '../utils/backgroundHealth';
 
 export const BLE_DEVICE_NAME  = 'IllumaBuggy';
 export const SERVICE_UUID     = '12345678-1234-1234-1234-123456789abc';
@@ -148,6 +149,7 @@ class BLEService {
           console.log('[BLE] iOS restored peripheral', peripheral.id);
           this.shouldReconnect = true;
           void this.finishConnection(peripheral, 'restore');
+          void import('../utils/keepAliveRecovery').then((m) => m.onBackgroundWake('ble-restore'));
         },
       });
     }
@@ -324,9 +326,12 @@ class BLEService {
     // write still goes out, but awaiting it stalls the send queue until foreground.
     // Fire-and-forget WRITE_NR so zone applies can finish inside the FGS task window.
     if (backgrounded) {
+      markBleWrite(true, 'nr-dispatched');
       void device
         .writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64)
+        .then(() => markBleWrite(true, 'nr-ok'))
         .catch((e) => {
+          markBleWrite(false, e instanceof Error ? e.message : String(e));
           if (!isGattBusy(e)) console.warn('[BLE] background NR write failed:', e);
         })
         .finally(() => finishGattActivity(activity));
@@ -335,11 +340,13 @@ class BLEService {
     try {
       try {
         await device.writeCharacteristicWithResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+        markBleWrite(true, 'wr-ok');
         return;
       } catch (e) {
         if (!isGattBusy(e)) {
           try {
             await device.writeCharacteristicWithoutResponseForService(SERVICE_UUID, CMD_CHAR_UUID, b64);
+            markBleWrite(true, 'nr-ok');
             return;
           } catch (inner) {
             throw inner;
@@ -347,6 +354,9 @@ class BLEService {
         }
         throw e;
       }
+    } catch (e) {
+      markBleWrite(false, e instanceof Error ? e.message : String(e));
+      throw e;
     } finally {
       finishGattActivity(activity);
     }
@@ -406,9 +416,10 @@ class BLEService {
     return this.send({ type: 'log_marker', msg: String(msg || '').slice(0, 120) });
   }
   sendBrightness(value: number)                           { return this.send({ type: 'brightness', value }); }
-  sendWledRaw(wled: object, presetId?: string) {
+  sendWledRaw(wled: object, presetId?: string, opts?: { showCue?: boolean }) {
     const msg: BLEMessage = { type: 'wled_raw', wled };
     if (presetId) msg.preset_id = presetId;
+    if (opts?.showCue) msg.show_cue = true;
     return this.send(msg);
   }
   sendStatus()                                            { return this.send({ type: 'status' }); }
@@ -448,8 +459,15 @@ class BLEService {
   sendShowModeConfig(config: { parade: { pre: string; live: string }; fireworks: { pre: string; live: string; post: string } }) {
     return this.send({ type: 'show_mode_config', ...config });
   }
-  sendShowModeEnter(show: 'parade' | 'fireworks', phase: 'pre' | 'black' | 'live' | 'post') {
-    return this.send({ type: 'show_mode_enter', show, phase });
+  sendShowModeEnter(
+    show: 'parade' | 'fireworks',
+    phase: 'pre' | 'black' | 'live' | 'post',
+    opts?: { fadeMs?: number; look?: 'black' | 'keep' },
+  ) {
+    const msg: BLEMessage = { type: 'show_mode_enter', show, phase };
+    if (opts?.fadeMs != null) msg.fade_ms = opts.fadeMs;
+    if (opts?.look) msg.look = opts.look;
+    return this.send(msg);
   }
   sendShowModeExit() {
     return this.send({ type: 'show_mode_exit' });

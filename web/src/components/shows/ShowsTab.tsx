@@ -143,15 +143,21 @@ export function ShowsTab({ data, update }) {
     sh.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const phaseLabels = { pre: 'Pre-show', post: 'Post-show' };
+  const phaseLabels = { pre: 'Pre-show', post: 'Post-show', live: 'Live' };
+  const defaultFtbSec = ((data.bleEffectTransitionMs ?? 700) / 1000).toFixed(1);
   const presetOpts = showModePresetOptions(presets);
+  const livePresetOpts = presetOpts.map((o) => (
+    o.value === '' ? { ...o, label: 'Fade to black', searchText: 'fade black none' } : o
+  ));
 
   return (
     <ScrollArea h="100%">
       <Stack p="md" gap="md" maw={720}>
         <Title order={3}>Shows</Title>
         <Text size="xs" c="dimmed" lh={1.5}>
-          Assign pre/post presets per parade and fireworks show. Live phase is blackout-only on the board.
+          Assign pre/post presets per parade and fireworks show. Live defaults to fade-to-black;
+          pick a preset to use that look instead. Fade time and live preset need a firmware that
+          accepts show_mode_enter fade_ms and look.
           Synced to the companion app via export/import.
           Legacy <strong>showModeConfig</strong> (Settings → Show Mode) is updated from the selected park&apos;s bindings for board push.
         </Text>
@@ -327,7 +333,7 @@ export function ShowsTab({ data, update }) {
                         <Stack gap={2} align="flex-start">
                           <Text fw={600} size="sm">{b.name}</Text>
                           <Text size="xs" c="dimmed">
-                            {b.kind} · {scopeLabel(b)} · {b.durationSec}s · pre {b.preLeadSec}s · live {b.liveOffsetSec >= 0 ? '+' : ''}{b.liveOffsetSec}s · post +{b.postDelaySec}s
+                            {b.kind} · {scopeLabel(b)} · {b.durationSec}s · pre {b.preLeadSec}s · live {b.liveOffsetSec >= 0 ? '+' : ''}{b.liveOffsetSec}s · post +{b.postDelaySec}s{b.ftbFadeSec != null ? ` · ftb ${b.ftbFadeSec}s` : ''}
                           </Text>
                         </Stack>
                       </AppButton>
@@ -357,6 +363,43 @@ export function ShowsTab({ data, update }) {
                             </AppButton>
                           </Group>
                         ))}
+                        <Group gap="xs" wrap="nowrap">
+                          <Text size="xs" c="dimmed" w={88}>Live</Text>
+                          <AppButton
+                            variant="default"
+                            style={{ flex: 1, justifyContent: 'flex-start' }}
+                            size="compact-sm"
+                            onClick={() => setPicker({ bindingId: b.id, phase: 'live' })}
+                          >
+                            {b.liveMode === 'preset' && b.livePresetId
+                              ? showPresetLabel(presets, b.livePresetId, b.kind, 'live')
+                              : 'Fade to black'}
+                          </AppButton>
+                        </Group>
+                        {b.liveMode === 'preset' && b.livePresetId && (
+                          <Text size="xs" c="dimmed">Uses this preset&apos;s own transition (edit on Presets).</Text>
+                        )}
+                        <Group justify="space-between" align="center">
+                          <Text size="xs" c="dimmed">Fade to black time (sec)</Text>
+                          <NumberInput
+                            w={88}
+                            size="xs"
+                            decimalScale={1}
+                            min={0}
+                            max={600}
+                            placeholder={`Default (${defaultFtbSec} s)`}
+                            value={b.ftbFadeSec ?? ''}
+                            onChange={(v) => {
+                              if (v === '' || v == null) updateBinding(b.id, { ftbFadeSec: null });
+                              else {
+                                const n = typeof v === 'number' ? v : parseFloat(String(v));
+                                if (!isNaN(n) && n >= 0) updateBinding(b.id, { ftbFadeSec: Math.min(600, n) });
+                              }
+                            }}
+                            styles={{ input: { textAlign: 'right' } }}
+                          />
+                        </Group>
+                        <Text size="xs" c="dimmed">Applies to live (when FTB) and any phase set to Black.</Text>
                         <Checkbox
                           label="Disable auto pre/post (all instances)"
                           checked={!!b.autoStartDisabled}
@@ -428,15 +471,21 @@ export function ShowsTab({ data, update }) {
             width={420}
           >
             <SearchableSelect
-              value={pickerBinding.presets[picker.phase] || ''}
+              value={picker.phase === 'live' ? (pickerBinding.livePresetId || '') : (pickerBinding.presets[picker.phase] || '')}
               onChange={(v) => {
-                updateBinding(picker.bindingId, {
-                  presets: { ...pickerBinding.presets, [picker.phase]: v },
-                });
+                if (picker.phase === 'live') {
+                  updateBinding(picker.bindingId, v
+                    ? { liveMode: 'preset', livePresetId: v }
+                    : { liveMode: 'ftb', livePresetId: '' });
+                } else {
+                  updateBinding(picker.bindingId, {
+                    presets: { ...pickerBinding.presets, [picker.phase]: v },
+                  });
+                }
                 setPicker(null);
               }}
-              placeholder="(none)"
-              options={presetOpts}
+              placeholder={picker.phase === 'live' ? 'Fade to black' : '(none)'}
+              options={picker.phase === 'live' ? livePresetOpts : presetOpts}
               allowEmpty
             />
           </Modal>

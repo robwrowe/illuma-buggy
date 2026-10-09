@@ -1,6 +1,6 @@
 /**
- * Assign pre/post presets to park parades & fireworks; configure timing defaults.
- * Live phase is blackout-only (no live preset).
+ * Assign pre/post/live looks to park parades & fireworks; configure timing defaults.
+ * Live defaults to fade-to-black. Pick a preset to use that look instead.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -28,12 +28,13 @@ import {
 } from '../utils/showBindings';
 import { generateId } from '../utils/utils';
 
-type PhaseKey = 'pre' | 'post';
+type PhaseKey = 'pre' | 'post' | 'live';
 type PickerTarget = { bindingId: string; phase: PhaseKey } | null;
 
 const PHASE_LABELS: Record<PhaseKey, string> = {
   pre: 'Pre-show',
   post: 'Post-show',
+  live: 'Live',
 };
 
 function presetLabel(presets: { id: string; name: string }[], id: string, _kind: ShowKind, _phase: PhaseKey): string {
@@ -49,8 +50,10 @@ export default function ShowsScreen() {
   const { isConnected } = useBLE();
   const {
     parks, presets, zones, showBindings, showSettings, setShowSettings, saveToStorage,
-    upsertShowBinding, removeShowBinding,
+    upsertShowBinding, removeShowBinding, bleEffectTransitionMs,
   } = useAppStore();
+  const [ftbDraft, setFtbDraft] = useState<{ id: string; text: string } | null>(null);
+  const defaultFtbSec = (bleEffectTransitionMs / 1000).toFixed(1);
 
   const [selectedParkId, setSelectedParkId] = useState<string | null>(parks[0]?.id ?? null);
   const [apiShows, setApiShows] = useState<{ id: string; name: string }[]>([]);
@@ -384,7 +387,7 @@ export default function ShowsScreen() {
                     <View style={s.rowBetween}>
                       <View style={{ flex: 1 }}>
                         <Text style={s.bindingName}>{b.name}</Text>
-                        <Text style={s.hint}>{b.kind} · {scopeLabel(b)} · {b.durationSec}s · pre {b.preLeadSec}s · live {b.liveOffsetSec >= 0 ? '+' : ''}{b.liveOffsetSec}s · post +{b.postDelaySec}s</Text>
+                        <Text style={s.hint}>{b.kind} · {scopeLabel(b)} · {b.durationSec}s · pre {b.preLeadSec}s · live {b.liveOffsetSec >= 0 ? '+' : ''}{b.liveOffsetSec}s · post +{b.postDelaySec}s{b.ftbFadeSec != null ? ` · ftb ${b.ftbFadeSec}s` : ''}</Text>
                       </View>
                       <TouchableOpacity
                         onPress={() => {
@@ -427,6 +430,47 @@ export default function ShowsScreen() {
                             )}
                           </View>
                         ))}
+                        <TouchableOpacity
+                          style={s.phaseRow}
+                          onPress={() => setPicker({ bindingId: b.id, phase: 'live' })}
+                        >
+                          <Text style={s.rowLabel}>Live</Text>
+                          <Text style={s.phaseValue}>
+                            {b.liveMode === 'preset' && b.livePresetId
+                              ? presetLabel(presets, b.livePresetId, b.kind, 'live')
+                              : 'Fade to black'}
+                          </Text>
+                          <IconPencil size={14} color={colors.textMuted} />
+                        </TouchableOpacity>
+                        {b.liveMode === 'preset' && !!b.livePresetId && (
+                          <Text style={[s.hint, { marginTop: -4, marginBottom: 8, textAlign: 'left' }]}>
+                            Uses this preset&apos;s own transition (edit on Presets).
+                          </Text>
+                        )}
+                        <View style={s.numRow}>
+                          <Text style={s.rowLabel}>Fade to black time (sec)</Text>
+                          <TextInput
+                            style={s.numInput}
+                            keyboardType="decimal-pad"
+                            placeholder={`Default (${defaultFtbSec} s)`}
+                            placeholderTextColor={colors.textMuted}
+                            value={ftbDraft?.id === b.id ? ftbDraft.text : (b.ftbFadeSec == null ? '' : String(b.ftbFadeSec))}
+                            onFocus={() => setFtbDraft({ id: b.id, text: b.ftbFadeSec == null ? '' : String(b.ftbFadeSec) })}
+                            onChangeText={(v) => setFtbDraft({ id: b.id, text: v })}
+                            onEndEditing={() => {
+                              const text = (ftbDraft?.id === b.id ? ftbDraft.text : '').trim();
+                              if (!text) updateBinding(b.id, { ftbFadeSec: null });
+                              else {
+                                const n = parseFloat(text);
+                                if (!isNaN(n) && n >= 0) updateBinding(b.id, { ftbFadeSec: n });
+                              }
+                              setFtbDraft(null);
+                            }}
+                          />
+                        </View>
+                        <Text style={[s.hint, { textAlign: 'left' }]}>
+                          Applies to live (when FTB) and any phase set to Black.
+                        </Text>
                         <View style={s.switchRow}>
                           <Text style={s.rowLabel}>Disable auto pre/post (all instances)</Text>
                           <Switch
@@ -510,12 +554,22 @@ export default function ShowsScreen() {
         visible={!!picker && !!pickerBinding}
         title={picker ? `${PHASE_LABELS[picker.phase]} preset` : ''}
         presets={presets}
-        selectedId={pickerBinding && picker ? pickerBinding.presets[picker.phase] : ''}
-        emptyLabel="None"
+        selectedId={
+          pickerBinding && picker
+            ? (picker.phase === 'live' ? pickerBinding.livePresetId : pickerBinding.presets[picker.phase])
+            : ''
+        }
+        emptyLabel={picker?.phase === 'live' ? 'Fade to black' : 'None'}
         onSelect={(id) => {
           if (!picker || !pickerBinding) return;
-          const presetsNext = { ...pickerBinding.presets, [picker.phase]: id };
-          updateBinding(picker.bindingId, { presets: presetsNext });
+          if (picker.phase === 'live') {
+            updateBinding(picker.bindingId, id
+              ? { liveMode: 'preset', livePresetId: id }
+              : { liveMode: 'ftb', livePresetId: '' });
+          } else {
+            const presetsNext = { ...pickerBinding.presets, [picker.phase]: id };
+            updateBinding(picker.bindingId, { presets: presetsNext });
+          }
           setPicker(null);
         }}
         onClose={() => setPicker(null)}

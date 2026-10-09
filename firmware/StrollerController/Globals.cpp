@@ -107,6 +107,7 @@ uint8_t       wandTxCastPalette = 4;
 unsigned long wandTxLastAdvMs = 0;
 
 String savedWledState   = "";
+String lastShowCueWled  = "";
 String savedRestorePresetId = "";
 OverrideSource savedRestoreOverride = NONE;
 String liveWledState    = "";

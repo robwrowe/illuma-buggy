@@ -7,6 +7,7 @@ import {
 } from './ble/mbMapping';
 import type { AppData } from '../types/app';
 import { normalizeTags } from './tags';
+import { normalizeShowBinding } from './map/themeParks';
 import {
   DEFAULT_DATA,
   compareVersions,
@@ -85,11 +86,14 @@ export function migrateParksGrouping(data: AppData): AppData {
 }
 
 export function migrateShowBindingsDefaults(data: AppData): AppData {
-  if (data.showBindings && data.showSettings) return data;
+  const showSettings = { ...DEFAULT_DATA.showSettings, ...(data.showSettings || {}) };
+  const showBindings = (data.showBindings || [])
+    .map((b) => normalizeShowBinding(b, showSettings))
+    .filter(Boolean);
   return {
     ...data,
-    showBindings: data.showBindings || [],
-    showSettings: { ...DEFAULT_DATA.showSettings, ...(data.showSettings || {}) },
+    showBindings,
+    showSettings,
     showInstanceOverrides: data.showInstanceOverrides || {},
   };
 }

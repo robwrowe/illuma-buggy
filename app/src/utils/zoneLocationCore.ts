@@ -16,6 +16,9 @@ import {
   loadZoneRuntime,
   enqueuePendingBle,
 } from './locationRuntimeBridge';
+import { registerDeadlineSweep } from './restFetch';
+
+const ZONE_APPLY_TIMEOUT_MS = 12_000;
 
 const ZONE_REAPPLY_MS = 45_000;
 const ZONE_TRANSITION_SETTLE_MS = 4000; // require candidate to hold across ~1-2 GPS fixes
@@ -32,6 +35,17 @@ let lastSolarDay: boolean | null = null;
 let zoneTriggersSuppressed = false;
 let lastLoggedActiveIds: string[] = [];
 let zoneApplyChain: Promise<void> = Promise.resolve();
+
+type ZoneDeadline = { deadline: number; fire: () => void };
+const zoneApplyDeadlines = new Set<ZoneDeadline>();
+
+function sweepZoneApplyDeadlines(now: number): void {
+  for (const entry of zoneApplyDeadlines) {
+    if (now >= entry.deadline) entry.fire();
+  }
+}
+
+registerDeadlineSweep(sweepZoneApplyDeadlines);
 let lastCompletedApply: { zoneId: string; presetId: string; at: number } | null = null;
 // Collapses duplicate applies of the *same* zone/preset fired in quick succession from
 // different call sites (GPS re-eval, pending-drain, board-sync-idle flush, etc.) — these
@@ -89,6 +103,7 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
   }
   lastZoneApply = { zoneId: zone.id, at: Date.now() };
 
+  let stale = false;
   const run = async () => {
     if (!canApplyZoneNow()) {
       pendingZone = zone;
@@ -136,6 +151,10 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
       trustSend: true,
       zoneGps: true,
     });
+    if (stale) {
+      zoneLog('apply finished after deadline — result ignored', { zone: zone.name, reason });
+      return;
+    }
     zoneLog(ok ? 'apply OK' : 'apply FAILED', { presetId: preset.id, zone: zone.name });
     if (ok) {
       lastCompletedApply = { zoneId: zone.id, presetId: preset.id, at: Date.now() };
@@ -154,8 +173,32 @@ function applyZoneEntry(zone: Zone, force: boolean, reason: string) {
       }
     }
   };
-  zoneApplyChain = zoneApplyChain.then(run).catch((e) => {
-    console.warn('[Zone] apply error:', e);
+  let settled = false;
+  let rejectDeadline: (e: Error) => void = () => {};
+  const deadlinePromise = new Promise<never>((_, reject) => {
+    rejectDeadline = reject;
+  });
+  const deadlineAt = Date.now() + ZONE_APPLY_TIMEOUT_MS;
+  const deadlineEntry: ZoneDeadline = { deadline: deadlineAt, fire: () => {} };
+  deadlineEntry.fire = () => {
+    if (settled) return;
+    settled = true;
+    stale = true;
+    zoneApplyDeadlines.delete(deadlineEntry);
+    rejectDeadline(new Error('zone apply deadline'));
+  };
+  zoneApplyDeadlines.add(deadlineEntry);
+  const deadlineTimer = setTimeout(() => deadlineEntry.fire(), ZONE_APPLY_TIMEOUT_MS);
+  zoneApplyChain = zoneApplyChain.then(async () => {
+    try {
+      await Promise.race([run(), deadlinePromise]);
+    } catch (e) {
+      console.warn('[Zone] apply error:', e);
+    } finally {
+      settled = true;
+      clearTimeout(deadlineTimer);
+      zoneApplyDeadlines.delete(deadlineEntry);
+    }
   });
 }
 

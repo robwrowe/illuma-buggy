@@ -32,6 +32,7 @@ whitelist). Re-check that file if this doc and firmware ever disagree.
 {"type":"preset_list"}
 {"type":"wled_raw","wled":{"on":true,"bri":255,"seg":[{"fx":42}]}}
 {"type":"wled_raw","wled":{...},"preset_id":"fantasy"}
+{"type":"wled_raw","wled":{...},"preset_id":"fantasy","show_cue":true}
 {"type":"wled_get_effects"}
 {"type":"wled_get_palettes"}
 {"type":"wled_get_fxdata"}
@@ -43,7 +44,11 @@ whitelist). Re-check that file if this doc and firmware ever disagree.
 (subject to override priority — see below); without `preset_id` it's a live preview/effect
 push and does not change the active preset. Payloads containing a WLED `seg` array are
 treated as a segment/preset apply (snap, no crossfade); payloads without `seg` go through
-the crossfade path used for live BLE effects.
+the crossfade path used for live BLE effects. `show_cue: true` is only special while
+`SHOW_MODE` is already held: the override stays `SHOW_MODE`, the body is stored as
+`lastShowCueWled`, and that body is sent again when a `BLE_EFFECT` interruption ends.
+Otherwise `show_cue` is ignored and the command follows the normal MANUAL gate. A plain
+`wled_raw` during `SHOW_MODE` is still rejected (`blocked`).
 
 ### Zones, overrides & transitions
 
@@ -62,14 +67,15 @@ the crossfade path used for live BLE effects.
 
 ```json
 {"type":"show_mode_config","parade":{"pre":"...","live":"..."},"fireworks":{"pre":"...","live":"__BLACK__","post":"..."}}
-{"type":"show_mode_enter","show":"parade","phase":"live"}
+{"type":"show_mode_enter","show":"parade","phase":"live","fade_ms":10000,"look":"black"}
+{"type":"show_mode_enter","show":"parade","phase":"live","look":"keep"}
 {"type":"show_mode_exit"}
 {"type":"parade_manual_start"}
 {"type":"parade_manual_stop"}
 ```
 
 - `show_mode_config` — persists the WLED "look" strings used for each show/phase combination to NVS. `pre`/`live`/`post` are opaque look identifiers consumed by `applyShowPhaseLook()`; `fireworks.live` defaults to the sentinel `"__BLACK__"`.
-- `show_mode_enter` — `show` is `parade` or `fireworks`; `phase` is `pre`, `black`, `live`, or `post`. Entering `parade`+`post` is treated as an exit (clears the override) rather than a real phase. Takes the `SHOW_MODE` override, which outranks `MANUAL` and `ZONE`.
+- `show_mode_enter` — `show` is `parade` or `fireworks`; `phase` is `pre`, `black`, `live`, or `post`. Entering `parade`+`post` is treated as an exit (clears the override) rather than a real phase. Takes the `SHOW_MODE` override, which outranks `MANUAL` and `ZONE`. Optional `fade_ms` (default `bleEffectTransitionMs`, clamped to 600000) is the WLED transition for a blackout. Optional `look`: `"black"` or omitted blacks out `black`/`live` and clears `lastShowCueWled`; `"keep"` claims `SHOW_MODE` without changing the strip. A live preset is `look: "keep"` followed by `wled_raw` with `show_cue: true`. Older firmware ignores `fade_ms`, `look`, and `show_cue`, so a custom FTB time or live preset needs this firmware.
 - `show_mode_exit` — clears `SHOW_MODE` unconditionally.
 - `parade_manual_start` / `parade_manual_stop` — separate manual parade trigger path (`manualParadeStart()`/`manualParadeStop()`), independent of `show_mode_enter`.
 

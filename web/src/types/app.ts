@@ -100,6 +100,11 @@ export interface ParkShowBinding {
   autoPrePostDisabled?: boolean;
   autoLiveDisabled?: boolean;
   scopeZoneId?: string | null;
+  /** 'ftb' fades to black on live; 'preset' applies livePresetId */
+  liveMode?: 'ftb' | 'preset';
+  livePresetId?: string;
+  /** Seconds. Null/omitted uses the global effect transition. */
+  ftbFadeSec?: number | null;
 }
 
 export interface ShowInstanceOverride {

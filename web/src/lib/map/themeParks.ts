@@ -24,6 +24,20 @@ export function inferShowKind(name) {
   return /firework|happily ever after|enchantment|celebrat/i.test(name) ? 'fireworks' : 'parade';
 }
 
+const FTB_FADE_SEC_MAX = 600;
+
+function normalizeLiveFields(raw): { liveMode: 'ftb' | 'preset'; livePresetId: string } {
+  const livePresetId = typeof raw?.livePresetId === 'string' ? raw.livePresetId : '';
+  if (raw?.liveMode === 'preset' && livePresetId) return { liveMode: 'preset', livePresetId };
+  return { liveMode: 'ftb', livePresetId: '' };
+}
+
+function normalizeFtbFadeSec(raw): number | null {
+  const n = typeof raw === 'number' ? raw : (typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.min(FTB_FADE_SEC_MAX, n);
+}
+
 export function normalizeShowBinding(raw, defaults) {
   if (!raw?.parkId || !raw.entityId || !raw.name) return null;
   const presets = raw.presets || { pre: '', post: '' };
@@ -45,12 +59,16 @@ export function normalizeShowBinding(raw, defaults) {
     durationSec: Number.isFinite(raw.durationSec)
       ? raw.durationSec
       : (kind === 'fireworks' ? defaults.defaultFireworksDurationSec : defaults.defaultParadeDurationSec),
-    autoStartDisabled: !!raw.autoStartDisabled,
+    autoPrePostDisabled: !!(raw.autoPrePostDisabled ?? raw.autoStartDisabled),
+    autoLiveDisabled: raw.autoLiveDisabled ?? (kind === 'fireworks' ? false : true),
+    autoStartDisabled: !!(raw.autoPrePostDisabled ?? raw.autoStartDisabled),
     scopeZoneId: raw.scopeZoneId || null,
+    ...normalizeLiveFields(raw),
+    ftbFadeSec: normalizeFtbFadeSec(raw.ftbFadeSec),
   };
 }
 
-/** Live look empty — firmware LIVE is blackout-only. */
+/** Legacy NVS live look stays empty. Per-binding live presets are applied before show_mode_enter. */
 export function buildLegacyShowModeConfig(bindings, parkId) {
   const parkBindings = parkId ? (bindings || []).filter(b => b.parkId === parkId) : (bindings || []);
   const parade = parkBindings.find(b => b.kind === 'parade');
