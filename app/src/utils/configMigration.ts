@@ -4,7 +4,7 @@
 
 import { normalizeSegmentLayout, type CustomSegmentLayout, type WledSegmentDef } from './segmentLayouts';
 
-export const CURRENT_CONFIG_VERSION = '3.0';
+export const CURRENT_CONFIG_VERSION = '3.1';
 
 export interface ShowModeConfig {
   parade: { pre: string; live: string; post?: string };
@@ -18,6 +18,8 @@ export interface ParkConfig {
   id: string;
   name: string;
   themeParksApiEntityId: string;
+  /** IANA zone from themeparks.wiki, editable. Clock cues use this, not the phone. */
+  timezone?: string;
   centerLat?: number;
   centerLng?: number;
   createdAt: number;

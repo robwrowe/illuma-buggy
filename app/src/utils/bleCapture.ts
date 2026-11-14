@@ -33,6 +33,8 @@ export interface BleCaptureSession {
   endedAt: number;
   durationSec: number;
   packets: BleCapturePacket[];
+  /** Present when packets live in the journal and `packets` may be empty. */
+  packetCount?: number;
 }
 
 export type BleCaptureDurationSec = number;

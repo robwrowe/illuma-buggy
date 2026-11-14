@@ -8,8 +8,10 @@
  */
 
 import NetInfo from '@react-native-community/netinfo';
+import { restFetch } from '../utils/restFetch';
 import { useAppStore, type SheetsUploadItem } from '../stores/store';
 import type { BleCaptureSession } from '../utils/bleCapture';
+import { loadSessionPackets } from './captureJournal';
 import { deriveDisneyOpcodeHex } from '../utils/e9Parser';
 import { generateId } from '../utils/utils';
 
@@ -26,11 +28,11 @@ async function postToSheets(
   body: { sheet: string; rows: Record<string, unknown>[] },
 ) {
   if (body.rows.length === 0) return;
-  const res = await fetch(endpoint, {
+  const res = await restFetch('sheets-upload', endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(body),
-  });
+  }, { timeoutMs: 20_000 });
   const text = await res.text();
   let data: { ok?: boolean; wrote?: string; error?: string } | null = null;
   try {
@@ -159,7 +161,8 @@ export async function drainSheetsQueue() {
       }
 
       try {
-        await postSessionToSheets(session, useAppStore.getState().sheetsEndpoint);
+        const packets = session.packets.length ? session.packets : await loadSessionPackets(session.id);
+        await postSessionToSheets({ ...session, packets }, useAppStore.getState().sheetsEndpoint);
         useAppStore.getState().dequeueSheetsUpload(item.sessionId);
       } catch (err) {
         bumpAttempt(item.sessionId, String(err));

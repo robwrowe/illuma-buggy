@@ -71,10 +71,12 @@ export default function HomeScreen() {
     recallState,
     customSegmentLayouts,
     setShowInstanceOverride,
+    showInstanceOverrides,
     syncMode,
     parkMode,
     logMarkerSnippets,
     setLogMarkerSnippets,
+    activeCue,
   } = useAppStore();
 
   const [brightness, setBrightness] = useState(deviceStatus?.brightness ?? 0);
@@ -607,6 +609,11 @@ export default function HomeScreen() {
             <IconMap size={15} color={colors.textSecondary} />
             <Text style={s.label}>Shows</Text>
           </View>
+          {activeCue ? (
+            <Text style={s.showCountdown}>
+              Cue: {activeCue.label} · ends in {Math.floor(activeCue.remainSec / 60)}:{String(activeCue.remainSec % 60).padStart(2, '0')}
+            </Text>
+          ) : null}
           {!activePark?.themeParksApiEntityId || parkShowsError ? (
             <Text style={s.subText}>{parkShowsError}</Text>
           ) : parkShows.length === 0 ? (
@@ -667,6 +674,26 @@ export default function HomeScreen() {
                       />
                     </View>
                   )}
+                  <View style={s.autoRow}>
+                    <Text style={s.autoLabel}>Cues</Text>
+                    <Switch
+                      value={!showInstanceOverrides[show.id]?.cuesDisabled}
+                      onValueChange={(v) => {
+                        setShowInstanceOverride(show.id, { cuesDisabled: !v });
+                        saveToStorage();
+                      }}
+                      trackColor={{ false: colors.borderFocus, true: colors.primary }}
+                      thumbColor="#fff"
+                    />
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowInstanceOverride(show.id, { endAtMs: Date.now() });
+                      saveToStorage();
+                    }}
+                  >
+                    <Text style={s.autoHint}>Show ended now</Text>
+                  </TouchableOpacity>
                   {show.kind === "parade" && (
                     <Text style={s.autoHint}>
                       Start live manually when you&apos;re on the parade route.

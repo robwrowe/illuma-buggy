@@ -72,8 +72,8 @@ struct __attribute__((packed)) ParsedDisneyPacket {
 enum class BoardRole : uint8_t { STANDALONE = 0, LOGIC_BOARD = 1 };
 
 enum OverrideSource { NONE, ZONE, MANUAL, SHOW_MODE, BLE_EFFECT };
-enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS };
-enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST };
+enum ShowType  { SHOW_NONE, SHOW_PARADE, SHOW_FIREWORKS, SHOW_CUE };
+enum ShowPhase { PHASE_NONE, PHASE_PRE, PHASE_BLACK, PHASE_LIVE, PHASE_POST, PHASE_CUE };
 
 // Rule-engine effect lifecycle (timing-byte driven). IDLE = use flat magicBandTimeoutMs.
 // ON → DIP (fade to black on current shape) → FADE (shape-safe FTB/off) → COOLDOWN → restore.

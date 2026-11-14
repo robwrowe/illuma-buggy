@@ -20,15 +20,20 @@ import {
   stopLocationTask,
 } from '../utils/locationTracking';
 import { dismissStrollerNotification } from '../services/strollerNotification';
+import { shouldKeepProcessAlive } from '../utils/keepAlivePolicy';
+import { maybePromptBatteryExemption, onBackgroundWake, setFgsWanted } from '../utils/keepAliveRecovery';
 
 export function useZoneManager() {
   const zonesEnabledRef = useRef(useAppStore.getState().zonesEnabled);
   const captureLocationRef = useRef(useAppStore.getState().captureForcedLocationTracking);
+  const bleConnectedRef = useRef(bleService.isConnected());
+  const keepAliveRef = useRef(shouldKeepProcessAlive(bleConnectedRef.current));
 
   useEffect(() => {
     return useAppStore.subscribe((state) => {
       zonesEnabledRef.current = state.zonesEnabled;
       captureLocationRef.current = state.captureForcedLocationTracking;
+      keepAliveRef.current = shouldKeepProcessAlive(bleConnectedRef.current);
     });
   }, []);
 
@@ -267,6 +272,7 @@ export function useZoneManager() {
       console.log('[Location] startTracking', reason, {
         zones: zonesEnabledRef.current,
         capture: captureLocationRef.current,
+        keepAlive: keepAliveRef.current,
       });
 
       if (!(await ensureForegroundPermission())) {
@@ -306,15 +312,19 @@ export function useZoneManager() {
     };
 
     const syncWatchMode = async (reason: string) => {
-      if (!zonesEnabledRef.current && !captureLocationRef.current) {
-        console.log('[Location] zones and capture disabled — not tracking');
+      keepAliveRef.current = shouldKeepProcessAlive(bleConnectedRef.current);
+      if (!keepAliveRef.current) {
+        console.log('[Location] no keep-alive consumer — not tracking');
+        await setFgsWanted(false);
         await stopTracking();
         return;
       }
+      await setFgsWanted(true);
       await startTracking(reason);
     };
 
     void syncWatchMode('init');
+    void maybePromptBatteryExemption();
 
     const sessionSub = bleService.onSessionReady(async () => {
       void runtimeBridge.setBleLinkStatus(bleService.isConnected(), true);
@@ -326,12 +336,18 @@ export function useZoneManager() {
     });
 
     const connSub = bleService.onStateChange((state) => {
+      bleConnectedRef.current = state === 'connected';
       void runtimeBridge.setBleLinkStatus(
         state === 'connected',
         state === 'connected' && bleService.isSessionReady(),
       );
-      if (state === 'connected') {
-        // Zone flush waits for session ready + board sync idle (see onSessionReady).
+      const next = shouldKeepProcessAlive(state === 'connected');
+      if (next !== keepAliveRef.current) {
+        keepAliveRef.current = next;
+        void syncWatchMode(next ? 'ble-link-up' : 'ble-link-down');
+      }
+      if (state === 'connected' && AppState.currentState !== 'active') {
+        void onBackgroundWake('ble-connected');
       }
     });
 
@@ -342,7 +358,8 @@ export function useZoneManager() {
         await persistAppVisibility(next);
         const gen = ++appStateGeneration;
         console.log('[Location] appState', prev, '→', next);
-        if (!zonesEnabledRef.current && !captureLocationRef.current) return;
+        keepAliveRef.current = shouldKeepProcessAlive(bleConnectedRef.current);
+        if (!keepAliveRef.current) return;
 
         if (next === 'active') {
           stopDrainPoll();
@@ -376,9 +393,7 @@ export function useZoneManager() {
             console.log('[Location] FGS on background entry', { running });
             if (!running) {
               fgsStartPending = true;
-              console.warn(
-                '[Location] FGS not running — open app in foreground once to restart zone GPS',
-              );
+              void onBackgroundWake('app-background');
             }
           } else {
             console.warn(
@@ -395,13 +410,15 @@ export function useZoneManager() {
       if (
         state.zonesEnabled !== prev.zonesEnabled
         || state.captureForcedLocationTracking !== prev.captureForcedLocationTracking
+        || state.showBindings !== prev.showBindings
+        || state.activePark !== prev.activePark
       ) {
         void syncWatchMode('location-consumer-toggle');
         return;
       }
       if (
         state.locationPollSec !== prev.locationPollSec
-        && (zonesEnabledRef.current || captureLocationRef.current)
+        && keepAliveRef.current
       ) {
         startPoll();
         if (AppState.currentState === 'active' && backgroundGranted) {

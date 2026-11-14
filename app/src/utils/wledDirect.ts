@@ -5,17 +5,24 @@
  * `isOnWledNetwork()` remains for UI "on StrollerNet" display only.
  */
 
+import { AppState } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { useAppStore } from '../stores/store';
 import type { Preset, RecallState } from '../stores/store';
 import type { CustomSegmentLayout, SharedSegmentMap } from './segmentLayouts';
+import { restFetch } from './restFetch';
 
 const FETCH_TIMEOUT_MS = 2500;
 const PROBE_TIMEOUT_MS = 700;
 const PROBE_CACHE_MS = 12_000;
+const BG_FALSE_CACHE_MS = 2_000;
+const BG_PROBE_TIMEOUT_MS = 2_000;
+const BG_POST_TIMEOUT_MS = 8_000;
+const SKIP_PROBE_AFTER_OK_MS = 60_000;
 
 let lastProbeAt = 0;
 let lastProbeResult = false;
+let lastDirectOkAt = 0;
 
 /** Current WiFi SSID the phone is joined to, or null if not on WiFi / unavailable. */
 export async function getCurrentWifiSsid(): Promise<string | null> {
@@ -41,23 +48,32 @@ export async function isOnWledNetwork(): Promise<boolean> {
   return current === wledSsid;
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error('WLED request timed out')), ms),
-    ),
-  ]);
+function probeCacheMs(): number {
+  if (!lastProbeResult && AppState.currentState !== 'active') return BG_FALSE_CACHE_MS;
+  return PROBE_CACHE_MS;
+}
+
+async function probeOnce(url: string, timeoutMs: number): Promise<boolean> {
+  try {
+    const res = await restFetch('wled-probe', url, { method: 'GET' }, { timeoutMs });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Best-effort check that WLED is reachable right now over whatever network
  * path the phone currently has — hotspot-hosting, joined-AP, doesn't matter.
- * Cached briefly so repeated zone-GPS applies don't each pay the probe cost.
+ * A recent successful POST skips the probe. A background false result is only
+ * cached for a couple of seconds, and the probe is retried once.
  */
 export async function isWledReachable(force = false): Promise<boolean> {
   const now = Date.now();
-  if (!force && now - lastProbeAt < PROBE_CACHE_MS) {
+  if (!force && now - lastDirectOkAt < SKIP_PROBE_AFTER_OK_MS) {
+    return true;
+  }
+  if (!force && now - lastProbeAt < probeCacheMs()) {
     return lastProbeResult;
   }
   const { wledIp, wledPort } = useAppStore.getState();
@@ -69,19 +85,19 @@ export async function isWledReachable(force = false): Promise<boolean> {
   }
   const port = wledPort || 80;
   const url = `http://${host}:${port}/json/info`;
-  try {
-    const res = await withTimeout(fetch(url, { method: 'GET' }), PROBE_TIMEOUT_MS);
-    lastProbeResult = res.ok;
-  } catch {
-    lastProbeResult = false;
-  }
-  lastProbeAt = now;
+  const background = AppState.currentState !== 'active';
+  const timeoutMs = background ? Math.max(PROBE_TIMEOUT_MS, BG_PROBE_TIMEOUT_MS) : PROBE_TIMEOUT_MS;
+  let ok = await probeOnce(url, timeoutMs);
+  if (!ok) ok = await probeOnce(url, timeoutMs);
+  lastProbeResult = ok;
+  lastProbeAt = Date.now();
   return lastProbeResult;
 }
 
 /** Invalidate the cached reachability result — call after WLED IP/port changes. */
 export function invalidateWledReachabilityCache(): void {
   lastProbeAt = 0;
+  lastDirectOkAt = 0;
 }
 
 /** POST a resolved WLED state payload directly to WLED's HTTP JSON API. */
@@ -94,19 +110,19 @@ export async function postWledStateDirect(payload: object): Promise<boolean> {
   }
   const port = wledPort || 80;
   const url = `http://${host}:${port}/json/state`;
+  const background = AppState.currentState !== 'active';
+  const timeoutMs = background ? Math.max(FETCH_TIMEOUT_MS, BG_POST_TIMEOUT_MS) : FETCH_TIMEOUT_MS;
   try {
-    const res = await withTimeout(
-      fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }),
-      FETCH_TIMEOUT_MS,
-    );
+    const res = await restFetch('wled-state', url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, { timeoutMs });
     if (!res.ok) {
       console.warn('[WledDirect] WLED rejected request', res.status);
       return false;
     }
+    lastDirectOkAt = Date.now();
     return true;
   } catch (e) {
     console.warn('[WledDirect] request failed', e);

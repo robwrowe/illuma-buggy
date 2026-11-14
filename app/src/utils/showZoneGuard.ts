@@ -16,6 +16,8 @@ export function shouldProtectShowFromZones(opts: {
   deviceStatus: DeviceStatus | null;
   /** In-scope show instance in pre or live (from useParkShows schedule tick). */
   showScheduleProtects?: boolean;
+  /** A cue occurrence is active, including park-level cues with no show. */
+  cueActive?: boolean;
 }): boolean {
   const {
     activeParkId,
@@ -23,8 +25,10 @@ export function shouldProtectShowFromZones(opts: {
     showBindings,
     deviceStatus,
     showScheduleProtects,
+    cueActive,
   } = opts;
   if (!activeParkId) return false;
+  if (cueActive) return true;
 
   const parkBindings = showBindings.filter((b) => b.parkId === activeParkId);
   const inScope = (binding: ParkShowBinding) =>
@@ -39,6 +43,7 @@ export function shouldProtectShowFromZones(opts: {
   if (deviceStatus?.override !== SHOW_OVERRIDE) return false;
 
   const showType = deviceStatus.showType;
+  if (showType === 'cue') return true;
   return parkBindings.some((b) => {
     if (!inScope(b)) return false;
     if (!showType) return true;

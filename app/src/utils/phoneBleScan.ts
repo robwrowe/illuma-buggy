@@ -62,8 +62,20 @@ let scanActive = false;
 let lastPacketAt: number | null = null;
 let lastCallbackAt: number | null = null;
 let totalCallbackCount = 0;
-let callbackTimes: number[] = [];
+let callbacksLast10s = 0;
+let callbackWindowStart = 0;
+const pending = new Map<string, Parameters<PhoneScanPacketHandler>[0]>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<PhoneScanPacketHandler>();
+
+function flushPending(): void {
+  flushTimer = null;
+  const batch = [...pending.values()];
+  pending.clear();
+  for (const pkt of batch) {
+    for (const handler of listeners) handler(pkt);
+  }
+}
 
 /**
  * Starts a phone-native passive scan for Disney BLE manufacturer data.
@@ -80,7 +92,8 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
     lastPacketAt = null;
     lastCallbackAt = null;
     totalCallbackCount = 0;
-    callbackTimes = [];
+    callbacksLast10s = 0;
+    callbackWindowStart = 0;
 
     scanManager.startDeviceScan(null, { allowDuplicates: true }, (error, device: Device | null) => {
       if (error) {
@@ -91,18 +104,25 @@ export function startPhoneBleScan(onPacket: PhoneScanPacketHandler): () => void 
       const callbackAt = Date.now();
       lastCallbackAt = callbackAt;
       totalCallbackCount++;
-      callbackTimes.push(callbackAt);
-      callbackTimes = callbackTimes.filter(at => callbackAt - at <= 10_000);
+      if (callbackAt - callbackWindowStart > 10_000) {
+        callbackWindowStart = callbackAt;
+        callbacksLast10s = 0;
+      }
+      callbacksLast10s++;
 
-      if (!device?.manufacturerData) return;
-      const raw = decodeManufacturerData(device.manufacturerData);
-      if (raw.length === 0 || !isDisneyMfr(raw)) return;
+      const b64 = device?.manufacturerData;
+      if (!b64) return;
+      // Disney manufacturer id 0x0183 is base64 "gwE" when it is the first two bytes.
+      if (!b64.startsWith('gwE') && b64.length < 8) return;
+      const raw = decodeManufacturerData(b64);
+      if (raw.length < 2 || !isDisneyMfr(raw)) return;
 
       const tag = classifyScanPacket(raw);
       const hex = raw.map(b => b.toString(16).padStart(2, '0')).join('');
-      const pkt = { tag, rssi: device.rssi ?? 0, hex, len: raw.length, deviceId: device.id };
-      lastPacketAt = Date.now();
-      for (const handler of listeners) handler(pkt);
+      const dedupeKey = `${device.id}:${hex}`;
+      pending.set(dedupeKey, { tag, rssi: device.rssi ?? 0, hex, len: raw.length, deviceId: device.id });
+      lastPacketAt = callbackAt;
+      if (!flushTimer) flushTimer = setTimeout(flushPending, 250);
     });
   }
 
@@ -134,11 +154,10 @@ export function getPhoneBleScanHealth(): {
   totalCallbackCount: number;
   callbacksLast10s: number;
 } {
-  const cutoff = Date.now() - 10_000;
   return {
     active: scanActive,
     lastCallbackAt,
     totalCallbackCount,
-    callbacksLast10s: callbackTimes.filter(at => at >= cutoff).length,
+    callbacksLast10s,
   };
 }

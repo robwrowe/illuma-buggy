@@ -27,6 +27,8 @@
     "@tabler/icons-react-native": "^3.34.0",
     "base64-js": "^1.5.1",
     "expo": "~53.0.0",
+    "expo-build-properties": "~0.14.8",
+    "illuma-keepalive": "file:./modules/illuma-keepalive",
     "expo-constants": "~17.1.8",
     "expo-document-picker": "~13.1.6",
     "expo-file-system": "~18.1.0",

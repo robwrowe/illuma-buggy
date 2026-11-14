@@ -15,7 +15,7 @@ bool restoreWledSnapshot(const String& json, unsigned long fadeMs, bool dipToBla
                          const String* dipBodyOverride = nullptr);
 bool restorePresetWithTransition(const String& id, unsigned long fadeMs);
 bool restorePresetWithTransitionStyled(const String& id, unsigned long fadeMs, int blendingStyle);
-void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs);
+void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs, const String& look = "");
 const char* showTypeStatusStr();
 const char* showPhaseStatusStr();
 void pollLiveWledState();

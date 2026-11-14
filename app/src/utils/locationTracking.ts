@@ -2,6 +2,7 @@ import { AppState } from 'react-native';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { BACKGROUND_LOCATION_TASK } from '../tasks/locationTaskName';
+import { acquireRadioLocks, releaseRadioLocks } from './keepAliveNative';
 import {
   useAppStore,
   DEFAULT_LOCATION_POLL_SEC,
@@ -27,8 +28,8 @@ function locationTaskOptions(): Location.LocationTaskOptions {
     showsBackgroundLocationIndicator: true,
     pausesUpdatesAutomatically: false,
     foregroundService: {
-      notificationTitle: 'Illuma Buggy',
-      notificationBody: 'Tracking location for zone presets',
+      notificationTitle: 'Illuma Buggy — connected',
+      notificationBody: 'Keeping shows, zones, and the board link alive',
     },
   };
 }
@@ -67,6 +68,7 @@ async function safeStopLocationTask(): Promise<void> {
 export async function ensureLocationTaskRunning(reason: string): Promise<boolean> {
   assertTaskDefined();
   if (await isLocationTaskRunning()) {
+    acquireRadioLocks();
     console.log('[Location] FGS already active', reason);
     return true;
   }
@@ -78,6 +80,7 @@ export async function ensureLocationTaskRunning(reason: string): Promise<boolean
     return false;
   }
   await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, locationTaskOptions());
+  acquireRadioLocks();
   console.log('[Location] FGS started', reason);
   return true;
 }
@@ -91,10 +94,12 @@ export async function restartLocationTask(): Promise<boolean> {
   }
   await safeStopLocationTask();
   await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, locationTaskOptions());
+  acquireRadioLocks();
   console.log('[Location] FGS restarted (foreground)');
   return true;
 }
 
 export async function stopLocationTask(): Promise<void> {
   await safeStopLocationTask();
+  releaseRadioLocks();
 }

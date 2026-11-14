@@ -168,9 +168,12 @@ void handleBLECommand(const String& msg) {
   else if (type == "show_mode_enter") {
     String showStr = doc["show"] | "";
     String phaseStr = doc["phase"] | "";
-    ShowType st = (showStr == "parade") ? SHOW_PARADE : (showStr == "fireworks") ? SHOW_FIREWORKS : SHOW_NONE;
+    ShowType st = (showStr == "parade") ? SHOW_PARADE
+                : (showStr == "fireworks") ? SHOW_FIREWORKS
+                : (showStr == "cue") ? SHOW_CUE : SHOW_NONE;
     ShowPhase sp = (phaseStr == "pre") ? PHASE_PRE : (phaseStr == "black") ? PHASE_BLACK
-                 : (phaseStr == "live") ? PHASE_LIVE : (phaseStr == "post") ? PHASE_POST : PHASE_NONE;
+                 : (phaseStr == "live") ? PHASE_LIVE : (phaseStr == "post") ? PHASE_POST
+                 : (phaseStr == "cue") ? PHASE_CUE : PHASE_NONE;
     if (st == SHOW_NONE || sp == PHASE_NONE) {
       bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_enter\",\"ok\":false}");
     } else if (st == SHOW_PARADE && sp == PHASE_POST) {
@@ -184,7 +187,12 @@ void handleBLECommand(const String& msg) {
       showModeType = st;
       showModePhase = sp;
       setOverride(SHOW_MODE);
-      applyShowPhaseLook(st, sp, bleEffectTransitionMs);
+      unsigned long fadeMs = bleEffectTransitionMs;
+      if (doc.containsKey("fade_ms")) fadeMs = doc["fade_ms"].as<unsigned long>();
+      if (fadeMs > 600000UL) fadeMs = 600000UL;
+      String look = doc["look"] | "";
+      if (look != "keep") lastShowCueWled = "";
+      applyShowPhaseLook(st, sp, fadeMs, look);
       bleNotify("{\"type\":\"ack\",\"action\":\"show_mode_enter\",\"show\":\"" + showStr + "\",\"phase\":\"" + phaseStr + "\"}");
     }
   }
@@ -211,14 +219,21 @@ void handleBLECommand(const String& msg) {
     Serial.printf("[BLE] wled_raw preset=%s bytes=%u\n",
                   presetId.length() ? presetId.c_str() : "(preview)",
                   (unsigned)wled.length());
+    bool showCue = doc["show_cue"] | false;
+    bool showCueApplied = false;
     if (presetId.length() > 0) {
-      if (!canTakeOverride(MANUAL)) {
+      if (showCue && currentOverride == SHOW_MODE) {
+        // Stay in SHOW_MODE. A plain preset_id still cannot take MANUAL over a show.
+        setCurrentPreset(presetId);
+        showCueApplied = true;
+      } else if (!canTakeOverride(MANUAL)) {
         Serial.println("[BLE] wled_raw blocked by override priority");
         bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":false,\"reason\":\"blocked\"}");
         return;
+      } else {
+        setOverride(MANUAL);
+        setCurrentPreset(presetId);
       }
-      setOverride(MANUAL);
-      setCurrentPreset(presetId);
     }
     ensureWledPowerOn();
     // preparePresetApplyPayload folds inactive seg ids into one POST — no separate disable pass.
@@ -235,8 +250,12 @@ void handleBLECommand(const String& msg) {
     if (ok) {
       liveWledState = compactWledStateForSave(wled);
       lastLiveStatePollMs = millis();
+      if (showCueApplied) lastShowCueWled = wled;
     }
-    bleNotify("{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":" + String(ok ? "true" : "false") + "}");
+    String ack = "{\"type\":\"ack\",\"action\":\"wled_raw\",\"ok\":" + String(ok ? "true" : "false");
+    if (showCue) ack += ",\"show_cue\":true";
+    ack += "}";
+    bleNotify(ack);
   }
 
   // ── BLE scan log (Serial monitor) ──

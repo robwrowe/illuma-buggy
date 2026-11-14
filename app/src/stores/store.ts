@@ -244,6 +244,12 @@ import {
   type ShowSettings,
   type ShowInstanceOverride,
 } from '../utils/showBindings';
+import { normalizeShowCue, type ShowCue } from '../utils/showCues';
+import {
+  beginCaptureBuffer, captureBufferLength, captureSessionId, endCaptureBuffer,
+  noteIgnoredCapture, pushCapturePacket, takeCapturePackets,
+} from '../services/captureBuffer';
+import { finalizeCaptureJournal, recoverOrphanCaptures, startCaptureJournal, writeSessionPackets } from '../services/captureJournal';
 
 export type { CustomSegmentLayout, WledSegmentDef } from '../utils/segmentLayouts';
 export {
@@ -447,6 +453,10 @@ interface AppState {
   removeShowBinding: (id: string) => void;
   setShowSettings: (patch: Partial<ShowSettings>) => void;
   setShowInstanceOverride: (instanceId: string, patch: Partial<ShowInstanceOverride>) => void;
+  cues: ShowCue[];
+  setCues: (cues: ShowCue[]) => void;
+  activeCue: { id: string; label: string; endsAt: number; remainSec: number } | null;
+  setActiveCue: (cue: { id: string; label: string; endsAt: number; remainSec: number } | null) => void;
   ftbPresetId: string;
   setFtbPresetId: (id: string) => void;
   wandLab: WandLabConfig;
@@ -716,6 +726,9 @@ function parseWledJsonArray(raw: string | undefined): string[] | null {
   }
 }
 
+const failedLoadKeys = new Set<string>();
+let storageWritable = false;
+
 function buildCaptureSession(
   s: {
     bleCaptureBuffer: BleCapturePacket[];
@@ -816,6 +829,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   showBindings:           [],
   showSettings:           { ...DEFAULT_SHOW_SETTINGS },
   showInstanceOverrides:  {},
+  cues:                   [],
+  activeCue:              null,
   showProtectsZones:      false,
   ftbPresetId:            '',
   wandLab:                DEFAULT_WAND_LAB,
@@ -886,6 +901,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
 
   setShowProtectsZones: (showProtectsZones) => set({ showProtectsZones }),
+  setCues: (cues) => set({ cues }),
+  setActiveCue: (activeCue) => set({ activeCue }),
 
   setFtbPresetId: (ftbPresetId) => set({ ftbPresetId }),
 
@@ -1026,6 +1043,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (s.bleCaptureActive) return;
     const startedAt = Date.now();
     const durationSec = s.bleCaptureDurationSec;
+    const sessionId = `cap_${startedAt}_p1`;
     set({
       bleCaptureActive: true,
       bleCaptureStartedAt: startedAt,
@@ -1036,12 +1054,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureIgnoredCount: 0,
       captureForcedLocationTracking: true,
     });
+    beginCaptureBuffer(sessionId);
+    void startCaptureJournal({
+      id: sessionId,
+      name: s.bleCaptureDraftName.trim() || `Capture ${new Date(startedAt).toLocaleString()}`,
+      startedAt,
+      segment: 1,
+      draftName: s.bleCaptureDraftName,
+      endsAt: durationSec > 0 ? startedAt + durationSec * 1000 : null,
+    });
     void primeLocationRuntimeCache();
   },
 
   stopBleCapture: (reason = 'manual') => {
     const s = get();
-    if (!s.bleCaptureActive && s.bleCaptureBuffer.length === 0) {
+    const packets = takeCapturePackets();
+    if (!s.bleCaptureActive && packets.length === 0) {
       set({
         bleCaptureActive: false,
         bleCaptureStartedAt: null,
@@ -1052,8 +1080,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
     const endedAt = Date.now();
-    const session = buildCaptureSession(s, endedAt, s.bleCaptureSegment, false);
-    const packets = session.packets;
+    const journalId = captureSessionId();
+    const session = buildCaptureSession(
+      { ...s, bleCaptureBuffer: packets },
+      endedAt,
+      s.bleCaptureSegment,
+      false,
+    );
+    if (journalId) session.id = journalId;
+    session.packetCount = packets.length;
+    const stored = { ...session, packets: [] as BleCapturePacket[] };
+    endCaptureBuffer();
     set({
       bleCaptureActive: false,
       bleCaptureStartedAt: null,
@@ -1062,34 +1099,59 @@ export const useAppStore = create<AppState>((set, get) => ({
       bleCaptureLiveCount: 0,
       bleCaptureBuffer: [],
       captureForcedLocationTracking: false,
-      bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
+      bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, stored),
     });
-    if (packets.length > 0) {
-      get().enqueueSheetsUpload({
-        sessionId: session.id,
-        enqueuedAt: Date.now(),
-        attempts: 0,
-        lastAttemptAt: null,
-        lastError: null,
-      });
-    }
-    get().saveToStorage();
+    void (async () => {
+      if (journalId) await finalizeCaptureJournal(journalId);
+      if (packets.length > 0) {
+        get().enqueueSheetsUpload({
+          sessionId: session.id,
+          enqueuedAt: Date.now(),
+          attempts: 0,
+          lastAttemptAt: null,
+          lastError: null,
+        });
+      }
+      get().saveToStorage();
+    })();
     console.log(`[Capture] Stopped (${reason}): ${packets.length} packets`);
   },
 
   rolloverBleCapture: () => {
     const s = get();
-    if (!s.bleCaptureActive || s.bleCaptureBuffer.length === 0) return;
+    const packets = takeCapturePackets();
+    if (!s.bleCaptureActive || packets.length === 0) return;
     const endedAt = Date.now();
-    const session = buildCaptureSession(s, endedAt, s.bleCaptureSegment, true);
+    const journalId = captureSessionId();
+    const session = buildCaptureSession(
+      { ...s, bleCaptureBuffer: packets },
+      endedAt,
+      s.bleCaptureSegment,
+      true,
+    );
+    if (journalId) session.id = journalId;
+    session.packetCount = packets.length;
+    const stored = { ...session, packets: [] as BleCapturePacket[] };
     const nextSegment = s.bleCaptureSegment + 1;
+    const nextId = `cap_${endedAt}_p${nextSegment}`;
+    endCaptureBuffer();
+    beginCaptureBuffer(nextId);
+    void startCaptureJournal({
+      id: nextId,
+      name: s.bleCaptureDraftName,
+      startedAt: endedAt,
+      segment: nextSegment,
+      draftName: s.bleCaptureDraftName,
+      endsAt: null,
+    });
     set({
-      bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, session),
+      bleCaptureSessions: prependCaptureSession(s.bleCaptureSessions, stored),
       bleCaptureBuffer: [],
       bleCaptureLiveCount: 0,
       bleCaptureStartedAt: endedAt,
       bleCaptureSegment: nextSegment,
     });
+    void finalizeCaptureJournal(journalId ?? session.id);
     get().enqueueSheetsUpload({
       sessionId: session.id,
       enqueuedAt: Date.now(),
@@ -1099,7 +1161,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     get().saveToStorage();
     console.log(
-      `[Capture] Rolled over part ${s.bleCaptureSegment} (${session.packets.length} packets) → part ${nextSegment}`,
+      `[Capture] Rolled over part ${s.bleCaptureSegment} (${packets.length} packets) → part ${nextSegment}`,
     );
   },
 
@@ -1107,10 +1169,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const s = get();
     if (!s.bleCaptureActive) return;
     if (shouldIgnoreBleCapturePacket(pkt.tag, pkt.hex, s.bleCaptureIgnoreTags)) {
-      set({ bleCaptureIgnoredCount: s.bleCaptureIgnoredCount + 1 });
+      noteIgnoredCapture();
       return;
     }
-    if (s.bleCaptureBuffer.length >= MAX_PACKETS_PER_SESSION) {
+    if (captureBufferLength() >= MAX_PACKETS_PER_SESSION) {
       get().rolloverBleCapture();
     }
     const active = get();
@@ -1126,8 +1188,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         gpsUpdatedAt: gps.updatedAt,
       } : {}),
     };
-    const buf = [...active.bleCaptureBuffer, entry];
-    set({ bleCaptureBuffer: buf, bleCaptureLiveCount: buf.length });
+    pushCapturePacket(entry);
   },
 
   updateBleCapturePacketNote: (boardTs, hex, note) => {
@@ -1172,23 +1233,28 @@ export const useAppStore = create<AppState>((set, get) => ({
                     'bleCaptureIgnoreTags',
                     'customPalettes','savedColors','paletteSets','activePaletteSetId',
                     'customSegmentLayouts','parks','showModeConfig','showBindings','showSettings',
-                    'showInstanceOverrides','ftbPresetId','wandLab',
+                    'showInstanceOverrides','cues','ftbPresetId','wandLab',
                     'wledEffects','wledPalettes','wledFxData'];
-      const pairs = await AsyncStorage.multiGet(keys);
       const d: Record<string, any> = {};
-      pairs.forEach(([k, v]) => {
-        if (!v) return;
+      failedLoadKeys.clear();
+      for (const key of keys) {
         try {
-          d[k] = JSON.parse(v);
-        } catch {
-          // ftbPresetId was historically saved without JSON.stringify — accept bare id strings.
-          if (k === 'ftbPresetId') {
-            d[k] = v;
-          } else {
-            console.warn(`[Store] Skipping corrupt storage key "${k}"`);
+          const v = await AsyncStorage.getItem(key);
+          if (!v) continue;
+          try {
+            d[key] = JSON.parse(v);
+          } catch {
+            if (key === 'ftbPresetId') d[key] = v;
+            else {
+              failedLoadKeys.add(key);
+              console.warn(`[Store] Skipping corrupt storage key "${key}"`);
+            }
           }
+        } catch (e) {
+          failedLoadKeys.add(key);
+          console.warn(`[Store] Could not read "${key}"`, e);
         }
-      });
+      }
       void AsyncStorage.multiRemove(['mbSegmentLayouts', 'mbActiveSegmentLayoutId']);
       const mbMapping = normalizeMbMapping(d.mbMapping);
       set({
@@ -1250,6 +1316,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           : [],
         showSettings:       { ...DEFAULT_SHOW_SETTINGS, ...(d.showSettings ?? {}) },
         showInstanceOverrides: d.showInstanceOverrides ?? {},
+        cues: Array.isArray(d.cues)
+          ? d.cues.map((c: unknown) => normalizeShowCue(c)).filter((c): c is ShowCue => !!c)
+          : [],
         ftbPresetId:        d.ftbPresetId        ?? '',
         wandLab:            d.wandLab            ?? DEFAULT_WAND_LAB,
       });
@@ -1268,13 +1337,52 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         await AsyncStorage.setItem(MIGRATION_KEY, '1');
       }
+      const withPackets = (get().bleCaptureSessions || []).filter((sess) => sess.packets?.length);
+      for (const sess of withPackets) {
+        try { await writeSessionPackets(sess); } catch (e) { console.warn('[Capture] journal migrate failed', e); }
+      }
+      if (withPackets.length) {
+        set({
+          bleCaptureSessions: get().bleCaptureSessions.map((sess) => (
+            sess.packets?.length ? { ...sess, packetCount: sess.packets.length, packets: [] } : sess
+          )),
+        });
+      }
+      try {
+        const recovered = await recoverOrphanCaptures();
+        if (recovered.length) {
+          const known = new Set(get().bleCaptureSessions.map((sess) => sess.id));
+          const extra = recovered
+            .filter((sess) => !known.has(sess.id))
+            .map((sess) => ({ ...sess, packets: [] as BleCapturePacket[] }));
+          if (extra.length) {
+            set({ bleCaptureSessions: [...extra, ...get().bleCaptureSessions].slice(0, 20) });
+            for (const sess of extra) {
+              get().enqueueSheetsUpload({
+                sessionId: sess.id,
+                enqueuedAt: Date.now(),
+                attempts: 0,
+                lastAttemptAt: null,
+                lastError: null,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[Capture] orphan recover failed', e);
+      }
+      storageWritable = true;
     } catch (e) { console.error('[Store] Load error:', e); }
   },
 
   saveToStorage: async () => {
+    if (!storageWritable) {
+      console.warn('[Store] Save skipped — storage was not loaded');
+      return;
+    }
     try {
       const s = get();
-      await AsyncStorage.multiSet([
+      const pairs: [string, string][] = [
         ['presets',            JSON.stringify(s.presets)],
         ['zones',              JSON.stringify(s.zones)],
         ['indoorZones',        JSON.stringify(s.indoorZones)],
@@ -1318,7 +1426,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['wledEffects',        JSON.stringify(s.wledEffects)],
         ['wledPalettes',       JSON.stringify(s.wledPalettes)],
         ['wledFxData',         JSON.stringify(s.wledFxData)],
-        ['bleCaptureSessions', JSON.stringify(s.bleCaptureSessions)],
+        ['bleCaptureSessions', JSON.stringify(s.bleCaptureSessions.map((sess) => (
+          { ...sess, packets: [], packetCount: sess.packetCount ?? sess.packets.length }
+        )))],
         ['bleCaptureDurationSec', JSON.stringify(s.bleCaptureDurationSec)],
         ['bleCaptureDraftName',   JSON.stringify(s.bleCaptureDraftName)],
         ['bleCaptureIgnoreTags',  JSON.stringify(s.bleCaptureIgnoreTags)],
@@ -1327,9 +1437,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         ['showBindings',       JSON.stringify(s.showBindings)],
         ['showSettings',       JSON.stringify(s.showSettings)],
         ['showInstanceOverrides', JSON.stringify(s.showInstanceOverrides)],
+        ['cues',               JSON.stringify(s.cues)],
         ['ftbPresetId',        JSON.stringify(s.ftbPresetId)],
         ['wandLab',            JSON.stringify(s.wandLab)],
-      ]);
+      ];
+      await AsyncStorage.multiSet(pairs.filter(([key]) => !failedLoadKeys.has(key)));
     } catch (e) { console.error('[Store] Save error:', e); }
   },
 
@@ -1433,6 +1545,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       parks: s.parks, showModeConfig: s.showModeConfig,
       showBindings: s.showBindings, showSettings: s.showSettings,
       showInstanceOverrides: s.showInstanceOverrides,
+      cues: s.cues,
       ftbPresetId: s.ftbPresetId, wandLab: s.wandLab,
     };
   },
@@ -1481,6 +1594,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         : [],
       showSettings:       { ...DEFAULT_SHOW_SETTINGS, ...((m.showSettings as ShowSettings) ?? {}) },
       showInstanceOverrides: (m.showInstanceOverrides as Record<string, ShowInstanceOverride>) ?? {},
+      cues: Array.isArray(m.cues)
+        ? (m.cues as unknown[]).map((c) => normalizeShowCue(c)).filter((c): c is ShowCue => !!c)
+        : [],
       ftbPresetId:        (m.ftbPresetId as string) ?? '',
       wandLab:            (m.wandLab as WandLabConfig) ?? DEFAULT_WAND_LAB,
     });

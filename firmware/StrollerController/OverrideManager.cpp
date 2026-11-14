@@ -239,9 +239,11 @@ bool restorePresetWithTransition(const String& id, unsigned long fadeMs) {
   return restorePresetWithTransitionStyled(id, fadeMs, -1);
 }
 
-void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
-  // LIVE is blackout-only: turn lights off once on enter so the rule engine can drive
-  // effects without fighting a competing "live look" preset push.
+void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs, const String& look) {
+  // look "keep" / PHASE_CUE: do not touch the strip. The app follows with wled_raw show_cue.
+  if (look == "keep" || phase == PHASE_CUE) return;
+  // BLACK / LIVE blackout unless the app asked to keep the current look.
+  // showLook*Live globals stay for the manual-parade / legacy path and are not used here.
   if (phase == PHASE_BLACK || phase == PHASE_LIVE) {
     sendToWLED(injectWledTransition("{\"on\":false}", fadeMs));
     return;
@@ -276,6 +278,7 @@ void applyShowPhaseLook(ShowType type, ShowPhase phase, unsigned long fadeMs) {
 const char* showTypeStatusStr() {
   if (showModeType == SHOW_PARADE) return "parade";
   if (showModeType == SHOW_FIREWORKS) return "fireworks";
+  if (showModeType == SHOW_CUE) return "cue";
   return "";
 }
 
@@ -285,6 +288,7 @@ const char* showPhaseStatusStr() {
     case PHASE_BLACK: return "black";
     case PHASE_LIVE:  return "live";
     case PHASE_POST:  return "post";
+    case PHASE_CUE:   return "cue";
     default:          return "";
   }
 }
@@ -335,9 +339,15 @@ void clearOverride() {
     overrideBeforeInterrupt = NONE;
     currentOverride = SHOW_MODE;
     overrideTimestamp = millis();
+    if (lastShowCueWled.length() > 0) {
+      Serial.println("[Override] Restoring show cue after BLE effect");
+      sendToWLEDForBleSolid(lastShowCueWled);
+      return;
+    }
     applyShowPhaseLook(showModeType, showModePhase, fadeMs);
     return;
   }
+  lastShowCueWled = "";
 
   OverrideSource restoreOverride = savedRestoreOverride;
   String presetId = savedRestorePresetId;

@@ -79,12 +79,20 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       void bleService.connect().catch((e) => console.warn('[LocationTask] reconnect failed:', e));
     }
 
+    const { sweepStaleRequests } =
+      require('../utils/restFetch') as typeof import('../utils/restFetch');
+    sweepStaleRequests();
+
     const { processLocationUpdate } =
       require('../utils/zoneLocationCore') as typeof import('../utils/zoneLocationCore');
     processLocationUpdate(
       { latitude: loc.coords.latitude, longitude: loc.coords.longitude },
       { background: true, accuracyM: loc.coords.accuracy ?? undefined },
     );
+
+    const { showAutomationTick } =
+      require('../services/showAutomation') as typeof import('../services/showAutomation');
+    await showAutomationTick({ background: true, reconnect: false });
   } catch (e: unknown) {
     console.warn('[LocationTask] handler failed:', e);
   }

@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const ZONE_EFFECT_NOTIFICATION_ID = 'illuma-zone-effect';
 const ZONE_SUPPRESSED_NOTIFICATION_ID = 'illuma-zone-suppressed';
 const BLE_DISCONNECT_NOTIFICATION_ID = 'illuma-ble-disconnected';
+const RESUME_NOTIFICATION_ID = 'illuma-resume-keepalive';
 const CHANNEL_ID = 'stroller-controls-high';
 const LAST_NOTIFIED_ZONE_KEY = 'illuma-last-notified-zone';
 const BLE_DISCONNECT_DEBOUNCE_MS = 30_000;
@@ -166,7 +167,32 @@ export async function dismissBleDisconnectedNotification(): Promise<void> {
   }
 }
 
+export async function notifyTapToResume(): Promise<void> {
+  await initStrollerNotifications();
+  await Notifications.scheduleNotificationAsync({
+    identifier: RESUME_NOTIFICATION_ID,
+    content: {
+      title: 'Tap to resume Illuma Buggy',
+      body: 'Show automation and the board link paused. Open the app to restart.',
+      sticky: false,
+      priority: Notifications.AndroidNotificationPriority.HIGH,
+      data: { type: 'resume_keepalive' },
+      ...(Platform.OS === 'android' ? { channelId: CHANNEL_ID } : {}),
+    },
+    trigger: null,
+  });
+}
+
+export async function dismissResumeNotification(): Promise<void> {
+  try {
+    await Notifications.dismissNotificationAsync(RESUME_NOTIFICATION_ID);
+  } catch {
+    // not shown
+  }
+}
+
 export async function dismissStrollerNotification(): Promise<void> {
   await dismissZoneEffectNotification();
   await dismissBleDisconnectedNotification();
+  await dismissResumeNotification();
 }

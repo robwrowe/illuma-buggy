@@ -100,6 +100,8 @@ extern uint8_t       wandTxCastPalette;
 extern unsigned long wandTxLastAdvMs;
 
 extern String savedWledState;
+/** Last wled_raw body applied with show_cue while SHOW_MODE is held. Re-sent when a BLE_EFFECT interruption ends. */
+extern String lastShowCueWled;
 extern String savedRestorePresetId;
 extern OverrideSource savedRestoreOverride;
 extern String liveWledState;

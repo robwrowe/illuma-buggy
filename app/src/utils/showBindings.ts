@@ -1,9 +1,14 @@
 /**
  * Per-park show bindings — assign pre/post presets to specific parade/fireworks shows.
- * Live phase is blackout-only on firmware (no live preset).
+ * Live defaults to fade-to-black. A binding may instead apply `livePresetId`.
+ * `ftbFadeSec` covers every fade-to-black this binding performs (live, and any
+ * phase set to black). Null uses the global bleEffectTransitionMs.
  */
 
+import { normalizeFtbFadeSec, normalizeLiveFields } from './showPhasePlan';
+
 export type ShowKind = 'parade' | 'fireworks';
+export type ShowLiveMode = 'ftb' | 'preset';
 
 export interface ShowPhasePresets {
   pre: string;
@@ -41,6 +46,12 @@ export interface ParkShowBinding {
   autoStartDisabled?: boolean;
   /** When set, automation only runs inside this GPS zone; omit for anywhere in the park */
   scopeZoneId?: string | null;
+  /** 'ftb' (default) fades to black on live; 'preset' applies livePresetId instead */
+  liveMode: ShowLiveMode;
+  /** Preset id when liveMode === 'preset'; empty for fade-to-black */
+  livePresetId: string;
+  /** Fade-to-black duration in seconds. Null uses global bleEffectTransitionMs. */
+  ftbFadeSec: number | null;
 }
 
 export interface ShowSettings {
@@ -60,6 +71,8 @@ export interface ShowSettings {
   autoCaptureLeadSec: number;
   /** Seconds after scheduled show end to auto-stop capture */
   autoCaptureTailSec: number;
+  /** Safety cap when a cue has no end (toSec null). */
+  cueMaxHoldSec: number;
 }
 
 export interface ShowInstanceOverride {
@@ -69,6 +82,10 @@ export interface ShowInstanceOverride {
   autoLiveDisabled?: boolean;
   /** @deprecated use autoPrePostDisabled */
   autoStartDisabled?: boolean;
+  /** Skip show-anchored cues for this instance. */
+  cuesDisabled?: boolean;
+  /** "Show ended now" — re-anchors cues whose point is end. */
+  endAtMs?: number;
 }
 
 export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
@@ -83,6 +100,7 @@ export const DEFAULT_SHOW_SETTINGS: ShowSettings = {
   autoCaptureEnabled: false,
   autoCaptureLeadSec: 60,
   autoCaptureTailSec: 60,
+  cueMaxHoldSec: 900,
 };
 
 export function inferShowKind(name: string): ShowKind {
@@ -119,6 +137,8 @@ export function normalizeShowBinding(raw: Partial<ParkShowBinding> | undefined, 
     autoLiveDisabled: raw.autoLiveDisabled ?? (kind === 'fireworks' ? false : true),
     autoStartDisabled: !!(raw.autoPrePostDisabled ?? raw.autoStartDisabled),
     scopeZoneId: raw.scopeZoneId || null,
+    ...normalizeLiveFields(raw),
+    ftbFadeSec: normalizeFtbFadeSec(raw.ftbFadeSec),
   };
 }
 
@@ -175,7 +195,8 @@ export function bindingForEntity(
 
 /**
  * Legacy global showModeConfig from first binding per kind (firmware NVS compat).
- * Live look is empty — firmware LIVE/BLACK is blackout-only and ignores live presets.
+ * Legacy NVS live look stays empty. Per-binding live presets are applied by the
+ * app before show_mode_enter (look: "keep"); they are not stored in these globals.
  */
 export function buildLegacyShowModeConfig(bindings: ParkShowBinding[], parkId: string | undefined) {
   const parkBindings = parkId ? bindings.filter(b => b.parkId === parkId) : bindings;

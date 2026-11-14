@@ -152,9 +152,9 @@ export function SettingsTab({ data, update, sheetsEndpoint = '', setSheetsEndpoi
               return (
                 <>
                   <Text size="xs" c="dimmed" lh={1.5}>
-                    Parade and fireworks looks are pushed via <strong>📡 Board</strong>. Live phase
-                    is blackout-only on firmware (no live preset). Android show buttons send phase
-                    changes live over BLE.
+                    Parade and fireworks looks are pushed via <strong>📡 Board</strong>. Per-show live
+                    fade time and an optional live preset are set on the Shows tab (they need firmware
+                    that accepts fade_ms and look). Android show buttons send phase changes live over BLE.
                   </Text>
                   <AppCard style={{ borderColor: 'var(--primary)' }}>
                     <Text fw={700} size="sm" mb="sm" c="var(--primary)">

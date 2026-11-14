@@ -19,6 +19,8 @@ import {
   BleCaptureSession,
 } from '../utils/bleCapture';
 import { analyzeBeaconTracks, type BeaconTrack } from '../utils/beaconTrackAnalysis';
+import { loadSessionPackets } from '../services/captureJournal';
+import type { BleCapturePacket } from '../utils/bleCapture';
 import { getBestAvailableFixSync } from '../utils/locationRuntimeBridge';
 import {
   getPhoneBleScanHealth,
@@ -90,7 +92,8 @@ const MERGE_LABEL: Record<BeaconTrack['mergeConfidence'], string> = {
 };
 
 async function shareSession(session: BleCaptureSession) {
-  const body = formatCaptureExport(session);
+  const packets = session.packets.length ? session.packets : await loadSessionPackets(session.id);
+  const body = formatCaptureExport({ ...session, packets });
   const path = `${FileSystem.cacheDirectory}ble-capture-${session.id}.txt`;
   await FileSystem.writeAsStringAsync(path, body);
   if (await Sharing.isAvailableAsync()) {
@@ -106,6 +109,7 @@ export default function BleCaptureScreen() {
   const { colors } = useTheme();
   const s = styles(colors);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loadedPackets, setLoadedPackets] = useState<Record<string, BleCapturePacket[]>>({});
   const [tracksExpandedId, setTracksExpandedId] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [healthNow, setHealthNow] = useState(Date.now());
@@ -494,6 +498,7 @@ export default function BleCaptureScreen() {
         ) : (
           bleCaptureSessions.map(session => {
             const open = expandedId === session.id;
+            const packetCount = session.packetCount ?? session.packets.length;
             const trackOpen = tracksExpandedId === session.id;
             const tracks = open && trackOpen
               ? analyzeBeaconTracks(session).sort(
@@ -506,13 +511,21 @@ export default function BleCaptureScreen() {
             return (
               <View key={session.id} style={s.sessionBlock}>
                 <TouchableOpacity
-                  onPress={() => setExpandedId(open ? null : session.id)}
+                  onPress={() => {
+                    if (open) { setExpandedId(null); return; }
+                    setExpandedId(session.id);
+                    if (!session.packets.length && !loadedPackets[session.id]) {
+                      void loadSessionPackets(session.id).then((packets) => {
+                        setLoadedPackets((prev) => ({ ...prev, [session.id]: packets }));
+                      });
+                    }
+                  }}
                   style={s.sessionHead}
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={s.sessionName}>{session.name}</Text>
                     <Text style={s.sub}>
-                      {session.packets.length} packets · {formatElapsed(session.durationSec * 1000)} ·{' '}
+                      {packetCount} packets · {formatElapsed(session.durationSec * 1000)} ·{' '}
                       {new Date(session.startedAt).toLocaleString()}
                     </Text>
                   </View>
@@ -595,7 +608,7 @@ export default function BleCaptureScreen() {
                         )}
                       </>
                     )}
-                    {session.packets.map((p, i) => (
+                    {(loadedPackets[session.id] ?? session.packets).slice(0, 200).map((p, i) => (
                       <View key={`${p.boardTs}-${i}`} style={s.packetRow}>
                         <Text style={s.packetTag}>{p.quality ? `UNK/${p.quality}` : p.tag}</Text>
                         <Text style={s.packetHint}>
@@ -612,7 +625,18 @@ export default function BleCaptureScreen() {
                             placeholder="Note…"
                             placeholderTextColor={colors.textMuted}
                             value={p.note ?? ''}
-                            onChangeText={v => updateBleCapturePacketNote(p.boardTs, p.hex, v)}
+                            onChangeText={(v) => {
+                              setLoadedPackets((prev) => {
+                                const list = prev[session.id] ?? session.packets;
+                                return {
+                                  ...prev,
+                                  [session.id]: list.map((pkt) => (
+                                    pkt.boardTs === p.boardTs && pkt.hex === p.hex ? { ...pkt, note: v } : pkt
+                                  )),
+                                };
+                              });
+                            }}
+                            onEndEditing={(e) => updateBleCapturePacketNote(p.boardTs, p.hex, e.nativeEvent.text)}
                           />
                         )}
                       </View>
